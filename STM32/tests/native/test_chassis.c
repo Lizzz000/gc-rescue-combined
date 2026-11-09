@@ -887,11 +887,11 @@ static void test_turn_ramp(void)
         {
             step(10000U,1U);
             body_target(body);
-            assert(fabsf(body[2]) <= 1.00001f);
+            assert(fabsf(body[2]) <= 2.00001f);
             assert(fabsf(body[2] - previous) <= 0.04001f);
             previous = body[2];
         }
-        near(body[2], 1.0f * direction);
+        near(body[2], 2.0f * direction);
 
         /* 瞬间到角、实际角速度已低时，较大的待发目标仍须减速。 */
         yaw_deg = direction * 180.0f;
@@ -900,7 +900,7 @@ static void test_turn_ramp(void)
         {
             step(10000U,1U);
             body_target(body);
-            near(body[2], direction * (1.0f - 0.040f * (i + 1U)));
+            near(body[2], direction * (2.0f - 0.040f * (i + 1U)));
         }
         assert(fabsf(body[2]) > 0.08f && !Chassis_Is_Stopped());
         previous = body[2];
@@ -941,13 +941,13 @@ static void test_turn_braking_and_fine(void)
         reset_case(0U,0U);
         assert(enable_ready() && Chassis_Turn_Start((int8_t)direction, 180.0f));
         for (unsigned i = 0U; i < 50U; ++i) step(10000U,1U);
-        body_target(body); near(body[2], direction * 1.0f);
+        body_target(body); near(body[2], direction * 2.0f);
 
         /* 6° 制动角对应 0.915291 rad/s，原 P 输出仅 0.209440 rad/s。 */
         yaw_deg = direction * 174.0f;
-        step(10000U,1U); body_target(body); near(body[2], direction * 0.96f);
+        step(10000U,1U); body_target(body); near(body[2], direction * 1.96f);
         previous = body[2];
-        for (unsigned i = 0U; i < 25U; ++i)
+        for (unsigned i = 0U; i < 35U; ++i)
         {
             step(10000U,1U); body_target(body);
             assert(fabsf(body[2] - previous) <= 0.04001f);
@@ -1021,7 +1021,7 @@ static void test_turn_closed_loop(void)
             step(interval,1U);
             body_target(body);
             near(body[0],0.0f); near(body[1],0.0f);
-            assert(fabsf(body[2]) <= 1.00001f);
+            assert(fabsf(body[2]) <= 2.00001f);
             /* 正常 Stop 在低速到位后回零；其余更新须满足斜坡界限。 */
             if (body[2] != 0.0f || fabsf(previous) > 0.08f)
                 assert(fabsf(body[2] - previous) <= 4.0f * dt + 0.00001f);
@@ -1042,7 +1042,7 @@ static void test_turn_closed_loop(void)
         assert(fine_exits == 0U && reversals <= 1U);
         assert(peak > 0.0f);
         if (angles[angle] >= 180.0f)
-            near(peak,1.0f);
+            near(peak,2.0f);
         assert(Chassis_Straight_Start(0.1f,0U));
     }
 }

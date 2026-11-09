@@ -301,14 +301,14 @@ class CanProbe:
         since = time.monotonic()
         observer.spin(0.2, owner)
         self.poll()
-        require(not any(row['id'] in (0x181, 0x182) and row['steady'] >= since
+        require(not any(row['id'] in (0x181, 0x182) and row['steady'] >= since and row['data'].startswith('01')
                         for row in self.records), 'coordinates emitted while mission waits for STM32')
 
     def steady_periodic(self, observer, task, since):
         """只比较收敛窗口，并将有效载荷与同窗口真实 ROS 输出逐项核对。"""
         self.poll()
         result = {}
-        invalid = {0x180: bytes(7).hex(), 0x181: bytes(5).hex(), 0x182: bytes(5).hex()}
+        invalid = {0x180: bytes(7).hex(), 0x181: bytes(8).hex(), 0x182: bytes(8).hex()}
         expected = {0x180: set(), 0x181: set(), 0x182: set()}
         mission = observer.records['mission'][-1]['value'] if observer.records['mission'] else None
         idle = mission is not None and mission['operation'] == 0
@@ -337,7 +337,7 @@ class CanProbe:
                 x = quantize(center['x'] / values['shared.image.width'])
                 y = quantize(center['y'] / values['shared.image.height'])
                 if x is not None and y is not None and detection['id']:
-                    expected[0x181].add(struct.pack('<Bhh', 1, x, y).hex())
+                    expected[0x181].add((struct.pack('<Bhh', 1, x, y) + ((row['source'][0] // 1000000) & 0xffffff).to_bytes(3, 'little')).hex())
         if task == 'field' and idle and mission.get('cycle_phase') == 4 and mission['outcome'] == 2 and mission['destination'] in (1, 2):
             for row in observer.records['safety']:
                 safety = row['value']
@@ -345,8 +345,8 @@ class CanProbe:
                     continue
                 x, y = quantize(safety['x']), quantize(safety['y'])
                 if x is not None and y is not None:
-                    expected[0x182].add(struct.pack('<Bhh', 1, x, y).hex())
-        for identifier, length in ((0x180, 7), (0x181, 5), (0x182, 5)):
+                    expected[0x182].add((struct.pack('<Bhh', 1, x, y) + ((row['source'][0] // 1000000) & 0xffffff).to_bytes(3, 'little')).hex())
+        for identifier, length in ((0x180, 7), (0x181, 8), (0x182, 8)):
             rows = [row for row in self.records if row['id'] == identifier and row['steady'] >= since]
             require(rows and all(row['dlc'] == length for row in rows), f'missing/wrong CAN {identifier:03x}')
             require(all(row['data'][:2] in ('00', '01') for row in rows), 'CAN valid byte outside 0/1')

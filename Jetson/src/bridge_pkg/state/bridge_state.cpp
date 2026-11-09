@@ -241,7 +241,8 @@ BridgeCenterOutput BridgeState::targetOutput(
   // coordinatesHeld 已检查空闲与阶段/实际模式匹配，通过后 mission_ 必然存在。
   return {!coordinatesHeld() &&
     mission_->cycle_phase == BridgeCyclePhase::SearchingTarget &&
-    fresh(target_, current, now), target_.x, target_.y};
+    fresh(target_, current, now), target_.x, target_.y,
+    static_cast<std::uint32_t>((target_.stamp.ns / 1000000) & 0xffffff)};
 }
 
 BridgeCenterOutput BridgeState::safetyOutput(
@@ -254,7 +255,8 @@ BridgeCenterOutput BridgeState::safetyOutput(
     mission_->destination != BridgeDestination::None &&
     static_cast<std::uint8_t>(mission_->destination) == safety_.side &&
     fresh(safety_, current, now);
-  return {allowed, safety_.x, safety_.y};
+  return {allowed, safety_.x, safety_.y,
+    static_cast<std::uint32_t>((safety_.stamp.ns / 1000000) & 0xffffff)};
 }
 
 BridgeVelocityOutput BridgeState::velocityOutput(BridgeMonotonicTime now) const

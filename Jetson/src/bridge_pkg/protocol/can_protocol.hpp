@@ -133,16 +133,20 @@ public:
   }
 
   // 中心帧 0x181/0x182 共用：调用方只传这两个 ID（运行时由 currentFrame 分派保证）。
-  static can_frame center(canid_t id, bool valid, std::int16_t x, std::int16_t y)
+  static can_frame center(canid_t id, bool valid, std::int16_t x, std::int16_t y,
+    std::uint32_t source_frame = 0)
   {
-    // 布局（DLC=5）：data[0]=valid，data[1..2]=x:int16，data[3..4]=y:int16，小端无填充；valid=false 时载荷清零，ID 与 DLC 保留。
+    // DLC=8：valid、两个小端 int16 坐标、源时间低 24 位毫秒；无效时载荷清零。
     can_frame frame{};
     frame.can_id = id;
-    frame.len = 5;
+    frame.len = 8;
     if (valid) {
       frame.data[0] = 1;
       putSigned(frame.data + 1, x);
       putSigned(frame.data + 3, y);
+      frame.data[5] = static_cast<std::uint8_t>(source_frame);
+      frame.data[6] = static_cast<std::uint8_t>(source_frame >> 8);
+      frame.data[7] = static_cast<std::uint8_t>(source_frame >> 16);
     }
     return frame;
   }

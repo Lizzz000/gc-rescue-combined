@@ -112,6 +112,7 @@ void BridgeRuntime::missionCallback(interface_pkg::msg::MissionStatus::ConstShar
   const auto update = state_.mission(input, current);
   // 周期帧不再排队，10 ms 定时器每拍按当时状态重发。
   if (update.accepted) {
+    mission_watchdog_.received({Clock::now()});
     if (!state_.locallyHeld() && state_.cyclePhase() == BridgeCyclePhase::SearchingTarget) {
       route_aborted_ = false;
     }
@@ -181,7 +182,17 @@ void BridgeRuntime::refreshTurnRequest(Clock::time_point current, bool force)
 
 can_frame BridgeRuntime::currentFrame(canid_t id) const
 {
-  // 周期帧提交前重新检查新鲜度；一次回复使用最近 armReply() 保存的快照，两者不能统一成入队时缓存载荷。
+  // Mission 超时不能继续发送可保活的速度帧或有效坐标。
+  const bool mission_alive = mission_watchdog_.alive({Clock::now()});
+  if (!mission_alive && id == CanProtocol::VELOCITY_ID) {
+    can_frame frame{};
+    frame.can_id = id;
+    return frame;
+  }
+  if (!mission_alive && (id == CanProtocol::TARGET_ID || id == CanProtocol::SAFETY_ID)) {
+    return CanProtocol::center(id, false, 0, 0);
+  }
+  // 周期帧提交前重新检查新鲜度；一次回复使用最近 armReply() 保存的快照。
   if (CanProtocol::replyId(id)) {return replies_.frame(id);}
   if (id == CanProtocol::VELOCITY_ID) {
     const auto velocity = state_.velocityOutput({Clock::now()});
@@ -191,7 +202,7 @@ can_frame BridgeRuntime::currentFrame(canid_t id) const
   const BridgeMonotonicTime monotonic{Clock::now()};
   const auto center = id == CanProtocol::TARGET_ID ?
     state_.targetOutput(current, monotonic) : state_.safetyOutput(current, monotonic);
-  return CanProtocol::center(id, center.valid, center.x, center.y);
+  return CanProtocol::center(id, center.valid, center.x, center.y, center.source_frame);
 }
 
 // ROI 终态同时更新业务结果、授权身份与编码快照；断线时只保存，重连后由查询重发。
@@ -222,6 +233,11 @@ void BridgeRuntime::armReply(canid_t id, const can_frame & frame)
 
 void BridgeRuntime::flushTxQueue()
 {
+  if (!mission_watchdog_.alive({Clock::now()})) {
+    dropped_frames_ += queue_.size();
+    queue_.reset();
+    return;
+  }
   // 提交待发帧：每周期最多尝试 8 次（含 EINTR）；front() 丢弃过期项，currentFrame() 用当前输入重建。
   for (int attempt = 0; attempt < 8; ++attempt) {
     const auto id = queue_.front(Clock::now(), tx_queue_timeout_, dropped_frames_);

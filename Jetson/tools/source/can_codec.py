@@ -13,7 +13,7 @@ IDS = {'velocity': 0x180, 'target': 0x181, 'safety': 0x182,
        'turn_to_safety': 0x193, 'arrival': 0x200,
        'turn_completed': 0x203, 'safety_arrived': 0x204, 'start_search': 0x205,
        'delivery_completed': 0x206}
-LENGTHS = {0x180: 7, 0x181: 5, 0x182: 5, 0x190: 1, 0x191: 3,
+LENGTHS = {0x180: 7, 0x181: 8, 0x182: 8, 0x190: 1, 0x191: 3,
            0x192: 6, 0x193: 6, 0x200: 1, 0x203: 5, 0x204: 5, 0x205: 1, 0x206: 5}
 COMMANDS = {'turn_completed': 1, 'safety_arrived': 2, 'start_search': 3, 'delivery_completed': 4}
 
@@ -50,15 +50,20 @@ def encode(kind: str, values: list[str], invalid: bool = False) -> str:
     identifier = IDS[kind]
     if kind in ('target', 'safety', 'velocity'):
         count = 3 if kind == 'velocity' else 2
-        if len(values) != count:
-            raise ValueError(f'{kind} needs {count} values')
-        numbers = [float(value) for value in values]
+        if len(values) != count and not (count == 2 and len(values) == 3):
+            raise ValueError(f'{kind} needs {count} values and optionally a source frame for coordinates')
+        source_frame = int(values[2]) if count == 2 and len(values) == 3 else 0
+        if source_frame < 0 or source_frame > 0xffffff:
+            raise ValueError('source frame must fit in 24 bits')
+        numbers = [float(value) for value in values[:count]]
         try:
             quantized = [fixed_point(value, 1000 if count == 3 else 10000) for value in numbers]
         except ValueError:
             invalid = True
             quantized = [0] * count
         data = bytes(LENGTHS[identifier]) if invalid else struct.pack('<B' + 'h' * count, 1, *quantized)
+        if not invalid and count == 2:
+            data += source_frame.to_bytes(3, 'little')
     elif kind in ('arrival', 'start_search'):
         if values or invalid:
             raise ValueError(f'{kind} needs no values and cannot use --invalid')
@@ -96,7 +101,7 @@ def decode(text: str) -> dict:
         identifier = int(identifier_text, 16)
         data = bytes.fromhex(payload)
     except (ValueError, TypeError) as error:
-        raise ValueError('expected ID#HEX, for example 181#0188134C1D') from error
+        raise ValueError('expected ID#HEX, for example 181#0188134C1D010000') from error
     if identifier not in LENGTHS or len(data) != LENGTHS[identifier]:
         raise ValueError('unknown standard ID or incorrect DLC')
     result = {'id': f'0x{identifier:03X}', 'dlc': len(data),
@@ -107,7 +112,9 @@ def decode(text: str) -> dict:
         names = ('vx', 'vy', 'yaw_rate') if identifier == 0x180 else ('x', 'y')
         result['valid'] = bool(data[0])
         scale = 1000 if identifier == 0x180 else 10000
-        result.update(zip(names, [value / scale for value in struct.unpack('<' + 'h' * len(names), data[1:])]))
+        result.update(zip(names, [value / scale for value in struct.unpack('<' + 'h' * len(names), data[1:1 + 2 * len(names)])]))
+        if identifier != 0x180:
+            result['source_frame'] = int.from_bytes(data[5:8], 'little')
         if not data[0] and any(data[1:]):
             result['warning'] = 'invalid frame has nonzero payload; ignore its values'
     elif identifier == 0x190:

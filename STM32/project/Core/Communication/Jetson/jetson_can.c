@@ -67,6 +67,12 @@ void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len)
             jetson_data.heartbeat_received_ms = now_ms;
             jetson_data.heartbeat_seen = 1U;
         }
+        else if (len == 0U)
+        {
+            /* Jetson 以空 0x180 明确报告任务失联，不能等待普通心跳超时。 */
+            jetson_data.heartbeat_seen = 0U;
+            ++jetson_data.mission_loss_sequence;
+        }
         if (velocity.well_formed && data[0] == 1U)
         {
             velocity.valid = 1U;
@@ -88,11 +94,13 @@ void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len)
         Jetson_CAN_Center_t center = {0};
         center.received_ms = now_ms;
         center.sequence = ++jetson_data.rx_sequence;
-        if (data != NULL && len == 5U && data[0] == 1U)
+        if (data != NULL && len == 8U && data[0] == 1U)
         {
             center.valid = 1U;
             center.x = Read_Signed(data + 1U);
             center.y = Read_Signed(data + 3U);
+            center.source_frame = (uint32_t)data[5] | ((uint32_t)data[6] << 8U) |
+                                  ((uint32_t)data[7] << 16U);
         }
         if (id == 0x181U)
             jetson_data.target = center;

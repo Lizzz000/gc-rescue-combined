@@ -278,6 +278,8 @@ void MissionNode::publishStatus(const MissionState & state)
 void MissionNode::checkTimeouts()
 {
   controller_.checkTimeouts(std::chrono::steady_clock::now());
+  // 周期状态同时作为桥接失联保护的存活信号。
+  publishStatus(controller_.state());
 }
 
 void MissionNode::settleArrivalFailure(

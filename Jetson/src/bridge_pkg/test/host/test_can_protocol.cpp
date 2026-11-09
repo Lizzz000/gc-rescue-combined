@@ -47,12 +47,12 @@ void testCanProtocol()
   const std::uint8_t velocity_invalid[] = {0, 0, 0, 0, 0, 0, 0};
   CHECK(bytesEqual(CanProtocol::velocity(false, -2, 0, 1000), CanProtocol::VELOCITY_ID, 7, velocity_invalid));
 
-  // 0x181 / 0x182 共用 5 字节中心。invalid 仍保留 ID 和 DLC，载荷清零。
-  const std::uint8_t center_bytes[] = {1, 0x88, 0x13, 0xff, 0xff};
-  CHECK(bytesEqual(CanProtocol::center(CanProtocol::TARGET_ID, true, 5000, -1), CanProtocol::TARGET_ID, 5, center_bytes));
-  CHECK(bytesEqual(CanProtocol::center(CanProtocol::SAFETY_ID, true, 5000, -1), CanProtocol::SAFETY_ID, 5, center_bytes));
-  const std::uint8_t center_invalid[] = {0, 0, 0, 0, 0};
-  CHECK(bytesEqual(CanProtocol::center(CanProtocol::TARGET_ID, false, 5000, -1), CanProtocol::TARGET_ID, 5, center_invalid));
+  // 坐标帧携带 24 位源帧编号；无效帧仍保留 ID 和 DLC，载荷清零。
+  const std::uint8_t center_bytes[] = {1, 0x88, 0x13, 0xff, 0xff, 0x56, 0x34, 0x12};
+  CHECK(bytesEqual(CanProtocol::center(CanProtocol::TARGET_ID, true, 5000, -1, 0x123456), CanProtocol::TARGET_ID, 8, center_bytes));
+  CHECK(bytesEqual(CanProtocol::center(CanProtocol::SAFETY_ID, true, 5000, -1, 0x123456), CanProtocol::SAFETY_ID, 8, center_bytes));
+  const std::uint8_t center_invalid[] = {0, 0, 0, 0, 0, 0, 0, 0};
+  CHECK(bytesEqual(CanProtocol::center(CanProtocol::TARGET_ID, false, 5000, -1), CanProtocol::TARGET_ID, 8, center_invalid));
 
   // std::round 在半整数处远离零。越界失败并把输出写成 0，不饱和。
   // 半整数和边界用整数乘 1，避免十进制小数再乘 10000 时不是精确的 .5。

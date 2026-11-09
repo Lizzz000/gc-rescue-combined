@@ -179,8 +179,8 @@
 <polyline fill="none" stroke="black" points="389,-1161 383,-1161"/>
 <text xml:space="preserve" text-anchor="middle" x="301.5" y="-1149.7" font-family="Microsoft YaHei" font-size="14.00">周期帧（寻找或导航时）</text>
 <text xml:space="preserve" text-anchor="middle" x="301.5" y="-1130.95" font-family="Microsoft YaHei" font-size="14.00">0x180 速度 DLC 7</text>
-<text xml:space="preserve" text-anchor="middle" x="301.5" y="-1112.2" font-family="Microsoft YaHei" font-size="14.00">0x181 目标中心 DLC 5</text>
-<text xml:space="preserve" text-anchor="middle" x="301.5" y="-1093.45" font-family="Microsoft YaHei" font-size="14.00">0x182 安全区中心 DLC 5</text>
+<text xml:space="preserve" text-anchor="middle" x="301.5" y="-1112.2" font-family="Microsoft YaHei" font-size="14.00">0x181 目标中心 DLC 8</text>
+<text xml:space="preserve" text-anchor="middle" x="301.5" y="-1093.45" font-family="Microsoft YaHei" font-size="14.00">0x182 安全区中心 DLC 8</text>
 </g>
 <!-- note -->
 <g id="node14" class="node">

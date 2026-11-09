@@ -17,7 +17,7 @@
 #define CHASSIS_STRAIGHT_YAW_KD 0.25f
 #define CHASSIS_STRAIGHT_YAW_INTEGRAL_LIMIT 0.2f
 #define CHASSIS_STRAIGHT_YAW_OUTPUT_LIMIT 0.8f
-#define CHASSIS_VECTOR_MAX_WZ_RAD_S 1.0f
+#define CHASSIS_VECTOR_MAX_WZ_RAD_S 2.0f
 #define CHASSIS_VECTOR_ACCEL_RAD_S2 1.6f
 
 /* 旧车 chassis_turn.h：保留原一圈角度值、独立 PID 与连续到位条件。 */
@@ -27,8 +27,8 @@
 #define CHASSIS_TURN_YAW_KI 0.0f
 #define CHASSIS_TURN_YAW_KD 0.1f
 #define CHASSIS_TURN_INTEGRAL_LIMIT 0.2f
-/* 定角转向为车体量。纯转向对应三轮各约 3.09 rad/s、12.34 rad/s²。 */
-#define CHASSIS_TURN_OUTPUT_LIMIT 1.0f
+/* 定角转向为车体量。纯转向对应三轮各约 6.17 rad/s、12.34 rad/s²。 */
+#define CHASSIS_TURN_OUTPUT_LIMIT 2.0f
 #define CHASSIS_TURN_ACCEL_RAD_S2 4.0f
 #define CHASSIS_TURN_FINE_ANGLE_DEG 5.0f
 #define CHASSIS_TURN_ANGLE_TOLERANCE_DEG 2.0f
@@ -134,7 +134,7 @@ uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction,
  * @note 本次定角参数适配：180 表示半圈，旧整圈可传 CHASSIS_TURN_LEFT_ANGLE_DEG
  *       或 CHASSIS_TURN_RIGHT_ANGLE_DEG；累计角度与 PID 增益沿旧车。
  *       远端按剩余角安排制动，最后 5 度由原 PID 修偏；按 4.0 rad/s² 加减速，
- *       车体角速度上限 1.0 rad/s。正常到位还要求
+ *       车体角速度上限 2.0 rad/s。正常到位还要求
  *       斜坡指令降到原角速度容差内。显式 Stop/Disable 仍立即清目标。
  *       三轮确认停车后才接受转向，避免提前累计转角或启动超时计时；
  *       到位回零速待命，15 s 超时失能。
@@ -144,7 +144,7 @@ uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg);
 /** @brief 设置连续车体速度，按线/角加速度联合更新斜坡。
  * @param[in] vx 纵向速度，m/s，前正；与 vy 合速度有限且不超过 0.50。
  * @param[in] vy 横向速度，m/s，左正；与 vx 合速度约束相同。
- * @param[in] wz 角速度，rad/s，逆时针正，有限且绝对值不超过 1.0。
+ * @param[in] wz 角速度，rad/s，逆时针正，有限且绝对值不超过 2.0。
  * @return 零速请求或待命/连续速度模式下接受返回 1；参数或姿态不满足返回 0。
  * @note 三项全零在任一已使能动作中等价 Stop，不依赖姿态就绪；非零目标
  *       从待命起步须确认三轮已停，运行中可直接更新，直至显式 Stop/Disable。

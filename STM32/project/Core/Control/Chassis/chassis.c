@@ -347,7 +347,7 @@ uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg)
 /** @brief 沿旧连续向量入口保存目标，纯平移开始时记录当前航向。
  * @param[in] vx 前向速度，m/s。
  * @param[in] vy 左向速度，m/s；与 vx 合速度不超过 0.50。
- * @param[in] wz 逆时针角速度，rad/s，绝对值不超过 1.0。
+ * @param[in] wz 逆时针角速度，rad/s，绝对值不超过 2.0。
  * @return 请求接受返回 1，否则 0；全零请求回零速待命。
  * @note 连续更新平移目标保留航向；显式转向结束后按当前姿态重新锁定，斜坡连续。
  */

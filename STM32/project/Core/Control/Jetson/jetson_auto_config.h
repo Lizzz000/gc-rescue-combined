@@ -35,7 +35,9 @@
 /* 图像误差速度增益 m/s 每单位归一化误差、平移上限 m/s、搜索车体角速度 rad/s。 */
 #define JETSON_AUTO_APPROACH_GAIN 0.80f
 #define JETSON_AUTO_APPROACH_SPEED_MPS 0.50f
-#define JETSON_AUTO_SEARCH_WZ_RAD_S 0.0f
+/* 离开窗口时用于克服静摩擦的最小轴速度，按实车标定。 */
+#define JETSON_AUTO_APPROACH_MIN_SPEED_MPS 0.005f
+#define JETSON_AUTO_SEARCH_WZ_RAD_S 2.0f
 
 /* 图像卡尔曼的坐标噪声和过程加速度标准差，单位为定点单位及定点单位/s²。 */
 #define JETSON_AUTO_APPROACH_SIGMA_X_Q 15.0f
@@ -49,14 +51,14 @@
 
 /* 正常视觉入窗后的停车确认期限，ms；不改变故障制动期限或停稳轮速门限。 */
 #define JETSON_AUTO_VISION_STOP_TIMEOUT_MS 1000U
-/* 停稳后的核验等待：Jetson 源帧龄上限 1000 ms，另留 20 ms 链路余量。 */
-#define JETSON_AUTO_VERIFY_WAIT_MS (1000U + 20U)
+/* 停稳后的核验等待：Jetson 源帧龄上限 250 ms，另留 20 ms 链路余量。 */
+#define JETSON_AUTO_VERIFY_WAIT_MS (250U + 20U)
 
 /* 检查后退与拒绝恢复仍使用定距；速度和距离留待实车标定。 */
-#define JETSON_AUTO_DISTANCE_SPEED_MPS 0.0f
+#define JETSON_AUTO_DISTANCE_SPEED_MPS 0.50f
 #define JETSON_AUTO_ROI_BACK_M 0.0f
-/* 前后直行时两后轮目标约 10 rad/s；计时包含加速，停稳还需额外时间。 */
-#define JETSON_AUTO_PUSH_SPEED_MPS (10.0f * 0.035f / 0.8660254f)
+/* 直行目标可配置为 0.50 m/s；计时包含加速，停稳还需额外时间。 */
+#define JETSON_AUTO_PUSH_SPEED_MPS 0.50f
 #define JETSON_AUTO_PUSH_DURATION_MS 1200U
 #define JETSON_AUTO_RECOVERY_BACK_M 0.0f
 /* 左/右去程分别左/右转；返程方向取反，角度均为 180°。 */

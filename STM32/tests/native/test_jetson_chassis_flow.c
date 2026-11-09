@@ -47,7 +47,7 @@ void test_enter_critical(void)
         can_arrival_before_snapshot = 0U;
         ++test_tick;
         const uint8_t heartbeat[7] = {0U};
-        const uint8_t target[5] = {1U, 0x88U, 0x13U, 0xA0U, 0x0FU}; /* (5000,4000) */
+        const uint8_t target[8] = {1U, 0x88U, 0x13U, 0xA0U, 0x0FU, (uint8_t)test_tick, (uint8_t)(test_tick >> 8U), (uint8_t)(test_tick >> 16U)}; /* (5000,4000) */
         Jetson_CAN_Receive(0x180U, heartbeat, sizeof(heartbeat));
         Jetson_CAN_Receive(0x181U, target, sizeof(target));
     }
@@ -224,7 +224,8 @@ static void Steps(unsigned count, uint8_t heartbeat)
 static void Receive_Center(uint16_t id, int16_t x, int16_t y)
 {
     const uint8_t bytes[] = {1U, (uint8_t)x, (uint8_t)((uint16_t)x >> 8U),
-                            (uint8_t)y, (uint8_t)((uint16_t)y >> 8U)};
+                            (uint8_t)y, (uint8_t)((uint16_t)y >> 8U),
+                            (uint8_t)test_tick, (uint8_t)(test_tick >> 8U), (uint8_t)(test_tick >> 16U)};
     Jetson_CAN_Receive(id, bytes, sizeof(bytes));
 }
 

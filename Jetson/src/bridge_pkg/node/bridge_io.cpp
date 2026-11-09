@@ -152,6 +152,7 @@ bool BridgeRuntime::readAvailableFrames()
 // 安全区到达先核对阶段再停坐标；转向完成必须已获授权，之后才调用 Mission。
 bool BridgeRuntime::handleCommand(const can_frame & frame)
 {
+  if (!mission_watchdog_.alive({Clock::now()})) {return false;}
   const auto command = CanProtocol::parseCommand(frame);
   if (command.kind == CanProtocol::CommandKind::NONE) {return false;}
   if (command.kind == CanProtocol::CommandKind::MALFORMED) {

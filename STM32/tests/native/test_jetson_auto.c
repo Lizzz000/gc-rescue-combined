@@ -46,7 +46,7 @@ void test_enter_critical(void)
         can_arrival_before_snapshot = 0U;
         ++test_tick;
         const uint8_t heartbeat[7] = {0U};
-        const uint8_t target[5] = {1U, 0x88U, 0x13U, 0xA0U, 0x0FU}; /* (5000,4000) */
+        const uint8_t target[8] = {1U, 0x88U, 0x13U, 0xA0U, 0x0FU, (uint8_t)test_tick, (uint8_t)(test_tick >> 8U), (uint8_t)(test_tick >> 16U)}; /* (5000,4000) */
         Jetson_CAN_Receive(0x180U, heartbeat, sizeof(heartbeat));
         Jetson_CAN_Receive(0x181U, target, sizeof(target));
     }
@@ -223,7 +223,8 @@ static void Steps(unsigned count, uint8_t heartbeat)
 static void Receive_Center(uint16_t id, int16_t x, int16_t y)
 {
     const uint8_t bytes[] = {1U, (uint8_t)x, (uint8_t)((uint16_t)x >> 8U),
-                            (uint8_t)y, (uint8_t)((uint16_t)y >> 8U)};
+                            (uint8_t)y, (uint8_t)((uint16_t)y >> 8U),
+                            (uint8_t)test_tick, (uint8_t)(test_tick >> 8U), (uint8_t)(test_tick >> 16U)};
     Jetson_CAN_Receive(id, bytes, sizeof(bytes));
 }
 
@@ -343,19 +344,37 @@ static void Test_CAN_Snapshot_Tick_Order(void)
     }
 }
 
+/** @brief 同一源帧的 CAN 重发不能重复更新跟随目标。 */
+static void Test_Repeated_Source_Frame(void)
+{
+    Begin_Target_Test();
+    const uint32_t source = test_tick;
+    const uint8_t frame[8] = {1U, 0x38U, 0x18U, 0x4cU, 0x1dU,
+                              (uint8_t)source, (uint8_t)(source >> 8U), (uint8_t)(source >> 16U)};
+    Jetson_CAN_Receive(0x181U, frame, sizeof(frame));
+    Step(1U);
+    const unsigned before = velocity_requests;
+    Jetson_CAN_Receive(0x181U, frame, sizeof(frame));
+    Step(1U);
+    assert(velocity_requests == before);
+    Receive_Center(0x181U, 6200, 7500);
+    Step(1U);
+    assert(velocity_requests == before + 1U);
+}
+
 /** @brief 验证预测进窗时先减速，真实入窗才停车并核验新帧。 */
 static void Test_Approach_Brakes_And_Verifies(void)
 {
     Begin_Target_Test();
     Receive_Center(0x181U, 6200, 7500);
     Steps(4U, 1U);
-    assert(fabsf(last_vy - 0.096f) < 1e-6f && last_vx == 0.0f);
+    assert(fabsf(last_vy - 0.088f) < 1e-6f && last_vx == 0.0f);
     for (unsigned i = 0U; i < 3U; ++i)
     {
         /* 以 20 ms 重报验证旧速率兼容；5 ms 任务轮询不视为新测量。 */
         Receive_Center(0x181U, 6200, 7500);
         Steps(4U, 1U);
-        assert(stops == 0U && fabsf(last_vy - 0.096f) < 1e-6f);
+        assert(stops == 0U && last_vy >= 0.088f && last_vy <= 0.10f);
     }
     const unsigned before_slow = velocity_requests;
     Receive_Center(0x181U, 5400, 7500);
@@ -374,13 +393,13 @@ static void Test_Approach_Brakes_And_Verifies(void)
     /* 停稳后漂到 5154 已超出 ±100，恢复连续跟随，不视为到位。 */
     Receive_Center(0x181U, 5154, 7500);
     Step(1U);
-    assert(last_vx == 0.0f && fabsf(last_vy - 0.01232f) < 1e-6f && last_wz == 0.0f);
+    assert(last_vx == 0.0f && fabsf(last_vy - 0.005f) < 1e-6f && last_wz == 0.0f);
     assert(stops == 1U && velocity_requests == moves + 1U && servo_commands == 1U);
     Steps(20U, 1U);
-    assert(stops == 1U && fabsf(last_vy - 0.01232f) < 1e-6f);
+    assert(stops == 1U && fabsf(last_vy - 0.005f) < 1e-6f);
     Receive_Center(0x181U, 5154, 7500);
     Step(1U);
-    assert(last_vy > 0.01232f && stops == 1U && servo_commands == 1U);
+    assert(last_vy >= 0.005f && stops == 1U && servo_commands == 1U);
     Receive_Center(0x181U, 5100, 7400);
     Step(1U);
     assert(stops == 2U && servo_commands == 1U);
@@ -461,7 +480,7 @@ static void Test_Approach_Axis_Window_Continuity(void)
     assert(velocity_requests == updates);
     Receive_Center(0x181U, 5099, 7000);
     Step(1U);
-    assert(last_vx > 0.0f && last_vy > 0.0f && fabsf(last_vy - outside) < 0.0002f);
+    assert(last_vx > 0.0f && last_vy == 0.0f && outside > 0.0f && outside <= JETSON_AUTO_APPROACH_MIN_SPEED_MPS);
     assert(stops == 0U && velocity_requests == updates + 1U);
     Receive_Center(0x181U, 5050, 7000);
     Step(1U);
@@ -474,25 +493,25 @@ static void Test_Approach_Integral(void)
     Begin_Target_Test();
     Receive_Center(0x181U, 5300, 7500);
     Step(1U);
-    assert(fabsf(last_vy - 0.024f) < 1e-6f && stops == 0U);
+    assert(fabsf(last_vy - 0.016f) < 1e-6f && stops == 0U);
     Steps(7U, 1U);
-    assert(fabsf(last_vy - 0.024f) < 1e-6f);
+    assert(fabsf(last_vy - 0.016f) < 1e-6f);
     Receive_Center(0x181U, 5300, 7500);
     Step(1U);
-    assert(fabsf(last_vy - 0.0264f) < 1e-6f);
-    for (unsigned i = 0U; i < 55U; ++i)
+    assert(fabsf(last_vy - 0.0176f) < 1e-6f);
+    for (unsigned i = 0U; i < 75U; ++i)
     {
         Steps(3U, 1U);
         Receive_Center(0x181U, 5300, 7500);
         Step(1U);
     }
-    assert(fabsf(last_vy - (0.024f + JETSON_AUTO_APPROACH_I_LIMIT_MPS)) < 1e-6f);
+    assert(fabsf(last_vy - (0.016f + JETSON_AUTO_APPROACH_I_LIMIT_MPS)) < 1e-6f);
     assert(stops == 0U && servo_commands == 1U);
 
     /* 只差一个定点单位时，即便历史积分已饱和，仍保留小幅同向修正。 */
     Receive_Center(0x181U, 5101, 7500);
     Step(1U);
-    assert(last_vy >= 0.008f && last_vy < 0.00859f && stops == 0U);
+    assert(last_vy == JETSON_AUTO_APPROACH_MIN_SPEED_MPS && stops == 0U);
 
     Receive_Center(0x181U, 3500, 7500);
     Step(1U);
@@ -577,7 +596,7 @@ static void Prepare_ROI(uint8_t destination, uint32_t token)
 /** @brief 从开机验证完整运输及匹配身份。
  * @param[in] destination 左 1、右 2。 @param[in] token 使用无符号完整 32 位。
  */
-static void Test_Transport(uint8_t destination, uint32_t token)
+static void Test_Transport(uint8_t destination, uint32_t token, uint8_t stuck)
 {
     Prepare_ROI(destination, token);
     Receive_Arrival_Ack(1U);
@@ -612,7 +631,7 @@ static void Test_Transport(uint8_t destination, uint32_t token)
     {
         Receive_Center(0x182U, i % 2U == 0U ? 5101 : 5099, 7500);
         Steps(4U, 1U);
-        assert(last_vy > 0.0f && stops == stops_before_alignment && sent_count == 2U);
+        assert(last_vy >= 0.0f && stops == stops_before_alignment && sent_count == 2U);
     }
     if (destination == 2U)
         test_tick = UINT32_MAX - 100U; /* 右区复核等待跨过 RTOS 毫秒回绕。 */
@@ -640,8 +659,14 @@ static void Test_Transport(uint8_t destination, uint32_t token)
     Reach_Verify_Cutoff(0x182U);
     assert(sent_count == 2U);
     /* 同一坐标快照的多次轮询不能充当第二个确认样本。 */
+    const uint32_t repeated_source = test_tick;
     Receive_Center(0x182U, 5000, 7500);
     Steps(4U, 1U);
+    assert(sent_count == 2U);
+    const uint8_t repeated[8] = {1U, 0x88U, 0x13U, 0x4cU, 0x1dU,
+        (uint8_t)repeated_source, (uint8_t)(repeated_source >> 8U), (uint8_t)(repeated_source >> 16U)};
+    Jetson_CAN_Receive(0x182U, repeated, sizeof(repeated));
+    Step(1U);
     assert(sent_count == 2U);
     Receive_Center(0x182U, 5000, 7500);
     Wait_For_Count(&sent_count, 3U);
@@ -657,6 +682,12 @@ static void Test_Transport(uint8_t destination, uint32_t token)
     assert(stops == before_push_stop && servo_position == TRANSPORT_SERVO_CLOSED);
     Step(1U);
     assert(stops == before_push_stop + 1U && servo_position == TRANSPORT_SERVO_CLOSED);
+    if (stuck)
+    {
+        Steps((2U * JETSON_BRAKE_TIMEOUT_MS) / 5U + 1U, 1U);
+        assert(!enabled && disables == 1U && servo_position == TRANSPORT_SERVO_CLOSED);
+        return;
+    }
     stopped = 1U;
     Step(1U);
     assert(servo_position == TRANSPORT_SERVO_OPEN && distance_count == 1U && sent_count == 3U);
@@ -848,6 +879,24 @@ static void Test_Auto_Heartbeat_Age(void)
     }
 }
 
+/** @brief Jetson 报告任务失联时，下一次调度立即停车。 */
+static void Test_Mission_Lost(void)
+{
+    Begin_Target_Test();
+    Receive_Center(0x181U, 5000, 4000);
+    Step(1U);
+    assert(last_vx > 0.0f);
+    const unsigned before = stops;
+    const uint8_t unused = 0U;
+    Jetson_CAN_Receive(0x180U, &unused, 0U);
+    const uint8_t recovered[7] = {0U};
+    Jetson_CAN_Receive(0x180U, recovered, sizeof(recovered));
+    Step(0U);
+    assert(stops == before + 1U && enabled);
+    stopped = 1U;
+    Step(0U);
+    assert(!enabled && disables == 1U);
+}
 /** @brief 板端缺少舵机外设时，参数有效也不能开始自主移动。 */
 static void Test_Servo_Unavailable(void)
 {
@@ -874,6 +923,7 @@ int main(void)
 {
 #ifdef TEST_JETSON_AUTO_CONFIGURED
     Test_CAN_Snapshot_Tick_Order();
+    Test_Repeated_Source_Frame();
     Test_Approach_Brakes_And_Verifies();
     Test_Approach_Lost_During_Brake();
     Test_Approach_Retreat_And_Limit();
@@ -881,12 +931,14 @@ int main(void)
     Test_Approach_Integral();
     Test_Approach_Anti_Windup();
     Test_Approach_Brake_Timeout();
-    Test_Transport(1U, 0x89ABCDEFU);
-    Test_Transport(2U, 0U);
+    Test_Transport(1U, 0x89ABCDEFU, 0U);
+    Test_Transport(2U, 0U, 0U);
+    Test_Transport(1U, 123U, 1U);
     Test_Request_Deadline();
     Test_Reject_And_Resume();
     Test_Lost_Target_And_Link();
     Test_Auto_Heartbeat_Age();
+    Test_Mission_Lost();
     Test_Servo_Unavailable();
     puts("PASS: Jetson auto transport, simulated stop gates, tokens, reacquisition and link loss");
 #else

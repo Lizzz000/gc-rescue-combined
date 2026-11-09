@@ -30,6 +30,7 @@ typedef struct
     int16_t x, y;        /**< 图像归一化中心坐标乘 10000；不在协议层裁剪。 */
     uint32_t received_ms;
     uint32_t sequence;
+    uint32_t source_frame; /**< 源帧时间的低 24 位毫秒，用于区分周期重发。 */
 } Jetson_CAN_Center_t;
 
 typedef struct
@@ -79,6 +80,7 @@ typedef struct
     uint32_t rx_sequence; /**< 每条已知 ID 递增并自然回绕；非速度快照记录接收时的值。 */
     uint32_t heartbeat_received_ms; /**< 最近一条格式合法的 0x180 到达时刻，RTOS ms。 */
     uint8_t heartbeat_seen;         /**< 已收到格式合法的 0x180。 */
+    uint32_t mission_loss_sequence; /**< 空 0x180 失联标志计数，防止被紧随的心跳覆盖。 */
 } Jetson_CAN_Data_t;
 
 /**

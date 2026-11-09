@@ -26,6 +26,19 @@ struct BridgeMonotonicTime
   std::chrono::steady_clock::time_point value;
 };
 
+// 由任务状态心跳续期；单调时钟避免系统时间变化影响失联判定。
+class BridgeMissionWatchdog
+{
+public:
+  void received(BridgeMonotonicTime now) {last_ = now.value;}
+  bool alive(BridgeMonotonicTime now) const
+  {
+    return last_ && now.value >= *last_ && now.value - *last_ < std::chrono::milliseconds(500);
+  }
+
+private:
+  std::optional<std::chrono::steady_clock::time_point> last_;
+};
 // 集中 Bridge 输入缓存、阶段／任务门控及双时钟新鲜度，不持有 ROS 消息或 CAN 队列。
 
 // 数值与 MissionStatus.msg 相同。Bridge 核心不包含该消息头，所以在此单独声明。
@@ -111,6 +124,7 @@ struct BridgeCenterOutput
   // 坐标已乘 10000 量化；valid=false 时成员可保留旧值，协议编码器负责将无效帧载荷清零。
   bool valid{false};
   std::int16_t x{0}, y{0};
+  std::uint32_t source_frame{0};  // ROS 源时间的低 24 位毫秒。
 };
 
 struct BridgeVelocityOutput

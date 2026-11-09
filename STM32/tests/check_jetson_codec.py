@@ -35,8 +35,8 @@ def initial_state():
     """声明接收快照可见字段，初始值均为零。"""
     fields = {
         "velocity": "valid vx vy wz received_ms sequence invalid_sequence",
-        "target": "valid x y received_ms",
-        "safety": "valid x y received_ms",
+        "target": "valid x y received_ms source_frame",
+        "safety": "valid x y received_ms source_frame",
         "arrival_ack": "valid accepted received_ms",
         "roi_reply": "valid passed destination received_ms",
         "command_reply": "valid accepted command token received_ms",
@@ -56,6 +56,8 @@ def decoded_fields(codec, wire):
         fields = {"valid": int(value["valid"])}
         fields.update({name: round(value[source] * scale) if value["valid"] else 0
                        for name, source in zip(names, source_names)})
+        if kind != "velocity":
+            fields["source_frame"] = value["source_frame"] if value["valid"] else 0
         return kind, fields
     if kind == "arrival_ack":
         return kind, {"valid": 1, "accepted": int(value["accepted"])}
@@ -102,6 +104,7 @@ def scenarios(codec):
     for kind in ("target", "safety"):
         for values in ((0.5, 0.75), (-0.25, 1.2), (-3.2768, 3.2767)):
             encoded(kind, values)
+        encoded(kind, (0.5, 0.75, 0xABCDEF))
         encoded(kind, (0.5, 0.75), invalid=True)
     encoded("arrival_ack")
     encoded("arrival_ack", invalid=True)
@@ -127,9 +130,11 @@ def scenarios(codec):
         seed = encoded(kind, values)
         identifier, payload = seed.split("#")
         # 每条错误前先恢复有效状态，证明旧内容确实被撤销。
-        for malformed in (f"{identifier}#{payload[:-2]}",
-                          f"{identifier}#{payload}00",
-                          f"{identifier}#02{payload[2:]}"):
+        malformed_frames = [f"{identifier}#{payload[:-2]}", f"{identifier}#02{payload[2:]}"]
+        # 标准 CAN 的 DLC 最大为 8，满长帧不能再构造 9 字节的合法报文。
+        if len(payload) < 16:
+            malformed_frames.append(f"{identifier}#{payload}00")
+        for malformed in malformed_frames:
             encoded(kind, values)
             try:
                 codec.decode(malformed)

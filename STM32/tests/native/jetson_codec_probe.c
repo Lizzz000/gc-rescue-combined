@@ -87,9 +87,9 @@ static int Parse_Frame(char *line, uint16_t *id, uint8_t *data, uint8_t *length)
  */
 static void Print_Center(const char *name, const Jetson_CAN_Center_t *center)
 {
-    printf("\"%s\":{\"valid\":%u,\"x\":%d,\"y\":%d,\"received_ms\":%" PRIu32 "}",
-           name, (unsigned)center->valid, (int)center->x, (int)center->y,
-           center->received_ms);
+    printf("\"%s\":{\"valid\":%u,\"x\":%d,\"y\":%d,\"received_ms\":%" PRIu32
+           ",\"source_frame\":%" PRIu32 "}", name, (unsigned)center->valid,
+           (int)center->x, (int)center->y, center->received_ms, center->source_frame);
 }
 
 /** @brief 输出真实模块的完整快照，便于检查未知帧及各路状态互不影响。 @return 无。 */

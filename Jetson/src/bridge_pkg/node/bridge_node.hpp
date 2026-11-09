@@ -147,6 +147,7 @@ private:
   BridgeState state_;
   CanTxQueue queue_;
   Clock::time_point next_open_;
+  BridgeMissionWatchdog mission_watchdog_;
   std::uint64_t tx_frames_{0}, rx_frames_{0}, bus_errors_{0}, dropped_frames_{0};
   std::string last_error_;
   // ROI 与命令各一等待槽，可同时在途；四个回复快照独立于服务等待。

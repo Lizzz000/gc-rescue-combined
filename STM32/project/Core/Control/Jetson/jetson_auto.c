@@ -64,7 +64,7 @@ static const Image_Window_t safety_window = {
 };
 static Auto_Stage_t stage;
 static Auto_Request_t request;
-static uint32_t stage_started_ms, center_boundary, route_token;
+static uint32_t stage_started_ms, center_boundary, route_token, mission_loss_sequence;
 static int8_t outbound_direction;
 static uint8_t navigating;
 static uint8_t timed_move_stopping;
@@ -111,6 +111,7 @@ static uint8_t Configuration_Ready(void)
            (JETSON_AUTO_Y_TO_FORWARD == 1 || JETSON_AUTO_Y_TO_FORWARD == -1) &&
            isfinite(JETSON_AUTO_APPROACH_GAIN) && JETSON_AUTO_APPROACH_GAIN > 0.0f &&
            Positive_Within(JETSON_AUTO_APPROACH_SPEED_MPS, CHASSIS_STRAIGHT_MAX_SPEED_MPS) &&
+           Positive_Within(JETSON_AUTO_APPROACH_MIN_SPEED_MPS, JETSON_AUTO_APPROACH_SPEED_MPS) &&
            isfinite(JETSON_AUTO_APPROACH_I_GAIN) && JETSON_AUTO_APPROACH_I_GAIN >= 0.0f &&
            Positive_Within(JETSON_AUTO_APPROACH_I_LIMIT_MPS, JETSON_AUTO_APPROACH_SPEED_MPS) &&
            isfinite(JETSON_AUTO_APPROACH_SIGMA_X_Q) && JETSON_AUTO_APPROACH_SIGMA_X_Q > 0.0f &&
@@ -204,25 +205,22 @@ static void Stop_Navigation(void)
  * @param[in] raw_error,error 原始、滤波图像误差，单位为定点值。
  * @param[in] tolerance 到位容差，单位为定点值。
  * @param[in] rate 图像定点坐标每秒变化量。
- * @return 与原始误差同向的定点误差。窗内由边缘到半窗连续衰减至零。
+ * @return 与原始误差同向的定点误差。入窗后输出为零，窗外按预测后的剩余误差减速。
  */
 static float Predicted_Error(float raw_error, float error, float tolerance, float rate)
 {
     const float direction = copysignf(1.0f, raw_error);
     const float raw_distance = fabsf(raw_error) - tolerance;
+    /* 进入允许窗口的轴不再驱动；窗外只对超出窗口的误差施加速度。 */
     if (raw_distance <= 0.0f)
-    {
-        /* 另一轴仍需对准时保留温和的居中力，避免在窗边反复切掉整轴速度。 */
-        const float edge = fmaxf(0.0f, 1.0f + 2.0f * raw_distance / fmaxf(1.0f, tolerance));
-        return direction * tolerance * edge * edge * (3.0f - 2.0f * edge);
-    }
+        return 0.0f;
     const float toward = fmaxf(0.0f, direction * rate);
     const float predicted = direction * error - tolerance - JETSON_AUTO_APPROACH_BRAKE_S * toward;
     const float width = fmaxf(1.0f, tolerance);
     /* 预测过窗时保留有界正余量。实际进窗前保留原比例微动幅度，避免过小目标停在窗外。 */
     const float floor = raw_distance * width / (raw_distance + width);
     const float remaining = fminf(raw_distance, fmaxf(floor, predicted));
-    return direction * (remaining + tolerance);
+    return direction * remaining;
 }
 
 /** @brief 退出导航，停稳前保持零目标并清除运动时的图像速度。
@@ -253,13 +251,15 @@ static void Approach_Lost_Center(uint8_t search, uint32_t now_ms)
 /** @brief 用合法 CAN 中心更新卡尔曼估计，取得本次积分的实际间隔。
  * @param[in] center 非空的合法中心，接收时间使用 RTOS 毫秒。
  * @return 当前积分时长，单位秒。重复快照、首包或长间隔返回 0。
- * @note 不按 5 ms 任务轮询重复观测。不同 CAN 包也可能是同一相机帧的缓存重发。
+ * @note 相同源帧编号的周期重发不重复参与滤波和积分。
  */
 static float Update_Image(const Jetson_CAN_Center_t *center)
 {
-    if (vision.previous.valid && !Received_After(center->sequence, vision.previous.sequence))
+    if (vision.previous.valid && center->source_frame == vision.previous.source_frame)
         return 0.0f;
-    uint32_t elapsed = vision.previous.valid ? center->received_ms - vision.previous.received_ms : 0U;
+    /* 按源帧间隔更新滤波，避免 CAN 调度抖动变成虚假的图像速度。 */
+    uint32_t elapsed = vision.previous.valid ?
+        (center->source_frame - vision.previous.source_frame) & 0xffffffU : 0U;
     if (!vision.tracker.initialized || elapsed >= JETSON_VELOCITY_TIMEOUT_MS)
     {
         Image_Tracker_Init(&vision.tracker, JETSON_AUTO_APPROACH_SIGMA_X_Q,
@@ -267,7 +267,9 @@ static float Update_Image(const Jetson_CAN_Center_t *center)
         vision.integral_x = vision.integral_y = 0.0f;
         elapsed = 0U;
     }
-    Image_Tracker_Update(&vision.tracker, center->x, center->y, center->received_ms);
+    const uint32_t filter_time = vision.tracker.initialized ?
+        vision.tracker.received_ms + elapsed : center->received_ms;
+    Image_Tracker_Update(&vision.tracker, center->x, center->y, filter_time);
     vision.previous = *center;
     return elapsed * 0.001f;
 }
@@ -278,7 +280,7 @@ static float Update_Image(const Jetson_CAN_Center_t *center)
  */
 static float Integral_Scale(float raw_error, float remaining, float tolerance)
 {
-    return fmaxf(0.0f, fabsf(remaining) - tolerance) /
+    return fabsf(remaining) /
         fmaxf(1.0f, fmaxf(tolerance, fabsf(raw_error) - tolerance));
 }
 
@@ -370,7 +372,7 @@ static uint8_t Approach(const Jetson_CAN_Center_t *center, const Image_Window_t 
     }
     /* 底盘斜坡每轮照常推进，视觉只用新包计算目标。无新包时仍检查断流。 */
     if (vision.phase == VISION_FOLLOW && navigating && fresh && vision.previous.valid &&
-        !Received_After(center->sequence, vision.previous.sequence))
+        center->source_frame == vision.previous.source_frame)
         return 0U;
 
     /* 在 CAN 定点单位比较窗口，确保标定的边界点按等号接收。 */
@@ -390,7 +392,7 @@ static uint8_t Approach(const Jetson_CAN_Center_t *center, const Image_Window_t 
     {
         if (window->verify_pair)
         {
-            if (vision.previous.valid && !Received_After(center->sequence, vision.previous.sequence))
+            if (vision.previous.valid && center->source_frame == vision.previous.source_frame)
                 return 0U;
             const uint8_t arrived = inside && vision.previous.valid &&
                 (uint32_t)(now_ms - vision.previous.received_ms) < JETSON_VELOCITY_TIMEOUT_MS &&
@@ -421,7 +423,7 @@ static uint8_t Approach(const Jetson_CAN_Center_t *center, const Image_Window_t 
     if (inside &&
         (!window->verify_pair ||
          (fabsf(raw_x_error) <= 0.5f * x_tol && fabsf(raw_y_error) <= 0.5f * y_tol) ||
-         (vision.previous.valid && Received_After(center->sequence, vision.previous.sequence) &&
+         (vision.previous.valid && center->source_frame != vision.previous.source_frame &&
           (uint32_t)(now_ms - vision.previous.received_ms) < JETSON_VELOCITY_TIMEOUT_MS &&
           Window_Side(goal_x - vision.previous.x, x_tol) == 0 &&
           Window_Side(goal_y - vision.previous.y, y_tol) == 0)))
@@ -457,8 +459,13 @@ static uint8_t Approach(const Jetson_CAN_Center_t *center, const Image_Window_t 
         vision.integral_x = next_ix;
         vision.integral_y = next_iy;
     }
-    const float vy = (px + vision.integral_x * ix_scale) * JETSON_AUTO_X_TO_LEFT;
-    const float vx = (py + vision.integral_y * iy_scale) * JETSON_AUTO_Y_TO_FORWARD;
+    float vy = (px + vision.integral_x * ix_scale) * JETSON_AUTO_X_TO_LEFT;
+    float vx = (py + vision.integral_y * iy_scale) * JETSON_AUTO_Y_TO_FORWARD;
+    /* 窗外保留可调的低速克服静摩擦；入窗后该轴输出为零。 */
+    if (!raw_x_in_window && fabsf(vy) < JETSON_AUTO_APPROACH_MIN_SPEED_MPS)
+        vy = copysignf(JETSON_AUTO_APPROACH_MIN_SPEED_MPS, x_remaining * JETSON_AUTO_X_TO_LEFT);
+    if (!raw_y_in_window && fabsf(vx) < JETSON_AUTO_APPROACH_MIN_SPEED_MPS)
+        vx = copysignf(JETSON_AUTO_APPROACH_MIN_SPEED_MPS, y_remaining * JETSON_AUTO_Y_TO_FORWARD);
     const float speed = hypotf(vx, vy);
     const float scale = speed > limit ? limit / speed : 1.0f;
     Navigate(vx * scale, vy * scale, 0.0f, now_ms);
@@ -529,8 +536,15 @@ static uint8_t Timed_Move_Stopped(uint32_t now_ms)
     {
         Chassis_Stop();
         timed_move_stopping = 1U;
+        stage_started_ms = now_ms;
     }
-    return timed_move_stopping && Chassis_Is_Stopped();
+    if (!timed_move_stopping)
+        return 0U;
+    if (Chassis_Is_Stopped())
+        return 1U;
+    if ((uint32_t)(now_ms - stage_started_ms) >= JETSON_BRAKE_TIMEOUT_MS)
+        Halt(now_ms);
+    return 0U;
 }
 
 /** @brief 从停稳状态启动一次定角转向，转向完成沿用底盘的停车确认。
@@ -771,7 +785,7 @@ void Jetson_Auto_Init(void)
 {
     Jetson_CAN_Expect_Command_Reply(0U, 0U);
     request = (Auto_Request_t){0};
-    route_token = center_boundary = 0U;
+    route_token = center_boundary = mission_loss_sequence = 0U;
     outbound_direction = 0;
     navigating = 0U;
     timed_move_stopping = 0U;
@@ -814,7 +828,9 @@ void Jetson_Auto_Loop(void)
     /* 先取接收快照再读时钟，避免中断跨 tick 写入更新的时间而被误判过期。 */
     const uint32_t now_ms = (uint32_t)xTaskGetTickCount();
     /* 自动搬运按最后一条合法格式心跳计时。坏帧不保活，速度撤权仍由手动模式处理。 */
-    const uint8_t link = data.heartbeat_seen &&
+    const uint8_t mission_lost = data.mission_loss_sequence != mission_loss_sequence;
+    mission_loss_sequence = data.mission_loss_sequence;
+    const uint8_t link = !mission_lost && data.heartbeat_seen &&
         (uint32_t)(now_ms - data.heartbeat_received_ms) < JETSON_VELOCITY_TIMEOUT_MS;
     if (stage == WAIT_LINK)
     {

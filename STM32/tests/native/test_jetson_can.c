@@ -108,7 +108,7 @@ static void Check_Velocity(void)
 static void Check_Lengths(void)
 {
     const uint16_t ids[] = {0x180U, 0x181U, 0x182U, 0x190U, 0x191U, 0x192U, 0x193U};
-    const uint8_t lengths[] = {7U, 5U, 5U, 1U, 3U, 6U, 6U};
+    const uint8_t lengths[] = {7U, 8U, 8U, 1U, 3U, 6U, 6U};
     const uint8_t frame[8] = {1U, 1U, 1U, 0U, 0U, 0U, 0U, 0U};
     for (unsigned i = 0U; i < sizeof(ids) / sizeof(ids[0]); ++i)
     {
@@ -151,9 +151,9 @@ static void Check_Lengths(void)
 /** @brief 核对坐标原值、拒绝回复和 ROI 的四种合法组合；错误布尔不得赋予效力。 */
 static void Check_Centers_And_ROI(void)
 {
-    const uint8_t center[5] = {1U, 0x88U, 0x13U, 0x4CU, 0xE2U};
-    const uint8_t invalid_center[5] = {0U, 1U, 2U, 3U, 4U};
-    const uint8_t malformed_center[5] = {2U, 1U, 2U, 3U, 4U};
+    const uint8_t center[8] = {1U, 0x88U, 0x13U, 0x4CU, 0xE2U};
+    const uint8_t invalid_center[8] = {0U, 1U, 2U, 3U, 4U};
+    const uint8_t malformed_center[8] = {2U, 1U, 2U, 3U, 4U};
     Jetson_CAN_Receive(0x181U, center, sizeof(center));
     Jetson_CAN_Receive(0x182U, center, sizeof(center));
     Jetson_CAN_Data_t data = Snapshot();
@@ -319,9 +319,9 @@ static void Check_Receive_Sequence(void)
     assert(data.rx_sequence == 4U && data.velocity.sequence == 4U);
     assert(!data.velocity.well_formed);
 
-    const uint8_t frame[6] = {1U, 1U, 1U};
-    Jetson_CAN_Receive(0x181U, frame, 5U);
-    Jetson_CAN_Receive(0x182U, frame, 5U);
+    const uint8_t frame[8] = {1U, 1U, 1U};
+    Jetson_CAN_Receive(0x181U, frame, 8U);
+    Jetson_CAN_Receive(0x182U, frame, 8U);
     Jetson_CAN_Receive(0x190U, frame, 1U);
     Jetson_CAN_Receive(0x191U, frame, 3U);
     Jetson_CAN_Receive(0x192U, frame, 6U);

@@ -73,6 +73,14 @@ void testBridgeState()
   const BridgeSourceTime now{now_ns};
   const auto arrival = monoAt(std::chrono::seconds(10));
 
+  BridgeMissionWatchdog watchdog;
+  CHECK(!watchdog.alive(monoAt(std::chrono::seconds(10))));
+  watchdog.received(monoAt(std::chrono::seconds(10)));
+  CHECK(watchdog.alive(monoAt(std::chrono::milliseconds(10499))));
+  CHECK(!watchdog.alive(monoAt(std::chrono::milliseconds(10500))));
+  CHECK(!watchdog.alive(monoAt(std::chrono::milliseconds(9999))));
+  watchdog.received(monoAt(std::chrono::milliseconds(10500)));
+  CHECK(watchdog.alive(monoAt(std::chrono::milliseconds(10500))));
   BridgeState state = makeState();
   armSearch(state, now_ns, 2);
   BridgeTargetInput target;
@@ -81,7 +89,7 @@ void testBridgeState()
   target.detection = detection("a", "0", 960, 540);
   CHECK(state.target(target, now, arrival, true));
   const auto output = state.targetOutput(now, arrival);
-  CHECK(output.valid && output.x == 5000 && output.y == 5000);
+  CHECK(output.valid && output.x == 5000 && output.y == 5000 && output.source_frame == 9900);
 
   // 拒绝：插座关、不是 seg、源时间非法、旧于截止。这些帧不覆盖上一帧。
   CHECK(!state.target(target, now, arrival, false));
