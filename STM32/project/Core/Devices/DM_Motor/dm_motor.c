@@ -6,6 +6,7 @@
 #include "bsp_can.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include <math.h>
 
 volatile dm_motor_t dm_motor[3];
 /* 用户已确认的电机幅值，必须与电机端参数一致。 */
@@ -33,6 +34,12 @@ HAL_StatusTypeDef ctrl_motor(CAN_HandleTypeDef *hcan, uint16_t id,
 {
     if (hcan != &MOTOR_CAN || id < 1U || id > 3U)
         return HAL_ERROR;
+    const float torque_limit = motor_tmax[id - 1U];
+    if (!isfinite(_pos) || !isfinite(_vel) || !isfinite(_KP) || !isfinite(_KD) || !isfinite(_torq) ||
+        _pos < -12.5f || _pos > 12.5f || _vel < -40.0f || _vel > 40.0f ||
+        _KP < 0.0f || _KP > 500.0f || _KD < 0.0f || _KD > 5.0f ||
+        _torq < -torque_limit || _torq > torque_limit)
+        return HAL_ERROR;
 
     uint16_t pos_tmp = float_to_uint(_pos, -12.5f, 12.5f, 16);
     uint16_t vel_tmp = float_to_uint(_vel, -40.0f, 40.0f, 12);
@@ -55,6 +62,13 @@ HAL_StatusTypeDef ctrl_motor(CAN_HandleTypeDef *hcan, uint16_t id,
     data[5] = kd_tmp >> 4;
     data[6] = ((kd_tmp & 0xFU) << 4) | (tor_tmp >> 8);
     data[7] = tor_tmp;
+    /* 保留命令与极值 MIT 报文可能重合，避免普通控制触发使能、失能或清错。 */
+    uint8_t reserved = 1U;
+    for (unsigned i = 0U; i < 7U; ++i)
+        if (data[i] != 0xFFU)
+            reserved = 0U;
+    if (reserved && data[7] >= 0xFBU && data[7] <= 0xFEU)
+        return HAL_ERROR;
     return HAL_CAN_AddTxMessage(hcan, &header, data, &mailbox);
 }
 

@@ -31,6 +31,7 @@ typedef struct
     uint32_t received_ms;
     uint32_t sequence;
     uint32_t source_frame; /**< 源帧时间的低 24 位毫秒，用于区分周期重发。 */
+    uint32_t invalid_sequence; /**< 无效或畸形坐标递增，防止后续有效帧覆盖撤销事件。 */
 } Jetson_CAN_Center_t;
 
 typedef struct

@@ -290,6 +290,20 @@ int main(void)
     for (unsigned i = 0; i < 8; ++i) assert(tx_data[i] == 0);
     ctrl_motor(&hcan1,3,12.5f,40,500,5,2);
     for (unsigned i = 0; i < 8; ++i) assert(tx_data[i] == 0xFF);
+    /* 任何无效数值和保留控制字节都不得进入 CAN 邮箱。 */
+    const uint32_t before_bad_command = tx_count;
+    assert(ctrl_motor(&hcan1,1,NAN,0,0,0,0) == HAL_ERROR);
+    assert(ctrl_motor(&hcan1,1,0,INFINITY,0,0,0) == HAL_ERROR);
+    assert(ctrl_motor(&hcan1,1,0,0,-1,0,0) == HAL_ERROR);
+    assert(ctrl_motor(&hcan1,1,0,0,0,5.01f,0) == HAL_ERROR);
+    assert(ctrl_motor(&hcan1,1,0,0,0,0,1.01f) == HAL_ERROR);
+    for (unsigned code = 0xFFBU; code <= 0xFFEU; ++code)
+    {
+        const float torque = -2.0f + ((float)code + 0.5f) * 4.0f / 4095.0f;
+        assert(float_to_uint(torque, -2.0f, 2.0f, 12) == (int)code);
+        assert(ctrl_motor(&hcan1,3,12.5f,40.0f,500.0f,5.0f,torque) == HAL_ERROR);
+    }
+    assert(tx_count == before_bad_command);
     assert(float_to_uint(0,-12.5f,12.5f,16) == 32767);
     assert(uint_to_float(0,-40,40,12) == -40 && uint_to_float(4095,-40,40,12) == 40);
     tx_result = HAL_BUSY;
@@ -369,7 +383,7 @@ int main(void)
 
     /* 所有下行 ID 可达协议层；畸形长度仍交给协议层撤销旧速度。 */
     const uint16_t jetson_ids[] = {0x180U, 0x181U, 0x182U, 0x190U, 0x191U, 0x192U, 0x193U};
-    const uint8_t jetson_lengths[] = {7U, 5U, 5U, 1U, 3U, 6U, 6U};
+    const uint8_t jetson_lengths[] = {7U, 8U, 8U, 1U, 3U, 6U, 6U};
     for (unsigned i = 0U; i < sizeof(jetson_ids) / sizeof(jetson_ids[0]); ++i)
     {
         rx_header.StdId = jetson_ids[i]; rx_header.DLC = jetson_lengths[i];

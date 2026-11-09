@@ -65,6 +65,7 @@ static const Image_Window_t safety_window = {
 static Auto_Stage_t stage;
 static Auto_Request_t request;
 static uint32_t stage_started_ms, center_boundary, route_token, mission_loss_sequence;
+static uint32_t target_invalid_sequence, safety_invalid_sequence;
 static int8_t outbound_direction;
 static uint8_t navigating;
 static uint8_t timed_move_stopping;
@@ -786,6 +787,7 @@ void Jetson_Auto_Init(void)
     Jetson_CAN_Expect_Command_Reply(0U, 0U);
     request = (Auto_Request_t){0};
     route_token = center_boundary = mission_loss_sequence = 0U;
+    target_invalid_sequence = safety_invalid_sequence = 0U;
     outbound_direction = 0;
     navigating = 0U;
     timed_move_stopping = 0U;
@@ -828,6 +830,10 @@ void Jetson_Auto_Loop(void)
     /* 先取接收快照再读时钟，避免中断跨 tick 写入更新的时间而被误判过期。 */
     const uint32_t now_ms = (uint32_t)xTaskGetTickCount();
     /* 自动搬运按最后一条合法格式心跳计时。坏帧不保活，速度撤权仍由手动模式处理。 */
+    const uint8_t target_revoked = data.target.invalid_sequence != target_invalid_sequence;
+    const uint8_t safety_revoked = data.safety.invalid_sequence != safety_invalid_sequence;
+    target_invalid_sequence = data.target.invalid_sequence;
+    safety_invalid_sequence = data.safety.invalid_sequence;
     const uint8_t mission_lost = data.mission_loss_sequence != mission_loss_sequence;
     mission_loss_sequence = data.mission_loss_sequence;
     const uint8_t link = !mission_lost && data.heartbeat_seen &&
@@ -842,8 +848,25 @@ void Jetson_Auto_Loop(void)
     }
 
     if (!link || !Chassis_Is_Enabled() || (stage != ARMING && !Jetson_Control_Motors_Ready()))
+    {
         Halt(now_ms);
-    else
-        Service_Stage(&data, now_ms);
+        return;
+    }
+    /* 无效帧与恢复帧同批抵达时仍先撤销旧控制，再由下一拍接纳新坐标。 */
+    if (stage == APPROACH_TARGET && target_revoked && data.target.valid)
+    {
+#if JETSON_AUTO_CHASSIS_TEST
+        Approach_Lost_Center(0U, now_ms);
+#else
+        Approach_Lost_Center(1U, now_ms);
+#endif
+        return;
+    }
+    if (stage == APPROACH_SAFETY && safety_revoked && data.safety.valid)
+    {
+        Approach_Lost_Center(0U, now_ms);
+        return;
+    }
+    Service_Stage(&data, now_ms);
 }
 #endif

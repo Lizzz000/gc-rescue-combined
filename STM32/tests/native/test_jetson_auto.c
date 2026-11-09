@@ -625,6 +625,18 @@ static void Test_Transport(uint8_t destination, uint32_t token, uint8_t stuck)
     Receive_Command_Ack(0U, 1U, token);
     Jetson_CAN_Receive(0x192U, NULL, 0U);
     Step(1U);
+    /* 同批撤销与恢复安全区时，必须先清除上次运动目标。 */
+    Receive_Center(0x182U, 5200, 7000);
+    Step(1U);
+    assert(last_vx > 0.0f);
+    const unsigned stops_before_revocation = stops;
+    const uint8_t invalid_safety[8] = {0U};
+    Jetson_CAN_Receive(0x182U, invalid_safety, sizeof(invalid_safety));
+    Receive_Center(0x182U, 5200, 7000);
+    Step(1U);
+    assert(stops == stops_before_revocation + 1U);
+    stopped = 1U;
+    Step(1U);
     /* 安全区仅在窗沿来回波动时维持微调，避免每次进窗都突然清零。 */
     const unsigned stops_before_alignment = stops;
     for (unsigned i = 0U; i < 4U; ++i)
@@ -827,6 +839,24 @@ static void Test_Reject_And_Resume(void)
     assert(last_wz != 0.0f && distance_count == 2U && !turn_count);
 }
 
+/** @brief 同批无效坐标和恢复坐标不能跳过撤销。
+ * @return 无；先搜索，下一拍才接纳恢复帧。
+ */
+static void Test_Center_Revoked_Before_Recovery(void)
+{
+    Begin_Target_Test();
+    Receive_Center(0x181U, 5000, 4000);
+    Step(1U);
+    assert(last_vx > 0.0f);
+    const uint8_t invalid[8] = {0U};
+    Jetson_CAN_Receive(0x181U, invalid, sizeof(invalid));
+    Receive_Center(0x181U, 5000, 4000);
+    Step(1U);
+    assert(last_vx == 0.0f && last_vy == 0.0f && last_wz != 0.0f);
+    Step(1U);
+    assert(last_vx > 0.0f && last_wz == 0.0f);
+}
+
 /** @brief 区分目标丢失时主动搜索与通信断流时保护停车。 */
 static void Test_Lost_Target_And_Link(void)
 {
@@ -936,6 +966,7 @@ int main(void)
     Test_Transport(1U, 123U, 1U);
     Test_Request_Deadline();
     Test_Reject_And_Resume();
+    Test_Center_Revoked_Before_Recovery();
     Test_Lost_Target_And_Link();
     Test_Auto_Heartbeat_Age();
     Test_Mission_Lost();

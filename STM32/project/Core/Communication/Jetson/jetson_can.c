@@ -94,6 +94,8 @@ void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len)
         Jetson_CAN_Center_t center = {0};
         center.received_ms = now_ms;
         center.sequence = ++jetson_data.rx_sequence;
+        center.invalid_sequence = id == 0x181U ?
+            jetson_data.target.invalid_sequence : jetson_data.safety.invalid_sequence;
         if (data != NULL && len == 8U && data[0] == 1U)
         {
             center.valid = 1U;
@@ -102,6 +104,8 @@ void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len)
             center.source_frame = (uint32_t)data[5] | ((uint32_t)data[6] << 8U) |
                                   ((uint32_t)data[7] << 16U);
         }
+        if (!center.valid)
+            ++center.invalid_sequence;
         if (id == 0x181U)
             jetson_data.target = center;
         else

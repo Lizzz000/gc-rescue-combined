@@ -57,8 +57,8 @@ int float_to_uint(float x, float x_min, float x_max, int bits);
  * @param[in] _KP 位置增益N·m/rad，有限且在[0,500]。
  * @param[in] _KD 阻尼增益N·m·s/rad，有限且在[0,5]。
  * @param[in] _torq 扭矩N·m，有限；ID1/2为[-1,1]，ID3为[-2,2]。
- * @return HAL 提交结果；HAL_OK 仅表示进入邮箱，不表示电机已经收到。
- * @note 调用者保证数值范围，且载荷不得使用手册p37保留的FF*7+FB/FC/FD/FE命令。
+ * @return 数值越界、非有限数或保留命令载荷返回 HAL_ERROR；HAL_OK 仅表示进入邮箱。
+ * @note 参数在打包前校验；普通控制不会发送 FF*7+FB/FC/FD/FE 保留命令。
  */
 HAL_StatusTypeDef ctrl_motor(CAN_HandleTypeDef *hcan, uint16_t id,
                 float _pos, float _vel, float _KP, float _KD, float _torq);
