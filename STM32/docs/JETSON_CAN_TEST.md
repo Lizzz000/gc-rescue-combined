@@ -101,7 +101,7 @@ Jetson 当前 `damiao_serial_fixed` 使用 USB 侧 921600、模块 CAN 预期 1 
 | `JETSON_AUTO_OUT_TURN_DEG`、`JETSON_AUTO_RETURN_TURN_DEG` | 当前均为 180°。去程按目的区左转或右转，回转取相反方向。 |
 | `TRANSPORT_SERVO_OPEN_US`、`TRANSPORT_SERVO_CLOSED_US`、`JETSON_AUTO_SERVO_OPEN_MS`、`JETSON_AUTO_SERVO_CLOSE_MS` | 按舵机规格及机构行程实测两端高电平脉宽（μs）和带载开合时间（ms）。先脱开连杆核对方向，再接机构检查有效行程。 |
 
-未标定参数留零，继续使用 `JETSON_AUTO_ENABLED=0`。全项标定后才设为 `1`。舵机由脉宽和动作时间控制，实车需目视核实夹稳和释放。盲推和放货后退分别以两后轮目标约 12.37 rad/s 的直行速度执行 1.2 s，时间含加速，随后停车并等三轮停稳；航向修正会改变各轮瞬时目标。其余定距动作以指令速度积分规划，实际行程需用车上标记或量尺复测。
+未标定参数留零，继续使用 `JETSON_AUTO_ENABLED=0`。全项标定后才设为 `1`。舵机由脉宽和动作时间控制，实车需目视核实夹稳和释放。盲推和放货后退均以两后轮目标各 10 rad/s 的直行速度执行 1.2 s；按轮半径 0.035 m 和三轮几何换算，车体目标约为 0.404 m/s。计时含加速，随后停车并等三轮停稳；航向修正会改变各轮瞬时目标。其余定距动作以指令速度积分规划，实际行程需用车上标记或量尺复测。
 
 ### `/cmd_vel` 与 CMSIS-DAP 手动标定
 

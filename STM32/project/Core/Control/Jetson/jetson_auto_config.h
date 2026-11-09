@@ -1,6 +1,8 @@
 #ifndef JETSON_AUTO_CONFIG_H
 #define JETSON_AUTO_CONFIG_H
 
+#include "motor_chassis.h"
+
 /* 标定后改为 1，上电自动搬运；0 保留 0x180 联调与舵机标定。 */
 #ifndef JETSON_AUTO_ENABLED
 #define JETSON_AUTO_ENABLED 0
@@ -57,8 +59,9 @@
 /* 检查后退与拒绝恢复仍使用定距；速度和距离留待实车标定。 */
 #define JETSON_AUTO_DISTANCE_SPEED_MPS 0.50f
 #define JETSON_AUTO_ROI_BACK_M 0.0f
-/* 直行目标可配置为 0.50 m/s；计时包含加速，停稳还需额外时间。 */
-#define JETSON_AUTO_PUSH_SPEED_MPS 0.50f
+/* 直行时两后轮目标为 10 rad/s，按三轮几何换算为车体 m/s。
+ * 计时包含加速，停稳还需额外时间；修改轮速目标时同步修改这里。 */
+#define JETSON_AUTO_PUSH_SPEED_MPS (10.0f * CHASSIS_WHEEL_RADIUS / 0.8660254f)
 #define JETSON_AUTO_PUSH_DURATION_MS 1200U
 #define JETSON_AUTO_RECOVERY_BACK_M 0.0f
 /* 左/右去程分别左/右转；返程方向取反，角度均为 180°。 */
