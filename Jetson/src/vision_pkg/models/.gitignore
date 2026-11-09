@@ -1,0 +1,9 @@
+# 模型与 engine 缓存不进 git：体积大，而且 engine 与设备/TensorRT 版本绑定。
+*.onnx
+*.engine
+*.trt
+*.timing.cache
+*.calib
+*.int8-failed
+*.rejected
+*.partial

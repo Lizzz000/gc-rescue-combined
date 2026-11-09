@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>track_pkg</name>
+  <version>0.0.0</version>
+  <description>OC-SORT tracking and blue-avoiding nearest-target selection.</description>
+  <maintainer email="li@todo.todo">li</maintainer>
+  <license>Apache-2.0</license>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+  <depend>std_msgs</depend>
+  <depend>rcl_interfaces</depend>
+  <depend>vision_msgs</depend>
+  <depend>interface_pkg</depend>
+  <!-- Eigen仅服务于真实OC-SORT关联；本包不加载模型或创建CPU/GPU推理后端。 -->
+  <depend>eigen</depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>python3-yaml</test_depend>
+
+
+  <test_depend>ament_cmake_test</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

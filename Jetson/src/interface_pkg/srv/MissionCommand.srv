@@ -1,0 +1,19 @@
+# Copyright 2026 li
+# SPDX-License-Identifier: Apache-2.0
+# STM32 运输握手。命令不得代替实际检测阶段确认，也不携带运动速度。
+# ROI 授权后的去程转向完成才报告；闭合及检查前后退在 ROI 请求之前完成。
+uint8 TURN_COMPLETED=1
+uint8 SAFETY_ARRIVED=2
+# 正常收到送达成功收据且返程转向完成后重找；异常也可放弃本趟，不表示已送达。
+# 返程转向不再发 TURN_COMPLETED；新比赛需协调重启任务进程。
+uint8 START_SEARCH=3
+# 盲推入正确舱、张开释放、回撤核实后报告；先记送达，再执行本地返程转向。
+uint8 DELIVERY_COMPLETED=4
+uint8 command
+# TURN_COMPLETED / SAFETY_ARRIVED / DELIVERY_COMPLETED 必填本趟完整 RoiCheck.request_id。
+# START_SEARCH 不依赖路由编号，可置0；不能用旧物理完成事件推进新一趟。
+uint64 roi_request_id
+---
+# 表示命令受理；送达只记录 STM32 确认的事实，切模式仍需 TaskState 与服务双确认。
+bool accepted
+string message

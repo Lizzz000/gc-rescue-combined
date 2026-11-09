@@ -1,0 +1,29 @@
+digraph vision {
+  graph [
+    fontname="Microsoft YaHei",
+    rankdir=LR,
+    label="一帧：采集、推理、发布、图传",
+    labelloc=t,
+    fontsize=16
+  ];
+  node [fontname="Microsoft YaHei", shape=box, style="rounded,filled", fillcolor="#f7f7f7"];
+  edge [fontname="Microsoft YaHei"];
+
+  cam [label="/dev/video0\nMJPG 1920×1080"];
+  gst [label="v4l2src\njpegparse\nnvv4l2decoder\nnvvidconv"];
+  nvmm [label="NVMM I420"];
+  letter [label="nvmmLetterbox\n全范围色转、letterbox、/255、NCHW"];
+  trt [label="TensorRT fp16\nseg 或 field"];
+  post [label="后处理"];
+  topics [label="/detect_node/seg/detections\n/detect_node/field/results\n/detect_node/active_task"];
+  image [label="/detect_node/image_processed\n同帧源图"];
+  overlay [label="stream_node\n叠加框、场地和标签"];
+  jpeg [label="nvjpeg"];
+  http [label="HTTP :8080\n/healthz  /view\n/snapshot.jpg  /stream.mjpg"];
+
+  cam -> gst -> nvmm;
+  nvmm -> letter -> trt -> post -> topics;
+  nvmm -> image [label="映射后拷出"];
+  image -> overlay -> jpeg -> http;
+  topics -> overlay [label="等时图层"];
+}

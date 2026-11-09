@@ -1,0 +1,731 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>录像控制台 · GC Rescue</title>
+  <style>
+    :root {
+      --text: #292b2f;
+      --muted: #6b7078;
+      --line: #e5e7ea;
+      --surface: #f7f8f9;
+      --green: #227457;
+      --red: #b73535;
+      --amber: #8c6319;
+      --radius: 8px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background: #fff;
+      font-synthesis: none;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-size: 14px; line-height: 1.6; }
+    [hidden] { display: none !important; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    button { font: inherit; }
+    a { color: inherit; text-underline-offset: 4px; }
+    button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
+      outline: 3px solid #2767a4;
+      outline-offset: 4px;
+    }
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }
+    .skip-link { position: fixed; top: -80px; left: 24px; z-index: 10; padding: 12px 20px; background: #fff; }
+    .skip-link:focus { top: 12px; }
+    .wrap { width: 100%; max-width: 1440px; margin: 0 auto; padding-inline: 40px; }
+    .masthead { border-bottom: 1px solid var(--line); }
+    .masthead-inner { min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .brand { display: flex; align-items: center; gap: 18px; }
+    .brand-name { font-size: 16px; font-weight: 750; letter-spacing: .1em; }
+    .brand-context { border-left: 1px solid #d8dade; padding-left: 18px; color: var(--muted); font-size: 13px; }
+    main { padding-block: 36px 28px; }
+    .intro { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; margin-bottom: 24px; }
+    h1, h2, p { margin: 0; }
+    h1 { font-size: 30px; font-weight: 650; line-height: 1.3; letter-spacing: -.03em; }
+    .intro p { color: var(--muted); margin-top: 8px; }
+    .intro-note { color: var(--muted); font-size: 12px; white-space: nowrap; padding-bottom: 2px; }
+    .console { display: grid; grid-template-columns: minmax(0, 1fr) 328px; gap: 24px; align-items: stretch; }
+    .panel { border: 1px solid var(--line); border-radius: var(--radius); background: #fff; min-width: 0; }
+    .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 22px; }
+    h2 { font-size: 15px; font-weight: 650; }
+    .badge { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 500; color: var(--muted); white-space: nowrap; }
+    .badge::before { content: ""; width: 6px; height: 6px; flex: none; border-radius: 50%; background: currentColor; }
+    .badge[data-tone="online"] { color: var(--green); }
+    .badge[data-tone="recording"], .badge[data-tone="error"] { color: var(--red); }
+    .badge[data-tone="busy"] { color: var(--amber); }
+    .preview-panel { display: flex; flex-direction: column; overflow: hidden; }
+    .preview-stage { position: relative; flex: 1; min-height: 320px; aspect-ratio: 16 / 9; background: #08090b; overflow: hidden; }
+    .preview-image { display: block; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+    .preview-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 9px; padding: 32px; text-align: center; }
+    .preview-empty strong { color: #e3e5e8; font-size: 17px; font-weight: 500; }
+    .preview-empty p { max-width: 420px; color: #989da6; font-size: 13px; }
+    .preview-overlay { position: absolute; top: 16px; left: 16px; border: 1px solid #48494d; background: #151619; border-radius: 4px; padding: 5px 9px; }
+    .preview-overlay .badge { color: #f3f3f4; }
+    .preview-overlay .badge[data-tone="recording"]::before { background: #ff7676; }
+    .preview-overlay .badge[data-tone="busy"]::before { background: #eac783; }
+    .preview-meta { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; padding: 17px 22px; margin: 0; }
+    dt { color: var(--muted); font-size: 12px; }
+    dd { margin: 4px 0 0; }
+    .number { font-variant-numeric: tabular-nums; }
+    .preview-meta dd { font-size: 13px; white-space: nowrap; }
+    .controls { display: flex; flex-direction: column; padding: 22px; }
+    .controls .panel-heading { padding: 0; }
+    .record-metrics { margin: 27px 0 22px; display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: 12px; }
+    .record-metrics dd { margin-top: 7px; line-height: 1.35; letter-spacing: -.045em; font-size: 31px; font-weight: 550; }
+    .record-metrics .frame-count { font-size: 25px; letter-spacing: -.02em; padding-top: 6px; overflow-wrap: anywhere; }
+    .record-quality { color: var(--muted); font-size: 12px; margin: -10px 0 20px; }
+    .record-file { padding-top: 18px; border-top: 1px solid var(--line); margin: 0 0 24px; }
+    .record-file dd { margin-top: 7px; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; min-height: 21px; }
+    .actions { display: grid; gap: 10px; margin-top: auto; }
+    .button { min-height: 46px; padding: 10px 16px; border: 1px solid #cfd2d6; border-radius: var(--radius); display: inline-flex; align-items: center; justify-content: center; gap: 10px; font-weight: 600; cursor: pointer; background: #fff; color: var(--text); }
+    .button:hover:enabled { background: #f2f3f4; border-color: #a8adb5; }
+    .button-primary { background: #27292d; border-color: #27292d; color: #fff; }
+    .button-primary:hover:enabled { background: #41444a; border-color: #41444a; }
+    .button:disabled { cursor: not-allowed; color: #7b8088; background: #f2f3f5; border-color: #e4e6e9; }
+    .button-dot { width: 10px; height: 10px; flex: none; border-radius: 50%; background: currentColor; }
+    .button-square { width: 9px; height: 9px; flex: none; background: currentColor; border-radius: 1px; }
+    .control-note { min-height: 42px; margin-top: 14px; color: var(--muted); font-size: 12px; line-height: 1.75; }
+    .notice { margin-top: 14px; padding: 12px 16px; border: 1px solid #e9d7b8; border-radius: var(--radius); background: #fffcf6; color: #79571e; font-size: 13px; overflow-wrap: anywhere; }
+    .notice-error { border-color: #eed1d1; background: #fff9f9; color: #a53232; }
+    .storage { margin-top: 20px; display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 20px 22px; background: var(--surface); }
+    .storage-label { display: flex; gap: 12px; align-items: center; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+    .storage-tag { border: 1px solid #dcdfe3; border-radius: 4px; padding: 0 6px; color: #555b64; font-size: 10px; letter-spacing: .04em; }
+    .storage-path { font: 13px/1.7 Consolas, "SFMono-Regular", "Microsoft YaHei", monospace; overflow-wrap: anywhere; }
+    .storage-description { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    .storage-space { margin: 0; flex: none; text-align: right; }
+    .storage-space dd { font-size: 15px; font-weight: 550; }
+    .recent { margin-top: 30px; }
+    .recent-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 20px; margin-bottom: 14px; }
+    .recent-heading h2 { font-size: 17px; }
+    .recent-description { font-size: 12px; color: var(--muted); text-align: right; }
+    .table-wrap { overflow: auto; }
+    table { border-collapse: collapse; width: 100%; text-align: left; font-size: 13px; }
+    th { background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 500; padding: 11px 20px; white-space: nowrap; }
+    td { padding: 16px 20px; border-top: 1px solid var(--line); vertical-align: middle; }
+    td:not(:first-child) { white-space: nowrap; }
+    .file-cell { min-width: 210px; max-width: 540px; overflow-wrap: anywhere; }
+    .result-error, .result-quality { font-size: 12px; margin-top: 4px; }
+    .result-error { color: var(--red); }
+    .result-quality { color: var(--muted); }
+    .result-quality[data-warning="true"] { color: var(--amber); }
+    .file-actions { display: flex; gap: 16px; }
+    .file-actions a { display: inline-flex; min-height: 32px; align-items: center; font-size: 12px; }
+    .empty-history { padding: 31px 20px; color: var(--muted); text-align: center; font-size: 13px; }
+    .page-footer { margin-top: 22px; color: var(--muted); font-size: 12px; display: flex; justify-content: space-between; gap: 20px; }
+    .page-footer p:last-child { white-space: nowrap; }
+    noscript p { margin: 24px; padding: 16px; border: 1px solid #eed1d1; color: var(--red); }
+    @media (max-width: 1100px) {
+      .wrap { padding-inline: 24px; }
+      .console { grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; }
+      .controls { padding: 20px; }
+      .preview-meta { padding-inline: 18px; gap: 10px; }
+      .record-metrics dd { font-size: 28px; }
+      th, td { padding-inline: 16px; }
+    }
+    @media (max-width: 800px) {
+      .console { grid-template-columns: minmax(0, 1fr); }
+      .preview-stage { flex: none; min-height: 240px; }
+      .controls { display: block; }
+      .record-metrics { margin-block: 20px; }
+      .actions { grid-template-columns: 1fr 1fr; }
+      .control-note { min-height: 0; }
+      .intro-note { display: none; }
+      .storage { align-items: flex-start; }
+      .page-footer { flex-direction: column; gap: 8px; }
+    }
+    @media (max-width: 480px) {
+      .wrap { padding-inline: 16px; }
+      .masthead-inner { min-height: 64px; }
+      .brand-context { display: none; }
+      main { padding-top: 26px; }
+      h1 { font-size: 26px; }
+      .panel-heading { padding-inline: 16px; }
+      .preview-meta { grid-template-columns: 1fr 1fr; }
+      .storage { flex-direction: column; gap: 14px; padding: 18px; }
+      .storage-space { display: flex; gap: 12px; align-items: baseline; }
+      .recent-heading { align-items: flex-start; flex-direction: column; gap: 4px; }
+      .recent-description { text-align: left; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#record-controls">跳转到录像控制</a>
+  <header class="masthead">
+    <div class="wrap masthead-inner">
+      <div class="brand"><span class="brand-name">GC RESCUE</span><span class="brand-context">电脑端录像</span></div>
+      <span class="badge" id="service-state">正在连接后台</span>
+    </div>
+  </header>
+  <main class="wrap">
+    <div class="intro">
+      <div><h1>录像控制台</h1><p>查看实时画面，将录像保存到电脑。</p></div>
+      <span class="intro-note">原始画面预览 · MP4 录像</span>
+    </div>
+    <div class="console">
+      <section class="panel preview-panel" aria-labelledby="preview-heading">
+        <div class="panel-heading"><h2 id="preview-heading">实时预览</h2><span class="badge" id="camera-state">等待相机状态</span></div>
+        <div class="preview-stage" aria-label="相机原始画面">
+          <img class="preview-image" id="preview-image" alt="相机实时画面" hidden>
+          <div class="preview-empty" id="preview-empty">
+            <strong id="preview-title">等待相机画面</strong>
+            <p id="preview-description">正在连接电脑后台，请稍候。</p>
+          </div>
+          <div class="preview-overlay" id="preview-overlay" hidden><span class="badge" id="overlay-state"></span></div>
+        </div>
+        <dl class="preview-meta number">
+          <div><dt>画面尺寸</dt><dd id="resolution">—</dd></div>
+          <div><dt>源帧率</dt><dd id="source-fps">—</dd></div>
+          <div><dt>接收帧率</dt><dd id="receive-fps">—</dd></div>
+          <div><dt>最新帧距今</dt><dd id="frame-age">—</dd></div>
+        </dl>
+      </section>
+      <section class="panel controls" id="record-controls" tabindex="-1" aria-labelledby="control-heading">
+        <div class="panel-heading"><h2 id="control-heading">录像控制</h2><span class="badge" id="record-state">状态待确认</span></div>
+        <dl class="record-metrics number">
+          <div><dt>已录时间</dt><dd id="elapsed">—</dd></div>
+          <div><dt>已录帧数</dt><dd class="frame-count" id="frames">—</dd></div>
+        </dl>
+        <p class="record-quality" id="encoder-label">编码：开始录像时检测硬件</p>
+        <p class="record-quality number" id="bad-frames">已跳过坏帧：—</p>
+        <dl class="record-file"><dt id="file-label">录像文件</dt><dd id="current-file">等待后台状态</dd></dl>
+        <div class="actions">
+          <button type="button" class="button button-primary" id="start-button" aria-describedby="control-note" disabled>
+            <span class="button-dot" aria-hidden="true"></span><span id="start-label">开始录像</span>
+          </button>
+          <button type="button" class="button" id="stop-button" aria-describedby="control-note" disabled>
+            <span class="button-square" aria-hidden="true"></span><span id="stop-label">停止并保存</span>
+          </button>
+        </div>
+        <p class="control-note" id="control-note">连接后台并确认相机画面后，即可开始录像。</p>
+      </section>
+    </div>
+    <p class="notice" id="connection-notice" role="status" hidden></p>
+    <p class="notice notice-error" id="action-notice" role="alert" hidden></p>
+    <p class="notice" id="record-notice" role="status" hidden></p>
+    <section class="panel storage" aria-label="录像保存设置">
+      <div>
+        <div class="storage-label">保存到电脑 <span class="storage-tag">MP4</span></div>
+        <p class="storage-path" id="output-dir">D:\A1_Workspace\GC_Rescue\MP4</p>
+        <p class="storage-description">板端不保存文件，录像由电脑接收并写入此目录。</p>
+      </div>
+      <dl class="storage-space number"><dt>磁盘可用空间</dt><dd id="free-space">—</dd></dl>
+    </section>
+    <section class="recent" aria-labelledby="recent-heading">
+      <div class="recent-heading"><h2 id="recent-heading">最近录像</h2><p class="recent-description" id="recent-description">完成后可在浏览器播放或下载</p></div>
+      <div class="panel table-wrap" id="recent-table-wrap" tabindex="0" role="region" aria-label="最近录像结果，可横向滚动" hidden>
+        <table>
+          <caption class="sr-only">后台返回的最近录像结果</caption>
+          <thead><tr><th scope="col">文件</th><th scope="col">结果</th><th scope="col">时长</th><th scope="col">帧数</th><th scope="col">大小</th><th scope="col">操作</th></tr></thead>
+          <tbody id="recent-body"></tbody>
+        </table>
+      </div>
+      <div class="panel empty-history" id="recent-empty">正在读取录像记录…</div>
+    </section>
+    <footer class="page-footer">
+      <p>关闭网页不会停止电脑后台程序；请点击「停止并保存」结束录像。</p>
+      <p class="number" id="received-total">接收统计待更新</p>
+    </footer>
+    <div class="sr-only" id="state-announcer" role="status" aria-live="polite" aria-atomic="true"></div>
+  </main>
+  <noscript><p>请启用 JavaScript，以查看相机画面和控制录像。电脑后台程序不会因页面关闭而停止。</p></noscript>
+  <script>
+    (() => {
+      'use strict';
+
+      const POLL_MS = 500;
+      const PREVIEW_MS = 100;
+      const FRAME_MAX_AGE_MS = 2000;
+      const STATUS_TIMEOUT_MS = 2500;
+      const PREVIEW_TIMEOUT_MS = 1500;
+      const COMMAND_TIMEOUT_MS = 15000;
+      const ACTIVE_STATES = new Set(['starting', 'recording', 'stopping']);
+      const STATES = {
+        idle: ['未录像', 'neutral'], starting: ['正在开始', 'busy'],
+        recording: ['录像中', 'recording'], stopping: ['正在保存', 'busy'],
+        completed: ['已完成', 'neutral'], failed: ['录像失败', 'error']
+      };
+      const ui = {};
+      for (const element of document.querySelectorAll('[id]')) ui[element.id] = element;
+      const integer = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 });
+      let snapshot = null;
+      let statusSeenAt = 0;
+      let serviceAvailable = false;
+      let serviceError = '';
+      let pendingAction = null;
+      let needsReconcile = false;
+      let actionError = '';
+      let previewError = '';
+      let running = false;
+      let statusTimer = null;
+      let previewTimer = null;
+      let freshnessTimer = null;
+      let statusController = null;
+      let previewController = null;
+      let commandController = null;
+      let commandVersion = 0;
+      let previewVersion = 0;
+      let displayedUrl = null;
+      let pendingPreviewUrl = null;
+      let recentSignature = null;
+      let announcement = '';
+
+      const finite = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+      const message = value => typeof value === 'string' ? value.trim() : '';
+      const basename = file => message(file).split(/[\\/]/).pop() || '';
+      const put = (id, value) => {
+        const text = String(value);
+        if (ui[id].textContent !== text) ui[id].textContent = text;
+      };
+      const badge = (id, text, tone = 'neutral') => {
+        put(id, text);
+        ui[id].dataset.tone = tone;
+      };
+      const notice = (id, text) => {
+        put(id, text);
+        ui[id].hidden = !text;
+      };
+      function duration(value) {
+        if (!finite(value)) return '—';
+        const seconds = Math.floor(value);
+        return [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, seconds % 60]
+          .map(part => String(part).padStart(2, '0')).join(':');
+      }
+      function bytes(value) {
+        if (!finite(value)) return '—';
+        const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+        let index = 0;
+        while (value >= 1024 && index < units.length - 1) { value /= 1024; index += 1; }
+        return `${value.toLocaleString('zh-CN', { maximumFractionDigits: index ? 1 : 0 })} ${units[index]}`;
+      }
+      function serviceFresh() {
+        return running && serviceAvailable && navigator.onLine !== false && performance.now() - statusSeenAt <= 3000;
+      }
+      function hasReceivedFrame() {
+        return finite(snapshot?.received_frames) && snapshot.received_frames > 0;
+      }
+      function startGenerationReady() {
+        return Number.isSafeInteger(snapshot?.start_generation) && snapshot.start_generation >= 0;
+      }
+      function frameAge() {
+        return hasReceivedFrame() && finite(snapshot.frame_age_ms)
+          ? snapshot.frame_age_ms + Math.max(0, performance.now() - statusSeenAt) : Infinity;
+      }
+      function cameraFresh() {
+        return serviceFresh() && snapshot?.connected === true && frameAge() <= FRAME_MAX_AGE_MS && !message(snapshot.stream_error);
+      }
+      function canStart() {
+        return cameraFresh() && startGenerationReady() && !previewError && !pendingAction && !needsReconcile &&
+          !ACTIVE_STATES.has(snapshot.record.state) && Boolean(message(snapshot.token)) &&
+          typeof globalThis.crypto?.randomUUID === 'function';
+      }
+      function canStop() {
+        return serviceFresh() && !pendingAction && !needsReconcile && Boolean(message(snapshot?.token)) &&
+          ['starting', 'recording'].includes(snapshot?.record.state) && Boolean(message(snapshot.record.run_id));
+      }
+      function clearPreview() {
+        ui['preview-image'].hidden = true;
+        ui['preview-image'].removeAttribute('src');
+        ui['preview-empty'].hidden = false;
+        if (displayedUrl) { URL.revokeObjectURL(displayedUrl); displayedUrl = null; }
+      }
+      function pausePreview() {
+        previewVersion += 1;
+        clearTimeout(previewTimer);
+        previewTimer = null;
+        previewController?.abort();
+        if (pendingPreviewUrl) { URL.revokeObjectURL(pendingPreviewUrl); pendingPreviewUrl = null; }
+        clearPreview();
+      }
+      function syncPreview() {
+        if (!running || document.hidden || !cameraFresh()) {
+          if (displayedUrl || previewController || previewTimer !== null) pausePreview();
+          return;
+        }
+        if (!previewController && previewTimer === null) {
+          previewTimer = setTimeout(fetchPreview, 0);
+        }
+      }
+      function badFrameSummary(record) {
+        const count = finite(record?.bad_jpeg_frames) ? `${integer.format(record.bad_jpeg_frames)} 帧` : '—';
+        return `已跳过坏帧：${count}`;
+      }
+      function renderRecent() {
+        if (!snapshot) return;
+        const signature = JSON.stringify(snapshot.recent);
+        if (signature === recentSignature) return;
+        const fragment = document.createDocumentFragment();
+        for (const entry of snapshot.recent) {
+          if (!entry || typeof entry !== 'object') continue;
+          const row = document.createElement('tr');
+          const cell = text => {
+            const element = document.createElement('td');
+            if (text !== undefined) element.textContent = text;
+            row.append(element);
+            return element;
+          };
+          const filename = basename(entry.file);
+          const file = cell(filename || '未生成文件');
+          file.className = 'file-cell';
+          if (message(entry.file)) file.title = entry.file;
+          if (message(entry.error)) {
+            const error = document.createElement('p');
+            error.className = 'result-error';
+            error.textContent = entry.error;
+            file.append(error);
+          }
+          const warning = message(entry.warning);
+          const hasBadFrameCount = finite(entry.bad_jpeg_frames);
+          if (hasBadFrameCount || warning) {
+            const quality = document.createElement('p');
+            quality.className = 'result-quality number';
+            quality.dataset.warning = String(Boolean(warning) || (hasBadFrameCount && entry.bad_jpeg_frames > 0));
+            quality.textContent = warning || badFrameSummary(entry);
+            file.append(quality);
+          }
+          const state = Object.hasOwn(STATES, entry.state) ? STATES[entry.state] : ['状态未知', 'neutral'];
+          const result = document.createElement('span');
+          result.className = 'badge';
+          result.dataset.tone = state[1];
+          result.textContent = state[0];
+          cell().append(result);
+          cell(duration(entry.elapsed_seconds)).className = 'number';
+          cell(finite(entry.frames) ? integer.format(entry.frames) : '—').className = 'number';
+          cell(bytes(entry.bytes)).className = 'number';
+          const actions = cell();
+          if (entry.state === 'completed' && filename.toLowerCase().endsWith('.mp4')) {
+            const links = document.createElement('div');
+            links.className = 'file-actions';
+            for (const kind of ['播放', '下载']) {
+              const link = document.createElement('a');
+              link.href = `/files/${encodeURIComponent(filename)}`;
+              link.textContent = kind;
+              link.setAttribute('aria-label', `${kind} ${filename}${kind === '播放' ? '（新标签页）' : ''}`);
+              if (kind === '播放') { link.target = '_blank'; link.rel = 'noopener noreferrer'; }
+              else link.download = filename;
+              links.append(link);
+            }
+            actions.append(links);
+          } else { actions.textContent = '—'; }
+          fragment.append(row);
+        }
+        ui['recent-body'].replaceChildren(fragment);
+        recentSignature = signature;
+        const hasRows = ui['recent-body'].children.length > 0;
+        ui['recent-table-wrap'].hidden = !hasRows;
+        ui['recent-empty'].hidden = hasRows;
+        put('recent-empty', '暂无录像记录。完成一次录像后，可在这里查看结果。');
+      }
+      function render() {
+        const online = serviceFresh();
+        const ready = cameraFresh();
+        const record = snapshot?.record;
+        let cameraLabel = '等待相机状态';
+        let cameraTone = 'neutral';
+        let emptyTitle = '等待相机画面';
+        let emptyDescription = '正在连接电脑后台，请稍候。';
+        let connectionNote = '';
+
+        badge('service-state', online ? '电脑后台在线' : (snapshot || serviceError ? '电脑后台未连接' : '正在连接后台'), online ? 'online' : 'neutral');
+        if (!online) {
+          if (snapshot || serviceError) {
+            cameraLabel = '相机状态未知';
+            emptyTitle = '无法获取实时画面';
+            emptyDescription = '等待电脑后台恢复连接，过期画面已清除。';
+            connectionNote = serviceError || '后台状态更新超时，正在重新连接。';
+          }
+        } else if (message(snapshot.stream_error)) {
+          cameraLabel = '相机异常'; cameraTone = 'error';
+          emptyTitle = '相机画面不可用';
+          emptyDescription = '请检查相机与传输连接，恢复后将自动更新预览。';
+          connectionNote = `相机异常：${snapshot.stream_error}`;
+        } else if (!snapshot.connected) {
+          cameraLabel = '相机未连接';
+          emptyTitle = '等待相机连接';
+          emptyDescription = '电脑后台在线，尚未收到可用的相机画面。';
+          connectionNote = '相机未连接，已清除预览画面。恢复连接后需手动开始新录像。';
+        } else if (!hasReceivedFrame()) {
+          cameraLabel = '等待首帧';
+          emptyTitle = '等待相机画面';
+          emptyDescription = '相机已连接，正在等待第一帧画面。';
+        } else if (!ready) {
+          cameraLabel = '画面已超时'; cameraTone = 'busy';
+          emptyTitle = '等待新鲜画面';
+          emptyDescription = '超过 2 秒未收到新鲜帧，已清除过期画面。';
+          connectionNote = '相机画面已超时，暂时无法开始录像。';
+        } else if (previewError) {
+          cameraLabel = '预览暂不可用'; cameraTone = 'busy';
+          emptyTitle = '等待预览恢复';
+          emptyDescription = previewError;
+          connectionNote = previewError;
+        } else {
+          cameraLabel = '相机在线'; cameraTone = 'online';
+          emptyTitle = '正在获取画面';
+          emptyDescription = '相机已连接，正在读取未叠加标记的画面。';
+        }
+        if (document.hidden && ready) { emptyTitle = '预览已暂停'; emptyDescription = '返回页面后恢复预览，后台录像不受影响。'; }
+        badge('camera-state', cameraLabel, cameraTone);
+        put('preview-title', emptyTitle);
+        put('preview-description', emptyDescription);
+        notice('connection-notice', connectionNote);
+        notice('action-notice', actionError ? `${actionError}${online && !needsReconcile ? '后台状态已更新，请以当前录像状态为准。' : '正在核实后台状态，请勿重复操作。'}` : '');
+        const recordIssue = record && (message(record.error) || (record.state === 'failed' ? message(record.reason) || '后台未提供错误详情。' : ''));
+        const recordWarning = message(record?.warning);
+        const recordDetails = [recordIssue, recordWarning].filter(Boolean);
+        ui['record-notice'].classList.toggle('notice-error', Boolean(recordIssue));
+        ui['record-notice'].setAttribute('role', recordIssue ? 'alert' : 'status');
+        notice('record-notice', recordDetails.join(' '));
+
+        let recordLabel = online ? STATES[record.state][0] : '状态待确认';
+        let recordTone = online ? STATES[record.state][1] : 'neutral';
+        if (pendingAction) { recordLabel = pendingAction === 'start' ? '正在请求开始' : '正在请求停止'; recordTone = 'busy'; }
+        else if (needsReconcile) { recordLabel = '等待后台确认'; recordTone = 'busy'; }
+        badge('record-state', recordLabel, recordTone);
+        ui['preview-overlay'].hidden = !online || !ACTIVE_STATES.has(record?.state);
+        if (record && online) badge('overlay-state', STATES[record.state][0], STATES[record.state][1]);
+        const awaitingStart = pendingAction === 'start';
+        put('elapsed', awaitingStart ? '—' : duration(record?.elapsed_seconds));
+        const encoder = message(record?.encoder);
+        put('encoder-label', encoder ? `编码：${encoder === 'h264_nvenc' ? 'NVIDIA 硬件 · H.264' : 'CPU · H.264'}${message(record.encoder_fallback) ? '（硬件不可用）' : ''}` : '编码：开始录像时检测硬件');
+        put('frames', !awaitingStart && finite(record?.frames) ? integer.format(record.frames) : '—');
+        put('bad-frames', awaitingStart ? '已跳过坏帧：—' : badFrameSummary(record));
+        put('file-label', snapshot && !online ? '录像文件 · 上次状态' : '录像文件');
+        put('current-file', awaitingStart ? '等待后台确认…' : basename(record?.file) || (record && online ? '尚未生成文件' : '等待后台状态'));
+        ui['current-file'].title = message(record?.file);
+        ui['start-button'].disabled = !canStart();
+        ui['stop-button'].disabled = !canStop();
+        put('start-label', pendingAction === 'start' || (online && record?.state === 'starting') ? '正在开始…' : '开始录像');
+        put('stop-label', pendingAction === 'stop' ? '正在请求停止…' : online && record?.state === 'stopping' ? '正在保存…' : '停止并保存');
+
+        let controlNote = '相机已就绪。点击开始录像，将在电脑上创建 MP4 文件。';
+        if (pendingAction) controlNote = '请求已发出，正在等待后台确认，请勿重复操作。';
+        else if (!online || needsReconcile) controlNote = snapshot ? '正在核实后台状态；已录时间和帧数为上次返回值。' : '连接后台并确认相机画面后，即可开始录像。';
+        else if (record.state === 'stopping') controlNote = '后台正在完成 MP4 文件，请等待保存结果后再开始下一次录像。';
+        else if (['starting', 'recording'].includes(record.state)) controlNote = canStop() ? (ready ? '录像由电脑后台执行。点击停止并保存，结束本次录像。' : '相机画面中断；后台仍有录像任务，可点击停止并保存。') : '后台正在处理录像，等待可用的录像编号与控制令牌。';
+        else if (!message(snapshot.token)) controlNote = '后台尚未返回控制令牌，正在等待状态更新。';
+        else if (!startGenerationReady()) controlNote = '后台尚未返回有效的启动凭据，正在等待状态更新。';
+        else if (typeof globalThis.crypto?.randomUUID !== 'function') controlNote = '浏览器无法生成安全请求编号，请使用 localhost 或 HTTPS 地址打开页面。';
+        else if (!ready || previewError) controlNote = '等待相机画面恢复后可开始录像；重新连接不会自动开始录像。';
+        else if (record.state === 'completed') controlNote = '录像已保存，可在最近录像中播放或下载，也可开始下一次录像。';
+        else if (record.state === 'failed') controlNote = '上次录像失败，请查看下方原因。相机就绪后可手动重试。';
+        put('control-note', controlNote);
+
+        put('resolution', online && finite(snapshot.width) && snapshot.width > 0 && finite(snapshot.height) && snapshot.height > 0 ? `${snapshot.width} × ${snapshot.height}` : '—');
+        const showFrameMetrics = online && snapshot.connected === true && hasReceivedFrame();
+        const age = showFrameMetrics ? frameAge() : Infinity;
+        put('source-fps', showFrameMetrics && finite(snapshot.fps) ? `${snapshot.fps.toFixed(1)} fps` : '—');
+        put('receive-fps', online && finite(snapshot.receive_fps) ? `${snapshot.receive_fps.toFixed(1)} fps` : '—');
+        put('frame-age', finite(age) ? `${(age / 1000).toFixed(1)} 秒` : '—');
+        put('free-space', online ? bytes(snapshot.free_bytes) : '—');
+        if (message(snapshot?.output_dir)) put('output-dir', snapshot.output_dir);
+        put('received-total', online && finite(snapshot.received_frames) ? `累计接收 ${integer.format(snapshot.received_frames)} 帧` : '接收统计待更新');
+        put('recent-description', snapshot && !online ? '连接中断 · 显示上次获取的结果' : '完成后可在浏览器播放或下载');
+        if (!snapshot && serviceError) put('recent-empty', '尚未获取录像记录，等待后台连接。');
+        const nextAnnouncement = `${ui['service-state'].textContent}，${cameraLabel}，${recordLabel}`;
+        if (nextAnnouncement !== announcement) { announcement = nextAnnouncement; put('state-announcer', announcement); }
+        syncPreview();
+      }
+
+      function validateStatus(data) {
+        if (!data || typeof data !== 'object' || typeof data.connected !== 'boolean' ||
+            typeof data.token !== 'string' || !data.record || !Object.hasOwn(STATES, data.record.state) || !Array.isArray(data.recent)) {
+          throw new Error('后台返回的状态格式不完整');
+        }
+        return data;
+      }
+      function acceptStatus(data, observedAt) {
+        snapshot = validateStatus(data);
+        // Use request start as a conservative age reference; slow responses cannot revive stale frames.
+        statusSeenAt = observedAt;
+        serviceAvailable = true;
+        serviceError = '';
+        if (!pendingAction) needsReconcile = false;
+        renderRecent();
+        render();
+      }
+      async function readJson(response) {
+        let data;
+        try { data = await response.json(); }
+        catch { throw new Error(`后台返回了无法解析的响应（HTTP ${response.status}）`); }
+        if (!response.ok) throw new Error(message(data?.error) || `请求失败（HTTP ${response.status}）`);
+        return data;
+      }
+      function scheduleStatus(delay = POLL_MS) {
+        clearTimeout(statusTimer);
+        statusTimer = null;
+        if (running) statusTimer = setTimeout(pollStatus, delay);
+      }
+      async function pollStatus() {
+        statusTimer = null;
+        if (!running || statusController) return;
+        const controller = new AbortController();
+        statusController = controller;
+        const version = commandVersion;
+        const started = performance.now();
+        const timeout = setTimeout(() => controller.abort(), STATUS_TIMEOUT_MS);
+        try {
+          const response = await fetch('/api/status', { cache: 'no-store', credentials: 'same-origin', signal: controller.signal });
+          const data = await readJson(response);
+          // A status GET begun before a command must never overwrite that command's result.
+          if (running && version === commandVersion && !controller.signal.aborted) acceptStatus(data, started);
+        } catch (error) {
+          if (running && version === commandVersion) {
+            serviceAvailable = false;
+            serviceError = navigator.onLine === false ? '网络已断开，正在等待连接恢复。' : controller.signal.aborted ? '连接后台超时，正在重试。录像状态暂时无法确认。' : `无法读取后台状态：${error.message}`;
+            render();
+          }
+        } finally {
+          clearTimeout(timeout);
+          if (statusController === controller) statusController = null;
+          scheduleStatus();
+        }
+      }
+      function decodeImage(image, signal) {
+        return new Promise((resolve, reject) => {
+          const aborted = () => reject(new DOMException('Preview aborted', 'AbortError'));
+          if (signal.aborted) { aborted(); return; }
+          signal.addEventListener('abort', aborted, { once: true });
+          image.decode().then(resolve, reject).finally(() => signal.removeEventListener('abort', aborted));
+        });
+      }
+      async function fetchPreview() {
+        previewTimer = null;
+        if (!running || document.hidden || !cameraFresh() || previewController) return;
+        const controller = new AbortController();
+        previewController = controller;
+        const version = previewVersion;
+        const started = performance.now();
+        const timeout = setTimeout(() => controller.abort(), PREVIEW_TIMEOUT_MS);
+        let nextUrl = null;
+        let succeeded = false;
+        try {
+          const response = await fetch(`/preview.jpg?nonce=${Date.now()}-${version}`, { cache: 'no-store', credentials: 'same-origin', signal: controller.signal });
+          if (response.status === 503) throw new Error('暂时没有新鲜画面，正在等待相机恢复。');
+          if (!response.ok) throw new Error(`预览读取失败（HTTP ${response.status}），正在重试。`);
+          const blob = await response.blob();
+          if (!blob.size) throw new Error('收到空画面，正在重新读取。');
+          nextUrl = URL.createObjectURL(blob);
+          pendingPreviewUrl = nextUrl;
+          const image = new Image();
+          image.className = 'preview-image'; image.id = 'preview-image';
+          image.alt = '相机实时画面'; image.decoding = 'async'; image.src = nextUrl;
+          await decodeImage(image, controller.signal);
+          if (!running || document.hidden || version !== previewVersion || controller.signal.aborted || !cameraFresh()) return;
+          const previousUrl = displayedUrl;
+          ui['preview-image'].replaceWith(image);
+          ui['preview-image'] = image;
+          displayedUrl = nextUrl; nextUrl = null;
+          pendingPreviewUrl = null;
+          ui['preview-empty'].hidden = true;
+          if (previousUrl) URL.revokeObjectURL(previousUrl);
+          previewError = '';
+          succeeded = true;
+          render();
+        } catch (error) {
+          if (running && !document.hidden && version === previewVersion) {
+            previewError = controller.signal.aborted ? '预览请求超时，正在重新读取画面。' : error.message || '画面解码失败，正在重试。';
+            clearPreview();
+            render();
+          }
+        } finally {
+          clearTimeout(timeout);
+          if (nextUrl && pendingPreviewUrl === nextUrl) { URL.revokeObjectURL(nextUrl); pendingPreviewUrl = null; }
+          if (previewController === controller) previewController = null;
+          if (running && !document.hidden && cameraFresh()) {
+            clearTimeout(previewTimer);
+            previewTimer = setTimeout(fetchPreview, succeeded ? Math.max(0, PREVIEW_MS - (performance.now() - started)) : POLL_MS);
+          }
+        }
+      }
+      async function sendCommand(action) {
+        if ((action === 'start' && !canStart()) || (action === 'stop' && !canStop())) return;
+        const commandStatus = snapshot;
+        let body;
+        try {
+          // 发送前固定请求编号与代次；同一次 POST 如需重发，必须复用此请求体。
+          body = JSON.stringify(action === 'start'
+            ? { request_id: crypto.randomUUID(), start_generation: commandStatus.start_generation }
+            : { run_id: commandStatus.record.run_id });
+        }
+        catch { actionError = '无法生成请求编号，请检查浏览器是否支持安全随机数。'; render(); return; }
+        const token = commandStatus.token;
+        pendingAction = action;
+        needsReconcile = true;
+        actionError = '';
+        commandVersion += 1;
+        const version = commandVersion;
+        statusController?.abort();
+        const controller = new AbortController();
+        commandController = controller;
+        const started = performance.now();
+        let timedOut = false;
+        const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, COMMAND_TIMEOUT_MS);
+        render();
+        try {
+          const response = await fetch(`/api/${action}`, {
+            method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+            headers: { 'X-Record-Token': token, 'Content-Type': 'application/json' }, body
+          });
+          const data = await readJson(response);
+          if (!running || version !== commandVersion || controller.signal.aborted) return;
+          validateStatus(data);
+          // Preserve newer GET observations during a slow command. A GET after completion
+          // reconciles the result before controls are unlocked, even if the POST response was lost.
+          if (statusSeenAt <= started) acceptStatus(data, started);
+        } catch (error) {
+          needsReconcile = true;
+          actionError = controller.signal.aborted
+            ? `${action === 'start' ? '开始' : '停止'}请求${timedOut ? '超时' : '中断'}，操作结果尚未确认。`
+            : `${action === 'start' ? '开始' : '停止'}请求异常：${error.message}。`;
+        } finally {
+          clearTimeout(timeout);
+          if (commandController === controller) commandController = null;
+          pendingAction = null;
+          commandVersion += 1;
+          statusController?.abort();
+          if (running) { render(); scheduleStatus(0); }
+        }
+      }
+      function resume() {
+        if (running) return;
+        running = true;
+        serviceAvailable = false;
+        freshnessTimer = setInterval(render, 250);
+        render();
+        scheduleStatus(0);
+      }
+      ui['start-button'].addEventListener('click', () => sendCommand('start'));
+      ui['stop-button'].addEventListener('click', () => sendCommand('stop'));
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) pausePreview();
+        render();
+        // Visibility never sends a stop command; status polling continues in the background.
+        if (!document.hidden && running && !statusController) scheduleStatus(0);
+      });
+      window.addEventListener('offline', () => {
+        serviceAvailable = false;
+        serviceError = '网络已断开，正在等待连接恢复。';
+        statusController?.abort();
+        render();
+      });
+      window.addEventListener('online', () => { if (running && !statusController) scheduleStatus(0); });
+      window.addEventListener('pagehide', () => {
+        running = false;
+        serviceAvailable = false;
+        needsReconcile ||= Boolean(pendingAction);
+        commandVersion += 1;
+        clearTimeout(statusTimer); statusTimer = null;
+        clearInterval(freshnessTimer); freshnessTimer = null;
+        statusController?.abort();
+        commandController?.abort();
+        pausePreview();
+      });
+      window.addEventListener('pageshow', resume);
+      resume();
+    })();
+  </script>
+</body>
+</html>

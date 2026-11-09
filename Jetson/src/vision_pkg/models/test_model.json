@@ -1,0 +1,81 @@
+{
+  "ok": true,
+  "source_pt": "D:\\A1_Workspace\\GC_Rescue\\Yolo\\Material\\Test\\runs\\1024_150epochs\\weights\\best.pt",
+  "ultralytics": "8.4.72",
+  "task": "segment",
+  "family": "yolo26",
+  "imgsz": {
+    "height": 1024,
+    "width": 1024
+  },
+  "export_kwargs": {
+    "format": "onnx",
+    "imgsz": [
+      1024,
+      1024
+    ],
+    "dynamic": false,
+    "simplify": true,
+    "batch": 1,
+    "nms": false,
+    "half": false,
+    "int8": false,
+    "opset": 17,
+    "end2end": true
+  },
+  "class_names": [
+    "green",
+    "bright_blue",
+    "black",
+    "orange"
+  ],
+  "jetson_models": "D:\\A1_Workspace\\GC_Rescue\\Jetson\\src\\vision_pkg\\models",
+  "note": "只部署 seg.onnx 和 classes.txt。engine 由板上 detect_node 按当前 TensorRT 构建。",
+  "layout": "yolo26-end2end",
+  "input_shape": [
+    1,
+    3,
+    1024,
+    1024
+  ],
+  "det_shape": [
+    1,
+    300,
+    38
+  ],
+  "proto_shape": [
+    1,
+    32,
+    256,
+    256
+  ],
+  "warnings": [],
+  "errors": [],
+  "source_sha256": "85bc7a2a1e915010a5e7841ae51eeca97c1ac1de22bfbee0ccc839cea35d03ca",
+  "onnx_sha256": "b02e86a46c2463a8fa7871c0d79da14ae6ed5254932c650550556238de946097",
+  "usage": "模型导出与历史 Windows CPU 对照记录；当前 Jetson 构建、实测及覆盖范围见 docs/validation.md",
+  "pc_verification": {
+    "environment": "Windows CPU / PyTorch and ONNX Runtime",
+    "samples": [
+      {
+        "image": "v1_val_000001.jpg",
+        "detections": 1,
+        "max_box_delta_px": 0.0001220703125,
+        "min_mask_iou": 1.0
+      },
+      {
+        "image": "v1_val_000002.jpg",
+        "detections": 1,
+        "max_box_delta_px": 0.00030517578125,
+        "min_mask_iou": 1.0
+      },
+      {
+        "image": "v1_val_000003.jpg",
+        "detections": 1,
+        "max_box_delta_px": 7.62939453125e-05,
+        "min_mask_iou": 1.0
+      }
+    ],
+    "onnx_checker": "passed"
+  }
+}

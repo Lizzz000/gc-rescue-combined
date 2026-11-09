@@ -1,0 +1,236 @@
+# 高级配置：保留170项机制、调试和算法参数；由 rescue.yaml 引用，不单独作为启动入口。
+# 未启用功能的参数仍保留以支持相应模式；这里不覆盖基础文件中已有的字段。
+# 全链路共享类别身份；原图尺寸在基础配置中定义。
+shared:
+  # 顺序固定为 0 绿、1 亮蓝、2 黑、3 橙。改编号必须同时改 vision_pkg/models/classes.txt。
+  # 视觉包已冻结，未授权不要改标签文件。只改这里，ROI 和选择会对不上模型输出。
+  classes:
+    green: 0
+    blue: 1
+    black: 2
+    orange: 3
+  # 模型数字类别候选：包含绿色、排除蓝色；首趟类别由共享 green 编号派生。
+  candidate_ids: [0, 2, 3]
+# YOLO 与 Field 共用相机和最新帧邮箱；处理慢时取下一张最新帧，不积压旧输入。
+# 两阶段按 active_task 切换，不同时推理；JPEG 和 HTTP 保持在推理线程之外。
+vision:
+  detect:
+    # task 决定启动时具备哪些后端，active_task 决定当前执行哪个阶段；both 不表示并行推理。
+    task: both
+    # -1 使用 GPU；非负值是显式 DLA 核心选择，仍受已有引擎合同约束。
+    dla_core: -1
+    # 两种输出布局均按同类别IoU去重；用未裁剪框比较，避免画面边缘误合并。
+    nms_threshold: 0.7
+    max_detections: 300
+    publish_masks: false
+    # 掩膜尺寸为ceil(源尺寸/scale)；类别编号加offset后饱和到1..255，0保留为背景。
+    mask_scale: 2
+    mask_label_offset: 1
+    max_masks: 32
+    publish_field_results: true
+    publish_raw: true
+    publish_processed: true
+    # 各 max_fps 的 0 表示不额外限速，实际速度仍受相机和处理吞吐约束。
+    raw_max_fps: 100.0
+    # 仅 V4L2 后端请求驱动队列深度；GStreamer 不读取此值，其最新帧队列固定为 1。
+    camera_buffer_size: 2
+    # 留空使用自动管线；非空是开发用完整 GStreamer 管线，须自行保证输出格式及最新帧策略。
+    camera_pipeline: ''
+    publish_timing: true
+    # 两阶段平均上限为 100 FPS，保留最多两帧额度吸收抖动；始终消费最新帧。
+    seg_max_fps: 100.0
+    field_max_fps: 100.0
+    active_task: seg
+    publish_status: true
+    frame_id: camera
+  stream:
+    image_topic: /detect_node/image_processed
+    seg_detections_topic: /detect_node/seg/detections
+    seg_masks_topic: /detect_node/seg/masks
+    field_results_topic: /detect_node/field/results
+    draw_boxes: true
+    draw_labels: true
+    # 默认不叠加掩膜；启用时须同时开启 detect.publish_masks。
+    draw_masks: false
+    draw_field: true
+    # 毫秒：等同帧图层的预算从图像到达时计起，且不能超过源帧剩余有效期。
+    overlay_wait_ms: 150.0
+    input_timeout_s: 1.0
+    active_task_topic: /detect_node/active_task
+    stream_enabled: true
+    stream_max_fps: 100.0
+    # 仅缩放 HTTP 图传；ROS 压缩图保留原画布，比例恰为 1 且质量相同才共享 JPEG。
+    stream_scale: 1.0
+    # 两路 JPEG 共用后端选择；nvjpeg 使用 Jetson 硬件，模型与 JPEG 质量设置不随之变化。
+    jpeg_backend: nvjpeg
+    publish_annotated: false
+    publish_compressed: false
+    compressed_quality: 80
+    # 默认关闭动态统计叠层；状态/计时话题仍按高级发布开关工作。
+    overlay_stats: false
+    publish_status: true
+    frame_id: ''
+  # 场地纯值参数：紫色饱和度为百分比，hue沿用OpenCV 0..180。
+  field:
+    # 仅 Field 按 720p 处理；源图/图传仍为 1080p，结果坐标还原到源图。
+    proc_width: 1280
+    proc_height: 720
+    # 鸟瞰像素密度，单位 px/m；bev_width/height 为 0 时按基础配置中的物理尺寸计算。
+    bev_px_per_m: 400.0
+    # 显式 BEV 像素尺寸；0 按基础配置中的物理尺寸 × bev_px_per_m 推导。
+    bev_width: 0
+    bev_height: 0
+    purple_a_min: 8.0
+    purple_b_max: -5.0
+    purple_chroma_min: 14.0
+    # Lab L 0..100，按[下限,上限]排列。
+    purple_L_range: [8.0, 96.0]
+    # 百分比 0..100，分割时换算为8位HSV。
+    purple_sat_min: 22.0
+    # OpenCV hue 0..180，按[下限,上限]排列。
+    purple_hue_range: [115.0, 175.0]
+    purple_use_hue: true
+    morph_close_ksize: 5
+    morph_close_iter: 2
+    morph_dilate_ksize: 3
+    morph_dilate_iter: 2
+    min_area_frac: 0.004
+    # 无量纲矩形比例，按[下限,上限]排列。
+    min_rect_ratio_range: [1.2, 12.0]
+    max_border_touch: 2
+    min_fill_ratio: 0.45
+    max_candidates_try: 4
+    corner_exclude_frac: 0.06
+    edge_bins: 32
+    edge_band_frac: 0.18
+    fit_outlier_px: 2.0
+    fit_iterations: 4
+    min_side_points: 8
+    min_side_inliers: 6
+    prior_corner_tol_frac: 0.12
+    quad_min_area_frac: 0.004
+    # 无量纲边长比例，按[下限,上限]排列。
+    quad_side_ratio_range: [0.2, 6.0]
+    use_aspect_check: false
+    quad_max_aspect_err: 2.0
+    # 归一化搜索区间0..1，按[下限,上限]排列，间距至少0.001。
+    black_search_range: [0.14, 0.86]
+    # 归一化采样行区间0..1，按[下限,上限]排列，间距至少0.001。
+    black_row_range: [0.12, 0.88]
+    black_abs_gray: 90.0
+    # 窄暗带灰度相对内部搜索区中位数的下陷深度。
+    black_min_depth: 0.15
+    black_conf_depth: 0.35
+    # 有效行覆盖比例；完整直线证据至少要求0.75，且三个纵向分段均需支持。
+    black_score_frac: 0.4
+    black_max_width_frac: 0.3
+    # 对比度主判据无合格带时的强暗备用比例；主判据歧义直接拒绝。
+    black_rel_gray: 0.55
+    # 仅标记split_suspect；可靠偏心线仍采用实测，不回退几何中线。
+    black_max_offset_frac: 0.04
+    # 小抖动平滑上下端点；位移相对split_jump_frac增大时提高当前帧权重。
+    split_ema_alpha: 0.3
+    split_jump_frac: 0.03
+    bev_border_margin_frac: 0.04
+    red_a_min: 28.0
+    red_chroma_min: 32.0
+    # Lab b -128..127，按[下限,上限]排列。
+    red_b_range: [-12.0, 70.0]
+    red_L_min: 15.0
+    use_blue_interior: false
+    blue_a_min: 5.0
+    blue_chroma_min: 25.0
+    # Lab b -128..127，按[下限,上限]排列。
+    blue_b_range: [-80.0, 5.0]
+    blue_L_min: 12.0
+    locate_hits_needed: 2
+    corner_ema_alpha: 0.45
+    lost_frames_to_search: 6
+    refit_every: 10
+    track_window_scale: 1.35
+    # 0=LAB并可选叠加HSV，1=仅LAB，2=仅HSV；0的HSV受purple_use_hue控制，2要求其为true。
+    seg_mode: 0
+    edge_samples: 40
+    edge_probe_radius: 3
+    edge_support_min: 0.25
+    edge_support_strong: 0.35
+    w_purple: 0.3
+    w_temporal: 0.3
+    w_red_inside: 0.2
+    w_red_outside: 0.15
+    w_geometry: 0.05
+    min_total_score: 0.45
+    min_purple_score: 0.28
+    red_inside_min: 0.15
+    red_outside_max: 0.25
+    purple_lost_threshold: 0.15
+    red_cells_min: 4
+    expand_frac: 0.08
+    red_grid_cols: 4
+    red_grid_rows: 2
+    red_cell_min: 0.1
+    pred_velocity_gain: 0.7
+    max_jump_frac: 0.35
+    jump_accept_frac: 0.35
+    switch_confirm_frames: 2
+    fast_switch_purple: 0.45
+    fast_switch_red_inside: 0.45
+    fast_switch_red_outside: 0.12
+    max_hold_frames: 5
+# 跟踪和选择：max_age按已接受帧计数，不是秒。
+tracking:
+  track:
+    det_threshold: 0.25
+    detections_topic: /detect_node/seg/detections
+    active_task_topic: /detect_node/active_task
+    iou_threshold: 0.3
+    inertia: 0.2
+    # max_age为未命中容忍帧数，min_hits为连续匹配门槛（含核心预热规则），delta_t为速度回看跨度。
+    # 空检测帧也推进跟踪帧龄，三个量均不是秒数。
+    max_age: 10
+    min_hits: 3
+    delta_t: 3
+    # 弱检测关联需上游保留低于det_threshold的框；不自动修改检测阈值。
+    use_byte: false
+    reset_timeout_s: 1.0
+  select:
+    tracks_topic: /track_node/seg/tracks
+    active_task_topic: /detect_node/active_task
+    reset_timeout_s: 1.0
+    mission_status_topic: /mission_node/status
+# 任务：ROI 1秒 < Mission 2秒；源时间和单调截止不可混用。
+mission:
+  controller:
+    # 单调秒；外层超时必须大于下游。
+    request_timeout_s: 2.0
+    detector_service: /detect_node/set_field
+    detector_task_topic: /detect_node/active_task
+    target_roi_service: /target_node/check_roi
+  target:
+    # 单调秒；受理后等待首个新鲜完整原始检测。
+    roi_check_timeout_s: 1.0
+    input_topic: /select_node/target
+    control_topic: /mission_node/active_task
+    reset_timeout_s: 1.0
+    detections_topic: /detect_node/seg/detections
+  safety:
+    input_topic: /detect_node/field/results
+    control_topic: /mission_node/active_task
+    reset_timeout_s: 1.0
+    mission_status_topic: /mission_node/status
+# CAN：输入、速度、发送队列和请求超时分别见高级配置，职责保持独立。
+bridge:
+  # 输入ROS源帧龄与本机单调到达龄上限；发送前复核，不替代速度到达龄或排队寿命。
+  input_timeout_s: 1.0
+  # 速度仅按本机单调到达龄判新鲜，单位秒。
+  velocity_timeout_s: 0.3
+  # 发送帧入队后的单调寿命，单位秒；同 ID 合并和背压重试都不续期。
+  tx_queue_timeout_s: 0.1
+  # 单调秒；外层超时必须大于下游。
+  request_timeout_s: 3.0
+  target_topic: /target_node/target
+  safety_topic: /safety_node/target
+  task_topic: /mission_node/active_task
+  mission_status_topic: /mission_node/status
+  roi_service: /mission_node/arrived
+  command_service: /mission_node/command

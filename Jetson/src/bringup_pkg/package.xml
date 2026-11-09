@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<!-- 唯一配置与rescue.launch.py装配；业务资源创建前完成校验。 -->
+<package format="3">
+  <name>bringup_pkg</name>
+  <version>0.0.0</version>
+  <description>Single entry point starting detect, stream, track, select, mission, target, safety and bridge from one shared deployment config.</description>
+  <maintainer email="li@todo.todo">li</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <!-- 装配层启动以下已安装包，不把业务代码编译进 launch 或配置解析器。 -->
+  <exec_depend>interface_pkg</exec_depend>
+  <exec_depend>vision_pkg</exec_depend>
+  <exec_depend>track_pkg</exec_depend>
+  <exec_depend>mission_pkg</exec_depend>
+  <exec_depend>bridge_pkg</exec_depend>
+
+  <test_depend>rclpy</test_depend>
+  <test_depend>rclcpp_components</test_depend>
+  <test_depend>composition_interfaces</test_depend>
+  <test_depend>vision_msgs</test_depend>
+  <test_depend>python3-numpy</test_depend>
+  <test_depend>python3-opencv</test_depend>
+
+  <test_depend>ament_cmake_test</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

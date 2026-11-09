@@ -1,0 +1,60 @@
+# 基础配置：保留25项日常有效字段；其余170项来自高级配置，合并后统一校验。
+version: 1
+# 相对路径以本文件所在目录为准；同一参数只能出现在基础或高级文件中的一处。
+advanced_config: rescue_advanced.yaml
+# 全链路共享原图尺寸；固定类别身份见高级配置，合并后映射给所有消费者。
+shared:
+  # 统一原图像素尺寸；ROI、目标选择与安全中心均按此解释，不是图传缩放后的尺寸。
+  image:
+    width: 1920
+    height: 1080
+# YOLO 与 Field 共用相机和最新帧邮箱；处理慢时取下一张最新帧，不积压旧输入。
+# 两阶段按 active_task 切换，不同时推理；JPEG 和 HTTP 保持在推理线程之外。
+vision:
+  detect:
+    # 只加载已存在TRT，不构建或回退；路径先由统一入口解析。
+    seg_model_path: package://vision_pkg/models/seg.ad2322286d06b71.trt
+    seg_labels_path: package://vision_pkg/models/classes.txt
+    # 置信度无量纲 [0,1]；与同类框去重配套，避免弱目标漏检及重复计数。
+    conf_threshold_seg: 0.5
+    camera_device: /dev/video0
+    # 两阶段共用 MJPG 120 FPS 请求；相机实际有效帧率与算法吞吐须分别实测。
+    camera_fps: 120
+    camera_fourcc: MJPG
+    # 自动 GStreamer 管线的解码前/颜色转换前队列及 appsink 各固定保留 1 项。
+    camera_backend: gstreamer
+  stream:
+    stream_address: 0.0.0.0
+    stream_port: 8080
+    # HTTP JPEG质量；高级配置的compressed_quality独立控制ROS压缩图。
+    stream_quality: 80
+  # 场地几何；处理尺寸、颜色阈值和跟踪机制见高级配置。
+  field:
+    # 拟合紫框外缘：图纸外框660×360 mm，内框600×300 mm、厚20 mm仅作尺寸参考。
+    # 这里使用米；算法不按内框尺寸自动扣除边框，也不使用厚度参与二维识别。
+    field_w_m: 0.66
+    field_h_m: 0.36
+# 目标选择；OC-SORT阈值和帧龄见高级配置。
+tracking:
+  select:
+    # 横纵框间隙分别按原图宽高归一化；两方向都小于此比例才避蓝，不是中心点距离。
+    blue_min_distance_ratio: 0.1
+# 任务ROI；三层独立请求期限见高级配置。
+mission:
+  target:
+    # 归一化矩形左上角和宽高；检测框与 ROI 相交或触边均计入，不按框中心筛选。
+    roi_x: 0.25
+    roi_y: 0.5
+    roi_width: 0.5
+    roi_height: 0.5
+# CAN：输入、速度、发送队列和请求超时分别见高级配置，职责保持独立。
+bridge:
+  # 当前实测V3沿用模块已有CAN设置；SocketCAN用于系统CAN网口及隔离vcan合同。
+  transport: damiao_serial_fixed
+  # 按USB序列号定位设备，避免ttyACM编号随插拔变化；SocketCAN须为空字符串。
+  serial_device: /dev/serial/by-id/usb-HDSC_CDC_Device_00000000050C-if00
+  # 当前模块与STM32台架均为1M；这里只记录预期值，不设置或验证实际码率。SocketCAN须为0。
+  can_bitrate: 1000000
+  # 仅 SocketCAN 使用；不能把串口路径写在这里。
+  can_interface: can0
+  velocity_topic: /cmd_vel

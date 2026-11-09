@@ -1,0 +1,16 @@
+# ROS 2 / colcon generated files
+/build/
+/install/
+/log/
+/build-teleop/
+/install-teleop/
+/.venv-teleop/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Board-local clangd databases, isolated tools and indexes
+/compile_commands.json
+/.deps/
+.cache/

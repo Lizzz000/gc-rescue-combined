@@ -1,0 +1,4 @@
+#pragma once
+namespace record {
+inline constexpr const char* web_page = R"GC_RECORD_WEB(@RECORD_WEB_PAGE@)GC_RECORD_WEB";
+}

@@ -1,0 +1,61 @@
+# Build products and local CMake state
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+compile_commands.json
+build.ninja
+.ninja_deps
+.ninja_log
+CMakeUserPresets.json
+*.o
+*.obj
+*.d
+*.elf
+*.axf
+*.hex
+*.bin
+*.map
+*.lst
+*.su
+*.exe
+*.gcda
+*.gcno
+*.gcov
+
+# Local IDE metadata and CubeMX bookkeeping
+.idea/
+.vs/
+.mxproject
+*.uvguix.*
+*.uvoptx
+
+# Caches and temporary files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+*.tmp
+*.bak
+tmp/
+
+# Local environment settings
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Track source, Drivers, Middlewares, *.ioc, *.ld, startup assembly,
+# CMakePresets.json, toolchains, and project documentation.

@@ -1,0 +1,12 @@
+# Copyright 2026 li
+# SPDX-License-Identifier: Apache-2.0
+# 一次 ROI 检查服务——请求触发检查，响应回传 interface_pkg/RoiCheck 结果。
+# /target_node/check_roi 检查完整原始检测；/mission_node/arrived 叠加运输限制。
+# Mission 应答和诊断成功且运输准入通过后提交路由，再等 STM32 去程转向；首趟进度只由送达确认推进。
+
+# 受理后等待首个源时间不早于请求的有效检测帧，再执行一次检查。
+# 请求体为空：ROI 矩形和超时由服务端配置决定，本次调用不会传入新的坐标。
+# 本服务没有逐次覆盖参数；忙时应立即拒绝新调用，不能替换旧请求等待。
+---
+interface_pkg/RoiCheck result
+# arrived 响应仅说明 ROI 结论；转向授权和识别模式完成须分别等待 CAN 指令及任务状态。

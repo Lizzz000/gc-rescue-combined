@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>vision_pkg</name>
+  <version>0.1.0</version>
+  <description>USB camera acquisition with stage-switched YOLO26 inference and independent MJPEG streaming.</description>
+  <maintainer email="li@todo.todo">li</maintainer>
+  <license>Apache-2.0</license>
+  <!-- YOLO 集成及上游保留各自 AGPL 声明；此处汇总许可，不替代源文件和安装的许可全文。 -->
+  <license>AGPL-3.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <build_depend>pkg-config</build_depend>
+  <depend>libgstreamer1.0-dev</depend>
+  <depend>libgstreamer-plugins-base1.0-dev</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+  <depend>rcl_interfaces</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>vision_msgs</depend>
+  <!-- 图像适配保持与 OpenCV 一致的 cv_bridge；GPU 后端选择在 CMake 中显式配置。 -->
+  <depend>cv_bridge</depend>
+  <depend>interface_pkg</depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>gstreamer1.0-plugins-bad</exec_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_cmake_test</test_depend>
+  <test_depend>rclpy</test_depend>
+  <test_depend>python3-opencv</test_depend>
+  <test_depend>python3-numpy</test_depend>
+  <test_depend>composition_interfaces</test_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

@@ -1,0 +1,33 @@
+digraph mission {
+  graph [
+    fontname="Microsoft YaHei",
+    rankdir=TB,
+    label="CyclePhase 0–8 与命令 1–4",
+    labelloc=t,
+    fontsize=16
+  ];
+  node [fontname="Microsoft YaHei", shape=box, style="rounded,filled", fillcolor="#f7f7f7"];
+  edge [fontname="Microsoft YaHei"];
+
+  fault [label="8 Fault\n启动初态"];
+  search [label="0 SearchingTarget\n寻找目标"];
+  roi [label="1 CheckingRoi\n检查 ROI"];
+  turn [label="2 WaitingTurn\n等待转向"];
+  field [label="3 SwitchingField\n切到 field"];
+  nav [label="4 NavigatingSafety\n驶向安全区"];
+  wait [label="5 WaitingTransfer\n等待送达或重找"];
+  seg [label="6 SwitchingSeg\n切回 seg"];
+  failed [label="7 RoiFailed\nROI 失败"];
+
+  fault -> search [label="首个合法 seg"];
+  search -> roi [label="arrived"];
+  roi -> turn [label="通过\ndestination=左或右"];
+  roi -> failed [label="超时或拒绝"];
+  failed -> seg [label="命令 3 重新寻找"];
+  turn -> field [label="命令 1 转向完成"];
+  field -> nav [label="set_field 成功\n且 TaskState 为 field"];
+  nav -> wait [label="命令 2 安全区到达"];
+  wait -> wait [label="命令 4 送达确认\ntransport_phase=Later"];
+  wait -> seg [label="命令 3 重新寻找"];
+  seg -> search [label="seg 双确认\n清空目的地和 ROI 号"];
+}

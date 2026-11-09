@@ -1,0 +1,4 @@
+# Linux deployment must receive LF text even when core.autocrlf is enabled.
+* text=auto eol=lf
+# Preserve vendored sources and licenses byte for byte.
+src/track_pkg/third_party/** -text

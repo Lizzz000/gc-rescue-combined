@@ -1,0 +1,1124 @@
+{
+  "parameters": {
+    "detect_node": {
+      "task": {
+        "path": "vision.detect.task",
+        "kind": "string"
+      },
+      "seg_model_path": {
+        "path": "vision.detect.seg_model_path",
+        "kind": "string"
+      },
+      "seg_labels_path": {
+        "path": "vision.detect.seg_labels_path",
+        "kind": "string"
+      },
+      "dla_core": {
+        "path": "vision.detect.dla_core",
+        "kind": "integer"
+      },
+      "conf_threshold_seg": {
+        "path": "vision.detect.conf_threshold_seg",
+        "kind": "number"
+      },
+      "nms_threshold": {
+        "path": "vision.detect.nms_threshold",
+        "kind": "number"
+      },
+      "max_detections": {
+        "path": "vision.detect.max_detections",
+        "kind": "integer"
+      },
+      "mask_scale": {
+        "path": "vision.detect.mask_scale",
+        "kind": "integer"
+      },
+      "mask_label_offset": {
+        "path": "vision.detect.mask_label_offset",
+        "kind": "integer"
+      },
+      "max_masks": {
+        "path": "vision.detect.max_masks",
+        "kind": "integer"
+      },
+      "publish_masks": {
+        "path": "vision.detect.publish_masks",
+        "kind": "boolean"
+      },
+      "publish_field_results": {
+        "path": "vision.detect.publish_field_results",
+        "kind": "boolean"
+      },
+      "publish_raw": {
+        "path": "vision.detect.publish_raw",
+        "kind": "boolean"
+      },
+      "publish_processed": {
+        "path": "vision.detect.publish_processed",
+        "kind": "boolean"
+      },
+      "raw_max_fps": {
+        "path": "vision.detect.raw_max_fps",
+        "kind": "number"
+      },
+      "camera_device": {
+        "path": "vision.detect.camera_device",
+        "kind": "string"
+      },
+      "camera_width": {
+        "path": "shared.image.width",
+        "kind": "integer"
+      },
+      "camera_height": {
+        "path": "shared.image.height",
+        "kind": "integer"
+      },
+      "camera_fps": {
+        "path": "vision.detect.camera_fps",
+        "kind": "integer"
+      },
+      "camera_fourcc": {
+        "path": "vision.detect.camera_fourcc",
+        "kind": "string"
+      },
+      "camera_buffer_size": {
+        "path": "vision.detect.camera_buffer_size",
+        "kind": "integer"
+      },
+      "camera_backend": {
+        "path": "vision.detect.camera_backend",
+        "kind": "string"
+      },
+      "camera_pipeline": {
+        "path": "vision.detect.camera_pipeline",
+        "kind": "string"
+      },
+      "publish_timing": {
+        "path": "vision.detect.publish_timing",
+        "kind": "boolean"
+      },
+      "seg_max_fps": {
+        "path": "vision.detect.seg_max_fps",
+        "kind": "number"
+      },
+      "field_max_fps": {
+        "path": "vision.detect.field_max_fps",
+        "kind": "number"
+      },
+      "active_task": {
+        "path": "vision.detect.active_task",
+        "kind": "string"
+      },
+      "publish_status": {
+        "path": "vision.detect.publish_status",
+        "kind": "boolean"
+      },
+      "frame_id": {
+        "path": "vision.detect.frame_id",
+        "kind": "string"
+      },
+      "field.proc_width": {
+        "path": "vision.field.proc_width",
+        "kind": "integer"
+      },
+      "field.proc_height": {
+        "path": "vision.field.proc_height",
+        "kind": "integer"
+      },
+      "field.field_w_m": {
+        "path": "vision.field.field_w_m",
+        "kind": "number"
+      },
+      "field.field_h_m": {
+        "path": "vision.field.field_h_m",
+        "kind": "number"
+      },
+      "field.bev_px_per_m": {
+        "path": "vision.field.bev_px_per_m",
+        "kind": "number"
+      },
+      "field.bev_width": {
+        "path": "vision.field.bev_width",
+        "kind": "integer"
+      },
+      "field.bev_height": {
+        "path": "vision.field.bev_height",
+        "kind": "integer"
+      },
+      "field.purple_a_min": {
+        "path": "vision.field.purple_a_min",
+        "kind": "number"
+      },
+      "field.purple_b_max": {
+        "path": "vision.field.purple_b_max",
+        "kind": "number"
+      },
+      "field.purple_chroma_min": {
+        "path": "vision.field.purple_chroma_min",
+        "kind": "number"
+      },
+      "field.purple_L_min": {
+        "path": "vision.field.purple_L_range",
+        "kind": "number",
+        "index": 0
+      },
+      "field.purple_L_max": {
+        "path": "vision.field.purple_L_range",
+        "kind": "number",
+        "index": 1
+      },
+      "field.purple_sat_min": {
+        "path": "vision.field.purple_sat_min",
+        "kind": "number"
+      },
+      "field.purple_hue_min": {
+        "path": "vision.field.purple_hue_range",
+        "kind": "number",
+        "index": 0
+      },
+      "field.purple_hue_max": {
+        "path": "vision.field.purple_hue_range",
+        "kind": "number",
+        "index": 1
+      },
+      "field.purple_use_hue": {
+        "path": "vision.field.purple_use_hue",
+        "kind": "boolean"
+      },
+      "field.morph_close_ksize": {
+        "path": "vision.field.morph_close_ksize",
+        "kind": "integer"
+      },
+      "field.morph_close_iter": {
+        "path": "vision.field.morph_close_iter",
+        "kind": "integer"
+      },
+      "field.morph_dilate_ksize": {
+        "path": "vision.field.morph_dilate_ksize",
+        "kind": "integer"
+      },
+      "field.morph_dilate_iter": {
+        "path": "vision.field.morph_dilate_iter",
+        "kind": "integer"
+      },
+      "field.min_area_frac": {
+        "path": "vision.field.min_area_frac",
+        "kind": "number"
+      },
+      "field.min_rect_ratio_lo": {
+        "path": "vision.field.min_rect_ratio_range",
+        "kind": "number",
+        "index": 0
+      },
+      "field.min_rect_ratio_hi": {
+        "path": "vision.field.min_rect_ratio_range",
+        "kind": "number",
+        "index": 1
+      },
+      "field.max_border_touch": {
+        "path": "vision.field.max_border_touch",
+        "kind": "integer"
+      },
+      "field.min_fill_ratio": {
+        "path": "vision.field.min_fill_ratio",
+        "kind": "number"
+      },
+      "field.max_candidates_try": {
+        "path": "vision.field.max_candidates_try",
+        "kind": "integer"
+      },
+      "field.corner_exclude_frac": {
+        "path": "vision.field.corner_exclude_frac",
+        "kind": "number"
+      },
+      "field.edge_bins": {
+        "path": "vision.field.edge_bins",
+        "kind": "integer"
+      },
+      "field.edge_band_frac": {
+        "path": "vision.field.edge_band_frac",
+        "kind": "number"
+      },
+      "field.fit_outlier_px": {
+        "path": "vision.field.fit_outlier_px",
+        "kind": "number"
+      },
+      "field.fit_iterations": {
+        "path": "vision.field.fit_iterations",
+        "kind": "integer"
+      },
+      "field.min_side_points": {
+        "path": "vision.field.min_side_points",
+        "kind": "integer"
+      },
+      "field.min_side_inliers": {
+        "path": "vision.field.min_side_inliers",
+        "kind": "integer"
+      },
+      "field.prior_corner_tol_frac": {
+        "path": "vision.field.prior_corner_tol_frac",
+        "kind": "number"
+      },
+      "field.quad_min_area_frac": {
+        "path": "vision.field.quad_min_area_frac",
+        "kind": "number"
+      },
+      "field.quad_side_ratio_lo": {
+        "path": "vision.field.quad_side_ratio_range",
+        "kind": "number",
+        "index": 0
+      },
+      "field.quad_side_ratio_hi": {
+        "path": "vision.field.quad_side_ratio_range",
+        "kind": "number",
+        "index": 1
+      },
+      "field.use_aspect_check": {
+        "path": "vision.field.use_aspect_check",
+        "kind": "boolean"
+      },
+      "field.quad_max_aspect_err": {
+        "path": "vision.field.quad_max_aspect_err",
+        "kind": "number"
+      },
+      "field.black_search_lo": {
+        "path": "vision.field.black_search_range",
+        "kind": "number",
+        "index": 0
+      },
+      "field.black_search_hi": {
+        "path": "vision.field.black_search_range",
+        "kind": "number",
+        "index": 1
+      },
+      "field.black_row_lo": {
+        "path": "vision.field.black_row_range",
+        "kind": "number",
+        "index": 0
+      },
+      "field.black_row_hi": {
+        "path": "vision.field.black_row_range",
+        "kind": "number",
+        "index": 1
+      },
+      "field.black_min_depth": {
+        "path": "vision.field.black_min_depth",
+        "kind": "number"
+      },
+      "field.black_conf_depth": {
+        "path": "vision.field.black_conf_depth",
+        "kind": "number"
+      },
+      "field.black_score_frac": {
+        "path": "vision.field.black_score_frac",
+        "kind": "number"
+      },
+      "field.black_max_width_frac": {
+        "path": "vision.field.black_max_width_frac",
+        "kind": "number"
+      },
+      "field.black_abs_gray": {
+        "path": "vision.field.black_abs_gray",
+        "kind": "number"
+      },
+      "field.black_rel_gray": {
+        "path": "vision.field.black_rel_gray",
+        "kind": "number"
+      },
+      "field.black_max_offset_frac": {
+        "path": "vision.field.black_max_offset_frac",
+        "kind": "number"
+      },
+      "field.split_ema_alpha": {
+        "path": "vision.field.split_ema_alpha",
+        "kind": "number"
+      },
+      "field.split_jump_frac": {
+        "path": "vision.field.split_jump_frac",
+        "kind": "number"
+      },
+      "field.red_a_min": {
+        "path": "vision.field.red_a_min",
+        "kind": "number"
+      },
+      "field.red_chroma_min": {
+        "path": "vision.field.red_chroma_min",
+        "kind": "number"
+      },
+      "field.red_b_min": {
+        "path": "vision.field.red_b_range",
+        "kind": "number",
+        "index": 0
+      },
+      "field.red_b_max": {
+        "path": "vision.field.red_b_range",
+        "kind": "number",
+        "index": 1
+      },
+      "field.red_L_min": {
+        "path": "vision.field.red_L_min",
+        "kind": "number"
+      },
+      "field.use_blue_interior": {
+        "path": "vision.field.use_blue_interior",
+        "kind": "boolean"
+      },
+      "field.blue_a_min": {
+        "path": "vision.field.blue_a_min",
+        "kind": "number"
+      },
+      "field.blue_chroma_min": {
+        "path": "vision.field.blue_chroma_min",
+        "kind": "number"
+      },
+      "field.blue_b_min": {
+        "path": "vision.field.blue_b_range",
+        "kind": "number",
+        "index": 0
+      },
+      "field.blue_b_max": {
+        "path": "vision.field.blue_b_range",
+        "kind": "number",
+        "index": 1
+      },
+      "field.blue_L_min": {
+        "path": "vision.field.blue_L_min",
+        "kind": "number"
+      },
+      "field.bev_border_margin_frac": {
+        "path": "vision.field.bev_border_margin_frac",
+        "kind": "number"
+      },
+      "field.locate_hits_needed": {
+        "path": "vision.field.locate_hits_needed",
+        "kind": "integer"
+      },
+      "field.lost_frames_to_search": {
+        "path": "vision.field.lost_frames_to_search",
+        "kind": "integer"
+      },
+      "field.refit_every": {
+        "path": "vision.field.refit_every",
+        "kind": "integer"
+      },
+      "field.track_window_scale": {
+        "path": "vision.field.track_window_scale",
+        "kind": "number"
+      },
+      "field.corner_ema_alpha": {
+        "path": "vision.field.corner_ema_alpha",
+        "kind": "number"
+      },
+      "field.seg_mode": {
+        "path": "vision.field.seg_mode",
+        "kind": "integer"
+      },
+      "field.edge_samples": {
+        "path": "vision.field.edge_samples",
+        "kind": "integer"
+      },
+      "field.edge_probe_radius": {
+        "path": "vision.field.edge_probe_radius",
+        "kind": "integer"
+      },
+      "field.edge_support_min": {
+        "path": "vision.field.edge_support_min",
+        "kind": "number"
+      },
+      "field.edge_support_strong": {
+        "path": "vision.field.edge_support_strong",
+        "kind": "number"
+      },
+      "field.w_purple": {
+        "path": "vision.field.w_purple",
+        "kind": "number"
+      },
+      "field.w_temporal": {
+        "path": "vision.field.w_temporal",
+        "kind": "number"
+      },
+      "field.w_red_inside": {
+        "path": "vision.field.w_red_inside",
+        "kind": "number"
+      },
+      "field.w_red_outside": {
+        "path": "vision.field.w_red_outside",
+        "kind": "number"
+      },
+      "field.w_geometry": {
+        "path": "vision.field.w_geometry",
+        "kind": "number"
+      },
+      "field.min_total_score": {
+        "path": "vision.field.min_total_score",
+        "kind": "number"
+      },
+      "field.min_purple_score": {
+        "path": "vision.field.min_purple_score",
+        "kind": "number"
+      },
+      "field.purple_lost_threshold": {
+        "path": "vision.field.purple_lost_threshold",
+        "kind": "number"
+      },
+      "field.red_inside_min": {
+        "path": "vision.field.red_inside_min",
+        "kind": "number"
+      },
+      "field.red_cells_min": {
+        "path": "vision.field.red_cells_min",
+        "kind": "integer"
+      },
+      "field.red_outside_max": {
+        "path": "vision.field.red_outside_max",
+        "kind": "number"
+      },
+      "field.expand_frac": {
+        "path": "vision.field.expand_frac",
+        "kind": "number"
+      },
+      "field.red_grid_cols": {
+        "path": "vision.field.red_grid_cols",
+        "kind": "integer"
+      },
+      "field.red_grid_rows": {
+        "path": "vision.field.red_grid_rows",
+        "kind": "integer"
+      },
+      "field.red_cell_min": {
+        "path": "vision.field.red_cell_min",
+        "kind": "number"
+      },
+      "field.pred_velocity_gain": {
+        "path": "vision.field.pred_velocity_gain",
+        "kind": "number"
+      },
+      "field.max_jump_frac": {
+        "path": "vision.field.max_jump_frac",
+        "kind": "number"
+      },
+      "field.jump_accept_frac": {
+        "path": "vision.field.jump_accept_frac",
+        "kind": "number"
+      },
+      "field.switch_confirm_frames": {
+        "path": "vision.field.switch_confirm_frames",
+        "kind": "integer"
+      },
+      "field.fast_switch_purple": {
+        "path": "vision.field.fast_switch_purple",
+        "kind": "number"
+      },
+      "field.fast_switch_red_inside": {
+        "path": "vision.field.fast_switch_red_inside",
+        "kind": "number"
+      },
+      "field.fast_switch_red_outside": {
+        "path": "vision.field.fast_switch_red_outside",
+        "kind": "number"
+      },
+      "field.max_hold_frames": {
+        "path": "vision.field.max_hold_frames",
+        "kind": "integer"
+      }
+    },
+    "stream_node": {
+      "image_topic": {
+        "path": "vision.stream.image_topic",
+        "kind": "string"
+      },
+      "seg_detections_topic": {
+        "path": "vision.stream.seg_detections_topic",
+        "kind": "string"
+      },
+      "seg_masks_topic": {
+        "path": "vision.stream.seg_masks_topic",
+        "kind": "string"
+      },
+      "field_results_topic": {
+        "path": "vision.stream.field_results_topic",
+        "kind": "string"
+      },
+      "draw_boxes": {
+        "path": "vision.stream.draw_boxes",
+        "kind": "boolean"
+      },
+      "draw_labels": {
+        "path": "vision.stream.draw_labels",
+        "kind": "boolean"
+      },
+      "draw_masks": {
+        "path": "vision.stream.draw_masks",
+        "kind": "boolean"
+      },
+      "draw_field": {
+        "path": "vision.stream.draw_field",
+        "kind": "boolean"
+      },
+      "overlay_wait_ms": {
+        "path": "vision.stream.overlay_wait_ms",
+        "kind": "number"
+      },
+      "input_timeout_s": {
+        "path": "vision.stream.input_timeout_s",
+        "kind": "number"
+      },
+      "active_task_topic": {
+        "path": "vision.stream.active_task_topic",
+        "kind": "string"
+      },
+      "stream_enabled": {
+        "path": "vision.stream.stream_enabled",
+        "kind": "boolean"
+      },
+      "stream_address": {
+        "path": "vision.stream.stream_address",
+        "kind": "string"
+      },
+      "stream_port": {
+        "path": "vision.stream.stream_port",
+        "kind": "integer"
+      },
+      "jpeg_backend": {
+        "path": "vision.stream.jpeg_backend",
+        "kind": "string"
+      },
+      "stream_quality": {
+        "path": "vision.stream.stream_quality",
+        "kind": "integer"
+      },
+      "stream_max_fps": {
+        "path": "vision.stream.stream_max_fps",
+        "kind": "number"
+      },
+      "stream_scale": {
+        "path": "vision.stream.stream_scale",
+        "kind": "number"
+      },
+      "publish_annotated": {
+        "path": "vision.stream.publish_annotated",
+        "kind": "boolean"
+      },
+      "publish_compressed": {
+        "path": "vision.stream.publish_compressed",
+        "kind": "boolean"
+      },
+      "compressed_quality": {
+        "path": "vision.stream.compressed_quality",
+        "kind": "integer"
+      },
+      "overlay_stats": {
+        "path": "vision.stream.overlay_stats",
+        "kind": "boolean"
+      },
+      "publish_status": {
+        "path": "vision.stream.publish_status",
+        "kind": "boolean"
+      },
+      "frame_id": {
+        "path": "vision.stream.frame_id",
+        "kind": "string"
+      }
+    },
+    "track_node": {
+      "detections_topic": {
+        "path": "tracking.track.detections_topic",
+        "kind": "string"
+      },
+      "active_task_topic": {
+        "path": "tracking.track.active_task_topic",
+        "kind": "string"
+      },
+      "det_threshold": {
+        "path": "tracking.track.det_threshold",
+        "kind": "number"
+      },
+      "iou_threshold": {
+        "path": "tracking.track.iou_threshold",
+        "kind": "number"
+      },
+      "inertia": {
+        "path": "tracking.track.inertia",
+        "kind": "number"
+      },
+      "max_age": {
+        "path": "tracking.track.max_age",
+        "kind": "integer"
+      },
+      "min_hits": {
+        "path": "tracking.track.min_hits",
+        "kind": "integer"
+      },
+      "delta_t": {
+        "path": "tracking.track.delta_t",
+        "kind": "integer"
+      },
+      "use_byte": {
+        "path": "tracking.track.use_byte",
+        "kind": "boolean"
+      },
+      "reset_timeout_s": {
+        "path": "tracking.track.reset_timeout_s",
+        "kind": "number"
+      }
+    },
+    "select_node": {
+      "tracks_topic": {
+        "path": "tracking.select.tracks_topic",
+        "kind": "string"
+      },
+      "active_task_topic": {
+        "path": "tracking.select.active_task_topic",
+        "kind": "string"
+      },
+      "image_width": {
+        "path": "shared.image.width",
+        "kind": "integer"
+      },
+      "image_height": {
+        "path": "shared.image.height",
+        "kind": "integer"
+      },
+      "candidate_class_ids": {
+        "path": "shared.candidate_ids",
+        "kind": "integers"
+      },
+      "first_class_id": {
+        "path": "shared.classes.green",
+        "kind": "integer"
+      },
+      "blue_class_id": {
+        "path": "shared.classes.blue",
+        "kind": "integer"
+      },
+      "blue_min_distance_ratio": {
+        "path": "tracking.select.blue_min_distance_ratio",
+        "kind": "number"
+      },
+      "reset_timeout_s": {
+        "path": "tracking.select.reset_timeout_s",
+        "kind": "number"
+      },
+      "mission_status_topic": {
+        "path": "tracking.select.mission_status_topic",
+        "kind": "string"
+      }
+    },
+    "mission_node": {
+      "detector_service": {
+        "path": "mission.controller.detector_service",
+        "kind": "string"
+      },
+      "detector_task_topic": {
+        "path": "mission.controller.detector_task_topic",
+        "kind": "string"
+      },
+      "target_roi_service": {
+        "path": "mission.controller.target_roi_service",
+        "kind": "string"
+      },
+      "request_timeout_s": {
+        "path": "mission.controller.request_timeout_s",
+        "kind": "number"
+      }
+    },
+    "target_node": {
+      "input_topic": {
+        "path": "mission.target.input_topic",
+        "kind": "string"
+      },
+      "control_topic": {
+        "path": "mission.target.control_topic",
+        "kind": "string"
+      },
+      "reset_timeout_s": {
+        "path": "mission.target.reset_timeout_s",
+        "kind": "number"
+      },
+      "detections_topic": {
+        "path": "mission.target.detections_topic",
+        "kind": "string"
+      },
+      "image_width": {
+        "path": "shared.image.width",
+        "kind": "integer"
+      },
+      "image_height": {
+        "path": "shared.image.height",
+        "kind": "integer"
+      },
+      "roi_x": {
+        "path": "mission.target.roi_x",
+        "kind": "number"
+      },
+      "roi_y": {
+        "path": "mission.target.roi_y",
+        "kind": "number"
+      },
+      "roi_width": {
+        "path": "mission.target.roi_width",
+        "kind": "number"
+      },
+      "roi_height": {
+        "path": "mission.target.roi_height",
+        "kind": "number"
+      },
+      "green_class_id": {
+        "path": "shared.classes.green",
+        "kind": "integer"
+      },
+      "blue_class_id": {
+        "path": "shared.classes.blue",
+        "kind": "integer"
+      },
+      "black_class_id": {
+        "path": "shared.classes.black",
+        "kind": "integer"
+      },
+      "orange_class_id": {
+        "path": "shared.classes.orange",
+        "kind": "integer"
+      },
+      "roi_check_timeout_s": {
+        "path": "mission.target.roi_check_timeout_s",
+        "kind": "number"
+      }
+    },
+    "safety_node": {
+      "input_topic": {
+        "path": "mission.safety.input_topic",
+        "kind": "string"
+      },
+      "control_topic": {
+        "path": "mission.safety.control_topic",
+        "kind": "string"
+      },
+      "reset_timeout_s": {
+        "path": "mission.safety.reset_timeout_s",
+        "kind": "number"
+      },
+      "mission_status_topic": {
+        "path": "mission.safety.mission_status_topic",
+        "kind": "string"
+      },
+      "image_width": {
+        "path": "shared.image.width",
+        "kind": "integer"
+      },
+      "image_height": {
+        "path": "shared.image.height",
+        "kind": "integer"
+      }
+    },
+    "bridge_node": {
+      "transport": {
+        "path": "bridge.transport",
+        "kind": "string"
+      },
+      "serial_device": {
+        "path": "bridge.serial_device",
+        "kind": "string"
+      },
+      "can_bitrate": {
+        "path": "bridge.can_bitrate",
+        "kind": "integer"
+      },
+      "can_interface": {
+        "path": "bridge.can_interface",
+        "kind": "string"
+      },
+      "image_width": {
+        "path": "shared.image.width",
+        "kind": "integer"
+      },
+      "image_height": {
+        "path": "shared.image.height",
+        "kind": "integer"
+      },
+      "input_timeout_s": {
+        "path": "bridge.input_timeout_s",
+        "kind": "number"
+      },
+      "velocity_timeout_s": {
+        "path": "bridge.velocity_timeout_s",
+        "kind": "number"
+      },
+      "tx_queue_timeout_s": {
+        "path": "bridge.tx_queue_timeout_s",
+        "kind": "number"
+      },
+      "request_timeout_s": {
+        "path": "bridge.request_timeout_s",
+        "kind": "number"
+      },
+      "velocity_topic": {
+        "path": "bridge.velocity_topic",
+        "kind": "string"
+      },
+      "target_topic": {
+        "path": "bridge.target_topic",
+        "kind": "string"
+      },
+      "safety_topic": {
+        "path": "bridge.safety_topic",
+        "kind": "string"
+      },
+      "task_topic": {
+        "path": "bridge.task_topic",
+        "kind": "string"
+      },
+      "mission_status_topic": {
+        "path": "bridge.mission_status_topic",
+        "kind": "string"
+      },
+      "roi_service": {
+        "path": "bridge.roi_service",
+        "kind": "string"
+      },
+      "command_service": {
+        "path": "bridge.command_service",
+        "kind": "string"
+      },
+      "target_class_ids": {
+        "path": "shared.candidate_ids",
+        "kind": "integers"
+      },
+      "first_target_class_id": {
+        "path": "shared.classes.green",
+        "kind": "integer"
+      }
+    }
+  },
+  "schema": {
+    "vision.detect.task": "string",
+    "vision.detect.seg_model_path": "string",
+    "vision.detect.seg_labels_path": "string",
+    "vision.detect.dla_core": "integer",
+    "vision.detect.conf_threshold_seg": "number",
+    "vision.detect.nms_threshold": "number",
+    "vision.detect.max_detections": "integer",
+    "vision.detect.mask_scale": "integer",
+    "vision.detect.mask_label_offset": "integer",
+    "vision.detect.max_masks": "integer",
+    "vision.detect.publish_masks": "boolean",
+    "vision.detect.publish_field_results": "boolean",
+    "vision.detect.publish_raw": "boolean",
+    "vision.detect.publish_processed": "boolean",
+    "vision.detect.raw_max_fps": "number",
+    "vision.detect.camera_device": "string",
+    "shared.image.width": "integer",
+    "shared.image.height": "integer",
+    "vision.detect.camera_fps": "integer",
+    "vision.detect.camera_fourcc": "string",
+    "vision.detect.camera_buffer_size": "integer",
+    "vision.detect.camera_backend": "string",
+    "vision.detect.camera_pipeline": "string",
+    "vision.detect.publish_timing": "boolean",
+    "vision.detect.seg_max_fps": "number",
+    "vision.detect.field_max_fps": "number",
+    "vision.detect.active_task": "string",
+    "vision.detect.publish_status": "boolean",
+    "vision.detect.frame_id": "string",
+    "vision.field.proc_width": "integer",
+    "vision.field.proc_height": "integer",
+    "vision.field.field_w_m": "number",
+    "vision.field.field_h_m": "number",
+    "vision.field.bev_px_per_m": "number",
+    "vision.field.bev_width": "integer",
+    "vision.field.bev_height": "integer",
+    "vision.field.purple_a_min": "number",
+    "vision.field.purple_b_max": "number",
+    "vision.field.purple_chroma_min": "number",
+    "vision.field.purple_L_range": "numbers",
+    "vision.field.purple_sat_min": "number",
+    "vision.field.purple_hue_range": "numbers",
+    "vision.field.purple_use_hue": "boolean",
+    "vision.field.morph_close_ksize": "integer",
+    "vision.field.morph_close_iter": "integer",
+    "vision.field.morph_dilate_ksize": "integer",
+    "vision.field.morph_dilate_iter": "integer",
+    "vision.field.min_area_frac": "number",
+    "vision.field.min_rect_ratio_range": "numbers",
+    "vision.field.max_border_touch": "integer",
+    "vision.field.min_fill_ratio": "number",
+    "vision.field.max_candidates_try": "integer",
+    "vision.field.corner_exclude_frac": "number",
+    "vision.field.edge_bins": "integer",
+    "vision.field.edge_band_frac": "number",
+    "vision.field.fit_outlier_px": "number",
+    "vision.field.fit_iterations": "integer",
+    "vision.field.min_side_points": "integer",
+    "vision.field.min_side_inliers": "integer",
+    "vision.field.prior_corner_tol_frac": "number",
+    "vision.field.quad_min_area_frac": "number",
+    "vision.field.quad_side_ratio_range": "numbers",
+    "vision.field.use_aspect_check": "boolean",
+    "vision.field.quad_max_aspect_err": "number",
+    "vision.field.black_search_range": "numbers",
+    "vision.field.black_row_range": "numbers",
+    "vision.field.black_min_depth": "number",
+    "vision.field.black_conf_depth": "number",
+    "vision.field.black_score_frac": "number",
+    "vision.field.black_max_width_frac": "number",
+    "vision.field.black_abs_gray": "number",
+    "vision.field.black_rel_gray": "number",
+    "vision.field.black_max_offset_frac": "number",
+    "vision.field.split_ema_alpha": "number",
+    "vision.field.split_jump_frac": "number",
+    "vision.field.red_a_min": "number",
+    "vision.field.red_chroma_min": "number",
+    "vision.field.red_b_range": "numbers",
+    "vision.field.red_L_min": "number",
+    "vision.field.use_blue_interior": "boolean",
+    "vision.field.blue_a_min": "number",
+    "vision.field.blue_chroma_min": "number",
+    "vision.field.blue_b_range": "numbers",
+    "vision.field.blue_L_min": "number",
+    "vision.field.bev_border_margin_frac": "number",
+    "vision.field.locate_hits_needed": "integer",
+    "vision.field.lost_frames_to_search": "integer",
+    "vision.field.refit_every": "integer",
+    "vision.field.track_window_scale": "number",
+    "vision.field.corner_ema_alpha": "number",
+    "vision.field.seg_mode": "integer",
+    "vision.field.edge_samples": "integer",
+    "vision.field.edge_probe_radius": "integer",
+    "vision.field.edge_support_min": "number",
+    "vision.field.edge_support_strong": "number",
+    "vision.field.w_purple": "number",
+    "vision.field.w_temporal": "number",
+    "vision.field.w_red_inside": "number",
+    "vision.field.w_red_outside": "number",
+    "vision.field.w_geometry": "number",
+    "vision.field.min_total_score": "number",
+    "vision.field.min_purple_score": "number",
+    "vision.field.purple_lost_threshold": "number",
+    "vision.field.red_inside_min": "number",
+    "vision.field.red_cells_min": "integer",
+    "vision.field.red_outside_max": "number",
+    "vision.field.expand_frac": "number",
+    "vision.field.red_grid_cols": "integer",
+    "vision.field.red_grid_rows": "integer",
+    "vision.field.red_cell_min": "number",
+    "vision.field.pred_velocity_gain": "number",
+    "vision.field.max_jump_frac": "number",
+    "vision.field.jump_accept_frac": "number",
+    "vision.field.switch_confirm_frames": "integer",
+    "vision.field.fast_switch_purple": "number",
+    "vision.field.fast_switch_red_inside": "number",
+    "vision.field.fast_switch_red_outside": "number",
+    "vision.field.max_hold_frames": "integer",
+    "vision.stream.image_topic": "string",
+    "vision.stream.seg_detections_topic": "string",
+    "vision.stream.seg_masks_topic": "string",
+    "vision.stream.field_results_topic": "string",
+    "vision.stream.draw_boxes": "boolean",
+    "vision.stream.draw_labels": "boolean",
+    "vision.stream.draw_masks": "boolean",
+    "vision.stream.draw_field": "boolean",
+    "vision.stream.overlay_wait_ms": "number",
+    "vision.stream.input_timeout_s": "number",
+    "vision.stream.active_task_topic": "string",
+    "vision.stream.stream_enabled": "boolean",
+    "vision.stream.stream_address": "string",
+    "vision.stream.stream_port": "integer",
+    "vision.stream.jpeg_backend": "string",
+    "vision.stream.stream_quality": "integer",
+    "vision.stream.stream_max_fps": "number",
+    "vision.stream.stream_scale": "number",
+    "vision.stream.publish_annotated": "boolean",
+    "vision.stream.publish_compressed": "boolean",
+    "vision.stream.compressed_quality": "integer",
+    "vision.stream.overlay_stats": "boolean",
+    "vision.stream.publish_status": "boolean",
+    "vision.stream.frame_id": "string",
+    "tracking.track.detections_topic": "string",
+    "tracking.track.active_task_topic": "string",
+    "tracking.track.det_threshold": "number",
+    "tracking.track.iou_threshold": "number",
+    "tracking.track.inertia": "number",
+    "tracking.track.max_age": "integer",
+    "tracking.track.min_hits": "integer",
+    "tracking.track.delta_t": "integer",
+    "tracking.track.use_byte": "boolean",
+    "tracking.track.reset_timeout_s": "number",
+    "tracking.select.tracks_topic": "string",
+    "tracking.select.active_task_topic": "string",
+    "shared.candidate_ids": "integers",
+    "shared.classes.green": "integer",
+    "shared.classes.blue": "integer",
+    "tracking.select.blue_min_distance_ratio": "number",
+    "tracking.select.reset_timeout_s": "number",
+    "tracking.select.mission_status_topic": "string",
+    "mission.controller.detector_service": "string",
+    "mission.controller.detector_task_topic": "string",
+    "mission.controller.target_roi_service": "string",
+    "mission.controller.request_timeout_s": "number",
+    "mission.target.input_topic": "string",
+    "mission.target.control_topic": "string",
+    "mission.target.reset_timeout_s": "number",
+    "mission.target.detections_topic": "string",
+    "mission.target.roi_x": "number",
+    "mission.target.roi_y": "number",
+    "mission.target.roi_width": "number",
+    "mission.target.roi_height": "number",
+    "shared.classes.black": "integer",
+    "shared.classes.orange": "integer",
+    "mission.target.roi_check_timeout_s": "number",
+    "mission.safety.input_topic": "string",
+    "mission.safety.control_topic": "string",
+    "mission.safety.reset_timeout_s": "number",
+    "mission.safety.mission_status_topic": "string",
+    "bridge.transport": "string",
+    "bridge.serial_device": "string",
+    "bridge.can_bitrate": "integer",
+    "bridge.can_interface": "string",
+    "bridge.input_timeout_s": "number",
+    "bridge.velocity_timeout_s": "number",
+    "bridge.tx_queue_timeout_s": "number",
+    "bridge.request_timeout_s": "number",
+    "bridge.velocity_topic": "string",
+    "bridge.target_topic": "string",
+    "bridge.safety_topic": "string",
+    "bridge.task_topic": "string",
+    "bridge.mission_status_topic": "string",
+    "bridge.roi_service": "string",
+    "bridge.command_service": "string",
+    "version": "integer"
+  },
+  "field_file_differences": {},
+  "array_expansion": {
+    "vision.field.purple_L_range": [
+      "vision.field.purple_L_min",
+      "vision.field.purple_L_max"
+    ],
+    "vision.field.purple_hue_range": [
+      "vision.field.purple_hue_min",
+      "vision.field.purple_hue_max"
+    ],
+    "vision.field.min_rect_ratio_range": [
+      "vision.field.min_rect_ratio_lo",
+      "vision.field.min_rect_ratio_hi"
+    ],
+    "vision.field.quad_side_ratio_range": [
+      "vision.field.quad_side_ratio_lo",
+      "vision.field.quad_side_ratio_hi"
+    ],
+    "vision.field.black_search_range": [
+      "vision.field.black_search_lo",
+      "vision.field.black_search_hi"
+    ],
+    "vision.field.black_row_range": [
+      "vision.field.black_row_lo",
+      "vision.field.black_row_hi"
+    ],
+    "vision.field.red_b_range": [
+      "vision.field.red_b_min",
+      "vision.field.red_b_max"
+    ],
+    "vision.field.blue_b_range": [
+      "vision.field.blue_b_min",
+      "vision.field.blue_b_max"
+    ]
+  }
+}

@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>mission_pkg</name>
+  <version>0.0.0</version>
+  <description>Recognition phase control and target/safety observation consumers.</description>
+  <maintainer email="li@todo.todo">li</maintainer>
+  <license>Apache-2.0</license>
+
+  <!-- 节点与 ROS 适配层使用以下依赖；纯值规则库不包含 ROS 消息头。 -->
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>rcl_interfaces</depend>
+  <depend>interface_pkg</depend>
+  <depend>vision_msgs</depend>
+  <!-- 包装器读取统一参数，ROS 合同直接驱动真实节点；仅构建测试时需要。 -->
+  <test_depend>python3-yaml</test_depend>
+  <test_depend>geometry_msgs</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+
+
+  <test_depend>ament_cmake_test</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

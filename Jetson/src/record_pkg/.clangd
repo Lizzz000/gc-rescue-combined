@@ -1,0 +1,3 @@
+# 此包在当前主机单独构建；不借用自动栈或另一台机器的头文件路径。
+CompileFlags:
+  CompilationDatabase: ../../build/record-clangd

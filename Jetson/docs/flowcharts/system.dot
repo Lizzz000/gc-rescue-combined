@@ -1,0 +1,80 @@
+digraph system {
+  graph [
+    fontname="Microsoft YaHei",
+    rankdir=LR,
+    label="完整部署：7 个进程，8 个节点",
+    labelloc=t,
+    fontsize=16,
+    nodesep=0.35,
+    ranksep=0.55
+  ];
+  node [fontname="Microsoft YaHei", shape=box, style="rounded,filled", fillcolor="#f7f7f7"];
+  edge [fontname="Microsoft YaHei", fontsize=9];
+
+  subgraph cluster_vision {
+    label="vision_runtime";
+    fontname="Microsoft YaHei";
+    color="#4c78a8";
+    detect [label="detect_node"];
+    stream [label="stream_node"];
+  }
+  subgraph cluster_track {
+    label="tracking_runtime";
+    fontname="Microsoft YaHei";
+    color="#f58518";
+    track [label="track_node"];
+  }
+  subgraph cluster_select {
+    label="tracking_runtime";
+    fontname="Microsoft YaHei";
+    color="#f58518";
+    select [label="select_node"];
+  }
+  subgraph cluster_mission {
+    label="mission_runtime";
+    fontname="Microsoft YaHei";
+    color="#54a24b";
+    mission [label="mission_node"];
+  }
+  subgraph cluster_target {
+    label="mission_runtime";
+    fontname="Microsoft YaHei";
+    color="#54a24b";
+    target [label="target_node"];
+  }
+  subgraph cluster_safety {
+    label="mission_runtime";
+    fontname="Microsoft YaHei";
+    color="#54a24b";
+    safety [label="safety_node"];
+  }
+  subgraph cluster_bridge {
+    label="bridge_runtime";
+    fontname="Microsoft YaHei";
+    color="#e45756";
+    bridge [label="bridge_node"];
+  }
+
+  http [label="HTTP :8080", shape=ellipse, fillcolor="#e8f1ff"];
+  can [label="CAN\n达妙串口或 SocketCAN", shape=ellipse, fillcolor="#fde8e8"];
+
+  detect -> track [label="/detect_node/seg/detections"];
+  detect -> target [label="/detect_node/seg/detections"];
+  detect -> safety [label="/detect_node/field/results"];
+  detect -> stream [label="image_processed\n检测 / 场地 / active_task"];
+  detect -> mission [label="/detect_node/active_task"];
+  mission -> detect [label="/detect_node/set_field", style=dashed];
+  track -> select [label="/track_node/seg/tracks"];
+  select -> target [label="/select_node/target"];
+  mission -> select [label="/mission_node/status"];
+  mission -> target [label="/mission_node/active_task", style=dashed];
+  mission -> target [label="/target_node/check_roi", style=dashed];
+  mission -> safety [label="/mission_node/status\n/mission_node/active_task"];
+  target -> bridge [label="/target_node/target"];
+  safety -> bridge [label="/safety_node/target"];
+  mission -> bridge [label="/mission_node/status\n/mission_node/active_task"];
+  bridge -> mission [label="/mission_node/arrived\n/mission_node/command", style=dashed];
+  stream -> http [label="/healthz  /view\n/snapshot.jpg  /stream.mjpg"];
+  bridge -> can [label="0x180–0x182\n0x190–0x193"];
+  can -> bridge [label="0x200 0x203\n0x204 0x205 0x206"];
+}

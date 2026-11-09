@@ -1,0 +1,3 @@
+# 本宿主真实构建的导出结果；Windows与Jetson分别生成，不复制异机绝对路径。
+CompileFlags:
+  CompilationDatabase: build/unified-clangd

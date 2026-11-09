@@ -1,0 +1,546 @@
+{
+  "groups": {
+    "geometry": "输入与几何",
+    "color": "颜色分割",
+    "search": "搜索与拟合",
+    "admission": "候选准入与评分",
+    "tracking": "跟踪与提交",
+    "split": "鸟瞰分界"
+  },
+  "parameters": {
+    "proc_width": {
+      "group": "geometry",
+      "level": "常用",
+      "unit": "处理图像素",
+      "purpose": "处理图宽度；像素阈值均需结合此尺度理解。"
+    },
+    "proc_height": {
+      "group": "geometry",
+      "level": "常用",
+      "unit": "处理图像素；0 按源图比例计算",
+      "purpose": "处理图高度；零值按输入宽高比推导。"
+    },
+    "field_w_m": {
+      "group": "geometry",
+      "level": "常用",
+      "unit": "米",
+      "purpose": "拟合的紫框外缘实际宽度；参与鸟瞰尺寸推导和可选长宽比检查，不是内框宽度。"
+    },
+    "field_h_m": {
+      "group": "geometry",
+      "level": "常用",
+      "unit": "米",
+      "purpose": "拟合的紫框外缘实际高度；与宽度一起描述物理几何，不是内框高度或板材厚度。"
+    },
+    "bev_px_per_m": {
+      "group": "geometry",
+      "level": "常用",
+      "unit": "像素/米",
+      "purpose": "未显式指定鸟瞰宽高时的像素密度。"
+    },
+    "bev_width": {
+      "group": "geometry",
+      "level": "高级",
+      "unit": "BEV 像素；0 按米制尺寸与密度计算",
+      "purpose": "显式鸟瞰宽度；零值由物理宽度与像素密度计算。"
+    },
+    "bev_height": {
+      "group": "geometry",
+      "level": "高级",
+      "unit": "BEV 像素；0 按米制尺寸与密度计算",
+      "purpose": "显式鸟瞰高度；零值由物理高度与像素密度计算。"
+    },
+    "purple_a_min": {
+      "group": "color",
+      "level": "常用",
+      "unit": "Lab a/b，无偏移值",
+      "purpose": "紫色 Lab a 通道下限。"
+    },
+    "purple_b_max": {
+      "group": "color",
+      "level": "常用",
+      "unit": "Lab a/b，无偏移值",
+      "purpose": "紫色 Lab b 通道上限，用于区分内部红色。"
+    },
+    "purple_chroma_min": {
+      "group": "color",
+      "level": "常用",
+      "unit": "Lab 通道差 a-b（既有紫色近似判据）",
+      "purpose": "紫色 a-b 差值下限，不是欧氏色度。"
+    },
+    "purple_L_range": {
+      "group": "color",
+      "level": "常用",
+      "unit": "Lab L，0..100，[下限,上限]",
+      "purpose": "紫色 Lab 亮度的闭区间。"
+    },
+    "purple_sat_min": {
+      "group": "color",
+      "level": "常用",
+      "unit": "HSV 饱和度百分比，0..100",
+      "purpose": "紫色 HSV 饱和度下限；以百分比配置，转为八位通道比较。"
+    },
+    "purple_hue_range": {
+      "group": "color",
+      "level": "常用",
+      "unit": "OpenCV HSV H，0..180，[下限,上限]",
+      "purpose": "紫色 OpenCV 色相闭区间。"
+    },
+    "purple_use_hue": {
+      "group": "color",
+      "level": "高级",
+      "unit": "布尔开关",
+      "purpose": "允许 HSV 判据；仅 LAB 模式不使用它，仅 HSV 模式要求开启。"
+    },
+    "seg_mode": {
+      "group": "color",
+      "level": "高级",
+      "unit": "分割枚举：0 LAB并可选HSV / 1 LAB / 2 HSV",
+      "purpose": "选择 LAB 与可选 HSV、仅 LAB、仅 HSV；不改变内部颜色独立判据。"
+    },
+    "red_a_min": {
+      "group": "color",
+      "level": "常用",
+      "unit": "Lab a/b，无偏移值",
+      "purpose": "红色内部 Lab a 下限。"
+    },
+    "red_chroma_min": {
+      "group": "color",
+      "level": "常用",
+      "unit": "Lab 通道和 a+abs(b)（既有内部色近似判据）",
+      "purpose": "红色内部 a+abs(b) 下限，不是欧氏色度。"
+    },
+    "red_b_range": {
+      "group": "color",
+      "level": "常用",
+      "unit": "Lab b，无偏移值，[下限,上限]",
+      "purpose": "红色内部 Lab b 闭区间。"
+    },
+    "red_L_min": {
+      "group": "color",
+      "level": "常用",
+      "unit": "Lab L，0..100",
+      "purpose": "红色内部 Lab 亮度下限。"
+    },
+    "use_blue_interior": {
+      "group": "color",
+      "level": "常用",
+      "unit": "布尔开关",
+      "purpose": "切换到蓝色内部阈值；输出中 red_* 名称保持原接口含义。"
+    },
+    "blue_a_min": {
+      "group": "color",
+      "level": "常用",
+      "unit": "Lab a/b，无偏移值",
+      "purpose": "蓝色内部 Lab a 下限，仅蓝色内部模式使用。"
+    },
+    "blue_chroma_min": {
+      "group": "color",
+      "level": "常用",
+      "unit": "Lab 通道和 a+abs(b)（既有内部色近似判据）",
+      "purpose": "蓝色内部 a+abs(b) 下限，仅蓝色内部模式使用。"
+    },
+    "blue_b_range": {
+      "group": "color",
+      "level": "常用",
+      "unit": "Lab b，无偏移值，[下限,上限]",
+      "purpose": "蓝色内部 Lab b 闭区间，仅蓝色内部模式使用。"
+    },
+    "blue_L_min": {
+      "group": "color",
+      "level": "常用",
+      "unit": "Lab L，0..100",
+      "purpose": "蓝色内部 Lab 亮度下限，仅蓝色内部模式使用。"
+    },
+    "morph_close_ksize": {
+      "group": "search",
+      "level": "常用",
+      "unit": "处理图像素，核边长",
+      "purpose": "紫色掩膜闭运算核边长；按处理图像素解释。"
+    },
+    "morph_close_iter": {
+      "group": "search",
+      "level": "高级",
+      "unit": "迭代次数",
+      "purpose": "闭运算迭代次数。"
+    },
+    "morph_dilate_ksize": {
+      "group": "search",
+      "level": "常用",
+      "unit": "处理图像素，核边长",
+      "purpose": "紫色掩膜膨胀核边长；与闭运算共同影响断口连接。"
+    },
+    "morph_dilate_iter": {
+      "group": "search",
+      "level": "高级",
+      "unit": "迭代次数",
+      "purpose": "膨胀迭代次数。"
+    },
+    "min_area_frac": {
+      "group": "search",
+      "level": "常用",
+      "unit": "无量纲比例",
+      "purpose": "搜索区域内轮廓面积下限；ROI 与全图各自按区域面积计算。"
+    },
+    "min_rect_ratio_range": {
+      "group": "search",
+      "level": "高级",
+      "unit": "候选矩形长短边比，[下限,上限]",
+      "purpose": "候选最小外接矩形的长短边比例范围。"
+    },
+    "max_border_touch": {
+      "group": "search",
+      "level": "高级",
+      "unit": "触及搜索图边界的边数",
+      "purpose": "候选允许接触当前搜索图边界的最大边数。"
+    },
+    "min_fill_ratio": {
+      "group": "search",
+      "level": "高级",
+      "unit": "无量纲比例",
+      "purpose": "候选凸包面积相对最小外接矩形面积的下限。"
+    },
+    "max_candidates_try": {
+      "group": "search",
+      "level": "高级",
+      "unit": "候选数上限",
+      "purpose": "进入拟合与评分的候选数量上限。"
+    },
+    "corner_exclude_frac": {
+      "group": "search",
+      "level": "高级",
+      "unit": "无量纲比例",
+      "purpose": "边两端排除的比例，减少相邻边混入采样。"
+    },
+    "edge_bins": {
+      "group": "search",
+      "level": "高级",
+      "unit": "每边分箱数",
+      "purpose": "沿边取点的分箱数；实现至少使用四箱。"
+    },
+    "edge_band_frac": {
+      "group": "search",
+      "level": "高级",
+      "unit": "无量纲比例",
+      "purpose": "沿边外侧采样带宽相对边长的比例。"
+    },
+    "fit_outlier_px": {
+      "group": "search",
+      "level": "高级",
+      "unit": "处理图像素",
+      "purpose": "鲁棒拟合距离阈值的下限；实际剔除阈值还结合残差中位数。"
+    },
+    "fit_iterations": {
+      "group": "search",
+      "level": "高级",
+      "unit": "拟合迭代次数",
+      "purpose": "鲁棒拟合迭代上限。"
+    },
+    "min_side_points": {
+      "group": "search",
+      "level": "高级",
+      "unit": "每边拟合点数",
+      "purpose": "开始及继续拟合所需的最少边点数。"
+    },
+    "min_side_inliers": {
+      "group": "search",
+      "level": "高级",
+      "unit": "每边内点数",
+      "purpose": "将拟合边视为实测边所需的内点数量。"
+    },
+    "prior_corner_tol_frac": {
+      "group": "search",
+      "level": "高级",
+      "unit": "无量纲比例",
+      "purpose": "拟合角点相对先验对角线的允许偏移。"
+    },
+    "quad_min_area_frac": {
+      "group": "admission",
+      "level": "高级",
+      "unit": "无量纲比例",
+      "purpose": "拟合四边形相对当前搜索图的面积下限。"
+    },
+    "quad_side_ratio_range": {
+      "group": "admission",
+      "level": "高级",
+      "unit": "四边形对边长度比，[下限,上限]",
+      "purpose": "上下边、左右边长度比的准入范围；不是物理长宽比。"
+    },
+    "use_aspect_check": {
+      "group": "admission",
+      "level": "高级",
+      "unit": "布尔开关",
+      "purpose": "是否启用基于场地物理尺寸的长宽比检查。"
+    },
+    "quad_max_aspect_err": {
+      "group": "admission",
+      "level": "高级",
+      "unit": "相对宽高比误差，无量纲",
+      "purpose": "启用长宽比检查时的相对偏差上限。"
+    },
+    "edge_samples": {
+      "group": "admission",
+      "level": "高级",
+      "unit": "每边采样点数",
+      "purpose": "各边紫色支持度采样数，也影响外圈逐边采样密度及无紫边支持区段内的切入场地反证计数。"
+    },
+    "edge_probe_radius": {
+      "group": "admission",
+      "level": "高级",
+      "unit": "处理图像素",
+      "purpose": "沿边法线探测的半径；实现至少取一像素。边界反证也用本处紫色支持，整边平均支持不能替代局部证据。"
+    },
+    "edge_support_min": {
+      "group": "admission",
+      "level": "高级",
+      "unit": "紫色探测支持比例，无量纲",
+      "purpose": "计入 edges_ok 的边支持度门槛；不同于拟合实测边数。"
+    },
+    "edge_support_strong": {
+      "group": "admission",
+      "level": "高级",
+      "unit": "紫色探测支持比例，无量纲",
+      "purpose": "只有两边合格时的次强边门槛；高时序一致性可豁免。"
+    },
+    "w_purple": {
+      "group": "admission",
+      "level": "高级",
+      "unit": "评分权重，无量纲；权重和不要求为1",
+      "purpose": "紫框支持度评分权重；所有权重的和不要求为一。"
+    },
+    "w_temporal": {
+      "group": "admission",
+      "level": "高级",
+      "unit": "评分权重，无量纲；权重和不要求为1",
+      "purpose": "与预测几何一致性的评分权重。"
+    },
+    "w_red_inside": {
+      "group": "admission",
+      "level": "高级",
+      "unit": "评分权重，无量纲；权重和不要求为1",
+      "purpose": "所选内部颜色占比的评分权重。"
+    },
+    "w_red_outside": {
+      "group": "admission",
+      "level": "高级",
+      "unit": "评分权重，无量纲；权重和不要求为1",
+      "purpose": "一减外侧颜色风险的评分权重。"
+    },
+    "w_geometry": {
+      "group": "admission",
+      "level": "高级",
+      "unit": "评分权重，无量纲；权重和不要求为1",
+      "purpose": "形状合理性的评分权重。"
+    },
+    "min_total_score": {
+      "group": "admission",
+      "level": "常用",
+      "unit": "总分准入门槛 [0,1]，无量纲；加权总分可大于1",
+      "purpose": "候选加权总分下限，不能抵消其他硬门槛。"
+    },
+    "min_purple_score": {
+      "group": "admission",
+      "level": "常用",
+      "unit": "紫色证据评分，无量纲",
+      "purpose": "候选提交准入的紫框支持度下限。"
+    },
+    "red_inside_min": {
+      "group": "admission",
+      "level": "常用",
+      "unit": "所选内部颜色占比，无量纲",
+      "purpose": "候选内部所选颜色占比下限。"
+    },
+    "red_cells_min": {
+      "group": "admission",
+      "level": "高级",
+      "unit": "达标网格数",
+      "purpose": "符合单格内部颜色条件的最少格数。"
+    },
+    "red_outside_max": {
+      "group": "admission",
+      "level": "常用",
+      "unit": "外侧所选颜色风险比例，无量纲",
+      "purpose": "候选外侧所选颜色风险上限；也限制单边无紫色支持区段内，明确的双侧内部颜色反证占采样点的比例，超过此值即拒绝。本处紫色支持或画外端点终止该段；遮挡不增加反证，也不清除同段已有反证。"
+    },
+    "expand_frac": {
+      "group": "admission",
+      "level": "高级",
+      "unit": "无量纲比例",
+      "purpose": "外圈颜色检查区域相对候选四边形的扩张比例。边界反证在边界与四角中心连线上向内外探测，偏移比例取 max(0.02, expand_frac)/2。"
+    },
+    "red_grid_cols": {
+      "group": "admission",
+      "level": "高级",
+      "unit": "网格列数",
+      "purpose": "内部颜色网格列数，改变单格覆盖范围。"
+    },
+    "red_grid_rows": {
+      "group": "admission",
+      "level": "高级",
+      "unit": "网格行数",
+      "purpose": "内部颜色网格行数，改变单格覆盖范围。"
+    },
+    "red_cell_min": {
+      "group": "admission",
+      "level": "高级",
+      "unit": "单格所选内部颜色占比，无量纲",
+      "purpose": "单格被计为有效内部颜色格的占比下限。"
+    },
+    "locate_hits_needed": {
+      "group": "tracking",
+      "level": "常用",
+      "unit": "定位提交命中次数门槛；普通保持不清零",
+      "purpose": "进入 TRACK 的定位命中门槛；普通拒绝保持不清 hits，不能理解为严格连续命中。"
+    },
+    "lost_frames_to_search": {
+      "group": "tracking",
+      "level": "高级",
+      "unit": "丢失帧数门槛",
+      "purpose": "无候选分支累积 lost 达此值时清历史；不与 max_hold_frames 合并。"
+    },
+    "refit_every": {
+      "group": "tracking",
+      "level": "高级",
+      "unit": "通过帧准备的累计帧数周期；含未提交帧",
+      "purpose": "准备帧累计计数的周期全图搜索间隔，包括未提交帧。"
+    },
+    "track_window_scale": {
+      "group": "tracking",
+      "level": "高级",
+      "unit": "跟踪 ROI 扩张倍数",
+      "purpose": "以预测四边形构造跟踪 ROI 时的放大比例。"
+    },
+    "corner_ema_alpha": {
+      "group": "tracking",
+      "level": "常用",
+      "unit": "无量纲比例",
+      "purpose": "普通接受分支的角点平滑系数；实现结合跳变调整，端点不走平滑。"
+    },
+    "purple_lost_threshold": {
+      "group": "tracking",
+      "level": "高级",
+      "unit": "紫色证据评分，无量纲",
+      "purpose": "普通拒绝分支低紫证据清历史，也用于判断旧几何是否足够差以快速切换。"
+    },
+    "pred_velocity_gain": {
+      "group": "tracking",
+      "level": "高级",
+      "unit": "角点速度预测增益，无量纲",
+      "purpose": "以前两次成功几何预测下一帧的速度系数。"
+    },
+    "max_jump_frac": {
+      "group": "tracking",
+      "level": "高级",
+      "unit": "无量纲比例",
+      "purpose": "相对预测的角点位移归一化门槛；同时参与时序评分。"
+    },
+    "jump_accept_frac": {
+      "group": "tracking",
+      "level": "高级",
+      "unit": "无量纲比例",
+      "purpose": "相邻待确认候选仍属于同一新位置的严格距离上限。"
+    },
+    "switch_confirm_frames": {
+      "group": "tracking",
+      "level": "高级",
+      "unit": "大跳变连续确认帧数",
+      "purpose": "普通大跳变的连续确认门槛，配置最小为二；强证据可当帧补齐计数并立即切换。"
+    },
+    "fast_switch_purple": {
+      "group": "tracking",
+      "level": "高级",
+      "unit": "快速切换紫色证据评分，无量纲",
+      "purpose": "快速切换的新候选紫框证据下限，须结合旧几何失锁条件。"
+    },
+    "fast_switch_red_inside": {
+      "group": "tracking",
+      "level": "高级",
+      "unit": "快速切换内部颜色占比，无量纲",
+      "purpose": "快速切换的新候选内部颜色下限。"
+    },
+    "fast_switch_red_outside": {
+      "group": "tracking",
+      "level": "高级",
+      "unit": "快速切换外侧颜色风险比例，无量纲",
+      "purpose": "快速切换的新候选外侧颜色风险上限。"
+    },
+    "max_hold_frames": {
+      "group": "tracking",
+      "level": "高级",
+      "unit": "普通候选拒绝保持帧数门槛",
+      "purpose": "普通候选拒绝累计超过此值时清历史；无候选及跳变等待另走各自分支。"
+    },
+    "black_search_range": {
+      "group": "split",
+      "level": "常用",
+      "unit": "BEV 横向归一化比例，[下限,上限]",
+      "purpose": "鸟瞰横向搜索区间，占鸟瞰宽度比例。"
+    },
+    "black_row_range": {
+      "group": "split",
+      "level": "常用",
+      "unit": "BEV 纵向归一化比例，[下限,上限]",
+      "purpose": "鸟瞰纵向统计区间，占鸟瞰高度比例。"
+    },
+    "black_min_depth": {
+      "group": "split",
+      "level": "高级",
+      "unit": "相对灰度下陷深度，无量纲",
+      "purpose": "窄暗带相对内部搜索区中位数的最小下陷深度；也用于生成对比度主判据的暗像素门槛。"
+    },
+    "black_conf_depth": {
+      "group": "split",
+      "level": "高级",
+      "unit": "满置信度相对灰度下陷深度，无量纲",
+      "purpose": "下陷深度归一为置信度的参考值；结果再乘有效行覆盖比例。"
+    },
+    "black_score_frac": {
+      "group": "split",
+      "level": "高级",
+      "unit": "无量纲比例",
+      "purpose": "窄暗带有效行覆盖比例；实际至少要求0.75，且三个纵向分段均有支持。"
+    },
+    "black_max_width_frac": {
+      "group": "split",
+      "level": "高级",
+      "unit": "无量纲比例",
+      "purpose": "单行候选暗带相对鸟瞰宽度的最大宽度，超宽行不计作有效证据。"
+    },
+    "black_abs_gray": {
+      "group": "split",
+      "level": "常用",
+      "unit": "灰度值，0..255",
+      "purpose": "对比度主判据与强暗备用共用的绝对灰度上限。"
+    },
+    "black_rel_gray": {
+      "group": "split",
+      "level": "高级",
+      "unit": "相对灰度比例，无量纲",
+      "purpose": "主判据没有合格黑带时的强暗备用比例；主判据多候选时直接拒绝，不借备用消除歧义。"
+    },
+    "black_max_offset_frac": {
+      "group": "split",
+      "level": "高级",
+      "unit": "无量纲比例",
+      "purpose": "黑带测量中点偏离鸟瞰几何中心超过此比例时标记split_suspect；可靠测量仍用于分区。"
+    },
+    "split_ema_alpha": {
+      "group": "split",
+      "level": "高级",
+      "unit": "无量纲比例",
+      "purpose": "小抖动时上下端点的最低测量权重；位移增大时提高权重，无可靠测量时清历史。"
+    },
+    "split_jump_frac": {
+      "group": "split",
+      "level": "高级",
+      "unit": "无量纲比例",
+      "purpose": "端点位移相对BEV宽度的平滑尺度；达到尺度直接采用当前测量，不作硬拒绝。"
+    },
+    "bev_border_margin_frac": {
+      "group": "split",
+      "level": "高级",
+      "unit": "无量纲比例",
+      "purpose": "统计鸟瞰内部颜色占比时排除边缘的比例，按短边计算。"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+digraph can {
+  graph [
+    fontname="Microsoft YaHei",
+    rankdir=TB,
+    label="CAN v3 握手与周期帧",
+    labelloc=t,
+    fontsize=16
+  ];
+  node [fontname="Microsoft YaHei", shape=box, style="rounded,filled", fillcolor="#f7f7f7"];
+  edge [fontname="Microsoft YaHei"];
+
+  f200 [label="STM32 → Jetson\n0x200  DLC 1  数据 01\n到达"];
+  f190 [label="Jetson → STM32\n0x190  DLC 1\n01 受理 / 00 当前阶段拒绝"];
+  f191 [label="Jetson → STM32\n0x191  DLC 3\nvalid、passed、destination"];
+  f193 [label="Jetson → STM32\n0x193  DLC 6\n01、destination、token 小端"];
+  f203 [label="STM32 → Jetson\n0x203  DLC 5\n01 + token"];
+  f192a [label="Jetson → STM32\n0x192  DLC 6\naccepted、command=1、token"];
+  f204 [label="STM32 → Jetson\n0x204  DLC 5\n01 + token\n安全区到达"];
+  f192b [label="0x192\ncommand=2"];
+  f206 [label="STM32 → Jetson\n0x206  DLC 5\n01 + token\n送达确认"];
+  f192c [label="0x192\ncommand=4"];
+  f205 [label="STM32 → Jetson\n0x205  DLC 1  数据 01\n重新寻找"];
+  f192d [label="0x192\ncommand=3，token 填 0"];
+  periodic [label="周期帧（寻找或导航时）\n0x180 速度 DLC 7\n0x181 目标中心 DLC 5\n0x182 安全区中心 DLC 5", shape=note, fillcolor="#fff8e8"];
+
+  f200 -> f190 -> f191 -> f193 -> f203 -> f192a -> f204 -> f192b -> f206 -> f192c -> f205 -> f192d;
+  note [label="未授权的 0x203 仍回 0x192，accepted=0\n畸形帧和未知 ID 无回包", shape=note, fillcolor="#fff8e8"];
+}

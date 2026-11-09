@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>record_pkg</name>
+  <version>0.3.1</version>
+  <description>Independent C++ camera stream and PC preview/MP4 recording console.</description>
+  <maintainer email="li@todo.todo">li</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <build_depend>pkg-config</build_depend>
+  <build_depend>libgstreamer1.0-dev</build_depend>
+  <build_depend>libgstreamer-plugins-base1.0-dev</build_depend>
+  <exec_depend>libgstreamer1.0-0</exec_depend>
+  <exec_depend>libgstreamer-plugins-base1.0-0</exec_depend>
+  <exec_depend>gstreamer1.0-plugins-good</exec_depend>
+  <exec_depend>gstreamer1.0-plugins-base</exec_depend>
+  <exec_depend>nvidia-l4t-gstreamer</exec_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

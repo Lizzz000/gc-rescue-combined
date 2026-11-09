@@ -1,0 +1,124 @@
+#ifndef JETSON_CAN_H
+#define JETSON_CAN_H
+
+#include <stdint.h>
+
+/* 来源：Jetson tools/source/can_codec.py 与 src/bridge_pkg/protocol/can_protocol.hpp。
+ * STM32 接收快照由 CAN 中断写入、任务临界区读取。
+ * received_ms 使用现有 1 kHz FreeRTOS 时基，不是总线事务编号。
+ */
+#define JETSON_CAN_ARRIVAL_ID             0x200U
+#define JETSON_CAN_TURN_COMPLETED_ID      0x203U
+#define JETSON_CAN_SAFETY_ARRIVED_ID      0x204U
+#define JETSON_CAN_START_SEARCH_ID        0x205U
+#define JETSON_CAN_DELIVERY_COMPLETED_ID  0x206U
+
+typedef struct
+{
+    uint8_t valid;
+    uint8_t well_formed; /**< DLC 和标志合法，包括 valid=0 的周期报文。 */
+    int16_t vx, vy, wz;  /**< 原始定点值：vx/vy 为 0.001 m/s，wz 为 0.001 rad/s。 */
+    uint32_t received_ms;
+    uint32_t sequence;   /**< 每条 0x180（含无效/畸形）递增，按 uint32_t 自然回绕。 */
+    uint32_t invalid_sequence; /**< 仅无效/畸形 0x180 递增；保留同一接收批次的撤权事件。 */
+    uint32_t zero_sequence;    /**< 仅有效全零 0x180 递增；保留同一接收批次的停车事件。 */
+} Jetson_CAN_Velocity_t;
+
+typedef struct
+{
+    uint8_t valid;
+    int16_t x, y;        /**< 图像归一化中心坐标乘 10000；不在协议层裁剪。 */
+    uint32_t received_ms;
+    uint32_t sequence;
+} Jetson_CAN_Center_t;
+
+typedef struct
+{
+    uint8_t valid;       /**< 结构合法标记；accepted=0 仍是合法拒绝回复。 */
+    uint8_t accepted;
+    uint32_t received_ms;
+    uint32_t sequence;
+} Jetson_CAN_Arrival_Ack_t;
+
+typedef struct
+{
+    uint8_t valid;
+    uint8_t passed;
+    uint8_t destination; /**< 0 未定，1 左区，2 右区；通过时必须为 1 或 2。 */
+    uint32_t received_ms;
+    uint32_t sequence;
+} Jetson_CAN_ROI_Reply_t;
+
+typedef struct
+{
+    uint8_t valid;       /**< 结构合法标记；accepted=0 仍是合法拒绝回复。 */
+    uint8_t accepted;
+    uint8_t command;     /**< 1 转向完成，2 安全区到达，3 重新搜索，4 投送完成。 */
+    uint32_t token;      /**< 0..UINT32_MAX 均合法；命令 3 必须为 0。 */
+    uint32_t received_ms;
+    uint32_t sequence;
+} Jetson_CAN_Command_Reply_t;
+
+typedef struct
+{
+    uint8_t valid;       /**< 合法请求字节固定为 1；本标记不直接授权底盘执行。 */
+    uint8_t destination; /**< 1 左区，2 右区。 */
+    uint32_t token;      /**< 本趟 ROI 请求号低 32 位，允许 0。 */
+    uint32_t received_ms;
+    uint32_t sequence;
+} Jetson_CAN_Turn_Request_t;
+
+typedef struct
+{
+    Jetson_CAN_Velocity_t velocity;
+    Jetson_CAN_Center_t target, safety;
+    Jetson_CAN_Arrival_Ack_t arrival_ack;
+    Jetson_CAN_ROI_Reply_t roi_reply;
+    Jetson_CAN_Command_Reply_t command_reply; /**< 等待时按请求匹配并保留首个受理回执。 */
+    Jetson_CAN_Turn_Request_t turn_to_safety;
+    uint32_t rx_sequence; /**< 每条已知 ID 递增并自然回绕；非速度快照记录接收时的值。 */
+    uint32_t heartbeat_received_ms; /**< 最近一条格式合法的 0x180 到达时刻，RTOS ms。 */
+    uint8_t heartbeat_seen;         /**< 已收到格式合法的 0x180。 */
+} Jetson_CAN_Data_t;
+
+/**
+ * @brief 清空 Jetson 接收状态；由任务在启动 CAN 接收前调用。
+ * @return 无；所有有效标记、时间戳及序号清零。
+ */
+void Jetson_CAN_Init(void);
+
+/**
+ * @brief 在 CAN RX 中断内解析单帧；不调用底盘、不排队、不发送回复。
+ * @param[in] id 已由 BSP 核验的 11 位标准数据帧 ID。
+ * @param[in] data 可读 len 字节；空指针按对应 ID 的畸形帧处理。
+ * @param[in] len CAN DLC，必须精确匹配协议；0x180 错误时撤销旧速度。
+ * @return 无；未知 ID 不改变快照，已知坏帧按对应报文处理。
+ */
+void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len);
+
+/**
+ * @brief 首次提交命令后设置 0x192 匹配，丢弃前一请求的回执快照。
+ * @param[in] request_id 上行 0x203 至 0x206，传 0 结束等待并恢复最新帧快照。
+ * @param[in] token 本趟 ROI 请求号低 32 位，0x205 固定按无 token 匹配。
+ * @return 无；活动期只更新合法匹配帧，首个受理帧保留到本次等待结束。
+ * @note 由自动任务在首次成功提交的同一临界区内设置，重试时不重新设置。
+ */
+void Jetson_CAN_Expect_Command_Reply(uint16_t request_id, uint32_t token);
+
+/**
+ * @brief 在任务临界区复制完整接收快照，屏蔽现有优先级 6 的 CAN RX 中断。
+ * @param[out] out 非空时写入快照；空指针不执行复制。
+ * @return 无；调用方负责时效检查及控制授权，不能把回复标记当运动许可。
+ */
+void Jetson_CAN_Get_Data(Jetson_CAN_Data_t *out);
+
+/**
+ * @brief 编码 STM32 上行运输请求的 CAN 载荷。
+ * @param[in] id 运输请求的标准帧 ID。
+ * @param[in] token 本趟 ROI 请求号低 32 位；到达与重新搜索帧无此字段。
+ * @param[out] data 非空时须能写 8 字节，DLC 以外清零以适配 HAL 的整缓冲读取。
+ * @return 成功返回 DLC 1 或 5，未知 ID 或空指针返回 0，不修改缓冲区。
+ */
+uint8_t Jetson_CAN_Encode_Uplink(uint16_t id, uint32_t token, uint8_t data[8]);
+
+#endif

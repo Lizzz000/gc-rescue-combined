@@ -1,0 +1,25 @@
+# Isolated experiment; never included by production CMake.
+cmake_minimum_required(VERSION 3.18)
+project(camera_fused_experiment LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+endif()
+get_filename_component(DEFAULT_REPO "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+set(CANDIDATE_VISION_ROOT "${DEFAULT_REPO}/src/vision_pkg" CACHE PATH
+  "Real candidate vision sources containing camera/full_range_i420.hpp")
+set(REFERENCE_VISION_ROOT "" CACHE PATH
+  "Frozen production vision sources used as the reference")
+find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs videoio)
+find_package(Threads REQUIRED)
+add_library(camera_fused_reference STATIC "${REFERENCE_VISION_ROOT}/camera/usb_camera.cpp")
+target_include_directories(camera_fused_reference PRIVATE "${REFERENCE_VISION_ROOT}" ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(camera_fused_reference PUBLIC ${OpenCV_LIBS} Threads::Threads)
+target_compile_options(camera_fused_reference PRIVATE -Wall -Wextra -Wpedantic)
+add_executable(camera_fused_probe probe.cpp)
+target_include_directories(camera_fused_probe PRIVATE
+  "${CANDIDATE_VISION_ROOT}" "${REFERENCE_VISION_ROOT}" ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(camera_fused_probe PRIVATE camera_fused_reference)
+target_compile_options(camera_fused_probe PRIVATE -Wall -Wextra -Wpedantic)
