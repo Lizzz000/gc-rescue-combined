@@ -13,7 +13,7 @@
 | bridge_pkg | 中心与速度的 CAN 桥，以及和 STM32 的运输握手 |
 | bringup_pkg | 唯一启动入口，用同一份配置拉起各角色 |
 | record_pkg | 独立工具：相机流和 PC 预览 / MP4 录制 |
-| teleop_pkg | 独立工具：通过 ROS 话题发送定时速度和停车命令 |
+| teleop_pkg | 独立工具：通过 USB-CAN 发送定时速度和停车命令 |
 
 `record_pkg` 和 `teleop_pkg` 不在完整部署的角色表里。
 
@@ -72,14 +72,14 @@ ros2 launch bringup_pkg rescue.launch.py run:=all
 - `http://<板端>:8080/snapshot.jpg`
 - `http://<板端>:8080/stream.mjpg`（同时最多 8 路，见 `mjpeg.cpp` 的 `kMaxStreamClients`）
 
-手动定时运动由 `teleop_pkg/move_timed.py` 独立发布 `/cmd_vel`，不参与自动搬运。先加载 ROS 环境并启动完整程序，再执行：
+手动定时运动由 `teleop_pkg/move_timed.py` 直接使用达妙 USB-CAN，不启动 ROS 桥接或自动搬运程序。STM32 须运行手动联调固件，USB-CAN 须空闲；自动搬运与手动脚本不能同时占用同一个适配器。
 
 ```bash
 python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/move_timed.py forward 0.08 1.2
 python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/move_timed.py stop
 ```
 
-方向可用 `forward`、`backward`、`left`、`right`、`ccw`（逆时针）或 `cw`（顺时针）；后面依次填写速度幅值和秒数。也可用 `velocity vx vy wz 秒数` 指定组合速度。平移单位 m/s，车体转向单位 rad/s。脚本先发 0.5 秒零速，再连续发送指定速度，时间到或执行 `stop` 后发零速；指定时间包含加速。手动测试时不要同时运行其他 `/cmd_vel` 发布器。速度上限由 STM32 配置决定；自动搬运仍由原有状态机控制。
+方向可用 `forward`、`backward`、`left`、`right`、`ccw`（逆时针）或 `cw`（顺时针）；后面依次填写速度幅值和秒数。也可用 `velocity vx vy wz 秒数` 指定组合速度，使用 `--device 设备路径` 指定其他达妙适配器。平移单位 m/s，车体转向单位 rad/s。脚本先发 0.5 秒零速准备，再以 100 Hz 发送速度；时间到、执行 `stop` 或按 Ctrl+C 后发送零速并撤权。指定时间包含加速，速度上限由 STM32 配置决定。此脚本不会驱动自动搬运流程。
 
 常用话题：`/detect_node/status`、`/detect_node/seg/detections`、`/detect_node/field/results`、`/detect_node/active_task`、`/track_node/seg/tracks`、`/select_node/target`、`/mission_node/status`、`/safety_node/target`、`/bridge_node/status`。`/detect_node/active_task` 和 `/mission_node/status` 是 `transient_local`。
 
