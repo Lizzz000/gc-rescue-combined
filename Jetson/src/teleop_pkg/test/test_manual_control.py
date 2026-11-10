@@ -107,6 +107,7 @@ class ManualControlTest(unittest.TestCase):
         self.start()
         state = self.post('/api/hold', {'vx': 2.0, 'vy': 0, 'wz': -9})
         self.assertEqual(state['phase'], 'prepare')
+        self.assertEqual(state['limits'], {'linear_mps': 0.5, 'angular_radps': 2.0})
         with self.assertRaises(urllib.error.HTTPError):
             self.post('/api/hold', {'vx': 'fast', 'vy': 0, 'wz': 0})
         self.post('/api/timed', {'vx': 0, 'vy': 0.1, 'wz': 0, 'seconds': 0.5})

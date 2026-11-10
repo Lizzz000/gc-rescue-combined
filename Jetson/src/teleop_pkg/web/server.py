@@ -3,7 +3,7 @@
 POST /api/hold  {"vx","vy","wz"}            按住中的速度，租约内须续发
 POST /api/timed {"vx","vy","wz","seconds"}  定时动作
 POST /api/stop                              停车
-GET  /api/state                             阶段、速度与链路计数
+GET  /api/state                             阶段、速度、链路计数与限幅
 GET  /                                       控制页面
 """
 
@@ -12,6 +12,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import time
+
+from manual.command import MAX_ANGULAR_RADPS, MAX_LINEAR_MPS
 
 BIND_ADDRESS = '127.0.0.1'
 _PAGE = (Path(__file__).resolve().parent / 'index.html').read_bytes()
@@ -88,7 +90,8 @@ class _Handler(BaseHTTPRequestHandler):
         return body
 
     def _state(self):
-        return {**self.server.command.snapshot(time.monotonic()), **self.server.status()}
+        return {**self.server.command.snapshot(time.monotonic()), **self.server.status(),
+                'limits': {'linear_mps': MAX_LINEAR_MPS, 'angular_radps': MAX_ANGULAR_RADPS}}
 
     def _json(self, status, payload):
         self._reply(status, json.dumps(payload, ensure_ascii=False).encode(), 'application/json')
