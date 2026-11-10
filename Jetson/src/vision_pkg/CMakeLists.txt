@@ -56,4 +56,9 @@ install(FILES camera/neon/LICENSE-OpenCV.txt DESTINATION share/${PROJECT_NAME}/l
 install(DIRECTORY models DESTINATION share/${PROJECT_NAME})
 install(PROGRAMS scripts/view_stream.sh DESTINATION share/${PROJECT_NAME}/scripts)
 
+# 安全区纯核心测试（只依赖 OpenCV），见 test/field/README.md
+if(BUILD_TESTING)
+  add_subdirectory(test/field)
+endif()
+
 ament_package()

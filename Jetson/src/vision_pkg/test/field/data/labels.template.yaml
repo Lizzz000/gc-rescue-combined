@@ -1,0 +1,11 @@
+%YAML:1.0
+---
+# 复制为 data/<clip>/labels.yaml 后填写；本模板本身不会被当成片段。
+reference_only: 1
+image_width: 1920
+frames:
+   - { file: "000001.jpg", present: 1, judge: "judgeable",
+       divider: [ 960., 420., 955., 900. ],
+       corners: [ 420., 410., 1500., 410., 1700., 950., 220., 950. ] }
+   - { file: "000002.jpg", present: 1, judge: "unjudgeable" }
+   - { file: "000003.jpg", present: 0, judge: "unjudgeable" }
