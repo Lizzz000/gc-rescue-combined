@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GC Rescue 手动控制</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; max-width: 560px; }
+  .pad { display: grid; grid-template-columns: repeat(3, 96px); gap: 8px; margin: 16px 0; }
+  .pad button, .stop { height: 72px; font-size: 18px; touch-action: none; }
+  .stop { width: 100%; background: #c62828; color: #fff; border: 0; }
+  label { display: block; margin: 8px 0; }
+  input[type=range] { width: 260px; vertical-align: middle; }
+  fieldset { margin-top: 16px; }
+  #state { font-family: monospace; white-space: pre; background: #f4f4f4; padding: 8px; }
+  .error { color: #c62828; }
+</style>
+</head>
+<body>
+<h2>GC Rescue 手动控制（0x17F）</h2>
+<p>按住方向键或按钮运动，松开即停；空格急停。键盘：W/S 前后，A/D 左右平移，Q/E 左右转。</p>
+<label>平移速度 <input id="linear" type="range" min="0.02" max="0.5" step="0.01" value="0.1"> <span id="linear_v"></span> m/s</label>
+<label>转向速度 <input id="angular" type="range" min="0.1" max="2.0" step="0.05" value="0.5"> <span id="angular_v"></span> rad/s</label>
+<div class="pad">
+  <button data-move="ccw">⟲ 左转</button><button data-move="forward">↑ 前进</button><button data-move="cw">⟳ 右转</button>
+  <button data-move="left">← 左移</button><button data-move="backward">↓ 后退</button><button data-move="right">→ 右移</button>
+</div>
+<button class="stop" id="stop">停车（空格）</button>
+<fieldset>
+  <legend>定时动作</legend>
+  vx <input id="t_vx" type="number" step="0.01" value="0.08" size="5">
+  vy <input id="t_vy" type="number" step="0.01" value="0" size="5">
+  wz <input id="t_wz" type="number" step="0.05" value="0" size="5">
+  秒 <input id="t_s" type="number" step="0.1" value="1.2" size="5">
+  <button id="timed">执行</button>
+</fieldset>
+<h3>状态</h3>
+<div id="state">连接中…</div>
+<div id="error" class="error"></div>
+<script>
+// 方向单位向量：vx 前进，vy 左移，wz 逆时针。
+const MOVES = {
+  forward: [1, 0, 0], backward: [-1, 0, 0], left: [0, 1, 0], right: [0, -1, 0],
+  ccw: [0, 0, 1], cw: [0, 0, -1],
+};
+const KEYS = {
+  ArrowUp: 'forward', KeyW: 'forward', ArrowDown: 'backward', KeyS: 'backward',
+  ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', KeyQ: 'ccw', KeyE: 'cw',
+};
+// 按住期间每 50 ms 续租；服务端租约 ≤ 200 ms，漏发几次即自动停车。
+const RENEW_MS = 50;
+const held = new Set();
+let timer = null;
+
+const $ = (id) => document.getElementById(id);
+for (const id of ['linear', 'angular']) {
+  const show = () => { $(id + '_v').textContent = $(id).value; };
+  $(id).addEventListener('input', show);
+  show();
+}
+
+async function post(path, body) {
+  try {
+    const response = await fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body || {})});
+    const data = await response.json();
+    $('error').textContent = response.ok ? '' : data.error;
+    if (response.ok) { show(data); }
+  } catch (error) {
+    $('error').textContent = '连接失败：' + error;
+  }
+}
+
+function velocity() {
+  const linear = Number($('linear').value), angular = Number($('angular').value);
+  const sum = [0, 0, 0];
+  for (const move of held) { MOVES[move].forEach((value, i) => { sum[i] += value; }); }
+  return {vx: sum[0] * linear, vy: sum[1] * linear, wz: sum[2] * angular};
+}
+
+function renew() {
+  if (held.size === 0) { return; }
+  post('/api/hold', velocity());
+}
+
+function press(move) {
+  if (held.has(move)) { return; }
+  held.add(move);
+  renew();
+  if (timer === null) { timer = setInterval(renew, RENEW_MS); }
+}
+
+function release(move) {
+  held.delete(move);
+  if (held.size === 0) { stop(); } else { renew(); }
+}
+
+function stop() {
+  held.clear();
+  if (timer !== null) { clearInterval(timer); timer = null; }
+  post('/api/stop');
+}
+
+for (const button of document.querySelectorAll('[data-move]')) {
+  const move = button.dataset.move;
+  button.addEventListener('pointerdown', (event) => { button.setPointerCapture(event.pointerId); press(move); });
+  for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    button.addEventListener(name, () => release(move));
+  }
+}
+document.addEventListener('keydown', (event) => {
+  if (event.target.tagName === 'INPUT') { return; }
+  if (event.code === 'Space') { event.preventDefault(); stop(); return; }
+  const move = KEYS[event.code];
+  if (move) { event.preventDefault(); press(move); }
+});
+document.addEventListener('keyup', (event) => {
+  const move = KEYS[event.code];
+  if (move) { release(move); }
+});
+window.addEventListener('blur', stop);
+document.addEventListener('visibilitychange', () => { if (document.hidden) { stop(); } });
+$('stop').addEventListener('click', stop);
+$('timed').addEventListener('click', () => post('/api/timed', {
+  vx: Number($('t_vx').value), vy: Number($('t_vy').value), wz: Number($('t_wz').value),
+  seconds: Number($('t_s').value)}));
+
+function show(state) {
+  $('state').textContent = JSON.stringify(state, null, 1);
+}
+setInterval(async () => {
+  try { show(await (await fetch('/api/state')).json()); } catch (error) { $('state').textContent = '断开'; }
+}, 250);
+</script>
+</body>
+</html>

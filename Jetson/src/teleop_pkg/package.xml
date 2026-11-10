@@ -2,9 +2,10 @@
 <package format="3">
   <name>teleop_pkg</name>
   <version>0.4.0</version>
-  <description>手动发送定时速度命令。</description>
+  <description>独立手动控制：网页上位机经达妙 USB-CAN 发送 0x17F。</description>
   <maintainer email="li@todo.todo">li</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <test_depend>ament_cmake_pytest</test_depend>
   <export><build_type>ament_cmake</build_type></export>
 </package>

@@ -1,0 +1,80 @@
+"""ManualCommand 纯状态：限幅、租约、准备与停车序列（注入时间）。"""
+
+from pathlib import Path
+import sys
+import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from manual.command import (  # noqa: E402
+    MAX_LEASE_S, PREPARE_S, STOP_ZERO_S, ManualCommand, quantize)
+from manual.link import manual_packet  # noqa: E402
+
+LEASE = MAX_LEASE_S
+
+
+class QuantizeTest(unittest.TestCase):
+    def test_linear_and_angular_limits(self):
+        vx, vy, wz = quantize(1.0, 1.0, -5.0)
+        self.assertLessEqual((vx * vx + vy * vy) ** 0.5, 500)
+        self.assertEqual(wz, -2000)
+        self.assertEqual(quantize(0.08, -0.1, 0.2), (80, -100, 200))
+
+    def test_rejects_non_finite(self):
+        for value in (float('nan'), float('inf')):
+            with self.assertRaises(ValueError):
+                quantize(value, 0, 0)
+
+    def test_packet_layout(self):
+        packet = manual_packet(True, -2, 0, 1000)
+        self.assertEqual(len(packet), 30)
+        self.assertEqual(packet[:5], bytes([0x55, 0xAA, 30, 1, 1]))
+        self.assertEqual(int.from_bytes(packet[13:17], 'little'), 0x17F)
+        self.assertEqual(packet[18], 7)
+        self.assertEqual(packet[21:28], bytes([1, 0xFE, 0xFF, 0, 0, 0xE8, 0x03]))
+
+
+class LeaseTest(unittest.TestCase):
+    def test_lease_bounds(self):
+        for lease in (0.0, MAX_LEASE_S + 0.01):
+            with self.assertRaises(ValueError):
+                ManualCommand(lease)
+
+    def test_idle_is_invalid(self):
+        self.assertEqual(ManualCommand(LEASE).frame(0.0), (False, 0, 0, 0))
+
+    def test_hold_prepares_then_moves_then_expires(self):
+        command = ManualCommand(LEASE)
+        t = 0.0
+        while t < PREPARE_S:
+            command.hold(0.1, 0, 0, t)
+            self.assertEqual(command.frame(t), (True, 0, 0, 0))
+            t += 0.05
+        command.hold(0.1, 0, 0, t)
+        self.assertEqual(command.frame(t), (True, 100, 0, 0))
+        # 不再续租：租约内保持速度，过期后先零速 valid=1，STOP_ZERO_S 后 valid=0。
+        self.assertEqual(command.frame(t + LEASE - 0.01), (True, 100, 0, 0))
+        self.assertEqual(command.frame(t + LEASE), (True, 0, 0, 0))
+        self.assertEqual(command.frame(t + LEASE + STOP_ZERO_S - 0.01), (True, 0, 0, 0))
+        self.assertEqual(command.frame(t + LEASE + STOP_ZERO_S), (False, 0, 0, 0))
+
+    def test_stop_then_resume_skips_prepare(self):
+        command = ManualCommand(LEASE)
+        command.timed(0, 0, 1.0, 5.0, 0.0)
+        self.assertEqual(command.frame(PREPARE_S), (True, 0, 0, 1000))
+        command.stop(1.0)
+        self.assertEqual(command.frame(1.0), (True, 0, 0, 0))
+        command.hold(0, 0.2, 0, 1.1)
+        self.assertEqual(command.frame(1.1), (True, 0, 200, 0))
+
+    def test_timed_duration_excludes_prepare(self):
+        command = ManualCommand(LEASE)
+        command.timed(0.2, 0, 0, 1.0, 0.0)
+        self.assertEqual(command.frame(PREPARE_S + 0.99), (True, 200, 0, 0))
+        self.assertEqual(command.frame(PREPARE_S + 1.0), (True, 0, 0, 0))
+        with self.assertRaises(ValueError):
+            command.timed(0.1, 0, 0, 0.0, 0.0)
+
+
+if __name__ == '__main__':
+    unittest.main()
