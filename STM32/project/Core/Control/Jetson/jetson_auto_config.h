@@ -8,7 +8,7 @@
 #define JETSON_AUTO_ENABLED 0
 #endif
 
-/* 单次底盘联调：由 SWD 显式启动，物资→规则转向→安全区；不执行夹爪或定距。 */
+/* 单次底盘联调：由 SWD 显式启动，物资→规则转向→安全区→盲推；不执行夹爪或定距。 */
 #ifndef JETSON_AUTO_CHASSIS_TEST
 #define JETSON_AUTO_CHASSIS_TEST 0
 #endif

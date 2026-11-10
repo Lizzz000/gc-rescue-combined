@@ -363,6 +363,15 @@ static void Flow_One_Shot(uint8_t destination)
     Check_Sent(2U, 0x204U, token);
     Receive_Command_Ack(1U, 2U, token);
     Step(1U);
+    assert(enabled && !stopped && last_vx == JETSON_AUTO_PUSH_SPEED_MPS);
+    assert(last_vy == 0.0f && last_wz == 0.0f);
+    const unsigned before_push_stop = stops;
+    Steps(JETSON_AUTO_PUSH_DURATION_MS / 5U - 1U, 1U);
+    assert(enabled && stops == before_push_stop);
+    Step(1U);
+    assert(enabled && stops == before_push_stop + 1U);
+    stopped = 1U;
+    Step(1U);
     assert(!enabled && disables == 1U);
     const unsigned after = velocity_requests;
     for (unsigned i = 0U; i < 100U; ++i)

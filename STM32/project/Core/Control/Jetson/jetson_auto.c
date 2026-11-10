@@ -119,12 +119,12 @@ static uint8_t Configuration_Ready(void)
            isfinite(JETSON_AUTO_APPROACH_SIGMA_Y_Q) && JETSON_AUTO_APPROACH_SIGMA_Y_Q > 0.0f &&
            isfinite(JETSON_AUTO_APPROACH_SIGMA_ACCEL_Q_S2) && JETSON_AUTO_APPROACH_SIGMA_ACCEL_Q_S2 > 0.0f &&
            isfinite(JETSON_AUTO_APPROACH_BRAKE_S) && JETSON_AUTO_APPROACH_BRAKE_S >= 0.0f &&
-           Positive_Within(JETSON_AUTO_OUT_TURN_DEG, 360.0f)
+           Positive_Within(JETSON_AUTO_OUT_TURN_DEG, 360.0f) &&
+           Positive_Within(JETSON_AUTO_PUSH_SPEED_MPS, CHASSIS_STRAIGHT_MAX_SPEED_MPS) &&
+           JETSON_AUTO_PUSH_DURATION_MS > 0U
 #if !JETSON_AUTO_CHASSIS_TEST
            && Positive_Within(fabsf(JETSON_AUTO_SEARCH_WZ_RAD_S), CHASSIS_VECTOR_MAX_WZ_RAD_S) &&
            Positive_Within(JETSON_AUTO_DISTANCE_SPEED_MPS, CHASSIS_DISTANCE_MAX_SPEED_MPS) &&
-           Positive_Within(JETSON_AUTO_PUSH_SPEED_MPS, CHASSIS_STRAIGHT_MAX_SPEED_MPS) &&
-           JETSON_AUTO_PUSH_DURATION_MS > 0U &&
            Positive_Within(JETSON_AUTO_RETURN_TURN_DEG, 360.0f) &&
            JETSON_AUTO_SERVO_OPEN_MS >= 20U && JETSON_AUTO_SERVO_CLOSE_MS >= 20U &&
            Transport_Servo_Is_Available()
@@ -478,6 +478,7 @@ static uint8_t Approach(const Jetson_CAN_Center_t *center, const Image_Window_t 
  * @param[in] next 舵机等待阶段。
  * @param[in] now_ms 当前 RTOS 毫秒。
  */
+#if !JETSON_AUTO_CHASSIS_TEST
 static void Start_Servo(Transport_Servo_Position_t position, Auto_Stage_t next, uint32_t now_ms)
 {
     if (Transport_Servo_Command(position, now_ms))
@@ -485,6 +486,8 @@ static void Start_Servo(Transport_Servo_Position_t position, Auto_Stage_t next, 
     else
         Halt(now_ms);
 }
+
+#endif
 
 /** @brief 判断设定脉宽的等待时间是否已到。
  * @param[in] now_ms,wait_ms 当前 RTOS 毫秒和配置的等待时长，ms。
@@ -732,19 +735,21 @@ static void Service_Stage(const Jetson_CAN_Data_t *data, uint32_t now_ms)
     case WAIT_SAFETY_ACK:
         if (Reply_Accepted(&data->command_reply, 2U) && Chassis_Is_Stopped())
         {
-#if JETSON_AUTO_CHASSIS_TEST
-            Chassis_Disable();
-            Enter(TEST_DONE, now_ms);
-#else
             Start_Timed_Move(JETSON_AUTO_PUSH_SPEED_MPS, PUSHING, now_ms);
-#endif
         }
         else
             Service_Request(now_ms);
         break;
     case PUSHING:
         if (Timed_Move_Stopped(now_ms))
+        {
+#if JETSON_AUTO_CHASSIS_TEST
+            Chassis_Disable();
+            Enter(TEST_DONE, now_ms);
+#else
             Start_Servo(TRANSPORT_SERVO_OPEN, RELEASING, now_ms);
+#endif
+        }
         break;
     case RELEASING:
         if (Servo_Elapsed(now_ms, JETSON_AUTO_SERVO_OPEN_MS) && Chassis_Is_Stopped())
