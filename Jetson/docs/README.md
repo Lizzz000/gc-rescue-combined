@@ -85,6 +85,8 @@ python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/move_timed.py sto
 
 终端中使用方向键选择平移、`Q/E` 左右转、`P` 设置速度和时间、`V` 输入组合速度、`X` 退出。每次按键触发一次定时动作，动作期间的其他方向键被丢弃；按 Ctrl+C 可请求停车。屏幕显示预计剩余时间，不代表实际电机反馈。非交互终端和不支持的终端沿用数字菜单。命令行方向可用 `forward`、`backward`、`left`、`right`、`ccw`（逆时针）或 `cw`（顺时针）；后面依次填写速度幅值和秒数。也可用 `velocity vx vy wz 秒数` 指定组合速度，使用 `--device 设备路径` 指定其他达妙适配器。平移单位 m/s，车体转向单位 rad/s。脚本先发 0.5 秒零速准备，再以 100 Hz 发送速度；时间到、执行 `stop` 或按 Ctrl+C 后发送零速并撤权。指定时间包含加速，速度上限由 STM32 配置决定。此脚本不会驱动自动搬运流程。
 
+安全区黑带当前试调为 `black_row_range: [0.40, 0.60]`、`black_min_depth: 0.08`。仅在当前静止画面中验证过；不同距离、角度、光照和遮挡下仍需复测分界位置与无效帧率，不能仅凭有效率判断识别正确。
+
 常用话题：`/detect_node/status`、`/detect_node/seg/detections`、`/detect_node/field/results`、`/detect_node/active_task`、`/track_node/seg/tracks`、`/select_node/target`、`/mission_node/status`、`/safety_node/target`、`/bridge_node/status`。`/detect_node/active_task` 和 `/mission_node/status` 是 `transient_local`。
 
 服务：`/detect_node/set_field`、`/target_node/check_roi`、`/mission_node/arrived`、`/mission_node/command`。

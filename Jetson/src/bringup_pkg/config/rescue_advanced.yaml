@@ -116,10 +116,10 @@ vision:
     # 归一化搜索区间0..1，按[下限,上限]排列，间距至少0.001。
     black_search_range: [0.14, 0.86]
     # 归一化采样行区间0..1，按[下限,上限]排列，间距至少0.001。
-    black_row_range: [0.12, 0.88]
+    black_row_range: [0.40, 0.60]
     black_abs_gray: 90.0
     # 窄暗带灰度相对内部搜索区中位数的下陷深度。
-    black_min_depth: 0.15
+    black_min_depth: 0.08
     black_conf_depth: 0.35
     # 有效行覆盖比例；完整直线证据至少要求0.75，且三个纵向分段均需支持。
     black_score_frac: 0.4
