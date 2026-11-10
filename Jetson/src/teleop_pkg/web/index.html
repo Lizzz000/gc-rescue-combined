@@ -5,39 +5,116 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GC Rescue 手动控制</title>
 <style>
-  body { font-family: sans-serif; margin: 24px; max-width: 560px; }
-  .pad { display: grid; grid-template-columns: repeat(3, 96px); gap: 8px; margin: 16px 0; }
-  .pad button, .stop { height: 72px; font-size: 18px; touch-action: none; }
-  .stop { width: 100%; background: #c62828; color: #fff; border: 0; }
-  label { display: block; margin: 8px 0; }
-  input[type=range] { width: 260px; vertical-align: middle; }
-  fieldset { margin-top: 16px; }
-  #state { font-family: monospace; white-space: pre; background: #f4f4f4; padding: 8px; }
-  .error { color: #c62828; }
+  :root {
+    --bg: #eef1f5; --card: #fff; --text: #1d2733; --muted: #6b7785; --line: #dde3ea;
+    --accent: #1f6feb; --accent-soft: #dbe8fd; --danger: #c62828; --ok: #2e7d32; --warn: #ef6c00;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  header { padding: 16px 24px; background: var(--card); border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 18px; }
+  header .hint { color: var(--muted); font-size: 13px; }
+  main { display: grid; grid-template-columns: 1fr; gap: 16px; padding: 16px; max-width: 1180px; margin: 0 auto; }
+  @media (min-width: 900px) { main { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+  .column { display: grid; gap: 16px; align-content: start; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 16px 18px; box-shadow: 0 1px 2px rgba(0, 0, 0, .04); }
+  .card h2 { margin: 0 0 12px; font-size: 15px; color: var(--muted); font-weight: 600; letter-spacing: .02em; }
+  .slider { display: grid; grid-template-columns: 5.5em 1fr 6.5em; align-items: center; gap: 10px; margin: 6px 0; }
+  .slider input { width: 100%; }
+  .slider output { font-variant-numeric: tabular-nums; text-align: right; }
+  .pad { display: grid; grid-template-columns: repeat(3, 88px); grid-template-rows: repeat(3, 72px);
+    gap: 10px; justify-content: center; margin: 18px 0; }
+  .pad button { border: 1px solid var(--line); border-radius: 10px; background: #f7f9fb; color: var(--text);
+    font-size: 24px; touch-action: none; user-select: none; cursor: pointer; transition: background .08s, transform .08s; }
+  .pad button small { display: block; color: var(--muted); font-size: 11px; }
+  .pad button.active { background: var(--accent); border-color: var(--accent); color: #fff; transform: scale(.97); }
+  .pad button.active small { color: #dbe8fd; }
+  .pad .center { background: #fdecea; border-color: #f5c2bd; color: var(--danger); font-weight: 600; }
+  .pad .blank { visibility: hidden; }
+  .stop { width: 100%; height: 56px; border: 0; border-radius: 10px; background: var(--danger); color: #fff;
+    font-size: 17px; font-weight: 600; cursor: pointer; }
+  .stop:active { filter: brightness(.9); }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 600;
+    background: #eceff3; color: var(--muted); }
+  .badge.idle { background: #eceff3; color: var(--muted); }
+  .badge.prepare { background: #fff3e0; color: var(--warn); }
+  .badge.active { background: #e8f5e9; color: var(--ok); }
+  .badge.stopping { background: #fdecea; color: var(--danger); }
+  .badge.offline { background: var(--danger); color: #fff; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .stat { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+  .stat .label { color: var(--muted); font-size: 12px; }
+  .stat .value { font-size: 17px; font-variant-numeric: tabular-nums; word-break: break-all; }
+  .stat .value.small { font-size: 13px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+  .timed { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  .timed label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+  .timed input { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; font-size: 15px;
+    font-variant-numeric: tabular-nums; }
+  .submit { margin-top: 12px; width: 100%; height: 42px; border: 0; border-radius: 8px; background: var(--accent);
+    color: #fff; font-size: 15px; cursor: pointer; }
+  .error { color: var(--danger); min-height: 1.5em; margin-top: 8px; font-size: 13px; }
+  .keys { color: var(--muted); font-size: 13px; margin: 0; }
+  kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px;
+    background: #f7f9fb; font-size: 12px; }
 </style>
 </head>
 <body>
-<h2>GC Rescue 手动控制（0x17F）</h2>
-<p>按住方向键或按钮运动，松开即停；空格急停。键盘：W/S 前后，A/D 左右平移，Q/E 左右转。</p>
-<label>平移速度 <input id="linear" type="range" min="0.02" step="0.01" value="0.1"> <span id="linear_v"></span> m/s</label>
-<label>转向速度 <input id="angular" type="range" min="0.1" step="0.05" value="0.5"> <span id="angular_v"></span> rad/s</label>
-<div class="pad">
-  <button data-move="ccw">⟲ 左转</button><button data-move="forward">↑ 前进</button><button data-move="cw">⟳ 右转</button>
-  <button data-move="left">← 左移</button><button data-move="backward">↓ 后退</button><button data-move="right">→ 右移</button>
-</div>
-<button class="stop" id="stop">停车（空格）</button>
-<fieldset>
-  <legend>定时动作</legend>
-  vx <input id="t_vx" type="number" step="0.01" value="0.08" size="5">
-  vy <input id="t_vy" type="number" step="0.01" value="0" size="5">
-  wz <input id="t_wz" type="number" step="0.05" value="0" size="5">
-  秒 <input id="t_s" type="number" step="0.1" value="1.2" size="5">
-  <button id="timed">执行</button>
-  <div id="timed_error" class="error"></div>
-</fieldset>
-<h3>状态</h3>
-<div id="state">连接中…</div>
-<div id="error" class="error"></div>
+<header>
+  <h1>GC Rescue 手动控制 <span class="hint">0x17F</span></h1>
+  <span class="hint">按住运动、松开即停；<kbd>空格</kbd> 急停；页面失焦或切走自动停车</span>
+</header>
+<main>
+  <section class="card">
+    <h2>运动控制</h2>
+    <div class="slider"><span>平移速度</span><input id="linear" type="range" min="0.02" step="0.01" value="0.1"><output id="linear_v"></output></div>
+    <div class="slider"><span>转向速度</span><input id="angular" type="range" min="0.1" step="0.05" value="0.5"><output id="angular_v"></output></div>
+    <div class="pad">
+      <button data-move="ccw">⟲<small>Q 左转</small></button>
+      <button data-move="forward">↑<small>W 前进</small></button>
+      <button data-move="cw">⟳<small>E 右转</small></button>
+      <button data-move="left">←<small>A 左移</small></button>
+      <button class="center" id="pad_stop">■<small>停车</small></button>
+      <button data-move="right">→<small>D 右移</small></button>
+      <button class="blank" tabindex="-1" aria-hidden="true"></button>
+      <button data-move="backward">↓<small>S 后退</small></button>
+      <button class="blank" tabindex="-1" aria-hidden="true"></button>
+    </div>
+    <button class="stop" id="stop">停车（空格）</button>
+    <p class="keys">键盘：<kbd>W</kbd>/<kbd>S</kbd> 或 <kbd>↑</kbd>/<kbd>↓</kbd> 前后，<kbd>A</kbd>/<kbd>D</kbd> 或 <kbd>←</kbd>/<kbd>→</kbd> 平移，<kbd>Q</kbd>/<kbd>E</kbd> 转向。</p>
+    <div id="error" class="error"></div>
+  </section>
+  <div class="column">
+    <section class="card">
+      <div class="row"><h2 style="margin:0">实时状态</h2><span id="phase" class="badge offline">连接中</span></div>
+      <div class="stats">
+        <div class="stat"><div class="label">指令 vx / vy（m/s）</div><div class="value" id="cmd_linear">–</div></div>
+        <div class="stat"><div class="label">指令 wz（rad/s）</div><div class="value" id="cmd_angular">–</div></div>
+        <div class="stat"><div class="label">剩余时间（s）</div><div class="value" id="remaining">–</div></div>
+        <div class="stat"><div class="label">最近一帧 0x17F</div><div class="value" id="last_frame">–</div></div>
+        <div class="stat"><div class="label">已发帧数</div><div class="value" id="frames">–</div></div>
+        <div class="stat"><div class="label">发送频率（Hz）</div><div class="value" id="rate">–</div></div>
+        <div class="stat"><div class="label">设备</div><div class="value small" id="device">–</div></div>
+        <div class="stat"><div class="label">限幅</div><div class="value" id="limits">–</div></div>
+      </div>
+    </section>
+    <section class="card">
+      <h2>定时动作</h2>
+      <div class="timed">
+        <label>vx（m/s）<input id="t_vx" type="number" step="0.01" value="0.08"></label>
+        <label>vy（m/s）<input id="t_vy" type="number" step="0.01" value="0"></label>
+        <label>wz（rad/s）<input id="t_wz" type="number" step="0.05" value="0"></label>
+        <label>时长（s）<input id="t_s" type="number" step="0.1" value="1.2"></label>
+      </div>
+      <button class="submit" id="timed">执行</button>
+      <div id="timed_error" class="error"></div>
+    </section>
+  </div>
+</main>
 <script>
 // 方向单位向量：vx 前进，vy 左移，wz 逆时针。
 const MOVES = {
@@ -48,16 +125,25 @@ const KEYS = {
   ArrowUp: 'forward', KeyW: 'forward', ArrowDown: 'backward', KeyS: 'backward',
   ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', KeyQ: 'ccw', KeyE: 'cw',
 };
+const PHASES = {idle: '空闲', prepare: '使能零速', active: '运动中', stopping: '停车零速'};
 // 按住期间每 50 ms 续租；服务端租约 ≤ 200 ms，漏发几次即自动停车。
 const RENEW_MS = 50;
+const POLL_MS = 250;
 const held = new Set();
 let timer = null;
 
 const $ = (id) => document.getElementById(id);
 for (const id of ['linear', 'angular']) {
-  const show = () => { $(id + '_v').textContent = $(id).value; };
+  const show = () => { $(id + '_v').textContent = $(id).value + (id === 'linear' ? ' m/s' : ' rad/s'); };
   $(id).addEventListener('input', show);
   show();
+}
+
+// 按钮高亮只反映 held 集合，鼠标、触摸与键盘同一来源。
+function highlight() {
+  for (const button of document.querySelectorAll('[data-move]')) {
+    button.classList.toggle('active', held.has(button.dataset.move));
+  }
 }
 
 async function post(path, body) {
@@ -87,17 +173,20 @@ function renew() {
 function press(move) {
   if (held.has(move)) { return; }
   held.add(move);
+  highlight();
   renew();
   if (timer === null) { timer = setInterval(renew, RENEW_MS); }
 }
 
 function release(move) {
   held.delete(move);
+  highlight();
   if (held.size === 0) { stop(); } else { renew(); }
 }
 
 function stop() {
   held.clear();
+  highlight();
   if (timer !== null) { clearInterval(timer); timer = null; }
   post('/api/stop');
 }
@@ -122,6 +211,7 @@ document.addEventListener('keyup', (event) => {
 window.addEventListener('blur', stop);
 document.addEventListener('visibilitychange', () => { if (document.hidden) { stop(); } });
 $('stop').addEventListener('click', stop);
+$('pad_stop').addEventListener('click', stop);
 // 限幅来自 /api/state；未取得前拒绝定时提交。
 let limits = null;
 $('timed').addEventListener('click', () => {
@@ -137,17 +227,46 @@ $('timed').addEventListener('click', () => {
   if (problems.length === 0) { post('/api/timed', body); }
 });
 
+// 发送频率由相邻两次轮询的帧数差估算（POST 回包不参与，避免间隔过短）。
+let lastCount = null;
+const fixed = (value, digits) => Number(value).toFixed(digits);
 function show(state) {
   if (state.limits && limits === null) {
     limits = state.limits;
     $('linear').max = limits.linear_mps;
     $('angular').max = limits.angular_radps;
+    $('limits').textContent = `${limits.linear_mps} m/s · ${limits.angular_radps} rad/s`;
   }
-  $('state').textContent = JSON.stringify(state, null, 1);
+  const phase = $('phase');
+  phase.className = 'badge ' + state.phase;
+  phase.textContent = PHASES[state.phase] || state.phase;
+  const [vx, vy, wz] = state.velocity_milli.map((value) => value / 1000);
+  $('cmd_linear').textContent = `${fixed(vx, 3)} / ${fixed(vy, 3)}`;
+  $('cmd_angular').textContent = fixed(wz, 3);
+  $('remaining').textContent = fixed(state.remaining_s, 2);
+  const [valid, fx, fy, fw] = state.last_frame;
+  $('last_frame').textContent = `valid=${valid ? 1 : 0}  ${fx} ${fy} ${fw}`;
+  $('frames').textContent = state.frames;
+  $('device').textContent = state.device;
+}
+function rate(state) {
+  const now = performance.now();
+  if (lastCount !== null && now > lastCount.at) {
+    $('rate').textContent = fixed((state.frames - lastCount.frames) * 1000 / (now - lastCount.at), 0);
+  }
+  lastCount = {frames: state.frames, at: now};
 }
 setInterval(async () => {
-  try { show(await (await fetch('/api/state')).json()); } catch (error) { $('state').textContent = '断开'; }
-}, 250);
+  try {
+    const state = await (await fetch('/api/state')).json();
+    show(state);
+    rate(state);
+  } catch (error) {
+    $('phase').className = 'badge offline';
+    $('phase').textContent = '断开';
+    lastCount = null;
+  }
+}, POLL_MS);
 </script>
 </body>
 </html>
