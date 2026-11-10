@@ -59,4 +59,14 @@ rclcpp_components_register_nodes(bridge_components "BridgeNode")
 install(TARGETS bridge_components LIBRARY DESTINATION lib ARCHIVE DESTINATION lib
   RUNTIME DESTINATION bin)
 
+# 主机测试：达妙串口独占（M5）与 0x17F/0x180 心跳不变量（M7），pty 代替 USB-CAN，仅 Linux
+if(BUILD_TESTING)
+  find_package(ament_cmake_test REQUIRED)
+  add_executable(test_damiao_exclusive test/host/test_damiao_exclusive.cpp)
+  target_include_directories(test_damiao_exclusive PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test/host)
+  target_link_libraries(test_damiao_exclusive bridge_transport bridge_state util)
+  ament_add_test(test_damiao_exclusive COMMAND $<TARGET_FILE:test_damiao_exclusive>
+    GENERATE_RESULT_FOR_RETURN_CODE_ZERO TIMEOUT 60)
+endif()
+
 ament_package()
