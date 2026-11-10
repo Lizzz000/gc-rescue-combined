@@ -287,6 +287,17 @@ static void Wait_For_Count(const unsigned *counter, unsigned count)
 /** @brief 模拟一次有效心跳开机，并确认停车反馈前不启动舵机或导航。 */
 static void Start_Automatic(void)
 {
+    /* 独立手动帧不能启动自动心跳或改变接收快照。 */
+    const uint8_t manual[7] = {1U, 80U, 0U, 0U, 0U, 0U, 0U};
+    for (unsigned i = 0U; i < 60U; ++i)
+    {
+        Jetson_CAN_Receive(JETSON_CAN_MANUAL_ID, manual, sizeof(manual));
+        Step(0U);
+    }
+    Jetson_CAN_Data_t snapshot;
+    Jetson_CAN_Get_Data(&snapshot);
+    assert(!snapshot.heartbeat_seen && snapshot.velocity.sequence == 0U);
+    assert(!enabled && !enables && !servo_commands && !velocity_requests);
     Steps(3U, 0U);
     const uint8_t malformed[6] = {0};
     Jetson_CAN_Receive(0x180U, malformed, sizeof(malformed));
@@ -909,6 +920,20 @@ static void Test_Auto_Heartbeat_Age(void)
     }
 }
 
+/** @brief 独立手动帧不影响已经运行的自动链路或目标。 */
+static void Test_Manual_Frame_Does_Not_Affect_Automatic(void)
+{
+    Begin_Target_Test();
+    const uint8_t manual[7] = {1U, 80U, 0U, 0U, 0U, 0U, 0U};
+    const unsigned before_stops = stops;
+    for (unsigned i = 0U; i < 60U; ++i)
+    {
+        Jetson_CAN_Receive(JETSON_CAN_MANUAL_ID, manual, sizeof(manual));
+        Step(1U);
+        assert(enabled && stops == before_stops);
+    }
+}
+
 /** @brief Jetson 报告任务失联时，下一次调度立即停车。 */
 static void Test_Mission_Lost(void)
 {
@@ -969,6 +994,7 @@ int main(void)
     Test_Center_Revoked_Before_Recovery();
     Test_Lost_Target_And_Link();
     Test_Auto_Heartbeat_Age();
+    Test_Manual_Frame_Does_Not_Affect_Automatic();
     Test_Mission_Lost();
     Test_Servo_Unavailable();
     puts("PASS: Jetson auto transport, simulated stop gates, tokens, reacquisition and link loss");

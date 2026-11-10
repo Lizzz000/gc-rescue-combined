@@ -7,6 +7,7 @@ import math
 import os
 import select
 import socket
+import subprocess
 import struct
 import sys
 import termios
@@ -34,7 +35,7 @@ def parse_arguments():
         description='独立 USB-CAN 手动运动：平移 m/s，车体角速度 rad/s，时间 s。',
         epilog='例：python3 move_timed.py forward 0.08 1.2；停车：python3 move_timed.py stop')
     parser.add_argument('--device', default=DEFAULT_DEVICE, help='达妙 USB-CAN 设备路径')
-    commands = parser.add_subparsers(dest='command', required=True)
+    commands = parser.add_subparsers(dest='command')
     for direction in ('forward', 'backward', 'left', 'right', 'ccw', 'cw'):
         sub = commands.add_parser(direction, help=f'{direction} 速度 时间')
         sub.add_argument('speed', type=finite_number, help='速度幅值；平移 m/s，转向 rad/s')
@@ -46,6 +47,8 @@ def parse_arguments():
     velocity.add_argument('seconds', type=finite_number, help='持续时间，秒')
     commands.add_parser('stop', help='停止正在执行的手动动作')
     args = parser.parse_args()
+    if args.command is None:
+        return args.device, 'interactive'
     if args.command == 'stop':
         return args.device, None
     if not 0.0 < args.seconds <= 3600.0:
@@ -71,7 +74,7 @@ def make_packet(values, valid):
     packet = bytearray(30)
     packet[:5] = bytes([0x55, 0xaa, 30, 1, 1])
     packet[8] = 10
-    packet[13:17] = (0x180).to_bytes(4, 'little')
+    packet[13:17] = (0x17f).to_bytes(4, 'little')
     packet[18] = 7
     packet[21:28] = struct.pack('<Bhhh', int(valid), *(round(value * 1000) for value in values))
     return packet
@@ -100,8 +103,63 @@ def send_for(fd, packet, seconds, stop_socket=None):
     return True
 
 
+def interactive(device):
+    linear, angular, seconds = 0.08, 0.2, 1.2
+    directions = {
+        '1': ('前进', 'forward'), '2': ('后退', 'backward'),
+        '3': ('左移', 'left'), '4': ('右移', 'right'),
+        '5': ('左转', 'ccw'), '6': ('右转', 'cw'),
+    }
+    print('独立手动控制：运动时按 Ctrl+C 可停车。')
+    while True:
+        print(f'\n平移 {linear:g} m/s | 转向 {angular:g} rad/s | 时间 {seconds:g} s')
+        print('1 前进  2 后退  3 左移  4 右移  5 左转  6 右转')
+        print('7 修改速度和时间  8 组合速度  0 停车  q 退出')
+        try:
+            choice = input('请选择：').strip().lower()
+            if choice in ('q', 'quit', 'exit'):
+                return 0
+            if choice == '7':
+                entries = (
+                    input(f'平移速度 m/s [{linear:g}]：').strip(),
+                    input(f'车体转向速度 rad/s [{angular:g}]：').strip(),
+                    input(f'持续时间 s [{seconds:g}]：').strip(),
+                )
+                numbers = [float(value) if value else default for value, default in
+                           zip(entries, (linear, angular, seconds))]
+                if not all(math.isfinite(value) and value > 0 for value in numbers) or numbers[2] > 3600:
+                    print('请输入正的有限速度，时间为 (0, 3600] 秒。')
+                    continue
+                linear, angular, seconds = numbers
+                continue
+            if choice == '8':
+                entries = input('输入 vx vy wz 时间（空格分隔）：').split()
+                if len(entries) != 4:
+                    print('请输入四个数值。')
+                    continue
+                action = ['velocity', *entries]
+            elif choice == '0':
+                action = ['stop']
+            elif choice in directions:
+                label, command = directions[choice]
+                speed = angular if choice in ('5', '6') else linear
+                print(f'开始{label}；按 Ctrl+C 停车。', flush=True)
+                action = [command, str(speed), str(seconds)]
+            else:
+                print('未识别选项，请重新选择。')
+                continue
+            subprocess.run([sys.executable, __file__, '--device', device, *action], check=False)
+        except (EOFError, KeyboardInterrupt):
+            print('\n已退出。')
+            return 0
+        except ValueError:
+            print('请输入有效数字。')
+
+
 def main():
     device, values = parse_arguments()
+    if values == 'interactive':
+        return interactive(device)
     if values is None:
         with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sender:
             try:

@@ -21,7 +21,7 @@ CAN_HandleTypeDef hcan2 = { &can2_regs };
 uint32_t test_tick;
 TIM_HandleTypeDef htim4;
 static uint32_t pwm_starts, buzzer_starts, buzzer_stops, led_toggles, battery_reads;
-static CAN_FilterTypeDef filters[2];
+static CAN_FilterTypeDef filters[3];
 static uint32_t filter_count, failed_filter_bank;
 static CAN_TxHeaderTypeDef tx_header;
 static CAN_RxHeaderTypeDef rx_header;
@@ -164,7 +164,7 @@ float get_battery_voltage(void)
  */
 HAL_StatusTypeDef HAL_CAN_ConfigFilter(CAN_HandleTypeDef *hcan, CAN_FilterTypeDef *filter)
 {
-    assert(hcan == &hcan1 && filter_count < 2U && filter->FilterBank == filter_count);
+    assert(hcan == &hcan1 && filter_count < 3U && filter->FilterBank == filter_count);
     filters[filter_count++] = *filter;
     setup_steps |= 1U;
     return filter->FilterBank == failed_filter_bank ? HAL_ERROR : HAL_OK;
@@ -172,7 +172,7 @@ HAL_StatusTypeDef HAL_CAN_ConfigFilter(CAN_HandleTypeDef *hcan, CAN_FilterTypeDe
 /** @brief 模拟启动CAN1。 @param[in,out] hcan 句柄。 @return HAL_OK。 */
 HAL_StatusTypeDef HAL_CAN_Start(CAN_HandleTypeDef *hcan)
 {
-    assert(hcan == &hcan1 && filter_count == 2U && setup_steps == 1U);
+    assert(hcan == &hcan1 && filter_count == 3U && setup_steps == 1U);
     setup_steps |= 2U;
     return start_result;
 }
@@ -248,7 +248,7 @@ static void Check_Uplink_Submission(void)
 int main(void)
 {
     const uint8_t zero[8] = {0x7F,0xFF,0x7F,0xF0,0,0,7,0xFF};
-    for (failed_filter_bank = 0U; failed_filter_bank < 2U; ++failed_filter_bank)
+    for (failed_filter_bank = 0U; failed_filter_bank < 3U; ++failed_filter_bank)
     {
         can_filter_init();
         assert(filter_count == failed_filter_bank + 1U && setup_steps == 1U);
@@ -257,16 +257,17 @@ int main(void)
     failed_filter_bank = UINT32_MAX;
     start_result = HAL_ERROR;
     can_filter_init();
-    assert(filter_count == 2U && setup_steps == 3U);
+    assert(filter_count == 3U && setup_steps == 3U);
     setup_steps = filter_count = 0U;
     start_result = HAL_OK;
     can_filter_init();
-    assert(filter_count == 2U && setup_steps == 7U);
-    const uint16_t accepted_ids[2][4] = {
+    assert(filter_count == 3U && setup_steps == 7U);
+    const uint16_t accepted_ids[3][4] = {
         {0x000U, 0x180U, 0x181U, 0x182U},
         {0x190U, 0x191U, 0x192U, 0x193U},
+        {0x17FU, 0x17FU, 0x17FU, 0x17FU},
     };
-    for (unsigned bank = 0U; bank < 2U; ++bank)
+    for (unsigned bank = 0U; bank < 3U; ++bank)
     {
         const CAN_FilterTypeDef *filter = &filters[bank];
         assert(filter->FilterBank == bank && filter->SlaveStartFilterBank == 14U);
@@ -382,8 +383,8 @@ int main(void)
     assert(memcmp(jetson_rx_data, turn, 6) == 0);
 
     /* 所有下行 ID 可达协议层；畸形长度仍交给协议层撤销旧速度。 */
-    const uint16_t jetson_ids[] = {0x180U, 0x181U, 0x182U, 0x190U, 0x191U, 0x192U, 0x193U};
-    const uint8_t jetson_lengths[] = {7U, 8U, 8U, 1U, 3U, 6U, 6U};
+    const uint16_t jetson_ids[] = {0x17FU, 0x180U, 0x181U, 0x182U, 0x190U, 0x191U, 0x192U, 0x193U};
+    const uint8_t jetson_lengths[] = {7U, 7U, 8U, 8U, 1U, 3U, 6U, 6U};
     for (unsigned i = 0U; i < sizeof(jetson_ids) / sizeof(jetson_ids[0]); ++i)
     {
         rx_header.StdId = jetson_ids[i]; rx_header.DLC = jetson_lengths[i];
@@ -397,7 +398,7 @@ int main(void)
         Receive_Current_Frame();
         assert(jetson_rx_id == 0x180U && jetson_rx_length == length);
     }
-    assert(jetson_rx_count == 18U && dm_motor[0].feedback_seq == 2U);
+    assert(jetson_rx_count == 19U && dm_motor[0].feedback_seq == 2U);
 
     /* 不属于下行的握手、未知 ID、扩展帧、远程帧与超长帧不进入任一解析器。 */
     const uint16_t rejected_ids[] = {1U, 3U, 0x183U, 0x200U, 0x203U, 0x204U, 0x205U, 0x206U, 0x7FFU};
@@ -413,7 +414,7 @@ int main(void)
     Receive_Current_Frame();
     rx_header.RTR = CAN_RTR_DATA; rx_header.DLC = 9U;
     Receive_Current_Frame();
-    assert(jetson_rx_count == 18U && dm_motor[0].feedback_seq == 2U);
+    assert(jetson_rx_count == 19U && dm_motor[0].feedback_seq == 2U);
     assert(dm_motor[1].feedback_seq == 1U && dm_motor[2].feedback_seq == 1U);
     DM_Motor_ReceiveFeedback(NULL);
     assert(dm_motor[0].feedback_seq == 2U);
