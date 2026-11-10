@@ -317,12 +317,8 @@
         "path": "vision.field.black_max_width_frac",
         "kind": "number"
       },
-      "field.black_abs_gray": {
-        "path": "vision.field.black_abs_gray",
-        "kind": "number"
-      },
-      "field.black_rel_gray": {
-        "path": "vision.field.black_rel_gray",
+      "field.black_max_lift": {
+        "path": "vision.field.black_max_lift",
         "kind": "number"
       },
       "field.black_max_offset_frac": {
@@ -960,8 +956,7 @@
     "vision.field.black_conf_depth": "number",
     "vision.field.black_score_frac": "number",
     "vision.field.black_max_width_frac": "number",
-    "vision.field.black_abs_gray": "number",
-    "vision.field.black_rel_gray": "number",
+    "vision.field.black_max_lift": "number",
     "vision.field.black_max_offset_frac": "number",
     "vision.field.split_ema_alpha": "number",
     "vision.field.split_jump_frac": "number",

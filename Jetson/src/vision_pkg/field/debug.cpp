@@ -151,14 +151,14 @@ std::string configToString(const FieldConfig & cfg)
   char buf[2048];
   std::snprintf(buf, sizeof(buf),
                   "proc=%dx%d field=%.2fx%.2fm bev_ppm=%.0f purple[a>=%.1f b<=%.1f C>=%.1f S>=%.1f H=%.1f..%.1f hue=%d] "
-                  "fill>=%.2f ratio=%.2f..%.2f corner_tol=%.2f black[depth>=%.2f suspect_offset>%.2f width<=%.2f] "
+                  "fill>=%.2f ratio=%.2f..%.2f corner_tol=%.2f black[depth>=%.2f suspect_offset>%.2f width<=%.2f lift<=%.2f] "
                   "red[a>=%.1f C>=%.1f b=%.1f..%.1f]",
                   cfg.proc_width, cfg.proc_height, cfg.field_w_m, cfg.field_h_m, cfg.bev_px_per_m,
                   cfg.purple_a_min, cfg.purple_b_max, cfg.purple_chroma_min, cfg.purple_sat_min,
                   cfg.purple_hue_min, cfg.purple_hue_max, int(cfg.purple_use_hue),
                   cfg.min_fill_ratio, cfg.min_rect_ratio_lo, cfg.min_rect_ratio_hi,
                   cfg.prior_corner_tol_frac, cfg.black_min_depth, cfg.black_max_offset_frac,
-                  cfg.black_max_width_frac, cfg.red_a_min, cfg.red_chroma_min, cfg.red_b_min,
+                  cfg.black_max_width_frac, cfg.black_max_lift, cfg.red_a_min, cfg.red_chroma_min, cfg.red_b_min,
                   cfg.red_b_max);
   return std::string(buf);
 }
@@ -227,7 +227,7 @@ void validateFieldConfig(const FieldConfig & c)
   FRACTION(min_area_frac); FRACTION(min_fill_ratio); FRACTION(edge_band_frac);
   FRACTION(prior_corner_tol_frac); FRACTION(quad_min_area_frac);
   FRACTION(black_min_depth); FRACTION(black_score_frac); FRACTION(black_max_width_frac);
-  FRACTION(black_rel_gray); FRACTION(black_max_offset_frac); FRACTION(split_ema_alpha);
+  FRACTION(black_max_offset_frac); FRACTION(split_ema_alpha);
   FRACTION(split_jump_frac); FRACTION(corner_ema_alpha);
   FRACTION(edge_support_min); FRACTION(edge_support_strong); FRACTION(min_total_score);
   FRACTION(min_purple_score); FRACTION(purple_lost_threshold); FRACTION(red_inside_min);
@@ -254,7 +254,7 @@ void validateFieldConfig(const FieldConfig & c)
   range(c.blue_b_max, c.blue_b_min, 127, "blue_b_max");
   range(c.blue_chroma_min, 0, 200, "blue_chroma_min");
   range(c.blue_L_min, 0, 100, "blue_L_min");
-  range(c.black_abs_gray, 0, 255, "black_abs_gray");
+  range(c.black_max_lift, 0, 4, "black_max_lift");
   range(c.max_border_touch, 0, 4, "max_border_touch");
   range(c.pred_velocity_gain, 0, 10, "pred_velocity_gain");
   for (double weight : {c.w_purple, c.w_temporal, c.w_red_inside, c.w_red_outside, c.w_geometry}) {

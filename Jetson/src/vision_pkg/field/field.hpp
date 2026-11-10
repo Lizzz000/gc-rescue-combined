@@ -104,17 +104,17 @@ struct FieldConfig
   double quad_max_aspect_err = 2.0;
 
   // ---- [分组] 黑带与分区: 找 split_x + 平滑与跳变保护 ----
-  // 黑带直线：从 BEV 内部行范围的完整暗带定位，平滑上下端点；偏心只保留诊断。
+  // 黑带直线：BEV 内部行中相对两侧内部颜色的局部色度下陷，投票+稳健拟合成唯一直线；
+  // 不用全局灰度阈值，反光提亮的黑带仍可测；平滑上下端点，偏心只保留诊断。
   double black_search_lo = 0.14;
   double black_search_hi = 0.86;
   double black_row_lo = 0.12;
   double black_row_hi = 0.88;
-  double black_min_depth = 0.15;         // 暗带灰度相对内部中位数的下陷深度下限
-  double black_conf_depth = 0.35;        // 下陷到该深度算满置信度
-  double black_score_frac = 0.40;        // 暗带有效行占比；直线证据至少要求 0.75，各三分段均须支持
-  double black_max_width_frac = 0.30;
-  double black_abs_gray = 90.0;         // 对比度主判据与强暗备用的绝对灰度上限
-  double black_rel_gray = 0.55;         // 主判据无合格带时使用的强暗备用比例；不掩盖多候选歧义
+  double black_min_depth = 0.35;         // 色度相对同行两侧内部颜色的下陷深度下限 1-C/C_side
+  double black_conf_depth = 0.70;        // 平均下陷到该深度算满置信度
+  double black_score_frac = 0.60;        // 沿线资格行中有黑带支持的比例下限；三分段各须达到其一半
+  double black_max_width_frac = 0.06;    // 黑带最大宽度/BEV 宽度；其一半也是两侧参照段偏移与长度
+  double black_max_lift = 0.25;          // 黑带亮度最多高出两侧较亮参照的比例，更亮视为高光条带
   double black_max_offset_frac = 0.04;     // 黑带中点偏离几何中心超过该比例时标记 suspect，仍使用可靠实测
   double split_ema_alpha = 0.30;
   double split_jump_frac = 0.03;
@@ -227,8 +227,7 @@ struct FieldConfig
   X(double, black_conf_depth) \
   X(double, black_score_frac) \
   X(double, black_max_width_frac) \
-  X(double, black_abs_gray) \
-  X(double, black_rel_gray) \
+  X(double, black_max_lift) \
   X(double, black_max_offset_frac) \
   X(double, split_ema_alpha) \
   X(double, split_jump_frac) \

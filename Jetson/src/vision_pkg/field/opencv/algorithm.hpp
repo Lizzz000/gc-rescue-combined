@@ -88,8 +88,8 @@ void finalizeScore(CandidateScore & sc, const FieldConfig & cfg);
 std::string rejectCandidate(
   const CandidateScore & sc, int measured, const FieldConfig & cfg, bool tracking);
 
-// 黑带须横跨配置的内部采样行区间，并能拟合成一条窄直带；端点在 BEV 顶/底边。
-// 不以几何中线替代测量；多个完整暗带或不完整/过宽暗区均返回无效。
+// 黑带是同行两侧均为内部颜色时的局部色度下陷，须沿资格行拟合成唯一窄直带；端点在 BEV 顶/底边。
+// 不以几何中线替代测量；多条合格直线、覆盖不足或超宽下陷均返回无效。
 struct SplitMeasurement
 {
   bool valid = false;
