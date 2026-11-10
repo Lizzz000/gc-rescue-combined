@@ -50,6 +50,12 @@
       "unit": "BEV 像素；0 按米制尺寸与密度计算",
       "purpose": "显式鸟瞰高度；零值由物理高度与像素密度计算。"
     },
+    "wall_thickness_m": {
+      "group": "geometry",
+      "level": "高级",
+      "unit": "米",
+      "purpose": "围边厚度：BEV、分区和区域对应内沿四边形（内部地面），默认 BEV 尺寸按 field−2×厚度；内沿某边未测到时外沿内缩该厚度作先验。须实测。"
+    },
     "purple_hue_range_deg": {
       "group": "color",
       "level": "常用",
@@ -373,12 +379,6 @@
       "level": "高级",
       "unit": "跟踪 ROI 扩张倍数",
       "purpose": "以预测四边形构造跟踪 ROI 时的放大比例。"
-    },
-    "corner_ema_alpha": {
-      "group": "tracking",
-      "level": "常用",
-      "unit": "无量纲比例",
-      "purpose": "普通接受分支的角点平滑系数；实现结合跳变调整，端点不走平滑。"
     },
     "purple_lost_threshold": {
       "group": "tracking",

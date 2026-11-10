@@ -6,14 +6,14 @@
 // 紫框场地定位与 SEARCH/LOCATE/TRACK 状态机，仅依赖 OpenCV。
 // 每帧先用紫框与内部颜色证据筛候选，再更新跟踪状态，最后生成鸟瞰与分区诊断：
 //   预处理 -> ROI／全图搜索 -> 拟合、评分、准入 -> 保持／跳变确认／提交
-//   -> 透视矫正 -> 黑带中线 split_x 与内部颜色占比。正式几何发布另由 ROS 转换边界判定。
+//   -> 内沿四边形透视矫正 -> 黑带中线 split_x 与内部颜色占比。正式几何发布另由 ROS 转换边界判定。
 // 默认参数针对紫色边框、红色场地；角点顺序固定为图像中的 TL/TR/BR/BL。
 
 #include <opencv2/core.hpp>
 #include <string>
 #include <vector>
 
-// EdgeState：MEASURED=本帧实测；PREDICTED=用上一帧预测或候选先验补的；LOST=无证据。
+// EdgeState：MEASURED=本帧实测；PREDICTED=用本帧候选凸包先验补的；LOST=无证据。
 enum class EdgeState { MEASURED = 0, PREDICTED = 1, LOST = 2 };
 
 // CandidateScore：单个候选的评分明细；先过各项硬门槛，再用 total 在同类候选中排序。
@@ -46,6 +46,9 @@ struct FieldConfig
   double bev_px_per_m = 400.0;
   int bev_width = 0;                     // >0 直接指定；有效尺寸须在 16..4096
   int bev_height = 0;                    // >0 直接指定；同上
+  // 围边厚度（米）：BEV 对应内沿四边形（内部地面），默认尺寸为 (field - 2·wall_thickness_m)·px/m；
+  // 内沿某条边本帧没测到时，用外沿内缩该厚度作先验边。须 ≥0 且小于短边的 1/4。
+  double wall_thickness_m = 0.015;
 
   // ---- [分组] 颜色判据：Lab 色相扇区 + 相对色度 C/L ----
   // 色相角 atan2(b,a)（度，逆时针为正），落在 [lo,hi] 扇区内，且 C=|a|+|b| ≥ ratio×L（L 0..100）。
@@ -98,7 +101,7 @@ struct FieldConfig
 
   // ---- [分组] 黑带与分区: 逐帧实测 split_x，跨帧保持由桥接层按时间处理 ----
   // 黑带直线：BEV 内部行中相对两侧内部颜色的局部色度下陷，投票+稳健拟合成唯一直线；
-  // 不用全局灰度阈值，反光提亮的黑带仍可测；平滑上下端点，偏心只保留诊断。
+  // 不用全局灰度阈值，反光提亮的黑带仍可测；上下端点逐帧实测，偏心只保留诊断。
   double black_search_lo = 0.14;
   double black_search_hi = 0.86;
   double black_row_lo = 0.12;
@@ -127,13 +130,12 @@ struct FieldConfig
   int interior_open_ksize = 3;
   double bev_border_margin_frac = 0.04;
 
-  // ---- [分组] 状态机与提交: 命中/丢失/重拟合/跟踪窗口/角点平滑 ----
+  // ---- [分组] 状态机与提交: 命中/丢失/重拟合/跟踪窗口（角点逐帧实测，不做跨帧平滑） ----
   // 改状态机阈值：命中与丢失帧数直接决定提交、保持与回退 SEARCH 的时机。
   int locate_hits_needed = 2;
   int lost_frames_to_search = 6;
   int refit_every = 10;
   double track_window_scale = 1.35;
-  double corner_ema_alpha = 0.45;
 
   // ---- 多特征评分 / 边状态 / 预测补偿 ----
   int edge_samples = 40;               // 每条边采样点数
@@ -176,6 +178,7 @@ struct FieldConfig
   X(double, bev_px_per_m) \
   X(int, bev_width) \
   X(int, bev_height) \
+  X(double, wall_thickness_m) \
   X(double, purple_hue_lo_deg) \
   X(double, purple_hue_hi_deg) \
   X(double, purple_chroma_ratio_min) \
@@ -229,7 +232,6 @@ struct FieldConfig
   X(int, lost_frames_to_search) \
   X(int, refit_every) \
   X(double, track_window_scale) \
-  X(double, corner_ema_alpha) \
   X(int, edge_samples) \
   X(int, edge_probe_radius) \
   X(double, edge_support_min) \
@@ -265,10 +267,13 @@ struct FieldResult
 {
   bool ok = false;
   std::string state = "SEARCH";        // SEARCH / LOCATE / TRACK
-  std::string quality = "unknown";     // 可为 good/degraded/predicted/prior_fallback/hold/overflow/none 等诊断值
+  std::string quality = "unknown";     // 可为 good/degraded/prior_fallback/hold/overflow/none 等诊断值
   std::string reason;
-  std::vector<cv::Point2f> corners;    // TL,TR,BR,BL (处理分辨率坐标)
-  cv::Mat bev;                         // 透视矫正结果
+  // 内部地面（内沿，z=0）TL,TR,BR,BL，处理分辨率坐标；鸟瞰、分区和区域都基于它。
+  std::vector<cv::Point2f> corners;
+  std::vector<cv::Point2f> outline;    // 紫框外沿四边形（搜索、评分、跟踪用），仅诊断
+  int inner_measured_edges = 0;        // 远端与两侧内沿中本帧实测的条数，其余为外沿内缩先验
+  cv::Mat bev;                         // 内沿四边形的透视矫正结果（内部地面）
   cv::Mat homography;                  // 处理分辨率 -> 鸟瞰图
   cv::Mat homography_inv;
   double split_x = 0.0;                // 本帧实测黑带线在 BEV 中间行的 x；斜线的上下端点可不同
@@ -331,7 +336,9 @@ private:
   SearchResult findCandidate(FrameEvidence &, bool force_full) const;
   bool prepareFrame(const cv::Mat &, cv::Mat &, FieldResult &);
   void updateTracking(FrameEvidence &, SearchResult &, FieldResult &);
-  // 生成输出平滑黑带上下端点；即使本帧未提交角点，也可能输出历史 BEV 诊断。
+  // 提交本帧候选：外沿角点与同一搜索图上拟合的内沿四边形一起写入。
+  void commitGeometry(const SearchResult &);
+  // 生成鸟瞰与本帧黑带实测；即使本帧未提交角点，也可能输出历史 BEV 诊断。
   void buildOutput(FrameEvidence &, SearchResult &, FieldResult &,
     bool ok, const std::string & quality, const std::string & why);
 
@@ -340,7 +347,9 @@ private:
   // hits_ 决定定位确认；lost_ 统计无候选，hold_frames_ 统计有候选但未过门槛，两者独立老化。
   int hits_ = 0, lost_ = 0, frame_idx_ = 0, hold_frames_ = 0;
   bool has_corners_ = false;
-  std::vector<cv::Point2f> corners_;            // 当前使用的四边形 (处理分辨率)
+  std::vector<cv::Point2f> corners_;            // 当前使用的外沿四边形 (处理分辨率)
+  std::vector<cv::Point2f> inner_;              // 与 corners_ 同帧提交的内沿四边形
+  int inner_measured_ = 0;
   std::vector<cv::Point2f> last_good_, prev_good_;     // 最近两次成功提交的角点
   std::vector<cv::Point2f> pending_;            // 大跳变候选（门槛为 max(2, switch_confirm_frames) 次确认）
   int pending_hits_ = 0;

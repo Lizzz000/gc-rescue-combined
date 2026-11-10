@@ -77,6 +77,7 @@ void scoreEdges(
 }
 
 // 内部颜色：默认红色（蓝色模式沿用 red 名称），配置网格（默认4×2）及总体采样占比。
+// quad 是内沿地面四边形；网格按地面平面射影均分，远处的格子不会因透视被压扁。
 // 总体比例衡量颜色覆盖率，cells_red 另约束分布；只在一角出现大片颜色不能替代多个合格格子。
 double redInsideGrid(
   const cv::Mat & red, const std::vector<cv::Point2f> & quad,
@@ -84,32 +85,35 @@ double redInsideGrid(
 {
   cells_red = 0;
   const int cols = std::max(1, cfg.red_grid_cols), rows = std::max(1, cfg.red_grid_rows);
-  const double inset = 0.10;       // 往里收 10%, 避开紫框本身
-  int total = 0, hit = 0;
+  constexpr double kInset = 0.10;  // 往里收 10%, 避开内沿混色
+  constexpr int kSub = 4;          // 每格 4x4 个采样点
+  std::vector<cv::Point2f> unit;
+  unit.reserve(static_cast<size_t>(cols * rows * kSub * kSub));
   for (int gy = 0; gy < rows; ++gy) {
     for (int gx = 0; gx < cols; ++gx) {
-      int cell_total = 0, cell_hit = 0;
-      const int sub = 4;         // 每格 4x4 个采样点
-      for (int sy = 0; sy < sub; ++sy) {
-        for (int sx = 0; sx < sub; ++sx) {
-          const float u = static_cast<float>(inset + (1 - 2 * inset) *
-            ((gx + (sx + 0.5f) / sub) / cols));
-          const float v = static_cast<float>(inset + (1 - 2 * inset) *
-            ((gy + (sy + 0.5f) / sub) / rows));
-                    // 双线性插值定位 (四边形参数坐标 -> 图像坐标)
-          const cv::Point2f top = quad[0] + (quad[1] - quad[0]) * u;
-          const cv::Point2f bot = quad[3] + (quad[2] - quad[3]) * u;
-          const cv::Point2f p = top + (bot - top) * v;
-          const int x = cvRound(p.x), y = cvRound(p.y);
-          if (x < 0 || y < 0 || x >= red.cols || y >= red.rows) {continue;}
-          ++cell_total; ++total;
-          if (red.at<uchar>(y, x) > 0) {++cell_hit; ++hit;}
+      for (int sy = 0; sy < kSub; ++sy) {
+        for (int sx = 0; sx < kSub; ++sx) {
+          unit.emplace_back(
+            static_cast<float>(kInset + (1 - 2 * kInset) * ((gx + (sx + 0.5) / kSub) / cols)),
+            static_cast<float>(kInset + (1 - 2 * kInset) * ((gy + (sy + 0.5) / kSub) / rows)));
         }
       }
-      if (cell_total > 0 && static_cast<double>(cell_hit) / cell_total >= cfg.red_cell_min) {
-        ++cells_red;
-      }
     }
+  }
+  const std::vector<cv::Point2f> square{{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+  std::vector<cv::Point2f> image;
+  cv::perspectiveTransform(unit, image, cv::getPerspectiveTransform(square, quad));
+  int total = 0, hit = 0;
+  for (size_t cell = 0; cell < image.size(); cell += kSub * kSub) {
+    int cell_total = 0, cell_hit = 0;
+    for (size_t k = cell; k < cell + kSub * kSub; ++k) {
+      const int x = cvRound(image[k].x), y = cvRound(image[k].y);
+      if (x < 0 || y < 0 || x >= red.cols || y >= red.rows) {continue;}
+      ++cell_total;
+      cell_hit += red.at<uchar>(y, x) > 0;
+    }
+    total += cell_total; hit += cell_hit;
+    if (cell_total > 0 && static_cast<double>(cell_hit) / cell_total >= cfg.red_cell_min) {++cells_red;}
   }
   return total > 0 ? static_cast<double>(hit) / total : 0.0;
 }
@@ -245,7 +249,8 @@ std::string rejectCandidate(
   if (sc.edges_ok == 2 && sc.top2_min < cfg.edge_support_strong &&
     !(tracking && sc.temporal >= 0.9)) {return "只有 2 条边有证据, 且强度/时序一致性不足";}
   if (sc.total < cfg.min_total_score) {return "总分过低";}
-  if (measured <= 1) {return "只有 1 条边测到";}
+  // 本帧实测边少于 3 条时几何主要来自先验，不能当测量提交。
+  if (measured < 3) {return "实测边少于 3 条";}
   return std::string();
 }
 

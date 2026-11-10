@@ -130,14 +130,50 @@ double pointLineDistance(const Line & l, const cv::Point2f & p)
   return std::abs(l.a * p.x + l.b * p.y + l.c);
 }
 
-// 总最小二乘／主成分直线拟合：用较小特征值方向作法线，逐轮剔除残差离群点。
+// 内点计数带宽下限（像素）：胶带边缘的亚像素抖动与 JPEG 振铃约 ±1.5 px。
+constexpr double kMinInlierBandPx = 3.0;
+
+// 一致性初值：按 1/4、1/3、1/2 边长间距取点对连线，取 fit_outlier_px 带内点数最多（同数取残差和最小）的直线。
+// 残差中位数剔除对集中在一端的污染（凸包截角处的斜点、贴边物块）没有抵抗力，会把整条线带歪；
+// 一致性初值让拟合跟随最长的共线段。点按分箱顺序排列，点对数随点数线性增长。
+std::vector<cv::Point2f> consensusInliers(const std::vector<cv::Point2f> & pts, double band)
+{
+  const size_t n = pts.size();
+  size_t best_count = 0;
+  double best_cost = 0;
+  Line best;
+  for (size_t gap : {std::max<size_t>(1, n / 4), std::max<size_t>(1, n / 3), std::max<size_t>(1, n / 2)}) {
+    for (size_t i = 0; i + gap < n; ++i) {
+      if (dist(pts[i], pts[i + gap]) < 1.0) {continue;}
+      const Line line = lineThrough(pts[i], pts[i + gap]);
+      size_t count = 0;
+      double cost = 0;
+      for (const auto & p : pts) {
+        const double d = pointLineDistance(line, p);
+        if (d <= band) {++count; cost += d;}
+      }
+      if (count > best_count || (count == best_count && cost < best_cost)) {
+        best_count = count; best_cost = cost; best = line;
+      }
+    }
+  }
+  if (best_count == 0) {return pts;}
+  std::vector<cv::Point2f> inliers;
+  for (const auto & p : pts) {
+    if (pointLineDistance(best, p) <= band) {inliers.push_back(p);}
+  }
+  return inliers;
+}
+
+// 一致性初值 + 总最小二乘／主成分直线拟合：用较小特征值方向作法线，逐轮剔除残差离群点。
 bool fitLineRobust(
   const std::vector<cv::Point2f> & pts, const FieldConfig & cfg, Line & out,
   int & inliers)
 {
   inliers = 0;
   if (static_cast<int>(pts.size()) < cfg.min_side_points) {return false;}
-  std::vector<cv::Point2f> P = pts;
+  std::vector<cv::Point2f> P = consensusInliers(pts, cfg.fit_outlier_px);
+  if (static_cast<int>(P.size()) < cfg.min_side_inliers) {return false;}
   Line line;
   for (int it = 0; it < std::max(1, cfg.fit_iterations); ++it) {
     cv::Scalar mean = cv::mean(P);
@@ -171,7 +207,7 @@ bool fitLineRobust(
   out = line;
   // 最后回到原始点集统计内点，避免迭代删点后把稀疏边误记成拥有足够实测证据。
   for (const auto & p : pts) {
-    if (pointLineDistance(line, p) <= std::max(cfg.fit_outlier_px, 3.0)) {++inliers;}}
+    if (pointLineDistance(line, p) <= std::max(cfg.fit_outlier_px, kMinInlierBandPx)) {++inliers;}}
   return true;
 }
 
@@ -360,22 +396,58 @@ double quadJumpRatio(const std::vector<cv::Point2f> & a, const std::vector<cv::P
   return diag > 1e-6 ? d / diag : 1e9;
 }
 
-// 拟合候选: assign_prior 只用来给紫色像素分边 (应该用候选自己的形状);
-// fallback_prior 只在该边没测到时补线 (TRACK 时=上一帧预测, 否则=候选自己的先验)。
-FitOut fitQuad(
-  const std::vector<cv::Point2f> & pts, const FieldConfig & cfg,
-  const std::vector<cv::Point2f> & assign_prior,
-  const std::vector<cv::Point2f> & fallback_prior)
+// 近端角点：近边实测的是近墙前立面底边（z=0），两侧实测的是侧墙顶外沿（z=h），外轮廓在近角处是六边形，
+// 侧线与近边的交点总落在真实近角外侧。近边实测点在画内结束时，前立面底边的端点就是近角，取交点与端点中靠内者；
+// 近边支持延伸到画面边界（有贴边点落在近边带内）时端点不是角点，保留交点。
+void trimNearCorners(
+  const Line & near_line, const QuadEvidence & evidence, const FieldConfig & cfg,
+  std::vector<cv::Point2f> & quad)
+{
+  const double band = std::max(cfg.fit_outlier_px, kMinInlierBandPx);
+  const cv::Point2f u(static_cast<float>(near_line.b), static_cast<float>(-near_line.a));
+  const cv::Point2f origin = quad[2];
+  auto along = [&](const cv::Point2f & p) {return double((p - origin).dot(u));};
+  double lo = 1e18, hi = -1e18;
+  for (const auto & p : evidence.pts) {
+    if (pointLineDistance(near_line, p) > band) {continue;}
+    lo = std::min(lo, along(p)); hi = std::max(hi, along(p));
+  }
+  if (lo > hi) {return;}
+  bool clipped_lo = false, clipped_hi = false;
+  for (const auto & p : evidence.clipped) {
+    if (pointLineDistance(near_line, p) > band) {continue;}
+    (along(p) < 0.5 * (lo + hi) ? clipped_lo : clipped_hi) = true;
+  }
+  auto pointAt = [&](double s) {
+    const double base = -near_line.c;   // 线上离原点最近点 = base·n
+    const cv::Point2f foot(static_cast<float>(near_line.a * base), static_cast<float>(near_line.b * base));
+    return foot + u * static_cast<float>(s - double((foot - origin).dot(u)));
+  };
+  // quad 为 top∩left、top∩right、bottom∩right、bottom∩left；后两个在近边上；按沿线坐标分别夹到实测端点以内。
+  for (int k : {2, 3}) {
+    const double s = along(quad[k]);
+    const bool low_end = s < 0.5 * (along(quad[2]) + along(quad[3]));
+    if (low_end && !clipped_lo && s < lo) {quad[k] = pointAt(lo);}
+    if (!low_end && !clipped_hi && s > hi) {quad[k] = pointAt(hi);}
+  }
+}
+
+// 拟合候选：分边先验取全部证据（含贴边点）的凸包简化，用来给像素分边，并在该边没测到时补线。
+// 只用本帧证据，不借历史预测。
+// 贴边点不参与直线拟合；某条边只有贴边点时整侧出画，几何不完整，不产生候选。
+FitOut fitQuad(const QuadEvidence & evidence, const FieldConfig & cfg)
 {
   FitOut out;
-  // 分边先验与补线先验分开：前者描述当前候选轮廓，后者只在缺边时提供几何，不增加实测边数。
-  out.prior = assign_prior.empty() ? priorQuad(pts) : assign_prior;
+  std::vector<cv::Point2f> all = evidence.pts;
+  all.insert(all.end(), evidence.clipped.begin(), evidence.clipped.end());
+  if (evidence.pts.size() < 4) {out.reason = "四条边都没有足够像素"; return out;}
+  out.prior = priorQuad(all);
   const std::vector<cv::Point2f> & prior = out.prior;
-  const std::vector<cv::Point2f> & fb = fallback_prior.empty() ? out.prior : fallback_prior;
   const int edges[4][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}};
   const char * names[4] = {"top", "right", "bottom", "left"};
 
-  const std::vector<std::vector<cv::Point2f>> sides = edgePoints(pts, prior, cfg);
+  const std::vector<std::vector<cv::Point2f>> sides = edgePoints(evidence.pts, prior, cfg);
+  const std::vector<std::vector<cv::Point2f>> clipped = edgePoints(evidence.clipped, prior, cfg);
 
   std::vector<Line> lines(4);
   std::vector<std::string> degraded;
@@ -383,8 +455,13 @@ FitOut fitQuad(
     Line l; int n = 0;
     const bool fitted = fitLineRobust(sides[i], cfg, l, n);
     if (!fitted || n < cfg.min_side_inliers) {
-            // 这条边这一帧没测到 -> 用上一帧预测(或候选自己的先验)那条边补
-      lines[i] = lineThrough(fb[edges[i][0]], fb[edges[i][1]]);
+      if (static_cast<int>(clipped[i].size()) >= cfg.min_side_points) {
+        out.out_of_frame = true;
+        out.reason = std::string(names[i]) + " 边整侧出画, 几何不完整";
+        return out;
+      }
+            // 这条边这一帧没测到 -> 用候选自己的凸包先验那条边补
+      lines[i] = lineThrough(prior[edges[i][0]], prior[edges[i][1]]);
       out.edge_state[i] = EdgeState::PREDICTED;
       degraded.push_back(names[i]);
     } else {
@@ -411,19 +488,21 @@ FitOut fitQuad(
   const cv::Point2f p4 = intersectLines(lines[2], lines[3], ok);
   if (!ok) {out.reason = "对边近似平行, 交点退化"; return out;}
 
-  std::vector<cv::Point2f> quad = orderCorners({p1, p2, p3, p4});
-  // 角点一致性：拟合角点不能偏离先验框太远，避免少量噪声点带偏直线；
-  // 短边较远时尤其容易出现这种退化，超出容差就退回先验框。
+  std::vector<cv::Point2f> corners{p1, p2, p3, p4};
+  if (out.edge_state[2] == EdgeState::MEASURED) {trimNearCorners(lines[2], evidence, cfg, corners);}
+  std::vector<cv::Point2f> quad = orderCorners(corners);
+  // 角点一致性（单侧）：先验凸包来自实测点，真实外沿只会在缺证据或出画处越出凸包；
+  // 角点落进先验内部且离最近先验角超过容差，才说明直线被带偏，此时退回先验框。画外角点必在凸包外，不受此约束。
   const double tol = cfg.prior_corner_tol_frac * std::max(dist(prior[0], prior[2]), 1.0);
-  double worst = 0;
+  bool inward = false;
   for (const auto & c : quad) {
     double m = 1e18;
     for (const auto & pc : prior) {
       m = std::min(m, dist(c, pc));
     }
-    worst = std::max(worst, m);
+    if (m > tol && cv::pointPolygonTest(prior, c, false) > 0) {inward = true;}
   }
-  if (worst > tol) {
+  if (inward) {
         // 距离门槛按先验对角线缩放；退回先验只是产生备选几何，仍需调用方检查颜色和边证据。
     out.ok = true;
     out.quad = prior;
@@ -466,15 +545,110 @@ bool checkQuad(
   return true;
 }
 
-// 阶段: 透视与鸟瞰 —— 米制尺寸乘 px/m 定默认 BEV 大小；显式宽、高可分别覆盖，生成 BEV 还需已有角点。
-// 经 validateFieldConfig 的配置保证有效尺寸在 16..4096；这里再取 16 下限，只为兜底直接调用未校验配置的场合。
+// 阶段: 透视与鸟瞰 —— BEV 对应内沿四边形（内部地面）：米制内部尺寸 (field - 2·wall_thickness) 乘 px/m 定默认大小；
+// 显式宽、高可分别覆盖。经 validateFieldConfig 的配置保证有效尺寸在 16..4096；这里再取 16 下限，只为兜底直接调用未校验配置的场合。
 cv::Size bevSize(const FieldConfig & cfg)
 {
-  const int w = cfg.bev_width >
-    0 ? cfg.bev_width : static_cast<int>(std::lround(cfg.field_w_m * cfg.bev_px_per_m));
-  const int h = cfg.bev_height >
-    0 ? cfg.bev_height : static_cast<int>(std::lround(cfg.field_h_m * cfg.bev_px_per_m));
+  const double inner_w = cfg.field_w_m - 2.0 * cfg.wall_thickness_m;
+  const double inner_h = cfg.field_h_m - 2.0 * cfg.wall_thickness_m;
+  const int w = cfg.bev_width > 0 ? cfg.bev_width : static_cast<int>(std::lround(inner_w * cfg.bev_px_per_m));
+  const int h = cfg.bev_height > 0 ? cfg.bev_height : static_cast<int>(std::lround(inner_h * cfg.bev_px_per_m));
   return {std::max(16, w), std::max(16, h)};
+}
+
+namespace {
+// 内沿扫描：连续多少个内部像素才算过渡（滤掉单像素混色）。
+constexpr int kInteriorRunPx = 2;
+// 内沿扫描只看外沿鸟瞰的外侧一半，越过中线的命中不属于该边。
+constexpr double kInnerScanDepth = 0.5;
+
+// 外沿鸟瞰中沿一条边向内扫描：每个采样位置取第一个连续内部像素。
+// along=true 时按列扫描（上/下边），from_end=true 从底/右端开始。
+std::vector<cv::Point2f> innerTransitions(
+  const cv::Mat & mask, bool along, bool from_end, const FieldConfig & cfg)
+{
+  const int length = along ? mask.cols : mask.rows;
+  const int depth = static_cast<int>((along ? mask.rows : mask.cols) * kInnerScanDepth);
+  const int samples = std::max(4, cfg.edge_bins);
+  std::vector<cv::Point2f> points;
+  for (int k = 0; k < samples; ++k) {
+    const double t = cfg.corner_exclude_frac + (1.0 - 2.0 * cfg.corner_exclude_frac) * (k + 0.5) / samples;
+    const int pos = std::clamp(static_cast<int>(t * (length - 1)), 0, length - 1);
+    int run = 0;
+    for (int step = 0; step < depth; ++step) {
+      const int inward = from_end ? (along ? mask.rows : mask.cols) - 1 - step : step;
+      const bool hit = along ? mask.at<uchar>(inward, pos) != 0 : mask.at<uchar>(pos, inward) != 0;
+      run = hit ? run + 1 : 0;
+      if (run == kInteriorRunPx) {
+        const int first = from_end ? inward + kInteriorRunPx - 1 : inward - kInteriorRunPx + 1;
+        points.emplace_back(along ? cv::Point2f(float(pos), float(first)) : cv::Point2f(float(first), float(pos)));
+        break;
+      }
+    }
+  }
+  return points;
+}
+}  // namespace
+
+InnerQuad fitInnerQuad(
+  const cv::Mat & interior, const std::vector<cv::Point2f> & outer, const FieldConfig & cfg)
+{
+  // 扫描用外沿鸟瞰（外沿四边形到米制外沿矩形的单应，像素密度与输出 BEV 相同）；只是图像的射影重参数化，
+  // 直线仍是直线。外沿近边是近墙前立面底边（z=0），其余外沿边在墙顶（z=h），因此只借用近边。
+  const cv::Size inner = bevSize(cfg);
+  const double sx = inner.width / (cfg.field_w_m - 2.0 * cfg.wall_thickness_m);
+  const double sy = inner.height / (cfg.field_h_m - 2.0 * cfg.wall_thickness_m);
+  const cv::Size size(static_cast<int>(std::lround(cfg.field_w_m * sx)),
+    static_cast<int>(std::lround(cfg.field_h_m * sy)));
+  const float w = size.width - 1.f, h = size.height - 1.f;
+  const std::vector<cv::Point2f> rect{{0, 0}, {w, 0}, {w, h}, {0, h}};
+  const cv::Mat forward = cv::getPerspectiveTransform(outer, rect);
+  cv::Mat mask;
+  cv::warpPerspective(interior, mask, forward, size, cv::INTER_NEAREST, cv::BORDER_CONSTANT, cv::Scalar(0));
+  const float tx = static_cast<float>(cfg.wall_thickness_m * sx);
+  const float ty = static_cast<float>(cfg.wall_thickness_m * sy);
+  // 远端与两侧内沿都在地面（远墙、侧墙内立面底边）；近端内沿被近墙挡住，不扫描。
+  // 先验（没测到时）：外沿内缩围边厚度。
+  struct Side {std::vector<cv::Point2f> scan; cv::Point2f a, b;};
+  const Side sides[3] = {
+    {innerTransitions(mask, true, false, cfg), {tx, ty}, {w - tx, ty}},       // 远
+    {innerTransitions(mask, false, true, cfg), {w - tx, ty}, {w - tx, h}},    // 右
+    {innerTransitions(mask, false, false, cfg), {tx, ty}, {tx, h}}};          // 左
+  InnerQuad out;
+  Line lines[3];
+  for (int i = 0; i < 3; ++i) {
+    Line line; int inliers = 0;
+    if (fitLineRobust(sides[i].scan, cfg, line, inliers) && inliers >= cfg.min_side_inliers) {
+      lines[i] = line;
+      ++out.measured_edges;
+    } else {
+      lines[i] = lineThrough(sides[i].a, sides[i].b);
+    }
+  }
+  const Line near_outer = lineThrough({0, h}, {w, h});
+  // 地面单应：内部地面 (0,0)/(W,0) 是远内沿与两侧内沿的交点，(W,H+t)/(0,H+t) 是两侧内沿与外沿近边（z=0）的交点。
+  // 由它求被近墙挡住的近端内沿角 (0,H)/(W,H)，四角都在地面。
+  bool ok = true;
+  std::vector<cv::Point2f> image(4);
+  image[0] = intersectLines(lines[0], lines[2], ok);
+  if (ok) {image[1] = intersectLines(lines[0], lines[1], ok);}
+  if (ok) {image[2] = intersectLines(near_outer, lines[1], ok);}
+  if (ok) {image[3] = intersectLines(near_outer, lines[2], ok);}
+  bool inside = ok && isConvexQuad(image);
+  for (const auto & c : image) {inside = inside && c.x >= -1 && c.y >= -1 && c.x <= w + 1 && c.y <= h + 1;}
+  // 交点退化或不再是包在外沿内的凸四边形时，本帧内沿不可信，整体用内缩先验。
+  if (!inside) {
+    image = {{tx, ty}, {w - tx, ty}, {w - tx, h}, {tx, h}};
+    out.measured_edges = 0;
+  }
+  const float iw = inner.width - 1.f, ih = inner.height - 1.f;
+  const float near_y = static_cast<float>(ih + cfg.wall_thickness_m * sy);
+  const cv::Mat ground = cv::getPerspectiveTransform(
+    std::vector<cv::Point2f>{{0, 0}, {iw, 0}, {iw, near_y}, {0, near_y}}, image);
+  std::vector<cv::Point2f> corners;
+  cv::perspectiveTransform(std::vector<cv::Point2f>{{0, 0}, {iw, 0}, {iw, ih}, {0, ih}}, corners, ground);
+  cv::perspectiveTransform(corners, out.quad, forward.inv());
+  return out;
 }
 
 }  // namespace field_detail

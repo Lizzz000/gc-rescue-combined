@@ -43,7 +43,7 @@ std::string asciiReason(const std::string & r)
     {"四边形外部也是红色", "red-outside-high"},
     {"紫色边支持度合格的边少于 2 条", "edges<2"},
     {"只有 2 条边有证据", "only-2-edges"},
-    {"只有 1 条边测到", "only-1-edge"},
+    {"实测边少于 3 条", "measured<3"},
     {"总分过低", "score-low"},
     {"紫框贴满画面边缘", "overflow"},
     {"没有通过过滤的紫色候选", "no-candidate"},
@@ -110,6 +110,11 @@ cv::Mat drawDebug(const cv::Mat & small, const FieldResult & res)
                         cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 200, 255), 1, cv::LINE_AA);
     }
   }
+  if (res.outline.size() == 4) {
+    std::vector<cv::Point> outline;
+    for (const auto & p : res.outline) {outline.emplace_back(cvRound(p.x), cvRound(p.y));}
+    cv::polylines(vis, outline, true, cv::Scalar(255, 200, 0), 1);
+  }
   char buf[256];
   std::snprintf(buf, sizeof(buf), "%s ok=%d q=%s split=%.0f conf=%.2f red=%.2f h=%.0fpx",
                   res.state.c_str(), int(res.ok), res.quality.c_str(), res.split_x,
@@ -150,11 +155,11 @@ std::string configToString(const FieldConfig & cfg)
 {
   char buf[2048];
   std::snprintf(buf, sizeof(buf),
-                  "proc=%dx%d field=%.2fx%.2fm bev_ppm=%.0f "
+                  "proc=%dx%d field=%.2fx%.2fm wall=%.3fm bev_ppm=%.0f "
                   "purple[H=%.0f..%.0f C/L>=%.2f L=%.0f..%.0f] "
                   "fill>=%.2f ratio=%.2f..%.2f corner_tol=%.2f black[depth>=%.2f suspect_offset>%.2f width<=%.2f lift<=%.2f] "
                   "interior[%s H=%.0f..%.0f C/L>=%.2f L>=%.0f]",
-                  cfg.proc_width, cfg.proc_height, cfg.field_w_m, cfg.field_h_m, cfg.bev_px_per_m,
+                  cfg.proc_width, cfg.proc_height, cfg.field_w_m, cfg.field_h_m, cfg.wall_thickness_m, cfg.bev_px_per_m,
                   cfg.purple_hue_lo_deg, cfg.purple_hue_hi_deg, cfg.purple_chroma_ratio_min,
                   cfg.purple_L_min, cfg.purple_L_max,
                   cfg.min_fill_ratio, cfg.min_rect_ratio_lo, cfg.min_rect_ratio_hi,
@@ -192,10 +197,12 @@ void validateFieldConfig(const FieldConfig & c)
   range(c.bev_px_per_m, 0.001, 100000, "bev_px_per_m");
   range(c.bev_width, 0, 4096, "bev_width");
   range(c.bev_height, 0, 4096, "bev_height");
-  // 显式尺寸逐轴覆盖；任一轴为 0 时使用米制尺寸乘像素密度，并检查最终有效尺寸。
-  range(c.bev_width > 0 ? c.bev_width : c.field_w_m * c.bev_px_per_m, 16, 4096,
+  // 围边厚度小于短边 1/4，保证内部尺寸为正且内沿先验不越过中线。
+  range(c.wall_thickness_m, 0, 0.25 * std::min(c.field_w_m, c.field_h_m), "wall_thickness_m");
+  // 显式尺寸逐轴覆盖；任一轴为 0 时使用内部米制尺寸乘像素密度，并检查最终有效尺寸。
+  range(c.bev_width > 0 ? c.bev_width : (c.field_w_m - 2 * c.wall_thickness_m) * c.bev_px_per_m, 16, 4096,
     "effective bev width");
-  range(c.bev_height > 0 ? c.bev_height : c.field_h_m * c.bev_px_per_m, 16, 4096,
+  range(c.bev_height > 0 ? c.bev_height : (c.field_h_m - 2 * c.wall_thickness_m) * c.bev_px_per_m, 16, 4096,
     "effective bev height");
   range(c.morph_close_ksize, 1, 63, "morph_close_ksize");
   range(c.morph_dilate_ksize, 1, 63, "morph_dilate_ksize");
@@ -235,7 +242,7 @@ void validateFieldConfig(const FieldConfig & c)
   FRACTION(min_area_frac); FRACTION(min_fill_ratio); FRACTION(edge_band_frac);
   FRACTION(prior_corner_tol_frac); FRACTION(quad_min_area_frac);
   FRACTION(black_min_depth); FRACTION(black_score_frac); FRACTION(black_max_width_frac);
-  FRACTION(black_max_offset_frac); FRACTION(corner_ema_alpha);
+  FRACTION(black_max_offset_frac);
   FRACTION(edge_support_min); FRACTION(edge_support_strong); FRACTION(min_total_score);
   FRACTION(min_purple_score); FRACTION(purple_lost_threshold); FRACTION(red_inside_min);
   FRACTION(red_outside_max); FRACTION(expand_frac); FRACTION(red_cell_min);

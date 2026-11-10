@@ -8,8 +8,8 @@
 // 职责：安全区拟合、投影和跟踪。调试图在 debug.cpp。
 // Copyright 2026 jetson_yolo integration
 // SPDX-License-Identifier: Apache-2.0
-// FieldLocator 的状态机实现：SEARCH/LOCATE/TRACK 迁移、候选搜索与评分调度、大跳变确认、证据不足保留历史几何、提交时的角点平滑。
-// 搜索不提交历史；updateTracking() 决定提交、保持与丢失，buildOutput() 生成几何并更新分界平滑。
+// FieldLocator 的状态机实现：SEARCH/LOCATE/TRACK 迁移、候选搜索与评分调度、大跳变确认、证据不足保留历史几何。
+// 搜索不提交历史；updateTracking() 决定提交、保持与丢失，buildOutput() 生成鸟瞰与本帧黑带实测。
 
 
 #include <opencv2/imgproc.hpp>
@@ -31,13 +31,18 @@
 
 using namespace field_detail;
 
+namespace {
+// 距处理图边界不超过该像素数的轮廓点视为画面裁断点（与候选贴边计数同一口径）。
+constexpr int kBorderPx = 1;
+}  // namespace
+
 void FieldLocator::reset()
 {
   // 同时清掉角点、运动历史、待确认跳变与分界线，避免新会话沿用旧相机的坐标。
   state_ = "SEARCH";
   hits_ = lost_ = frame_idx_ = hold_frames_ = 0;
   has_corners_ = false;
-  corners_.clear();
+  corners_.clear(); inner_.clear(); inner_measured_ = 0;
   last_good_.clear();
   prev_good_.clear();
   pending_.clear();
@@ -53,6 +58,9 @@ struct FieldLocator::SearchResult
   CandidateScore score;
   EdgeState edges[4] = {EdgeState::LOST, EdgeState::LOST, EdgeState::LOST, EdgeState::LOST};
   int measured = 0;
+  // 与 quad 同一搜索图拟合的内沿（地面）四边形，处理图坐标；内部颜色也在它上面计。
+  std::vector<cv::Point2f> inner;
+  int inner_measured = 0;
 };
 
 struct FieldLocator::FrameEvidence
@@ -125,7 +133,13 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
     component_areas.push_back(cv::contourArea(hull));
     contours.push_back(std::move(hull));
   }
-  struct Cand { double area; std::vector<cv::Point2f> pts; };
+  struct Cand { double area; QuadEvidence evidence; };
+  // 贴处理图边界的轮廓点是画面裁断边，不是场地实测边，只用于分边先验与整侧出画判断。
+  auto clippedPoint = [&](const cv::Point & p) {
+      const int x = p.x + int(offset.x), y = p.y + int(offset.y);
+      return x <= kBorderPx || y <= kBorderPx || x >= small.cols - 1 - kBorderPx ||
+             y >= small.rows - 1 - kBorderPx;
+    };
   std::vector<Cand> cands;
   for (size_t contour_index = 0; contour_index < contours.size(); ++contour_index) {
     const auto & c = contours[contour_index];
@@ -138,11 +152,11 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
     if (ratio < cfg_.min_rect_ratio_lo || ratio > cfg_.min_rect_ratio_hi) {continue;}
     const cv::Rect bb = cv::boundingRect(c);
     // 人工 ROI 裁剪边不是场地实测边；候选被裁断时放弃 ROI 假设，退回全图搜索。
-    if ((bb.x <= 1 && offset.x > 0) || (bb.y <= 1 && offset.y > 0) ||
-      (bb.x + bb.width >= img.cols - 1 && offset.x + img.cols < small.cols) ||
-      (bb.y + bb.height >= img.rows - 1 && offset.y + img.rows < small.rows)) {continue;}
-    int touch = (bb.x <= 1) + (bb.y <= 1) + (bb.x + bb.width >=
-      img.cols - 1) + (bb.y + bb.height >= img.rows - 1);
+    if ((bb.x <= kBorderPx && offset.x > 0) || (bb.y <= kBorderPx && offset.y > 0) ||
+      (bb.x + bb.width >= img.cols - kBorderPx && offset.x + img.cols < small.cols) ||
+      (bb.y + bb.height >= img.rows - kBorderPx && offset.y + img.rows < small.rows)) {continue;}
+    int touch = (bb.x <= kBorderPx) + (bb.y <= kBorderPx) + (bb.x + bb.width >=
+      img.cols - kBorderPx) + (bb.y + bb.height >= img.rows - kBorderPx);
     if (touch > cfg_.max_border_touch) {continue;}
         // 凸包填充率: 紫框断裂成 C 形时"轮廓填充率"只有 0.28-0.34 (会把真场地筛掉),
         // 凸包仍然包住整个场地, 所以用凸包。
@@ -160,9 +174,12 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
     std::vector<std::vector<cv::Point>> raw_contours;
     cv::findContours(component, raw_contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
     for (const auto & raw : raw_contours) {
-      for (const auto & p : raw) {candidate.pts.emplace_back(float(p.x + bb.x), float(p.y + bb.y));}
+      for (const auto & p : raw) {
+        const cv::Point q = p + bb.tl();
+        (clippedPoint(q) ? candidate.evidence.clipped : candidate.evidence.pts).emplace_back(float(q.x), float(q.y));
+      }
     }
-    if (candidate.pts.size() < 4) {continue;}
+    if (candidate.evidence.pts.size() < 4) {continue;}
     cands.push_back(std::move(candidate));
   }
   std::sort(cands.begin(), cands.end(), [](const Cand & u, const Cand & v) {
@@ -178,8 +195,8 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
     const int purple_px = cv::countNonZero(mask);
     if (purple_px > 0.02 * img_area) {
       const cv::Rect nb = cv::boundingRect(mask);
-      const int touch = (nb.x <= 1) + (nb.y <= 1) +
-        (nb.x + nb.width >= img.cols - 1) + (nb.y + nb.height >= img.rows - 1);
+      const int touch = (nb.x <= kBorderPx) + (nb.y <= kBorderPx) +
+        (nb.x + nb.width >= img.cols - kBorderPx) + (nb.y + nb.height >= img.rows - kBorderPx);
       if (touch >= 3) {
         search_result.reason = "紫框贴满画面边缘, 场地可能溢出画面 (此状态不做定位)";
         search_result.quality = "overflow";
@@ -195,17 +212,8 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
   cv::Mat purple_probe;
   const int n_try = std::min<int>(std::max(1, cfg_.max_candidates_try), cands.size());
   for (int i = 0; i < n_try; ++i) {
-        // 分边用候选自己的形状; 缺边用上一帧预测补 (TRACK 时)
-    std::vector<cv::Point2f> fb;
-    if (tracking) {
-      fb = predicted;
-      for (auto & p : fb) {
-        p -= offset;
-      }
-    }
-    // 优先拟合本帧几何，缺边时才借历史预测；相机运动时混用新旧实测边可能扭曲四边形。
-    FitOut fit_result = fitQuad(cands[i].pts, cfg_, {}, {});
-    if (!fit_result.ok && tracking) {fit_result = fitQuad(cands[i].pts, cfg_, {}, fb);}
+    // 只用本帧证据拟合：缺边由候选自己的凸包先验补，不借历史预测（预测只决定搜索窗与跳变检查）。
+    FitOut fit_result = fitQuad(cands[i].evidence, cfg_);
     if (!fit_result.ok) {if (!reasons.empty()) {reasons += "; ";} reasons += fit_result.reason; continue;}
     std::vector<cv::Point2f> q = fit_result.quad;
     for (auto & p : q) {
@@ -227,7 +235,9 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
     }
     CandidateScore score;
     scoreEdges(purple_probe, fit_result.quad, cfg_, score);
-    score.red_inside = redInsideGrid(interior_mask, fit_result.quad, cfg_, score.cells_red);
+    // 内部颜色只在内沿地面四边形里计：外沿四边形还含围边立面，远/低视角时围边占去大半。
+    const InnerQuad inner = fitInnerQuad(interior_mask, fit_result.quad, cfg_);
+    score.red_inside = redInsideGrid(interior_mask, inner.quad, cfg_, score.cells_red);
     score.red_outside = redOutsideRing(interior_mask, fit_result.quad, cfg_);
     score.crosses_interior = crossesInterior(interior_mask, purple_probe, fit_result.quad, cfg_);
     score.geometry = geometryScore(fit_result.quad, img.size(), cfg_);
@@ -251,14 +261,16 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
       best_accepted = accepted;
       best_total = score.total;
       search_result.quad = q;
+      search_result.inner = inner.quad;
+      for (auto & p : search_result.inner) {p += offset;}
+      search_result.inner_measured = inner.measured_edges;
       search_result.score = score;
       search_result.measured = fit_result.measured_edges;
       for (int k = 0; k < 4; ++k) {
         search_result.edges[k] = fit_result.edge_state[k];
       }
       search_result.quality = fit_result.used_prior_fallback ? "prior_fallback" :
-        (fit_result.measured_edges == 4 ? "good" :
-        (fit_result.measured_edges == 3 ? "degraded" : "predicted"));
+        (fit_result.measured_edges == 4 ? "good" : "degraded");
     }
   }
   if (search_result.quad.empty()) {search_result.reason = reasons.empty() ? "拟合失败" : reasons;}
@@ -280,6 +292,8 @@ FieldLocator::SearchResult FieldLocator::findCandidate(
   CandidateScore best_score;
   EdgeState best_edges[4] = {EdgeState::LOST, EdgeState::LOST, EdgeState::LOST, EdgeState::LOST};
   int best_measured = 0;
+  std::vector<cv::Point2f> inner;
+  int inner_measured = 0;
 
   auto window = [&](const std::vector<cv::Point2f> & ref, double scale) {
       float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
@@ -304,6 +318,7 @@ FieldLocator::SearchResult FieldLocator::findCandidate(
       // 跟踪窗口恰好覆盖全图时，这次搜索已是全图搜索；拒绝后复用它，避免重复拟合与评分。
       if (win == cv::Rect(0, 0, small.cols, small.rows)) {full_search = search_result;}
       quad = search_result.quad; reason = search_result.reason; quality = search_result.quality;
+      inner = search_result.inner; inner_measured = search_result.inner_measured;
       field_size_px = search_result.field_size_px;
       best_score = search_result.score; best_measured = search_result.measured;
       for (int k = 0; k < 4; ++k) {
@@ -318,6 +333,7 @@ FieldLocator::SearchResult FieldLocator::findCandidate(
       searchRegion(evidence, small, cv::Point2f(0, 0));
     if (!search_result.quad.empty()) {
       quad = search_result.quad; reason.clear(); quality = search_result.quality;
+      inner = search_result.inner; inner_measured = search_result.inner_measured;
       best_score = search_result.score; best_measured = search_result.measured;
       for (int k = 0; k < 4; ++k) {
         best_edges[k] = search_result.edges[k];
@@ -336,6 +352,8 @@ FieldLocator::SearchResult FieldLocator::findCandidate(
   result.field_size_px = field_size_px;
   result.score = best_score;
   result.measured = best_measured;
+  result.inner = std::move(inner);
+  result.inner_measured = inner_measured;
   for (int edge = 0; edge < 4; ++edge) {result.edges[edge] = best_edges[edge];}
   return result;
 }
@@ -377,15 +395,18 @@ void FieldLocator::buildOutput(
   res.reason = reason;
   res.state = state_;
   if (has_corners_) {
-    res.corners = corners_;
-    res.quad_area = polyArea(corners_);
+    res.corners = inner_;
+    res.outline = corners_;
+    res.quad_area = polyArea(inner_);
   }
-    // 未提交时保留上次接受的 corners_ 生成诊断 BEV；预测只帮助搜索，不在这里替换历史角点。
+    // 未提交时保留上次接受的几何生成诊断 BEV；预测只帮助搜索，不在这里替换历史角点。
+    // BEV 用内沿四边形：鸟瞰里只有内部地面，没有围边立面。
   if (has_corners_) {
+    res.inner_measured_edges = inner_measured_;
     const cv::Size bs = bevSize(cfg_);
     std::vector<cv::Point2f> dst{cv::Point2f(0, 0), cv::Point2f(bs.width - 1.f, 0),
       cv::Point2f(bs.width - 1.f, bs.height - 1.f), cv::Point2f(0, bs.height - 1.f)};
-    res.homography = cv::getPerspectiveTransform(corners_, dst);
+    res.homography = cv::getPerspectiveTransform(inner_, dst);
     cv::warpPerspective(small, res.bev, res.homography, bs);
     cv::invert(res.homography, res.homography_inv);
     res.ms_warp = (cv::getTickCount() - t0) * 1000.0 / cv::getTickFrequency() - ms_resize -
@@ -436,7 +457,7 @@ void FieldLocator::updateTracking(
     // 阈值前保留 hits_：历史仍有效时 TRACK 不应因一次丢失退回 LOCATE；清历史时才一起归零。
     ++lost_;
     if (lost_ >= cfg_.lost_frames_to_search) {
-      state_ = "SEARCH"; has_corners_ = false; corners_.clear();
+      state_ = "SEARCH"; has_corners_ = false; corners_.clear(); inner_.clear(); inner_measured_ = 0;
       last_good_.clear(); prev_good_.clear();
       lost_ = 0; hits_ = 0; hold_frames_ = 0;
     } else {
@@ -476,9 +497,8 @@ void FieldLocator::updateTracking(
     if (pending_hits_ >= std::max(2, cfg_.switch_confirm_frames)) {
             // 正式切换后清掉旧速度和分界线，避免下一帧从旧位置继续外推或沿用旧 BEV 分区。
       prev_good_.clear();
-      last_good_ = quad;
-      corners_ = quad;
-      has_corners_ = true;
+      commitGeometry(candidate);
+      last_good_ = corners_;
       lost_ = 0; hold_frames_ = 0; hits_ = std::max(hits_, cfg_.locate_hits_needed);
       state_ = "TRACK";
       pending_.clear(); pending_hits_ = 0;
@@ -506,8 +526,8 @@ void FieldLocator::updateTracking(
       const int px = cv::countNonZero(pm);
       if (px > 0.02 * small.cols * small.rows) {
         const cv::Rect nb = cv::boundingRect(pm);
-        const int touch = (nb.x <= 1) + (nb.y <= 1) +
-          (nb.x + nb.width >= small.cols - 1) + (nb.y + nb.height >= small.rows - 1);
+        const int touch = (nb.x <= kBorderPx) + (nb.y <= kBorderPx) +
+          (nb.x + nb.width >= small.cols - kBorderPx) + (nb.y + nb.height >= small.rows - kBorderPx);
         if (touch >= 3) {
           res.committed = false;
           buildOutput(evidence, candidate, res, false, "overflow", "紫框贴满画面边缘, 场地可能溢出画面 (此状态不做定位)");
@@ -519,7 +539,7 @@ void FieldLocator::updateTracking(
     if (has_corners_ && best_score.purple < cfg_.purple_lost_threshold) {
       state_ = "SEARCH";
       has_corners_ = false;
-      corners_.clear();
+      corners_.clear(); inner_.clear(); inner_measured_ = 0;
       last_good_.clear();
       prev_good_.clear();
       lost_ = 0; hits_ = 0; hold_frames_ = 0;
@@ -534,7 +554,7 @@ void FieldLocator::updateTracking(
     if (hold_frames_ > cfg_.max_hold_frames) {
       state_ = "SEARCH";
       has_corners_ = false;
-      corners_.clear();
+      corners_.clear(); inner_.clear(); inner_measured_ = 0;
       last_good_.clear();
       prev_good_.clear();
       lost_ = 0; hits_ = 0; hold_frames_ = 0;
@@ -548,37 +568,27 @@ void FieldLocator::updateTracking(
     return;
   }
 
-    // (c) 提交: 先平滑角点，再写入成功历史；命中次数决定 LOCATE/TRACK，不改变 committed 的含义。
-  if (has_corners_ && cfg_.corner_ema_alpha > 0.0 && cfg_.corner_ema_alpha < 1.0) {
-    double movement = 0;
-    for (size_t i = 0; i < quad.size(); ++i) {movement += dist(corners_[i], quad[i]);}
-    movement /= quad.size();
-    // 小抖动维持角点平滑；移动明显时提高当前帧权重，避免真实运动被过度拖慢。
-    const double motion_scale = std::max(4.0, 0.15 * quadSize(quad).second);
-    const float a = static_cast<float>(std::max(cfg_.corner_ema_alpha,
-      std::min(1.0, movement / motion_scale)));
-    for (size_t i = 0; i < quad.size(); ++i) {
-      corners_[i] = corners_[i] * (1.f - a) + quad[i] * a;
-    }
-  } else {
-    corners_ = quad;
-  }
+    // (c) 提交本帧实测角点（不做跨帧平滑，避免叠加 STM32 滤波的滞后），再写入成功历史；命中次数决定 LOCATE/TRACK。
+  commitGeometry(candidate);
   // 只有正常提交走到这里；上面的保持/等待分支均提前返回，不能污染运动预测历史。
   prev_good_ = last_good_;
   last_good_ = corners_;
-  has_corners_ = true;
   ++hits_; lost_ = 0; hold_frames_ = 0;
   state_ = hits_ >= cfg_.locate_hits_needed ? "TRACK" : "LOCATE";
   res.committed = true;
   res.ok = true;
-  res.quality = quality;
-  if (quality == "prior_fallback") {res.quality = quality;}
-  else if (best_measured == 4) {res.quality = "good";} else if (best_measured == 3) {
-    res.quality = "degraded";
-  } else {res.quality = "predicted";}
+  res.quality = quality == "prior_fallback" ? quality : (best_measured == 4 ? "good" : "degraded");
   buildOutput(evidence, candidate, res, true, res.quality, reason);
   return;
 
+}
+
+void FieldLocator::commitGeometry(const SearchResult & candidate)
+{
+  corners_ = candidate.quad;
+  inner_ = candidate.inner;
+  inner_measured_ = candidate.inner_measured;
+  has_corners_ = true;
 }
 
 FieldResult FieldLocator::update(const cv::Mat & frame)

@@ -145,6 +145,10 @@
         "path": "vision.field.bev_height",
         "kind": "integer"
       },
+      "field.wall_thickness_m": {
+        "path": "vision.field.wall_thickness_m",
+        "kind": "number"
+      },
       "field.purple_hue_lo_deg": {
         "path": "vision.field.purple_hue_range_deg",
         "kind": "number",
@@ -371,10 +375,6 @@
       },
       "field.track_window_scale": {
         "path": "vision.field.track_window_scale",
-        "kind": "number"
-      },
-      "field.corner_ema_alpha": {
-        "path": "vision.field.corner_ema_alpha",
         "kind": "number"
       },
       "field.edge_samples": {
@@ -898,6 +898,7 @@
     "vision.field.bev_px_per_m": "number",
     "vision.field.bev_width": "integer",
     "vision.field.bev_height": "integer",
+    "vision.field.wall_thickness_m": "number",
     "vision.field.purple_hue_range_deg": "numbers",
     "vision.field.purple_chroma_ratio_min": "number",
     "vision.field.purple_L_range": "numbers",
@@ -943,7 +944,6 @@
     "vision.field.lost_frames_to_search": "integer",
     "vision.field.refit_every": "integer",
     "vision.field.track_window_scale": "number",
-    "vision.field.corner_ema_alpha": "number",
     "vision.field.edge_samples": "integer",
     "vision.field.edge_probe_radius": "integer",
     "vision.field.edge_support_min": "number",

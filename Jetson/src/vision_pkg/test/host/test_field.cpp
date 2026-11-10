@@ -22,8 +22,8 @@ using field_scene::Scene;
 struct Outcome
 {
   int frames = 0, committed = 0, split = 0;
-  double corner_err = 0, split_err = 0, ms = 0;
-  int measured = 0;
+  double corner_err = 0, split_err = 0, centre_err = 0, ms = 0;
+  int corners = 0, measured = 0;
 };
 
 constexpr int kFrames = 8;      // 每场景帧数；前几帧用于定位确认
@@ -32,6 +32,24 @@ constexpr int kScored = 4;      // 只统计最后几帧
 double lineXAt(const cv::Point2f & a, const cv::Point2f & b, double y)
 {
   return a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y);
+}
+
+cv::Point2f mean4(const cv::Point2f & a, const cv::Point2f & b, const cv::Point2f & c, const cv::Point2f & d)
+{
+  return (a + b + c + d) * 0.25f;
+}
+
+// 左右区域中心（四顶点均值，与 safety_node 的 0x182 中心同口径）相对真值内部地面两半的平均误差，处理图像素。
+double regionCentreError(const FieldResult & r, const field_scene::Truth & truth)
+{
+  const float w = r.bev.cols - 1.f, h = r.bev.rows - 1.f;
+  const float xt = float(r.split_top_x), xb = float(r.split_bottom_x);
+  std::vector<cv::Point2f> bev{{0, 0}, {xt, 0}, {w, 0}, {0, h}, {xb, h}, {w, h}}, p;
+  cv::perspectiveTransform(bev, p, r.homography_inv);
+  const auto & in = truth.inner;
+  const double left = cv::norm(mean4(p[0], p[1], p[4], p[3]) - mean4(in[0], truth.split_far, truth.split_near, in[3]));
+  const double right = cv::norm(mean4(p[1], p[2], p[5], p[4]) - mean4(truth.split_far, in[1], in[2], truth.split_near));
+  return 0.5 * (left + right);
 }
 
 Outcome runScene(Scene scene, const FieldConfig & config)
@@ -52,9 +70,13 @@ Outcome runScene(Scene scene, const FieldConfig & config)
     if (!committed) {continue;}
     ++out.committed;
     if (truth.present) {
-      double e = 0;
-      for (int k = 0; k < 4; ++k) {e += cv::norm(r.corners[k] - truth.corners[k]) / 4;}
-      out.corner_err += e;
+      // corners 是内部地面四角：只考核画内角点；画外角点由区域中心误差考核。
+      for (int k = 0; k < 4; ++k) {
+        const auto & c = truth.inner[k];
+        if (c.x < 0 || c.y < 0 || c.x > size.width - 1 || c.y > size.height - 1) {continue;}
+        out.corner_err += cv::norm(r.corners[k] - c);
+        ++out.corners;
+      }
     }
     if (!r.split_valid) {continue;}
     ++out.split;
@@ -64,6 +86,7 @@ Outcome runScene(Scene scene, const FieldConfig & config)
       cv::perspectiveTransform(bev, img, r.homography_inv);
       const double y = 0.5 * (truth.split_far.y + truth.split_near.y);
       out.split_err += std::abs(lineXAt(img[0], img[1], y) - lineXAt(truth.split_far, truth.split_near, y));
+      out.centre_err += regionCentreError(r, truth);
       ++out.measured;
     }
   }
@@ -71,8 +94,9 @@ Outcome runScene(Scene scene, const FieldConfig & config)
 }
 
 // POSITIVE：须完整有效且中线准确；OCCLUDED：中线在可见内部被物块完全盖住，可以不输出，
-// 但输出时必须准确；NEGATIVE：任何一帧都不能提交外框。
-enum class Expect {POSITIVE, OCCLUDED, NEGATIVE};
+// 但输出时必须准确；NEGATIVE：任何一帧都不能提交外框；
+// OUT_OF_FRAME：有一整条边在画外，几何不完整，任何一帧都不能提交。
+enum class Expect {POSITIVE, OCCLUDED, NEGATIVE, OUT_OF_FRAME};
 
 struct Case {std::string group, name; Scene scene; Expect expect;};
 
@@ -118,7 +142,7 @@ std::vector<Case> matrix()
   {Scene s = base; s.cam_d = 1.1; s.cam_h = 0.3; add("视角", "远", s);}
   {Scene s = base; s.cam_d = 0.3; s.cam_h = 0.18; add("视角", "近", s);}
   {Scene s = base; s.yaw_deg = 12; add("视角", "偏航12°", s);}
-  {Scene s = base; s.cam_x = 0.25; s.yaw_deg = 22; add("视角", "部分出画", s);}
+  {Scene s = base; s.cam_x = 0.25; s.yaw_deg = 22; add("视角", "整侧出画", s, Expect::OUT_OF_FRAME);}
   // 成像质量
   {Scene s = base; s.motion_blur = 11; add("成像", "运动模糊", s);}
   {Scene s = base; s.contrast = 0.55; add("成像", "低对比", s);}
@@ -137,7 +161,12 @@ std::vector<Case> matrix()
   return cases;
 }
 
-struct Totals {Expect expect = Expect::POSITIVE; int scenes = 0, frames = 0, committed = 0, split = 0, measured = 0; double corner = 0, split_err = 0, ms = 0;};
+struct Totals
+{
+  Expect expect = Expect::POSITIVE;
+  int scenes = 0, frames = 0, committed = 0, split = 0, measured = 0, corners = 0;
+  double corner = 0, split_err = 0, centre = 0, ms = 0;
+};
 
 std::map<std::string, Totals> evaluate(bool report)
 {
@@ -149,13 +178,15 @@ std::map<std::string, Totals> evaluate(bool report)
     auto & t = by_name[c.group + "/" + c.name];
     t.expect = c.expect;
     ++t.scenes; t.frames += o.frames; t.committed += o.committed; t.split += o.split;
-    t.corner += o.corner_err; t.split_err += o.split_err; t.measured += o.measured; t.ms += o.ms;
+    t.corner += o.corner_err; t.corners += o.corners; t.split_err += o.split_err;
+    t.centre += o.centre_err; t.measured += o.measured; t.ms += o.ms;
   }
   if (report) {
-    std::printf("%-34s %8s %8s %10s %10s %7s\n", "场景", "外框提交", "分区有效", "角点误差px", "中线误差px", "ms/帧");
+    std::printf("%-34s %8s %8s %12s %10s %12s %7s\n", "场景", "外框提交", "分区有效", "画内角点误差", "中线误差", "区域中心误差", "ms/帧");
     for (const auto & [name, t] : by_name) {
-      std::printf("%-34s %4d/%-3d %4d/%-3d %10.2f %10.2f %7.2f\n", name.c_str(), t.committed, t.frames, t.split, t.frames,
-        t.committed ? t.corner / t.committed : 0.0, t.measured ? t.split_err / t.measured : 0.0, t.ms / t.frames);
+      std::printf("%-34s %4d/%-3d %4d/%-3d %12.2f %10.2f %12.2f %7.2f\n", name.c_str(), t.committed, t.frames, t.split, t.frames,
+        t.corners ? t.corner / t.corners : 0.0, t.measured ? t.split_err / t.measured : 0.0,
+        t.measured ? t.centre / t.measured : 0.0, t.ms / t.frames);
     }
   }
   return by_name;
@@ -168,8 +199,8 @@ void testFieldRobustness(bool report)
   Group group("field robustness");
   const auto results = evaluate(report);
   for (const auto & [name, t] : results) {
-    if (t.expect == Expect::NEGATIVE) {
-      // 负例：任何一帧提交外框都是误检
+    if (t.expect == Expect::NEGATIVE || t.expect == Expect::OUT_OF_FRAME) {
+      // 负例与整侧出画：任何一帧提交外框都是误检或几何不完整
       CHECK(t.committed == 0);
       continue;
     }

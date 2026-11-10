@@ -44,6 +44,7 @@ struct FitOut
   EdgeState edge_state[4] = {EdgeState::LOST, EdgeState::LOST, EdgeState::LOST, EdgeState::LOST};
   int measured_edges = 0;
   bool used_prior_fallback = false;
+  bool out_of_frame = false;   // 某条边只有贴边点：整侧出画，几何不完整
 };
 
 // ---- 颜色 ----
@@ -75,14 +76,27 @@ bool isConvexQuad(const std::vector<cv::Point2f> & q);
 // 返回值是较长边、较短边的像素长度估计，不是固定方向的场地宽、高；输入至少有四个有序角点。
 std::pair<double, double> quadSize(const std::vector<cv::Point2f> & q);
 cv::Mat morph(const cv::Mat & mask, const FieldConfig & cfg);
-FitOut fitQuad(
-  const std::vector<cv::Point2f> & pts, const FieldConfig & cfg,
-  const std::vector<cv::Point2f> & assign_prior,
-  const std::vector<cv::Point2f> & fallback_prior);
+// 候选外轮廓点：pts 参与拟合；clipped 是贴处理图边界的点，只用于分边先验和判断整侧出画。
+struct QuadEvidence
+{
+  std::vector<cv::Point2f> pts, clipped;
+};
+FitOut fitQuad(const QuadEvidence & evidence, const FieldConfig & cfg);
 bool checkQuad(
   const std::vector<cv::Point2f> & q, const cv::Size & sz, const FieldConfig & cfg,
   std::string & why);
+// 内沿 BEV 尺寸（内部地面），见 wall_thickness_m。
 cv::Size bevSize(const FieldConfig & cfg);
+// 内沿四边形（内部地面，四角都在 z=0）：远端和两侧取紫色围边到内部颜色的过渡线，近端内沿被近墙挡住，
+// 由地面单应从外沿近边（前立面底边）内推 wall_thickness_m 得到。corners、鸟瞰、分区和区域都用它；
+// 外沿四边形只用于搜索、评分与跟踪。interior 与 outer 同属一张搜索图坐标；没测到的边沿用外沿内缩先验。
+struct InnerQuad
+{
+  std::vector<cv::Point2f> quad;   // TL/TR/BR/BL，与 outer 同坐标
+  int measured_edges = 0;          // 远端与两侧内沿中本帧实测的条数（0..3）
+};
+InnerQuad fitInnerQuad(
+  const cv::Mat & interior, const std::vector<cv::Point2f> & outer, const FieldConfig & cfg);
 // 同序角点平均距离 / a 的对角线长度，是无量纲跳变比例；输入应保持 TL/TR/BR/BL 顺序。
 double quadJumpRatio(const std::vector<cv::Point2f> & a, const std::vector<cv::Point2f> & b);
 

@@ -53,6 +53,7 @@ struct Truth
   bool present = false;
   std::array<cv::Point2f, 4> corners;   // TL/TR/BR/BL：远端顶外沿、近端底外沿
   cv::Point2f split_far, split_near;     // 中线中心在内部远/近两端的图像点
+  std::array<cv::Point2f, 4> inner;     // 内部地面 TL/TR/BR/BL（z=0，围边内侧）
 };
 
 // 托盘尺寸与 rescue.yaml 一致：外沿 0.66×0.36 m；围边厚 0.015、高 0.04；中线宽 0.022。
@@ -190,6 +191,8 @@ inline cv::Mat render(const Scene & s, cv::Size size, Truth & truth)
     truth.corners = {cam.project({x0, y1, h}), cam.project({x1, y1, h}), cam.project({x1, y0, 0}), cam.project({x0, y0, 0})};
     truth.split_far = cam.project({0, y1 - t, 0});
     truth.split_near = cam.project({0, y0 + t, 0});
+    truth.inner = {cam.project({x0 + t, y1 - t, 0}), cam.project({x1 - t, y1 - t, 0}),
+      cam.project({x1 - t, y0 + t, 0}), cam.project({x0 + t, y0 + t, 0})};
   }
   cv::Mat f;
   img.convertTo(f, CV_32FC3, 1.0 / 255);

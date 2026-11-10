@@ -77,9 +77,11 @@ vision:
     proc_height: 720
     # 鸟瞰像素密度，单位 px/m；bev_width/height 为 0 时按基础配置中的物理尺寸计算。
     bev_px_per_m: 400.0
-    # 显式 BEV 像素尺寸；0 按基础配置中的物理尺寸 × bev_px_per_m 推导。
+    # 显式 BEV 像素尺寸；0 按内部尺寸（物理尺寸 − 2×wall_thickness_m）× bev_px_per_m 推导。
     bev_width: 0
     bev_height: 0
+    # 围边厚度（米，待实测）：BEV/分区/区域改用内沿四边形，0x182 中心随之变化，STM32 SAFETY_X/Y 须重新标定。
+    wall_thickness_m: 0.015
     # 紫框 Lab 色相角 atan2(b,a)，度，-180..180，[下限,上限]，宽度 <180，不得与内部扇区重叠。
     # 录屏实测紫框正面 -63..-72、背面 -48..-60；上限 -15 覆盖暖光下偏红。偏蓝物体可能落入，待现场标定。
     purple_hue_range_deg: [-80.0, -15.0]
@@ -140,7 +142,6 @@ vision:
     # 内部颜色掩膜开运算核边长（像素，奇数，1 不做）；去掉紫框与地面混色的一两像素细边。
     interior_open_ksize: 3
     locate_hits_needed: 2
-    corner_ema_alpha: 0.45
     lost_frames_to_search: 6
     refit_every: 10
     track_window_scale: 1.35
