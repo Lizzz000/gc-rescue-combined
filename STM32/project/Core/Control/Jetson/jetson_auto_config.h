@@ -24,6 +24,7 @@
 #define JETSON_AUTO_TARGET_Y 0.7500f
 #define JETSON_AUTO_TARGET_TOL_X 0.0100f
 #define JETSON_AUTO_TARGET_TOL_Y 0.0100f
+/* 安全区设定点：Jetson 0x182 改为内沿中心后基准偏移，当前为占位值，需板端标定。 */
 #define JETSON_AUTO_SAFETY_X 0.5000f
 #define JETSON_AUTO_SAFETY_Y 0.7500f
 #define JETSON_AUTO_SAFETY_TOL_X 0.0100f
