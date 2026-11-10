@@ -1,0 +1,184 @@
+// 安全区管线环境鲁棒性回归：每个场景生成一小段序列跑完整 FieldLocator，
+// 统计外框提交率、分区有效率、角点与中线误差；负例必须全程不出有效结果。
+#include "check.hpp"
+#include "field_scene.hpp"
+#include "field/field.hpp"
+
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <map>
+#include <string>
+#include <vector>
+
+namespace {
+
+using field_scene::Block;
+using field_scene::Floor;
+using field_scene::Scene;
+
+// 与 rescue_advanced.yaml 的 vision.field 一致；测试只覆盖与 yaml 不同的默认值。
+FieldConfig productionConfig()
+{
+  FieldConfig c;
+#define SET(name, value) c.name = value;
+#include "field_config_values.inc"
+#undef SET
+  validateFieldConfig(c);
+  return c;
+}
+
+struct Outcome
+{
+  int frames = 0, committed = 0, split = 0;
+  double corner_err = 0, split_err = 0, ms = 0;
+  int measured = 0;
+};
+
+constexpr int kFrames = 8;      // 每场景帧数；前几帧用于定位确认
+constexpr int kScored = 4;      // 只统计最后几帧
+
+double lineXAt(const cv::Point2f & a, const cv::Point2f & b, double y)
+{
+  return a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y);
+}
+
+Outcome runScene(Scene scene, const FieldConfig & config)
+{
+  FieldLocator locator(config);
+  Outcome out;
+  const cv::Size size(config.proc_width, config.proc_height);
+  for (int i = 0; i < kFrames; ++i) {
+    scene.seed = scene.seed * 31 + i;            // 每帧独立噪声
+    field_scene::Truth truth;
+    const cv::Mat image = field_scene::render(scene, size, truth);
+    const auto t0 = std::chrono::steady_clock::now();
+    const FieldResult r = locator.update(image);
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    if (i < kFrames - kScored) {continue;}
+    ++out.frames; out.ms += ms;
+    const bool committed = r.ok && r.committed && r.corners.size() == 4;
+    if (!committed) {continue;}
+    ++out.committed;
+    if (truth.present) {
+      double e = 0;
+      for (int k = 0; k < 4; ++k) {e += cv::norm(r.corners[k] - truth.corners[k]) / 4;}
+      out.corner_err += e;
+    }
+    if (!r.split_valid) {continue;}
+    ++out.split;
+    if (truth.present) {
+      // 分界线（BEV 上下端点投回处理图）与真值中线在内部中段同一行上的横向距离
+      std::vector<cv::Point2f> bev{{float(r.split_top_x), 0.f}, {float(r.split_bottom_x), float(r.bev.rows - 1)}}, img;
+      cv::perspectiveTransform(bev, img, r.homography_inv);
+      const double y = 0.5 * (truth.split_far.y + truth.split_near.y);
+      out.split_err += std::abs(lineXAt(img[0], img[1], y) - lineXAt(truth.split_far, truth.split_near, y));
+      ++out.measured;
+    }
+  }
+  return out;
+}
+
+struct Case {std::string group, name; Scene scene; bool positive;};
+
+std::vector<Case> matrix()
+{
+  std::vector<Case> cases;
+  const cv::Scalar black(28, 28, 30), white(235, 235, 232), blue(170, 80, 30), yellow(40, 200, 220), green(60, 160, 60);
+  auto add = [&](const std::string & g, const std::string & n, Scene s, bool positive = true) {
+      for (unsigned seed = 1; seed <= 3; ++seed) {
+        Scene v = s; v.seed = seed * 7919 + unsigned(cases.size());
+        v.cam_x += 0.03 * (int(seed) - 2); v.cam_d += 0.04 * (int(seed) - 2);
+        cases.push_back({g, n, v, positive});
+      }
+    };
+  Scene base;
+  add("基线", "白地面", base);
+  // 光照强弱与色温
+  for (double e : {0.45, 0.7, 1.35}) {Scene s = base; s.exposure = e; add("曝光", "增益" + std::to_string(e).substr(0, 4), s);}
+  {Scene s = base; s.tint = {0.7, 0.95, 1.3}; add("色温", "暖光", s);}
+  {Scene s = base; s.tint = {1.3, 1.0, 0.8}; add("色温", "冷光", s);}
+  {Scene s = base; s.tint = {0.9, 1.12, 0.92}; add("色温", "荧光偏绿", s);}
+  {Scene s = base; s.tint = {0.75, 0.95, 1.2}; s.exposure = 0.6; add("色温", "暖光+暗", s);}
+  // 反光、阴影、梯度
+  {Scene s = base; s.glare = 2; add("反光", "高光斑", s);}
+  {Scene s = base; s.glare = 1; s.glare_on_divider = true; add("反光", "高光压中线", s);}
+  {Scene s = base; s.shadows = 1; add("阴影", "单块阴影", s);}
+  {Scene s = base; s.shadows = 2; s.gradient = 0.35; add("阴影", "阴影+梯度", s);}
+  // 地面
+  {Scene s = base; s.floor = Floor::GRAY; add("地面", "灰", s);}
+  {Scene s = base; s.floor = Floor::WOOD; add("地面", "木纹", s);}
+  {Scene s = base; s.floor = Floor::RUBBER; add("地面", "绿地胶", s);}
+  {Scene s = base; s.floor = Floor::TEXTURE; add("地面", "强纹理", s);}
+  // 杂物
+  {Scene s = base; s.clutter = 4; add("杂物", "红紫杂物", s);}
+  // 物块
+  {Scene s = base; s.blocks = {{0.0, 0.2, 0.05, 0.05, black}}; add("物块", "黑块压线", s);}
+  {Scene s = base; s.blocks = {{0.0, 0.15, 0.05, 0.05, white}}; add("物块", "白块压线", s);}
+  {Scene s = base; s.blocks = {{0.045, 0.2, 0.05, 0.05, blue}}; add("物块", "蓝块贴线", s);}
+  {Scene s = base; s.blocks = {{-0.15, 0.12, 0.05, 0.05, black}, {0.12, 0.25, 0.05, 0.05, yellow},
+     {0.02, 0.08, 0.04, 0.04, green}}; add("物块", "多块", s);}
+  // 距离/视角/出画
+  {Scene s = base; s.cam_d = 1.1; s.cam_h = 0.3; add("视角", "远", s);}
+  {Scene s = base; s.cam_d = 0.3; s.cam_h = 0.18; add("视角", "近", s);}
+  {Scene s = base; s.yaw_deg = 12; add("视角", "偏航12°", s);}
+  {Scene s = base; s.cam_h = 0.12; add("视角", "低机位", s);}
+  {Scene s = base; s.cam_x = 0.25; s.yaw_deg = 22; add("视角", "部分出画", s);}
+  // 成像质量
+  {Scene s = base; s.motion_blur = 11; add("成像", "运动模糊", s);}
+  {Scene s = base; s.contrast = 0.55; add("成像", "低对比", s);}
+  {Scene s = base; s.jpeg = 30; s.noise = 6; add("成像", "JPEG30+噪声", s);}
+  // 组合
+  {Scene s = base; s.tint = {0.75, 0.95, 1.25}; s.glare = 1; s.shadows = 1; s.floor = Floor::WOOD;
+   s.blocks = {{0.0, 0.18, 0.05, 0.05, black}}; add("组合", "暖光+反光+阴影+木纹+物块", s);}
+  {Scene s = base; s.exposure = 0.6; s.contrast = 0.7; s.jpeg = 40; s.motion_blur = 7; s.clutter = 3;
+   s.blocks = {{0.08, 0.22, 0.05, 0.05, white}}; add("组合", "暗+低对比+模糊+杂物+物块", s);}
+  // 负例
+  {Scene s = base; s.tray = false; s.clutter = 6; add("负例", "无场地+红紫杂物", s, false);}
+  {Scene s = base; s.interior = false; add("负例", "只有紫框", s, false);}
+  {Scene s = base; s.purple_frame = false; add("负例", "只有红板", s, false);}
+  return cases;
+}
+
+struct Totals {int scenes = 0, frames = 0, committed = 0, split = 0, measured = 0; double corner = 0, split_err = 0, ms = 0;};
+
+std::map<std::string, Totals> evaluate(bool report)
+{
+  const FieldConfig config = productionConfig();
+  std::map<std::string, Totals> by_name;
+  std::string last;
+  for (const auto & c : matrix()) {
+    const Outcome o = runScene(c.scene, config);
+    auto & t = by_name[c.group + "/" + c.name];
+    ++t.scenes; t.frames += o.frames; t.committed += o.committed; t.split += o.split;
+    t.corner += o.corner_err; t.split_err += o.split_err; t.measured += o.measured; t.ms += o.ms;
+  }
+  if (report) {
+    std::printf("%-34s %8s %8s %10s %10s %7s\n", "场景", "外框提交", "分区有效", "角点误差px", "中线误差px", "ms/帧");
+    for (const auto & [name, t] : by_name) {
+      std::printf("%-34s %4d/%-3d %4d/%-3d %10.2f %10.2f %7.2f\n", name.c_str(), t.committed, t.frames, t.split, t.frames,
+        t.committed ? t.corner / t.committed : 0.0, t.measured ? t.split_err / t.measured : 0.0, t.ms / t.frames);
+    }
+  }
+  return by_name;
+}
+
+}  // namespace
+
+void testFieldRobustness(bool report)
+{
+  Group group("field robustness");
+  const auto results = evaluate(report);
+  for (const auto & [name, t] : results) {
+    if (name.rfind("负例", 0) == 0) {
+      // 负例：任何一帧提交外框都是误检
+      CHECK(t.committed == 0);
+      continue;
+    }
+    // 正例：最后几帧的完整有效率不低于 3/4，中线误差均值不超过 4 像素（约 1 cm）
+    const bool ok = t.split * 4 >= t.frames * 3 && (t.measured == 0 || t.split_err / t.measured <= 4.0);
+    if (!ok) {std::fprintf(stderr, "场景未达标: %s split=%d/%d\n", name.c_str(), t.split, t.frames);}
+    CHECK(ok);
+  }
+}
