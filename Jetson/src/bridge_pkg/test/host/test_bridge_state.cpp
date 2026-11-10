@@ -245,6 +245,24 @@ void testBridgeState()
   const auto safety_output = safety.safetyOutput(now, arrival);
   CHECK(safety_output.valid && safety_output.x == 2500 && safety_output.y == 5000);
 
+  // 定时速度有零速准备、指定时长、结束零速，撤销后不能自行恢复。
+  BridgeTimedVelocity timed;
+  const auto start = std::chrono::steady_clock::time_point{};
+  CHECK(timed.start(0.1, -0.2, 0.3, 1.2, start));
+  auto timed_output = timed.sample(start);
+  CHECK(timed_output && (*timed_output)[0] == 0.0);
+  timed_output = timed.sample(start + std::chrono::milliseconds(500));
+  CHECK(timed_output && (*timed_output)[0] == 0.1 && (*timed_output)[1] == -0.2 && (*timed_output)[2] == 0.3);
+  timed_output = timed.sample(start + std::chrono::milliseconds(1699));
+  CHECK(timed_output && (*timed_output)[0] == 0.1);
+  timed_output = timed.sample(start + std::chrono::milliseconds(1700));
+  CHECK(timed_output && (*timed_output)[0] == 0.0 && !timed.sample(start + std::chrono::milliseconds(1701)));
+  CHECK(!timed.start(0.1, 0.0, 0.0, -1.0, start));
+  CHECK(!timed.start(NAN, 0.0, 0.0, 1.0, start));
+  CHECK(timed.start(0.1, 0.0, 0.0, 1.0, start));
+  timed.cancel();
+  CHECK(!timed.sample(start + std::chrono::seconds(1)));
+
   // 桥收到的 ROI 是另一进程的消息，组合和 3 件上限在这里再看一次。
   const auto left = BridgeRoiResult::checked(true, true, {1, 0, 0, 0, 0});
   CHECK(left.valid && left.passed && left.destination == BridgeDestination::Left);

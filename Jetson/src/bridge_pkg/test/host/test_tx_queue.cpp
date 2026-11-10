@@ -10,6 +10,15 @@ void testCanTxQueue()
   const auto t0 = Clock::time_point{};
   const auto timeout = std::chrono::milliseconds(20);
 
+  // 即使某次机会丢失，轮转仍进入下一类，避免背压时安全区帧一直排在最后。
+  CanPeriodicSchedule schedule;
+  CHECK(CanPeriodicSchedule::interval * 3 >= std::chrono::milliseconds(10));
+  for (int i = 0; i < 3; ++i) {
+    CHECK(schedule.next() == CanProtocol::VELOCITY_ID);
+    CHECK(schedule.next() == CanProtocol::TARGET_ID);
+    CHECK(schedule.next() == CanProtocol::SAFETY_ID);
+  }
+
   // 同 ID 再入队不改变顺序，也不把 TTL 往后推。
   CanTxQueue merged;
   merged.queue(CanProtocol::TARGET_ID, t0);

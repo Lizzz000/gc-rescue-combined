@@ -85,7 +85,7 @@ static_assert(CanProtocol::DELIVERY_COMPLETED ==
 
 // ---- BridgeRuntime：ROS 输入事件 ----
 
-// TaskState 先过源时间与重复校验；周期帧由 10 ms 定时器统一重发，这里不再入队。
+// TaskState 先过源时间与重复校验；周期帧由定时器错峰重发，这里不再入队。
 void BridgeRuntime::taskCallback(interface_pkg::msg::TaskState::ConstSharedPtr msg)
 {
   const BridgeSourceTime current{now().nanoseconds()};
@@ -110,7 +110,7 @@ void BridgeRuntime::missionCallback(interface_pkg::msg::MissionStatus::ConstShar
     static_cast<BridgeTransportPhase>(msg->transport_phase), msg->roi_request_id,
     static_cast<BridgeCyclePhase>(msg->cycle_phase), msg->cycle_generation};
   const auto update = state_.mission(input, current);
-  // 周期帧不再排队，10 ms 定时器每拍按当时状态重发。
+  // 周期帧不再排队，定时器轮流按当时状态重发。
   if (update.accepted) {
     mission_watchdog_.received({Clock::now()});
     if (!state_.locallyHeld() && state_.cyclePhase() == BridgeCyclePhase::SearchingTarget) {
@@ -131,7 +131,7 @@ void BridgeRuntime::targetCallback(vision_msgs::msg::Detection2DArray::ConstShar
   if (msg->detections.size() == 1) {
     input.detection = RecognitionRosConversion::detection(msg->detections.front());
   }
-  // 空帧、多目标和有效目标都更新状态；周期帧由 10 ms 定时器重发。
+  // 空帧、多目标和有效目标都更新状态；周期帧由定时器错峰重发。
   state_.target(input, current, {Clock::now()}, can_->socketOpen());
 }
 
@@ -148,12 +148,31 @@ void BridgeRuntime::safetyCallback(interface_pkg::msg::SafetyTarget::ConstShared
 
 void BridgeRuntime::velocityCallback(geometry_msgs::msg::Twist::ConstSharedPtr msg)
 {
-  // Twist 没有源时间，只按本机单调到达时间限制速度有效期。
+  // 普通速度接管时取消定时动作，避免后续定时帧覆盖新指令。
+  timed_velocity_.cancel();
   state_.velocity(msg->linear.x, msg->linear.y, msg->angular.z, {Clock::now()}, can_->socketOpen());
 }
 
+void BridgeRuntime::timedVelocityCallback(std_msgs::msg::Float64MultiArray::ConstSharedPtr msg)
+{
+  const auto current = Clock::now();
+  if (!can_->socketOpen() || !can_->interfaceUp() || !mission_watchdog_.alive({current})) {
+    timed_velocity_.cancel();
+    if (can_->socketOpen()) {state_.velocity(0.0, 0.0, 0.0, {current}, true);}
+    RCLCPP_WARN(get_logger(), "timed velocity ignored: CAN or mission unavailable");
+    return;
+  }
+  if (msg->data.size() != 4 ||
+    !timed_velocity_.start(msg->data[0], msg->data[1], msg->data[2], msg->data[3], current))
+  {
+    timed_velocity_.cancel();
+    state_.velocity(0.0, 0.0, 0.0, {current}, true);
+    RCLCPP_WARN(get_logger(), "timed velocity requires [vx, vy, wz, seconds] with a positive duration");
+  }
+}
 
-// 每 10 毫秒的收发和到达握手在 bridge_io.cpp。
+
+// 周期收发和到达握手在 bridge_io.cpp。
 
 // ---- BridgeRuntime：排队、输出与诊断 ----
 

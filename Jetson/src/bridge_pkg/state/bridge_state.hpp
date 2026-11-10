@@ -5,7 +5,9 @@
 // Copyright 2026 li
 // SPDX-License-Identifier: Apache-2.0
 
+#include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -39,6 +41,47 @@ public:
 private:
   std::optional<std::chrono::steady_clock::time_point> last_;
 };
+// 定时速度先发送零速准备，再按单调时钟执行，结束时输出一次零速。
+class BridgeTimedVelocity
+{
+public:
+  using Clock = std::chrono::steady_clock;
+
+  bool start(double vx, double vy, double wz, double seconds, Clock::time_point now)
+  {
+    cancel();
+    if (!std::isfinite(vx) || !std::isfinite(vy) || !std::isfinite(wz) ||
+      !std::isfinite(seconds) || seconds <= 0.0 || seconds > 3600.0)
+    {
+      return false;
+    }
+    velocity_ = {vx, vy, wz};
+    start_ = now + std::chrono::milliseconds(500);
+    end_ = start_ + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(seconds));
+    active_ = true;
+    return true;
+  }
+
+  std::optional<std::array<double, 3>> sample(Clock::time_point now)
+  {
+    if (!active_) {return std::nullopt;}
+    if (now >= end_) {
+      cancel();
+      return std::array<double, 3>{0.0, 0.0, 0.0};
+    }
+    if (now < start_) {return std::array<double, 3>{0.0, 0.0, 0.0};}
+    return velocity_;
+  }
+
+  void cancel() {active_ = false;}
+  bool active() const {return active_;}
+
+private:
+  bool active_{false};
+  std::array<double, 3> velocity_{};
+  Clock::time_point start_{}, end_{};
+};
+
 // 集中 Bridge 输入缓存、阶段／任务门控及双时钟新鲜度，不持有 ROS 消息或 CAN 队列。
 
 // 数值与 MissionStatus.msg 相同。Bridge 核心不包含该消息头，所以在此单独声明。

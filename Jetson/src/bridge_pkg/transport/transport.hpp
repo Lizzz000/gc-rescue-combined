@@ -51,6 +51,25 @@ public:
   virtual WriteResult write(const can_frame & frame, std::string & error) = 0;
 };
 
+// 三个周期帧错开发送，每个 ID 的目标周期均为 10 ms。
+class CanPeriodicSchedule
+{
+public:
+  static constexpr auto interval = std::chrono::nanoseconds(3333334);
+
+  canid_t next()
+  {
+    constexpr canid_t ids[] = {
+      CanProtocol::VELOCITY_ID, CanProtocol::TARGET_ID, CanProtocol::SAFETY_ID};
+    const canid_t id = ids[index_];
+    index_ = (index_ + 1U) % 3U;
+    return id;
+  }
+
+private:
+  unsigned index_{0U};
+};
+
 // 七个协议输出 ID 各占至多一槽，按第一次入队顺序发送；载荷由运行层在提交前读取。
 // 调用方串行访问，本类不加锁；合并同 ID 仅保留发送机会，不承诺逐条交付。
 class CanTxQueue
