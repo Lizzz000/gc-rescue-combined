@@ -13,7 +13,7 @@
 | bridge_pkg | 中心与速度的 CAN 桥，以及和 STM32 的运输握手 |
 | bringup_pkg | 唯一启动入口，用同一份配置拉起各角色 |
 | record_pkg | 独立工具：相机流和 PC 预览 / MP4 录制 |
-| teleop_pkg | 独立工具：手柄经串口手动控制 |
+| teleop_pkg | 独立工具：通过 ROS 话题发送定时速度和停车命令 |
 
 `record_pkg` 和 `teleop_pkg` 不在完整部署的角色表里。
 
@@ -72,13 +72,14 @@ ros2 launch bringup_pkg rescue.launch.py run:=all
 - `http://<板端>:8080/snapshot.jpg`
 - `http://<板端>:8080/stream.mjpg`（同时最多 8 路，见 `mjpeg.cpp` 的 `kMaxStreamClients`）
 
-手动定时运动使用 `/cmd_vel_timed`（`std_msgs/msg/Float64MultiArray`），数组依次为 `[vx, vy, wz, 秒数]`：前、左方向的线速度为 m/s，逆时针角速度为 rad/s，时长为秒。一次发布即可；桥接先发 0.5 秒零速准备，再执行指定时长，最后发零速。命令需要 CAN 和 Mission 在线；普通 `/cmd_vel` 的新消息会接管并取消定时动作。重复发布定时命令会重新开始计时，使用 `--once`。例如悬空前进：
+手动定时运动由 `teleop_pkg/move_timed.py` 独立发布 `/cmd_vel`，不参与自动搬运。先加载 ROS 环境并启动完整程序，再执行：
 
 ```bash
-ros2 topic pub --once /cmd_vel_timed std_msgs/msg/Float64MultiArray "{data: [0.08, 0.0, 0.0, 1.2]}"
+python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/move_timed.py forward 0.08 1.2
+python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/move_timed.py stop
 ```
 
-速度上限由 STM32 配置决定；限时包含底盘加速，不代表电机始终处于目标速度。时长须在 (0, 3600] 秒内；时长不合法或格式错误会撤销定时动作并发送零速。此入口用于手动联调，自动搬运模式的运动由 STM32 状态机控制。
+方向可用 `forward`、`backward`、`left`、`right`、`ccw`（逆时针）或 `cw`（顺时针）；后面依次填写速度幅值和秒数。也可用 `velocity vx vy wz 秒数` 指定组合速度。平移单位 m/s，车体转向单位 rad/s。脚本先发 0.5 秒零速，再连续发送指定速度，时间到或执行 `stop` 后发零速；指定时间包含加速。手动测试时不要同时运行其他 `/cmd_vel` 发布器。速度上限由 STM32 配置决定；自动搬运仍由原有状态机控制。
 
 常用话题：`/detect_node/status`、`/detect_node/seg/detections`、`/detect_node/field/results`、`/detect_node/active_task`、`/track_node/seg/tracks`、`/select_node/target`、`/mission_node/status`、`/safety_node/target`、`/bridge_node/status`。`/detect_node/active_task` 和 `/mission_node/status` 是 `transient_local`。
 

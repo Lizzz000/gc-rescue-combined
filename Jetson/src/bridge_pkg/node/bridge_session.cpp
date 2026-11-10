@@ -148,29 +148,9 @@ void BridgeRuntime::safetyCallback(interface_pkg::msg::SafetyTarget::ConstShared
 
 void BridgeRuntime::velocityCallback(geometry_msgs::msg::Twist::ConstSharedPtr msg)
 {
-  // 普通速度接管时取消定时动作，避免后续定时帧覆盖新指令。
-  timed_velocity_.cancel();
+  // Twist 没有源时间，只按本机单调到达时间限制速度有效期。
   state_.velocity(msg->linear.x, msg->linear.y, msg->angular.z, {Clock::now()}, can_->socketOpen());
 }
-
-void BridgeRuntime::timedVelocityCallback(std_msgs::msg::Float64MultiArray::ConstSharedPtr msg)
-{
-  const auto current = Clock::now();
-  if (!can_->socketOpen() || !can_->interfaceUp() || !mission_watchdog_.alive({current})) {
-    timed_velocity_.cancel();
-    if (can_->socketOpen()) {state_.velocity(0.0, 0.0, 0.0, {current}, true);}
-    RCLCPP_WARN(get_logger(), "timed velocity ignored: CAN or mission unavailable");
-    return;
-  }
-  if (msg->data.size() != 4 ||
-    !timed_velocity_.start(msg->data[0], msg->data[1], msg->data[2], msg->data[3], current))
-  {
-    timed_velocity_.cancel();
-    state_.velocity(0.0, 0.0, 0.0, {current}, true);
-    RCLCPP_WARN(get_logger(), "timed velocity requires [vx, vy, wz, seconds] with a positive duration");
-  }
-}
-
 
 // 周期收发和到达握手在 bridge_io.cpp。
 

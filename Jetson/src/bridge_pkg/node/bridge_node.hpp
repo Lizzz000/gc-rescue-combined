@@ -10,7 +10,6 @@
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/twist.hpp>
-#include <std_msgs/msg/float64_multi_array.hpp>
 #include <vision_msgs/msg/detection2_d_array.hpp>
 #include <interface_pkg/msg/safety_target.hpp>
 #include <interface_pkg/msg/task_state.hpp>
@@ -58,7 +57,6 @@ private:
   rclcpp::Subscription<vision_msgs::msg::Detection2DArray>::SharedPtr target_sub_;
   rclcpp::Subscription<interface_pkg::msg::SafetyTarget>::SharedPtr safety_sub_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr velocity_sub_;
-  rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr timed_velocity_sub_;
   rclcpp::Subscription<interface_pkg::msg::TaskState>::SharedPtr task_sub_;
   rclcpp::Subscription<interface_pkg::msg::MissionStatus>::SharedPtr mission_sub_;
   rclcpp::TimerBase::SharedPtr io_timer_, status_timer_;
@@ -99,7 +97,6 @@ public:
   void targetCallback(vision_msgs::msg::Detection2DArray::ConstSharedPtr msg);
   void safetyCallback(interface_pkg::msg::SafetyTarget::ConstSharedPtr msg);
   void velocityCallback(geometry_msgs::msg::Twist::ConstSharedPtr msg);
-  void timedVelocityCallback(std_msgs::msg::Float64MultiArray::ConstSharedPtr msg);
   void taskCallback(interface_pkg::msg::TaskState::ConstSharedPtr msg);
   void missionCallback(interface_pkg::msg::MissionStatus::ConstSharedPtr msg);
 
@@ -148,7 +145,6 @@ private:
   int open_index_{0};
   Clock::duration tx_queue_timeout_, request_timeout_;
   BridgeState state_;
-  BridgeTimedVelocity timed_velocity_;
   CanTxQueue queue_;
   CanPeriodicSchedule periodic_schedule_;
   Clock::time_point next_open_;

@@ -32,17 +32,7 @@ void BridgeRuntime::io()
 {
   try {
     checkRequestTimeouts();
-    if (!ensureSocketReady()) {
-      timed_velocity_.cancel();
-      return;
-    }
-    if (!mission_watchdog_.alive({Clock::now()}) && timed_velocity_.active()) {
-      timed_velocity_.cancel();
-      state_.velocity(0.0, 0.0, 0.0, {Clock::now()}, true);
-    }
-    if (const auto velocity = timed_velocity_.sample(Clock::now())) {
-      state_.velocity((*velocity)[0], (*velocity)[1], (*velocity)[2], {Clock::now()}, true);
-    }
+    if (!ensureSocketReady()) {return;}
     if (!readAvailableFrames()) {return;}
     refreshTurnRequest(Clock::now());
     flushTxQueue();

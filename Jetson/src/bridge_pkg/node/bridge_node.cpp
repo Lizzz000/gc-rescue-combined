@@ -197,11 +197,6 @@ void BridgeNode::createRosInterfaces(StartupSettings & settings)
   velocity_sub_ = create_subscription<geometry_msgs::msg::Twist>(
     settings.velocity_topic, rclcpp::QoS(1).reliable().durability_volatile(),
     [this](geometry_msgs::msg::Twist::ConstSharedPtr msg) {runtime_->velocityCallback(msg);});
-  timed_velocity_sub_ = create_subscription<std_msgs::msg::Float64MultiArray>(
-    "/cmd_vel_timed", rclcpp::QoS(1).reliable().durability_volatile(),
-    [this](std_msgs::msg::Float64MultiArray::ConstSharedPtr msg) {
-      runtime_->timedVelocityCallback(msg);
-    });
   const auto control_qos = rclcpp::QoS(1).reliable().transient_local();
   task_sub_ = create_subscription<interface_pkg::msg::TaskState>(
     settings.task_topic, control_qos,
