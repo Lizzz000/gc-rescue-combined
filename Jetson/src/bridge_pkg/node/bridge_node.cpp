@@ -3,7 +3,7 @@
 #include "transport/damiao/damiao.hpp"
 
 // ---- 桥接节点实现 ----
-// 职责：装配 ROS 话题和定时器。每 10 毫秒调用的 io() 在 bridge_io.cpp。
+// 职责：装配 ROS 话题和定时器。周期收发在 bridge_io.cpp。
 // Copyright 2026 li
 // SPDX-License-Identifier: Apache-2.0
 // BridgeNode 装配 ROS 边界。BridgeRuntime 持有 CAN 会话，二者共用默认互斥回调组。
@@ -212,8 +212,8 @@ void BridgeNode::createRosInterfaces(StartupSettings & settings)
 
 void BridgeNode::createCanTimers()
 {
-  // 10 ms 一拍：事件回执先发，随后固定重发 0x180/0x181/0x182（100 Hz）。
-  io_timer_ = create_wall_timer(std::chrono::milliseconds(10), [this] {runtime_->io();});
+  // 每约 3.33 ms 先处理事件，再轮发一个周期帧；三类帧各约 100 Hz。
+  io_timer_ = create_wall_timer(CanPeriodicSchedule::interval, [this] {runtime_->io();});
   status_timer_ = create_wall_timer(std::chrono::seconds(1), [this] {runtime_->publishStatus();});
 }
 

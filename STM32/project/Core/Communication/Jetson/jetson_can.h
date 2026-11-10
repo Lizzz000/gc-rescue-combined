@@ -7,6 +7,7 @@
  * STM32 接收快照由 CAN 中断写入、任务临界区读取。
  * received_ms 使用现有 1 kHz FreeRTOS 时基，不是总线事务编号。
  */
+#define JETSON_CAN_MANUAL_ID              0x17FU
 #define JETSON_CAN_ARRIVAL_ID             0x200U
 #define JETSON_CAN_TURN_COMPLETED_ID      0x203U
 #define JETSON_CAN_SAFETY_ARRIVED_ID      0x204U
@@ -19,8 +20,8 @@ typedef struct
     uint8_t well_formed; /**< DLC 和标志合法，包括 valid=0 的周期报文。 */
     int16_t vx, vy, wz;  /**< 原始定点值：vx/vy 为 0.001 m/s，wz 为 0.001 rad/s。 */
     uint32_t received_ms;
-    uint32_t sequence;   /**< 每条 0x180（含无效/畸形）递增，按 uint32_t 自然回绕。 */
-    uint32_t invalid_sequence; /**< 仅无效/畸形 0x180 递增；保留同一接收批次的撤权事件。 */
+    uint32_t sequence;   /**< 每条 0x180/手动 0x17F（含无效/畸形）递增，按 uint32_t 自然回绕。 */
+    uint32_t invalid_sequence; /**< 仅无效/畸形速度帧递增；保留同一接收批次的撤权事件。 */
     uint32_t zero_sequence;    /**< 仅有效全零 0x180 递增；保留同一接收批次的停车事件。 */
 } Jetson_CAN_Velocity_t;
 

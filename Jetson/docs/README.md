@@ -13,7 +13,7 @@
 | bridge_pkg | 中心与速度的 CAN 桥，以及和 STM32 的运输握手 |
 | bringup_pkg | 唯一启动入口，用同一份配置拉起各角色 |
 | record_pkg | 独立工具：相机流和 PC 预览 / MP4 录制 |
-| teleop_pkg | 独立工具：手柄经串口手动控制 |
+| teleop_pkg | 独立工具：通过 USB-CAN 发送定时速度和停车命令 |
 
 `record_pkg` 和 `teleop_pkg` 不在完整部署的角色表里。
 
@@ -63,7 +63,7 @@ ros2 launch bringup_pkg rescue.launch.py run:=vision
 ros2 launch bringup_pkg rescue.launch.py run:=all
 ```
 
-默认请求相机以 1920×1080 MJPG、120 FPS 采集；分割、场地识别、原图发布和 HTTP 图传的上限为 100 FPS，CAN 三种周期帧以 10 ms 为目标周期。实际帧率与总线负载需在 Jetson 和相机上实测。
+默认请求相机以 1920×1080 MJPG、120 FPS 采集；分割、场地识别、原图发布和 HTTP 图传的上限为 100 FPS，CAN 三种周期帧错开约 3.33 ms 轮发，每种帧以 10 ms 为目标周期。实际帧率与总线负载需在 Jetson 和相机上实测。
 
 `run:=vision` 只启动检测和图传。`run:=all` 启动上一节的 7 个进程。图传地址和端口来自 `rescue.yaml` 的 `stream_address`、`stream_port`，当前是 `0.0.0.0:8080`。
 
@@ -71,6 +71,19 @@ ros2 launch bringup_pkg rescue.launch.py run:=all
 - `http://<板端>:8080/view`
 - `http://<板端>:8080/snapshot.jpg`
 - `http://<板端>:8080/stream.mjpg`（同时最多 8 路，见 `mjpeg.cpp` 的 `kMaxStreamClients`）
+
+手动定时运动由 `teleop_pkg/move_timed.py` 直接使用达妙 USB-CAN，不启动 ROS 桥接或自动搬运程序。独立手动帧使用 `0x17F`，自动固件忽略该帧，不把它视为任务心跳；必须同步更新 STM32 与脚本。STM32 须运行手动联调固件，USB-CAN 须空闲，不能与桥接同时占用。
+
+```bash
+# 不带参数进入中文交互菜单
+python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/move_timed.py
+
+# 也可直接发送一次动作
+python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/move_timed.py forward 0.08 1.2
+python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/move_timed.py stop
+```
+
+菜单支持选择方向、修改速度与时间及停车；执行动作时按 Ctrl+C 停车。命令行方向可用 `forward`、`backward`、`left`、`right`、`ccw`（逆时针）或 `cw`（顺时针）；后面依次填写速度幅值和秒数。也可用 `velocity vx vy wz 秒数` 指定组合速度，使用 `--device 设备路径` 指定其他达妙适配器。平移单位 m/s，车体转向单位 rad/s。脚本先发 0.5 秒零速准备，再以 100 Hz 发送速度；时间到、执行 `stop` 或按 Ctrl+C 后发送零速并撤权。指定时间包含加速，速度上限由 STM32 配置决定。此脚本不会驱动自动搬运流程。
 
 常用话题：`/detect_node/status`、`/detect_node/seg/detections`、`/detect_node/field/results`、`/detect_node/active_task`、`/track_node/seg/tracks`、`/select_node/target`、`/mission_node/status`、`/safety_node/target`、`/bridge_node/status`。`/detect_node/active_task` 和 `/mission_node/status` 是 `transient_local`。
 

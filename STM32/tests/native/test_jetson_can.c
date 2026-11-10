@@ -374,6 +374,14 @@ static void Check_Command_Expectation(void)
 /** @brief 运行实际 Jetson 编解码模块的离线边界测试。 @return 全部通过返回 0。 */
 int main(void)
 {
+    /* 手动 ID 可控速度，但不能产生或清除自动心跳。 */
+    Jetson_CAN_Init();
+    Jetson_CAN_Receive(JETSON_CAN_MANUAL_ID, velocity_frame, sizeof(velocity_frame));
+    Jetson_CAN_Data_t manual = Snapshot();
+    assert(manual.velocity.valid && manual.velocity.vx == -500 && !manual.heartbeat_seen);
+    Jetson_CAN_Receive(JETSON_CAN_MANUAL_ID, NULL, 0U);
+    manual = Snapshot();
+    assert(!manual.velocity.valid && !manual.heartbeat_seen && manual.mission_loss_sequence == 0U);
     Check_Velocity();
     Check_Lengths();
     Check_Centers_And_ROI();

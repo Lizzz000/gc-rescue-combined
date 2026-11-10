@@ -287,6 +287,17 @@ static void Wait_For_Count(const unsigned *counter, unsigned count)
 /** @brief 模拟一次有效心跳开机，并确认停车反馈前不启动舵机或导航。 */
 static void Start_Automatic(void)
 {
+    /* 手动帧不触发自动心跳或速度快照。 */
+    const uint8_t manual[7] = {1U, 80U, 0U, 0U, 0U, 0U, 0U};
+    for (unsigned i = 0U; i < 60U; ++i)
+    {
+        Jetson_CAN_Receive(JETSON_CAN_MANUAL_ID, manual, sizeof(manual));
+        Step(0U);
+    }
+    Jetson_CAN_Data_t snapshot;
+    Jetson_CAN_Get_Data(&snapshot);
+    assert(!snapshot.heartbeat_seen && snapshot.velocity.sequence == 0U);
+    assert(!enabled && !enables && !servo_commands && !velocity_requests);
     Steps(3U, 0U);
     const uint8_t malformed[6] = {0};
     Jetson_CAN_Receive(0x180U, malformed, sizeof(malformed));

@@ -1,4 +1,5 @@
 #include "jetson_can.h"
+#include "jetson_auto_config.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <stddef.h>
@@ -50,9 +51,15 @@ void Jetson_CAN_Init(void)
  */
 void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len)
 {
+#if JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST
+    /* 独立手动帧不参与自动搬运状态、心跳或接收序号。 */
+    if (id == JETSON_CAN_MANUAL_ID)
+        return;
+#endif
     uint32_t now_ms = (uint32_t)xTaskGetTickCountFromISR();
     switch (id)
     {
+    case JETSON_CAN_MANUAL_ID:
     case 0x180U:
     {
         Jetson_CAN_Velocity_t velocity = {0};
@@ -62,12 +69,12 @@ void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len)
         velocity.invalid_sequence = jetson_data.velocity.invalid_sequence;
         velocity.zero_sequence = jetson_data.velocity.zero_sequence;
         velocity.well_formed = data != NULL && len == 7U && data[0] <= 1U;
-        if (velocity.well_formed)
+        if (id == 0x180U && velocity.well_formed)
         {
             jetson_data.heartbeat_received_ms = now_ms;
             jetson_data.heartbeat_seen = 1U;
         }
-        else if (len == 0U)
+        else if (id == 0x180U && len == 0U)
         {
             /* Jetson 以空 0x180 明确报告任务失联，不能等待普通心跳超时。 */
             jetson_data.heartbeat_seen = 0U;

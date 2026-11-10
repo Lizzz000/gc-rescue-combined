@@ -1,2 +1,0 @@
-# Only the tested BEITONG 2.4G receiver; serial_control also checks the full HID descriptor.
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="20bc", ATTRS{idProduct}=="5159", GROUP="plugdev", MODE="0660", SYMLINK+="teleop-beitong"

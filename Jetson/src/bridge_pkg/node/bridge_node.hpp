@@ -90,8 +90,8 @@ public:
 
   // 有界轮询读取指令、淘汰过期发送机会并处理断线重连，不阻塞 ROS 回调。
   void io();
-  // 每拍固定写 0x180/0x181/0x182；valid 位反映此刻的新鲜度，过期也发。
-  void sendPeriodicFrames();
+  // 每拍轮流发送一类周期帧，载荷按发送时的新鲜度生成。
+  void sendPeriodicFrame();
   // 诊断只反映本机传输句柄、就绪状态与提交计数，不证明STM32在线或指令完成。
   void publishStatus();
   void targetCallback(vision_msgs::msg::Detection2DArray::ConstSharedPtr msg);
@@ -146,6 +146,7 @@ private:
   Clock::duration tx_queue_timeout_, request_timeout_;
   BridgeState state_;
   CanTxQueue queue_;
+  CanPeriodicSchedule periodic_schedule_;
   Clock::time_point next_open_;
   BridgeMissionWatchdog mission_watchdog_;
   std::uint64_t tx_frames_{0}, rx_frames_{0}, bus_errors_{0}, dropped_frames_{0};

@@ -47,7 +47,7 @@ private:
 };
 }  // namespace damiao
 
-// 独占一个USB tty；不启动线程。open只取得设备，check在后续10ms周期内有界初始化。
+// 独占一个USB tty；不启动线程。open只取得设备，check在后续轮询中有界初始化。
 // interfaceUp仅表示本机会话可收发，不证明STM32在线或实际CAN码率匹配。
 // V3沿用模块已有设置；不发送短控制命令，码率须在启动前与STM32核对。
 class DamiaoCan final : public CanTransport

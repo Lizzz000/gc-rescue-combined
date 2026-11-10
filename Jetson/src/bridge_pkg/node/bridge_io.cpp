@@ -26,7 +26,7 @@
 
 // ---- BridgeRuntime：CAN 事件与到达握手 ----
 
-// 单轮顺序：服务超时 → socket 准入 → 有界读取 → 刷新转向授权 → 事件帧 → 三帧周期数据。
+// 单轮顺序：服务超时 → socket 准入 → 有界读取 → 刷新转向授权 → 事件帧 → 一帧周期数据。
 // EINTR 计入收发预算；异常仍由本轮 catch 收尾。
 void BridgeRuntime::io()
 {
@@ -36,7 +36,7 @@ void BridgeRuntime::io()
     if (!readAvailableFrames()) {return;}
     refreshTurnRequest(Clock::now());
     flushTxQueue();
-    if (can_->socketOpen()) {sendPeriodicFrames();}
+    if (can_->socketOpen()) {sendPeriodicFrame();}
   } catch (const CanTransport::FatalError & error) {
     // 独占失败或半包无法安全恢复时退出；不能等待后自动抢占刚被teleop释放的设备。
     closeSocket(error.what());
@@ -46,27 +46,20 @@ void BridgeRuntime::io()
   }
 }
 
-// 固定 10 ms 写一遍三帧周期数据。valid=0 也发，STM32 才能区分“数据过期”和“链路断开”。
-// 背压时放弃本拍剩余帧，下一拍用最新状态重建，不补发旧帧。
-void BridgeRuntime::sendPeriodicFrames()
+// 每约 3.33 ms 轮发一类周期帧，避免同拍突发塞满串口；每个 ID 目标为 100 Hz。
+// 背压或中断时丢弃本次机会，下一拍轮到另一类；载荷始终在提交前重建。
+void BridgeRuntime::sendPeriodicFrame()
 {
-  const canid_t ids[3] = {
-    CanProtocol::VELOCITY_ID, CanProtocol::TARGET_ID, CanProtocol::SAFETY_ID};
-  for (const canid_t id : ids) {
-    const can_frame frame = currentFrame(id);
-    std::string error;
-    const auto result = can_->write(frame, error);
-    if (result == CanTransport::WriteResult::SENT) {
-      ++tx_frames_;
-    } else if (result == CanTransport::WriteResult::BACKPRESSURE) {
-      last_error_ = "CAN transport backpressure";
-      break;
-    } else if (result == CanTransport::WriteResult::INTERRUPTED) {
-      continue;
-    } else {
-      closeSocket(error);
-      return;
-    }
+  const canid_t id = periodic_schedule_.next();
+  const can_frame frame = currentFrame(id);
+  std::string error;
+  const auto result = can_->write(frame, error);
+  if (result == CanTransport::WriteResult::SENT) {
+    ++tx_frames_;
+  } else if (result == CanTransport::WriteResult::BACKPRESSURE) {
+    last_error_ = "CAN transport backpressure";
+  } else if (result != CanTransport::WriteResult::INTERRUPTED) {
+    closeSocket(error);
   }
 }
 

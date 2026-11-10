@@ -182,6 +182,8 @@ def main():
         command = [compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic", "-O0",
                    "-I" + str(root / "tests/native/stubs"),
                    "-I" + str(root / "project/Core/Communication/Jetson"),
+                   "-I" + str(root / "project/Core/Control/Jetson"),
+                   "-I" + str(root / "project/Core/Algorithm/Chassis"),
                    str(root / "tests/native/jetson_codec_probe.c"),
                    str(root / "project/Core/Communication/Jetson/jetson_can.c"),
                    "-o", str(executable)]

@@ -15,6 +15,7 @@ void can_filter_init(void)
     static const uint16_t ids[][4] = {
         {0x000U, 0x180U, 0x181U, 0x182U},
         {0x190U, 0x191U, 0x192U, 0x193U},
+        {JETSON_CAN_MANUAL_ID, JETSON_CAN_MANUAL_ID, JETSON_CAN_MANUAL_ID, JETSON_CAN_MANUAL_ID},
     };
     CAN_FilterTypeDef filter = {0};
     filter.FilterActivation = ENABLE;
@@ -69,6 +70,7 @@ static uint8_t Is_Jetson_Frame(uint32_t id)
 {
     switch (id)
     {
+    case JETSON_CAN_MANUAL_ID:
     case 0x180U:
     case 0x181U:
     case 0x182U:
