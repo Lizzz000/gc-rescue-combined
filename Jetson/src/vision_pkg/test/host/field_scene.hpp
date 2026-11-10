@@ -16,7 +16,7 @@
 
 namespace field_scene {
 
-enum class Floor { WHITE, GRAY, WOOD, RUBBER, TEXTURE };
+enum class Floor { WHITE, GRAY, WOOD, RUBBER, TEXTURE, NEAR_RED };  // NEAR_RED：与内部红色相近的浅红/橙地面
 
 struct Block { double x, y, size, height; cv::Scalar bgr; };       // 场地坐标，米
 
@@ -37,6 +37,10 @@ struct Scene
   int shadows = 0;                // 人/车体阴影数
   int clutter = 0;                // 场外杂物数（含红/紫色物体）
   std::vector<Block> blocks;
+  std::vector<Block> backdrop;     // 场外固定物体（近色背景），先于托盘绘制
+  cv::Scalar divider_bgr{32, 32, 35};  // 中线颜色；真机强光下实测约 (82,95,109)
+  double shadow_strength = 0.55;   // 阴影中心的亮度衰减比例
+  double awb_compensation = 0.0;   // 相机自动白平衡对 tint 的补偿比例，0=不补偿，1=完全抵消
   int motion_blur = 0;            // 水平运动模糊核长，像素
   double contrast = 1.0;          // 对比度压缩
   int jpeg = 90;
@@ -127,6 +131,7 @@ inline cv::Mat floorTexture(Floor floor, cv::Size size)
       }
       break;
     }
+    case Floor::NEAR_RED: img.setTo(cv::Scalar(120, 140, 205)); break;  // 浅橙红地面
     case Floor::TEXTURE: {             // 低饱和的斑驳水泥/拼接地垫
       cv::Mat noise(size / 8, CV_8U);
       cv::randu(noise, cv::Scalar(70), cv::Scalar(210));
@@ -143,10 +148,14 @@ inline cv::Mat floorTexture(Floor floor, cv::Size size)
 inline cv::Mat render(const Scene & s, cv::Size size, Truth & truth)
 {
   std::mt19937 rng(s.seed);
+  cv::theRNG().state = 0x9E3779B97F4A7C15ULL ^ s.seed;  // randu/randn 也按种子复现
   std::uniform_real_distribution<double> u(0, 1);
   const Camera cam(s, size);
   cv::Mat img = floorTexture(s.floor, size);
-  const cv::Scalar purple(190, 95, 120), red(70, 72, 160), black(32, 32, 35);
+  const cv::Scalar purple(190, 95, 120), red(70, 72, 160), black = s.divider_bgr;
+  for (const auto & b : s.backdrop) {
+    box(img, cam, b.x - b.size / 2, b.x + b.size / 2, b.y - b.size / 2, b.y + b.size / 2, 0, b.height, b.bgr);
+  }
   // 场外杂物：随机颜色的小盒子，含紫色/红色物体，位置在托盘外
   for (int i = 0; i < s.clutter; ++i) {
     const cv::Scalar colours[] = {purple, red, cv::Scalar(30, 30, 30), cv::Scalar(200, 120, 40),
@@ -192,7 +201,7 @@ inline cv::Mat render(const Scene & s, cv::Size size, Truth & truth)
       cvRound(size.height * (0.15 + 0.2 * u(rng)))), 360 * u(rng), 0, 360, cv::Scalar(1), cv::FILLED);
     cv::GaussianBlur(m, m, cv::Size(0, 0), 12);
     std::vector<cv::Mat> ch; cv::split(f, ch);
-    for (auto & c : ch) {c = c.mul(1.0 - 0.55 * m);}
+    for (auto & c : ch) {c = c.mul(1.0 - s.shadow_strength * m);}
     cv::merge(ch, f);
   }
   if (s.gradient != 0) {
@@ -203,7 +212,7 @@ inline cv::Mat render(const Scene & s, cv::Size size, Truth & truth)
   }
   // 色温与曝光
   std::vector<cv::Mat> ch; cv::split(f, ch);
-  for (int c = 0; c < 3; ++c) {ch[c] *= s.tint[c] * s.exposure;}
+  for (int c = 0; c < 3; ++c) {ch[c] *= std::pow(s.tint[c], 1.0 - s.awb_compensation) * s.exposure;}
   cv::merge(ch, f);
   // 镜面高光：向白色混合的椭圆斑，可压在中线上
   for (int i = 0; i < s.glare; ++i) {
