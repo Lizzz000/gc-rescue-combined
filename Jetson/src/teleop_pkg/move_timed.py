@@ -6,6 +6,7 @@ import fcntl
 import math
 import os
 import select
+import signal
 import socket
 import subprocess
 import struct
@@ -103,7 +104,7 @@ def send_for(fd, packet, seconds, stop_socket=None):
     return True
 
 
-def interactive(device):
+def numeric_menu(device):
     linear, angular, seconds = 0.08, 0.2, 1.2
     directions = {
         '1': ('前进', 'forward'), '2': ('后退', 'backward'),
@@ -154,6 +155,118 @@ def interactive(device):
             return 0
         except ValueError:
             print('请输入有效数字。')
+
+
+def interactive(device):
+    if not sys.stdin.isatty() or not sys.stdout.isatty() or os.environ.get('TERM') in (None, '', 'dumb'):
+        return numeric_menu(device)
+
+    linear, angular, seconds = 0.08, 0.2, 1.2
+    terminal = sys.stdin.fileno()
+    original = termios.tcgetattr(terminal)
+    message = '选择方向开始定时运动。'
+    keys = {
+        b'\x1b[A': ('前进', 'forward'), b'\x1b[B': ('后退', 'backward'),
+        b'\x1b[D': ('左移', 'left'), b'\x1b[C': ('右移', 'right'),
+        b'q': ('左转', 'ccw'), b'e': ('右转', 'cw'),
+    }
+
+    def display(status):
+        print('\x1b[2J\x1b[H', end='')
+        print('独立手动定时控制')
+        print(f'设备：{device}')
+        print(f'平移：{linear:g} m/s   转向：{angular:g} rad/s   时间：{seconds:g} s')
+        print('方向键：前后左右平移    Q / E：左转 / 右转')
+        print('P：设置参数    V：组合速度    X：退出')
+        print('运动时 Ctrl+C 停车；也可在另一终端执行 stop。')
+        print(f'\n{status}', flush=True)
+
+    try:
+        tty.setcbreak(terminal)
+        while True:
+            display(message)
+            key = os.read(terminal, 1).lower()
+            if key == b'\x1b':
+                while len(key) < 3 and select.select([terminal], [], [], 0.05)[0]:
+                    key += os.read(terminal, 1)
+            if not key or key == b'x':
+                return 0
+            if key in (b'p', b'v'):
+                termios.tcsetattr(terminal, termios.TCSADRAIN, original)
+                try:
+                    if key == b'p':
+                        values = [
+                            input(f'平移速度 m/s [{linear:g}]：').strip(),
+                            input(f'转向速度 rad/s [{angular:g}]：').strip(),
+                            input(f'持续时间 s [{seconds:g}]：').strip(),
+                        ]
+                        numbers = [float(value) if value else default for value, default in
+                                   zip(values, (linear, angular, seconds))]
+                        if (not all(math.isfinite(value) and value > 0 for value in numbers)
+                                or any(value > 32.767 for value in numbers[:2]) or numbers[2] > 3600):
+                            raise ValueError('速度必须为 (0, 32.767]，时间为 (0, 3600] 秒。')
+                        linear, angular, seconds = numbers
+                        message = '参数已更新。'
+                        continue
+                    values = input('输入 vx vy wz 时间（空格分隔）：').split()
+                    if len(values) != 4:
+                        raise ValueError('请输入四个数值。')
+                    numbers = [float(value) for value in values]
+                    if (not all(math.isfinite(value) for value in numbers)
+                            or any(value < -32.768 or value > 32.767 for value in numbers[:3])
+                            or not 0 < numbers[3] <= 3600):
+                        raise ValueError('速度超出 CAN 编码范围，或时间不在 (0, 3600] 秒。')
+                    label, action, duration = '组合速度', ['velocity', *values], numbers[3]
+                except ValueError as error:
+                    message = f'输入无效：{error}'
+                    continue
+                finally:
+                    tty.setcbreak(terminal)
+            elif key in keys:
+                label, direction = keys[key]
+                speed = angular if key in (b'q', b'e') else linear
+                action, duration = [direction, str(speed), str(seconds)], seconds
+            else:
+                message = '未识别按键，请使用屏幕上的快捷键。'
+                continue
+
+            process = subprocess.Popen([sys.executable, __file__, '--device', device, *action],
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       text=True, start_new_session=True)
+            start = time.monotonic()
+            interrupted = False
+            try:
+                while process.poll() is None:
+                    elapsed = time.monotonic() - start
+                    if elapsed < 0.5:
+                        status = f'{label}：发送零速准备中；Ctrl+C 停车。'
+                    else:
+                        remaining = max(0.0, duration - (elapsed - 0.5))
+                        status = f'{label}：预计剩余 {remaining:.1f} s；Ctrl+C 停车。'
+                    display(status)
+                    if select.select([terminal], [], [], 0.1)[0]:
+                        os.read(terminal, 32)  # 动作期间丢弃其他按键。
+            except KeyboardInterrupt:
+                interrupted = True
+                if process.poll() is None:
+                    try:
+                        process.send_signal(signal.SIGINT)
+                    except ProcessLookupError:
+                        pass
+            output, error = process.communicate()
+            if error.strip():
+                message = f'发送提示：{error.strip()}'
+            elif interrupted:
+                message = '已请求停车；未读取电机反馈。'
+            elif process.returncode == 0:
+                message = '动作已结束，已尝试发送停车报文；未读取电机反馈。'
+            else:
+                message = f'动作失败：{error.strip() or output.strip() or process.returncode}'
+    except (EOFError, KeyboardInterrupt):
+        return 0
+    finally:
+        termios.tcsetattr(terminal, termios.TCSADRAIN, original)
+        print('\n已退出。')
 
 
 def main():
