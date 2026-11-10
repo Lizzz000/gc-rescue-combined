@@ -10,7 +10,7 @@ python3 "$here/field_config.py" "$out/field_config_values.inc"
 start=$(date +%s%3N)
 ${CXX:-g++} -std=c++17 -O2 -Wall -Wextra -I"$here" -I"$package" -I"$out" \
   $(pkg-config --cflags opencv4) \
-  "$here/test_main.cpp" "$here/test_field.cpp" \
+  "$here/test_main.cpp" "$here/test_colour.cpp" "$here/test_field.cpp" \
   "$package"/field/*.cpp "$package"/field/opencv/*.cpp \
   $(pkg-config --libs opencv4) -o "$out/field_host_tests"
 "$out/field_host_tests" "$@"

@@ -13,6 +13,7 @@
 #include <opencv2/core.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -43,6 +44,25 @@ struct FitOut
   EdgeState edge_state[4] = {EdgeState::LOST, EdgeState::LOST, EdgeState::LOST, EdgeState::LOST};
   int measured_edges = 0;
   bool used_prior_fallback = false;
+};
+
+// ---- 颜色 ----
+// 相对色度上限：保证 HueSector 定点乘积留在 uint16 内。
+constexpr double kMaxChromaRatio = 4.0;
+
+// Lab 色相扇区判据（八位 Lab 输入），扇区宽度须 < 180°。标量与 NEON 路径共用这些定点常量。
+struct HueSector
+{
+  HueSector(double hue_lo_deg, double hue_hi_deg, double chroma_ratio_min,
+    double light_min, double light_max);
+  static HueSector purple(const FieldConfig & cfg);
+  // use_blue_interior 选择红或蓝扇区。
+  static HueSector interior(const FieldConfig & cfg);
+  uchar classify(const uchar * lab) const;
+
+  int16_t lo_a, lo_b, hi_a, hi_b;
+  uint16_t ratio_q;
+  uchar light_lo, light_hi;
 };
 
 // 严格3:2的BGR8面积采样使用整数核，其余类型/比例交回INTER_AREA；返回独占Mat，输入只读。

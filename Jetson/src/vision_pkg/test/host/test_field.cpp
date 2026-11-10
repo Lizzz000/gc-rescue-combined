@@ -2,6 +2,7 @@
 // 统计外框提交率、分区有效率、角点与中线误差；负例必须全程不出有效结果。
 #include "check.hpp"
 #include "field_scene.hpp"
+#include "production_config.hpp"
 #include "field/field.hpp"
 
 #include <chrono>
@@ -17,17 +18,6 @@ namespace {
 using field_scene::Block;
 using field_scene::Floor;
 using field_scene::Scene;
-
-// 与 rescue_advanced.yaml 的 vision.field 一致；测试只覆盖与 yaml 不同的默认值。
-FieldConfig productionConfig()
-{
-  FieldConfig c;
-#define SET(name, value) c.name = value;
-#include "field_config_values.inc"
-#undef SET
-  validateFieldConfig(c);
-  return c;
-}
 
 struct Outcome
 {
@@ -123,7 +113,6 @@ std::vector<Case> matrix()
   {Scene s = base; s.cam_d = 1.1; s.cam_h = 0.3; add("视角", "远", s);}
   {Scene s = base; s.cam_d = 0.3; s.cam_h = 0.18; add("视角", "近", s);}
   {Scene s = base; s.yaw_deg = 12; add("视角", "偏航12°", s);}
-  {Scene s = base; s.cam_h = 0.12; add("视角", "低机位", s);}
   {Scene s = base; s.cam_x = 0.25; s.yaw_deg = 22; add("视角", "部分出画", s);}
   // 成像质量
   {Scene s = base; s.motion_blur = 11; add("成像", "运动模糊", s);}
@@ -138,6 +127,8 @@ std::vector<Case> matrix()
   {Scene s = base; s.tray = false; s.clutter = 6; add("负例", "无场地+红紫杂物", s, false);}
   {Scene s = base; s.interior = false; add("负例", "只有紫框", s, false);}
   {Scene s = base; s.purple_frame = false; add("负例", "只有红板", s, false);}
+  // 机位低于围边视线，内部完全被围边挡住：看不到安全区就不能提交。
+  {Scene s = base; s.cam_h = 0.12; add("负例", "低机位内部不可见", s, false);}
   return cases;
 }
 

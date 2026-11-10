@@ -70,7 +70,7 @@ vision:
     overlay_stats: false
     publish_status: true
     frame_id: ''
-  # 场地纯值参数：紫色饱和度为百分比，hue沿用OpenCV 0..180。
+  # 场地纯值参数：颜色按 Lab 色相角（度）与相对色度 (|a|+|b|)/L 判定，对曝光与阴影近似不变。
   field:
     # 仅 Field 按 720p 处理；源图/图传仍为 1080p，结果坐标还原到源图。
     proc_width: 1280
@@ -80,16 +80,13 @@ vision:
     # 显式 BEV 像素尺寸；0 按基础配置中的物理尺寸 × bev_px_per_m 推导。
     bev_width: 0
     bev_height: 0
-    purple_a_min: 8.0
-    purple_b_max: -5.0
-    purple_chroma_min: 14.0
+    # 紫框 Lab 色相角 atan2(b,a)，度，-180..180，[下限,上限]，宽度 <180，不得与内部扇区重叠。
+    # 录屏实测紫框正面 -63..-72、背面 -48..-60；上限 -15 覆盖暖光下偏红。偏蓝物体可能落入，待现场标定。
+    purple_hue_range_deg: [-80.0, -15.0]
+    # 相对色度 (|a|+|b|)/L 下限（L 0..100），0..4；阴影下比值基本不变。
+    purple_chroma_ratio_min: 0.5
     # Lab L 0..100，按[下限,上限]排列。
     purple_L_range: [8.0, 96.0]
-    # 百分比 0..100，分割时换算为8位HSV。
-    purple_sat_min: 22.0
-    # OpenCV hue 0..180，按[下限,上限]排列。
-    purple_hue_range: [115.0, 175.0]
-    purple_use_hue: true
     morph_close_ksize: 5
     morph_close_iter: 2
     morph_dilate_ksize: 3
@@ -132,24 +129,24 @@ vision:
     split_ema_alpha: 0.3
     split_jump_frac: 0.03
     bev_border_margin_frac: 0.04
-    red_a_min: 28.0
-    red_chroma_min: 32.0
-    # Lab b -128..127，按[下限,上限]排列。
-    red_b_range: [-12.0, 70.0]
+    # 红色内部 Lab 色相扇区，度，[下限,上限]；下限 -12 覆盖冷光，上限 46 把木纹/橙色地面挡在外面。待现场标定。
+    red_hue_range_deg: [-12.0, 46.0]
+    # 红色内部相对色度下限 (|a|+|b|)/L，0..4。
+    red_chroma_ratio_min: 0.6
     red_L_min: 15.0
     use_blue_interior: false
-    blue_a_min: 5.0
-    blue_chroma_min: 25.0
-    # Lab b -128..127，按[下限,上限]排列。
-    blue_b_range: [-80.0, 5.0]
+    # 蓝色内部 Lab 色相扇区，度，[下限,上限]；需现场标定。
+    blue_hue_range_deg: [-140.0, -80.0]
+    # 蓝色内部相对色度下限 (|a|+|b|)/L，0..4。
+    blue_chroma_ratio_min: 0.6
     blue_L_min: 12.0
+    # 内部颜色掩膜开运算核边长（像素，奇数，1 不做）；去掉紫框与地面混色的一两像素细边。
+    interior_open_ksize: 3
     locate_hits_needed: 2
     corner_ema_alpha: 0.45
     lost_frames_to_search: 6
     refit_every: 10
     track_window_scale: 1.35
-    # 0=LAB并可选叠加HSV，1=仅LAB，2=仅HSV；0的HSV受purple_use_hue控制，2要求其为true。
-    seg_mode: 0
     edge_samples: 40
     edge_probe_radius: 3
     edge_support_min: 0.25

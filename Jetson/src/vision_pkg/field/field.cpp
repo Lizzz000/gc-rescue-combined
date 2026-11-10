@@ -68,7 +68,7 @@ struct FieldLocator::FrameEvidence
   // ROI 必须独立分割；只有需要全图回退、跳变检查或越界诊断时才生成全图双掩膜，单帧复用。
   const cv::Mat & fullPurple(const FieldConfig & config)
   {
-    if (full_purple.empty()) {FieldLocator::segment(small, config, full_purple, full_interior);}
+    if (full_purple.empty()) {FieldLocator::segmentEvidence(small, config, full_purple, full_interior);}
     return full_purple;
   }
 };
@@ -85,7 +85,7 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
     purple_raw = evidence.fullPurple(cfg_);
     interior_mask = evidence.full_interior;
   } else {
-    segment(img, cfg_, purple_raw, interior_mask);
+    segmentEvidence(img, cfg_, purple_raw, interior_mask);
   }
   // 全零证据经过既定闭运算和膨胀仍全零，省去形态学及轮廓扫描；上层仍照常处理丢失和历史输出。
   // 纯核心 cfg() 允许直接改值而不校验：仅对支持范围启用快路，其余仍交给原 OpenCV 调用处理。

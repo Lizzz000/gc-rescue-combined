@@ -150,16 +150,21 @@ std::string configToString(const FieldConfig & cfg)
 {
   char buf[2048];
   std::snprintf(buf, sizeof(buf),
-                  "proc=%dx%d field=%.2fx%.2fm bev_ppm=%.0f purple[a>=%.1f b<=%.1f C>=%.1f S>=%.1f H=%.1f..%.1f hue=%d] "
+                  "proc=%dx%d field=%.2fx%.2fm bev_ppm=%.0f "
+                  "purple[H=%.0f..%.0f C/L>=%.2f L=%.0f..%.0f] "
                   "fill>=%.2f ratio=%.2f..%.2f corner_tol=%.2f black[depth>=%.2f suspect_offset>%.2f width<=%.2f lift<=%.2f] "
-                  "red[a>=%.1f C>=%.1f b=%.1f..%.1f]",
+                  "interior[%s H=%.0f..%.0f C/L>=%.2f L>=%.0f]",
                   cfg.proc_width, cfg.proc_height, cfg.field_w_m, cfg.field_h_m, cfg.bev_px_per_m,
-                  cfg.purple_a_min, cfg.purple_b_max, cfg.purple_chroma_min, cfg.purple_sat_min,
-                  cfg.purple_hue_min, cfg.purple_hue_max, int(cfg.purple_use_hue),
+                  cfg.purple_hue_lo_deg, cfg.purple_hue_hi_deg, cfg.purple_chroma_ratio_min,
+                  cfg.purple_L_min, cfg.purple_L_max,
                   cfg.min_fill_ratio, cfg.min_rect_ratio_lo, cfg.min_rect_ratio_hi,
                   cfg.prior_corner_tol_frac, cfg.black_min_depth, cfg.black_max_offset_frac,
-                  cfg.black_max_width_frac, cfg.black_max_lift, cfg.red_a_min, cfg.red_chroma_min, cfg.red_b_min,
-                  cfg.red_b_max);
+                  cfg.black_max_width_frac, cfg.black_max_lift,
+                  cfg.use_blue_interior ? "blue" : "red",
+                  cfg.use_blue_interior ? cfg.blue_hue_lo_deg : cfg.red_hue_lo_deg,
+                  cfg.use_blue_interior ? cfg.blue_hue_hi_deg : cfg.red_hue_hi_deg,
+                  cfg.use_blue_interior ? cfg.blue_chroma_ratio_min : cfg.red_chroma_ratio_min,
+                  cfg.use_blue_interior ? cfg.blue_L_min : cfg.red_L_min);
   return std::string(buf);
 }
 
@@ -168,6 +173,14 @@ void validateFieldConfig(const FieldConfig & c)
 {
   auto range = [](double value, double lo, double hi, const char * name) {
       if (!std::isfinite(value) || value < lo || value > hi) {
+        throw std::invalid_argument(std::string("Invalid field config: ") + name);
+      }
+    };
+  // 扇区端点在 [-180,180]，宽度在 (0,180)，HueSector 的叉积判据只对半平面内扇区成立。
+  auto sector = [&range](double lo, double hi, const char * name) {
+      range(lo, -180, 180, name);
+      range(hi, -180, 180, name);
+      if (!(hi > lo && hi - lo < 180)) {
         throw std::invalid_argument(std::string("Invalid field config: ") + name);
       }
     };
@@ -198,11 +211,6 @@ void validateFieldConfig(const FieldConfig & c)
   range(c.red_grid_cols, 1, 64, "red_grid_cols");
   range(c.red_grid_rows, 1, 64, "red_grid_rows");
   range(c.red_cells_min, 0, c.red_grid_cols * c.red_grid_rows, "red_cells_min");
-  range(c.seg_mode, 0, 2, "seg_mode");
-  // 仅 HSV 模式不能同时关闭 HSV，否则两个颜色判据都不执行。
-  if (c.seg_mode == static_cast<int>(SegMode::HSV_ONLY) && !c.purple_use_hue) {
-    throw std::invalid_argument("Invalid field config: HSV_ONLY requires purple_use_hue");
-  }
   range(c.locate_hits_needed, 1, 100000, "locate_hits_needed");
   range(c.lost_frames_to_search, 1, 100000, "lost_frames_to_search");
   range(c.refit_every, 1, 100000, "refit_every");
@@ -235,25 +243,26 @@ void validateFieldConfig(const FieldConfig & c)
   FRACTION(max_jump_frac); FRACTION(jump_accept_frac); FRACTION(fast_switch_purple);
   FRACTION(fast_switch_red_inside); FRACTION(fast_switch_red_outside);
 #undef FRACTION
-  range(c.purple_a_min, -128, 127, "purple_a_min");
-  range(c.purple_b_max, -128, 127, "purple_b_max");
-  range(c.purple_chroma_min, 0, 200, "purple_chroma_min");
+  sector(c.purple_hue_lo_deg, c.purple_hue_hi_deg, "purple hue sector");
+  range(c.purple_chroma_ratio_min, 0, field_detail::kMaxChromaRatio, "purple_chroma_ratio_min");
   range(c.purple_L_min, 0, 100, "purple_L_min");
   range(c.purple_L_max, c.purple_L_min, 100, "purple_L_max");
-  // 饱和度配置使用百分比；分割时再换算到八位 HSV 的 0..255。
-  range(c.purple_sat_min, 0, 100, "purple_sat_min");
-  range(c.purple_hue_min, 0, 180, "purple_hue_min");
-  range(c.purple_hue_max, c.purple_hue_min, 180, "purple_hue_max");
-  range(c.red_a_min, -128, 127, "red_a_min");
-  range(c.red_b_min, -128, 127, "red_b_min");
-  range(c.red_b_max, c.red_b_min, 127, "red_b_max");
-  range(c.red_chroma_min, 0, 200, "red_chroma_min");
+  sector(c.red_hue_lo_deg, c.red_hue_hi_deg, "red hue sector");
+  range(c.red_chroma_ratio_min, 0, field_detail::kMaxChromaRatio, "red_chroma_ratio_min");
   range(c.red_L_min, 0, 100, "red_L_min");
-  range(c.blue_a_min, -128, 127, "blue_a_min");
-  range(c.blue_b_min, -128, 127, "blue_b_min");
-  range(c.blue_b_max, c.blue_b_min, 127, "blue_b_max");
-  range(c.blue_chroma_min, 0, 200, "blue_chroma_min");
+  sector(c.blue_hue_lo_deg, c.blue_hue_hi_deg, "blue hue sector");
+  range(c.blue_chroma_ratio_min, 0, field_detail::kMaxChromaRatio, "blue_chroma_ratio_min");
   range(c.blue_L_min, 0, 100, "blue_L_min");
+  range(c.interior_open_ksize, 1, 15, "interior_open_ksize");
+  if (c.interior_open_ksize % 2 == 0) {
+    throw std::invalid_argument("Invalid field config: interior_open_ksize must be odd");
+  }
+  // 所选内部扇区与紫色扇区不能重叠，否则同一像素同时是边框和内部证据。
+  const double interior_lo = c.use_blue_interior ? c.blue_hue_lo_deg : c.red_hue_lo_deg;
+  const double interior_hi = c.use_blue_interior ? c.blue_hue_hi_deg : c.red_hue_hi_deg;
+  if (interior_lo < c.purple_hue_hi_deg && c.purple_hue_lo_deg < interior_hi) {
+    throw std::invalid_argument("Invalid field config: interior hue sector overlaps purple");
+  }
   range(c.black_max_lift, 0, 4, "black_max_lift");
   range(c.max_border_touch, 0, 4, "max_border_touch");
   range(c.pred_velocity_gain, 0, 10, "pred_velocity_gain");

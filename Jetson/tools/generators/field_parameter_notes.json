@@ -50,23 +50,17 @@
       "unit": "BEV 像素；0 按米制尺寸与密度计算",
       "purpose": "显式鸟瞰高度；零值由物理高度与像素密度计算。"
     },
-    "purple_a_min": {
+    "purple_hue_range_deg": {
       "group": "color",
       "level": "常用",
-      "unit": "Lab a/b，无偏移值",
-      "purpose": "紫色 Lab a 通道下限。"
+      "unit": "Lab 色相角（度），[下限,上限]",
+      "purpose": "紫框 Lab 色相扇区；与内部颜色扇区不得重叠。"
     },
-    "purple_b_max": {
+    "purple_chroma_ratio_min": {
       "group": "color",
       "level": "常用",
-      "unit": "Lab a/b，无偏移值",
-      "purpose": "紫色 Lab b 通道上限，用于区分内部红色。"
-    },
-    "purple_chroma_min": {
-      "group": "color",
-      "level": "常用",
-      "unit": "Lab 通道差 a-b（既有紫色近似判据）",
-      "purpose": "紫色 a-b 差值下限，不是欧氏色度。"
+      "unit": "比值 0..4",
+      "purpose": "紫框相对色度下限，按 L1 色度 |a|+|b| 除以 L。"
     },
     "purple_L_range": {
       "group": "color",
@@ -74,47 +68,17 @@
       "unit": "Lab L，0..100，[下限,上限]",
       "purpose": "紫色 Lab 亮度的闭区间。"
     },
-    "purple_sat_min": {
+    "red_hue_range_deg": {
       "group": "color",
       "level": "常用",
-      "unit": "HSV 饱和度百分比，0..100",
-      "purpose": "紫色 HSV 饱和度下限；以百分比配置，转为八位通道比较。"
+      "unit": "Lab 色相角（度），[下限,上限]",
+      "purpose": "红色内部 Lab 色相扇区。"
     },
-    "purple_hue_range": {
+    "red_chroma_ratio_min": {
       "group": "color",
       "level": "常用",
-      "unit": "OpenCV HSV H，0..180，[下限,上限]",
-      "purpose": "紫色 OpenCV 色相闭区间。"
-    },
-    "purple_use_hue": {
-      "group": "color",
-      "level": "高级",
-      "unit": "布尔开关",
-      "purpose": "允许 HSV 判据；仅 LAB 模式不使用它，仅 HSV 模式要求开启。"
-    },
-    "seg_mode": {
-      "group": "color",
-      "level": "高级",
-      "unit": "分割枚举：0 LAB并可选HSV / 1 LAB / 2 HSV",
-      "purpose": "选择 LAB 与可选 HSV、仅 LAB、仅 HSV；不改变内部颜色独立判据。"
-    },
-    "red_a_min": {
-      "group": "color",
-      "level": "常用",
-      "unit": "Lab a/b，无偏移值",
-      "purpose": "红色内部 Lab a 下限。"
-    },
-    "red_chroma_min": {
-      "group": "color",
-      "level": "常用",
-      "unit": "Lab 通道和 a+abs(b)（既有内部色近似判据）",
-      "purpose": "红色内部 a+abs(b) 下限，不是欧氏色度。"
-    },
-    "red_b_range": {
-      "group": "color",
-      "level": "常用",
-      "unit": "Lab b，无偏移值，[下限,上限]",
-      "purpose": "红色内部 Lab b 闭区间。"
+      "unit": "比值 0..4",
+      "purpose": "红色内部相对色度下限。"
     },
     "red_L_min": {
       "group": "color",
@@ -128,29 +92,29 @@
       "unit": "布尔开关",
       "purpose": "切换到蓝色内部阈值；输出中 red_* 名称保持原接口含义。"
     },
-    "blue_a_min": {
+    "blue_hue_range_deg": {
       "group": "color",
       "level": "常用",
-      "unit": "Lab a/b，无偏移值",
-      "purpose": "蓝色内部 Lab a 下限，仅蓝色内部模式使用。"
+      "unit": "Lab 色相角（度），[下限,上限]",
+      "purpose": "蓝色内部 Lab 色相扇区，仅蓝色内部模式使用。"
     },
-    "blue_chroma_min": {
+    "blue_chroma_ratio_min": {
       "group": "color",
       "level": "常用",
-      "unit": "Lab 通道和 a+abs(b)（既有内部色近似判据）",
-      "purpose": "蓝色内部 a+abs(b) 下限，仅蓝色内部模式使用。"
-    },
-    "blue_b_range": {
-      "group": "color",
-      "level": "常用",
-      "unit": "Lab b，无偏移值，[下限,上限]",
-      "purpose": "蓝色内部 Lab b 闭区间，仅蓝色内部模式使用。"
+      "unit": "比值 0..4",
+      "purpose": "蓝色内部相对色度下限，仅蓝色内部模式使用。"
     },
     "blue_L_min": {
       "group": "color",
       "level": "常用",
       "unit": "Lab L，0..100",
       "purpose": "蓝色内部 Lab 亮度下限，仅蓝色内部模式使用。"
+    },
+    "interior_open_ksize": {
+      "group": "color",
+      "level": "高级",
+      "unit": "像素，奇数，1 不做",
+      "purpose": "内部颜色掩膜开运算核边长；去掉紫框与地面混色形成的一两像素细边。"
     },
     "morph_close_ksize": {
       "group": "search",

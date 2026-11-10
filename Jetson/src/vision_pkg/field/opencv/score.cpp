@@ -369,9 +369,11 @@ SplitMeasurement detectSplitBlack(const cv::Mat & bev, const FieldConfig & cfg)
   const double ref_norm = std::hypot(ref_a, ref_b);
   if (ref_norm < 1e-6) {return {};}
   ref_a /= ref_norm; ref_b /= ref_norm;
-  // 参照段资格：严格内部颜色，或非紫色、色度达到内部色度下限的 1/4 且色相与本色夹角在约 35° 内。
+  // 参照段资格：严格内部颜色，或非紫色、相对色度达到内部下限的 1/4 且色相与本色夹角在约 35° 内。
   // 局部反光/阴影使红色略出严格阈值时仍可作参照；紫色围边、低色度地面与黑带、其他颜色物块不能。
-  const double chroma_floor = 0.25 * (cfg.use_blue_interior ? cfg.blue_chroma_min : cfg.red_chroma_min);
+  // 八位 L 换回 0..100 后乘相对色度下限。
+  const double chroma_per_light = 0.25 / 2.55 *
+    (cfg.use_blue_interior ? cfg.blue_chroma_ratio_min : cfg.red_chroma_ratio_min);
   constexpr double hue_cos = 0.82;
   cv::Mat chroma(context.size(), CV_32F), light(context.size(), CV_32F);
   for (int y = 0; y < rows; ++y) {
@@ -384,7 +386,7 @@ SplitMeasurement detectSplitBlack(const cv::Mat & bev, const FieldConfig & cfg)
       l[x] = pixel[0];
       c[x] = float(std::abs(pixel[1] - 128) + std::abs(pixel[2] - 128));
       const int a = pixel[1] - 128, b = pixel[2] - 128;
-      if (violet[x] == 0 && c[x] >= chroma_floor && a * ref_a + b * ref_b >= hue_cos * std::hypot(a, b)) {in[x] = 255;}
+      if (violet[x] == 0 && c[x] >= chroma_per_light * pixel[0] && a * ref_a + b * ref_b >= hue_cos * std::hypot(a, b)) {in[x] = 255;}
     }
   }
   // 只沿黑带方向（纵向）平滑压缩噪声，横向不扩散，带宽保持实测。

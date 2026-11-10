@@ -16,9 +16,6 @@
 // EdgeState：MEASURED=本帧实测；PREDICTED=用上一帧预测或候选先验补的；LOST=无证据。
 enum class EdgeState { MEASURED = 0, PREDICTED = 1, LOST = 2 };
 
-// SegMode：紫色分割的通道选择；LAB_AND_HSV 是否叠加 HSV 还取决于 purple_use_hue。
-enum class SegMode { LAB_AND_HSV = 0, LAB_ONLY = 1, HSV_ONLY = 2 };
-
 // CandidateScore：单个候选的评分明细；先过各项硬门槛，再用 total 在同类候选中排序。
 struct CandidateScore
 {
@@ -50,20 +47,16 @@ struct FieldConfig
   int bev_width = 0;                     // >0 直接指定；有效尺寸须在 16..4096
   int bev_height = 0;                    // >0 直接指定；同上
 
-  // ---- [分组] 分割阈值: 紫色判据（LAB 判“紫 vs 红”, HSV 判“紫 vs 蓝”） ----
-  // 紫色阈值按 Lab 物理量配置（L 0..100、a/b 无偏移）；实现换成八位 Lab 后比较。
-  // 历史真机样本记录（43 帧，非本轮验收）: 紫框胶带 a≈18-22, b≈-20..-34, C≈30-39, S≈35-38(最低25),
-  // H≈122-140; 红色地面 a≈53-60, b≈+35..+46, C≈66-77, S≈75-84。
-  // 判据: "紫 vs 红" 看 b* 符号, "紫 vs 蓝" 看 HSV 色相。
-  double purple_a_min = 8.0;
-  double purple_b_max = -5.0;
-  double purple_chroma_min = 14.0;
+  // ---- [分组] 颜色判据：Lab 色相扇区 + 相对色度 C/L ----
+  // 色相角 atan2(b,a)（度，逆时针为正），落在 [lo,hi] 扇区内，且 C=|a|+|b| ≥ ratio×L（L 0..100）。
+  // 阴影下 L 与 C 近似等比例下降，比值基本不变；扇区宽度须在 (0,180) 度。
+  // 历史真机样本（43 帧，非本轮验收）：紫框 a≈18-22、b≈-20..-34（约 -45°..-62°）；
+  // 红色地面 a≈53-60、b≈+35..+46（约 33°..40°）。均为待标定初值。
+  double purple_hue_lo_deg = -80.0;
+  double purple_hue_hi_deg = -15.0;
+  double purple_chroma_ratio_min = 0.5;
   double purple_L_min = 8.0;
   double purple_L_max = 96.0;
-  double purple_sat_min = 22.0;          // S 按百分比配置，分割时换成 0..255；胶带只有 25-46
-  double purple_hue_min = 115.0;         // HSV H (OpenCV 0..180)
-  double purple_hue_max = 175.0;
-  bool purple_use_hue = true;
 
   // ---- [分组] 形态学: 闭合连通断裂胶带 + 膨胀补断口（尺寸按处理分辨率的像素计） ----
   int morph_close_ksize = 5;
@@ -119,22 +112,21 @@ struct FieldConfig
   double split_ema_alpha = 0.30;
   double split_jump_frac = 0.03;
 
-  // ---- [分组] 内部颜色证据：默认红色，blue 模式使用下方独立阈值 ----
-  // 内部颜色按独立 Lab 判据分类，并不显式减去紫色掩膜；阈值应避免把边框当作内部颜色。
-  double red_a_min = 30.0;
-  double red_chroma_min = 35.0;
-  double red_b_min = -12.0;
-  double red_b_max = 70.0;
+  // ---- [分组] 内部颜色证据：默认红色，blue 模式使用下方独立扇区 ----
+  // 内部颜色与紫色扇区独立判定，并不显式减去紫色掩膜；扇区应避免与紫框重叠。
+  double red_hue_lo_deg = -12.0;
+  double red_hue_hi_deg = 46.0;
+  double red_chroma_ratio_min = 0.6;
   double red_L_min = 15.0;
-  // false 用上面的红色内部阈值。true 改用 blue_*，紫框和其余几何不变。
+  // false 用上面的红色扇区。true 改用 blue_*，紫框和其余几何不变。
   // red_mask/red_inside/red_ratio 等名称沿用旧接口，蓝色模式下实际表示所选内部颜色的证据。
   bool use_blue_interior = false;
-  // 蓝色内部的起步阈值，按 OpenCV Lab 的负 b 通道。现场胶带要再量一次。
-  double blue_a_min = 5.0;
-  double blue_chroma_min = 25.0;
-  double blue_b_min = -80.0;
-  double blue_b_max = 5.0;
+  double blue_hue_lo_deg = -140.0;
+  double blue_hue_hi_deg = -80.0;
+  double blue_chroma_ratio_min = 0.6;
   double blue_L_min = 12.0;
+  // 内部掩膜开运算核边长（像素，奇数，1 不做）；去掉紫框与地面混色形成的一两像素细边。
+  int interior_open_ksize = 3;
   double bev_border_margin_frac = 0.04;
 
   // ---- [分组] 状态机与提交: 命中/丢失/重拟合/跟踪窗口/角点平滑 ----
@@ -146,7 +138,6 @@ struct FieldConfig
   double corner_ema_alpha = 0.45;
 
   // ---- 多特征评分 / 边状态 / 预测补偿 ----
-  int seg_mode = 0;                    // 0=LAB且按purple_use_hue选叠HSV，1=仅LAB，2=仅HSV
   int edge_samples = 40;               // 每条边采样点数
   int edge_probe_radius = 3;           // r 至少取1；沿边法线探测0、±r/2、±r，任一有紫色即命中
   double edge_support_min = 0.25;      // 紫色探测支持度合格门槛；实测边数另由直线拟合决定
@@ -187,15 +178,11 @@ struct FieldConfig
   X(double, bev_px_per_m) \
   X(int, bev_width) \
   X(int, bev_height) \
-  X(double, purple_a_min) \
-  X(double, purple_b_max) \
-  X(double, purple_chroma_min) \
+  X(double, purple_hue_lo_deg) \
+  X(double, purple_hue_hi_deg) \
+  X(double, purple_chroma_ratio_min) \
   X(double, purple_L_min) \
   X(double, purple_L_max) \
-  X(double, purple_sat_min) \
-  X(double, purple_hue_min) \
-  X(double, purple_hue_max) \
-  X(bool, purple_use_hue) \
   X(int, morph_close_ksize) \
   X(int, morph_close_iter) \
   X(int, morph_dilate_ksize) \
@@ -231,24 +218,22 @@ struct FieldConfig
   X(double, black_max_offset_frac) \
   X(double, split_ema_alpha) \
   X(double, split_jump_frac) \
-  X(double, red_a_min) \
-  X(double, red_chroma_min) \
-  X(double, red_b_min) \
-  X(double, red_b_max) \
+  X(double, red_hue_lo_deg) \
+  X(double, red_hue_hi_deg) \
+  X(double, red_chroma_ratio_min) \
   X(double, red_L_min) \
   X(bool, use_blue_interior) \
-  X(double, blue_a_min) \
-  X(double, blue_chroma_min) \
-  X(double, blue_b_min) \
-  X(double, blue_b_max) \
+  X(double, blue_hue_lo_deg) \
+  X(double, blue_hue_hi_deg) \
+  X(double, blue_chroma_ratio_min) \
   X(double, blue_L_min) \
+  X(int, interior_open_ksize) \
   X(double, bev_border_margin_frac) \
   X(int, locate_hits_needed) \
   X(int, lost_frames_to_search) \
   X(int, refit_every) \
   X(double, track_window_scale) \
   X(double, corner_ema_alpha) \
-  X(int, seg_mode) \
   X(int, edge_samples) \
   X(int, edge_probe_radius) \
   X(double, edge_support_min) \
@@ -333,7 +318,10 @@ public:
   // 供外部复用的小工具
   static cv::Mat purpleMask(const cv::Mat & bgr, const FieldConfig & cfg);
   static cv::Mat redMask(const cv::Mat & bgr, const FieldConfig & cfg);
-  // 一次 Lab 转换同时得到紫色和所选内部颜色掩膜；紫色需要时另做 HSV 转换。
+  // 搜索用证据：segment 后对内部掩膜做 interior_open_ksize 开运算，去掉混色细边。
+  static void segmentEvidence(
+    const cv::Mat & bgr, const FieldConfig & cfg, cv::Mat & purple, cv::Mat & interior);
+  // 一次 Lab 转换同时得到紫色和所选内部颜色掩膜；purple 与 red 须是不同的输出。
   static void segment(
     const cv::Mat & bgr, const FieldConfig & cfg, cv::Mat & purple,
     cv::Mat & red);

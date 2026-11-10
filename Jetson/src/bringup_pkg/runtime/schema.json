@@ -145,16 +145,18 @@
         "path": "vision.field.bev_height",
         "kind": "integer"
       },
-      "field.purple_a_min": {
-        "path": "vision.field.purple_a_min",
-        "kind": "number"
+      "field.purple_hue_lo_deg": {
+        "path": "vision.field.purple_hue_range_deg",
+        "kind": "number",
+        "index": 0
       },
-      "field.purple_b_max": {
-        "path": "vision.field.purple_b_max",
-        "kind": "number"
+      "field.purple_hue_hi_deg": {
+        "path": "vision.field.purple_hue_range_deg",
+        "kind": "number",
+        "index": 1
       },
-      "field.purple_chroma_min": {
-        "path": "vision.field.purple_chroma_min",
+      "field.purple_chroma_ratio_min": {
+        "path": "vision.field.purple_chroma_ratio_min",
         "kind": "number"
       },
       "field.purple_L_min": {
@@ -166,24 +168,6 @@
         "path": "vision.field.purple_L_range",
         "kind": "number",
         "index": 1
-      },
-      "field.purple_sat_min": {
-        "path": "vision.field.purple_sat_min",
-        "kind": "number"
-      },
-      "field.purple_hue_min": {
-        "path": "vision.field.purple_hue_range",
-        "kind": "number",
-        "index": 0
-      },
-      "field.purple_hue_max": {
-        "path": "vision.field.purple_hue_range",
-        "kind": "number",
-        "index": 1
-      },
-      "field.purple_use_hue": {
-        "path": "vision.field.purple_use_hue",
-        "kind": "boolean"
       },
       "field.morph_close_ksize": {
         "path": "vision.field.morph_close_ksize",
@@ -333,23 +317,19 @@
         "path": "vision.field.split_jump_frac",
         "kind": "number"
       },
-      "field.red_a_min": {
-        "path": "vision.field.red_a_min",
-        "kind": "number"
-      },
-      "field.red_chroma_min": {
-        "path": "vision.field.red_chroma_min",
-        "kind": "number"
-      },
-      "field.red_b_min": {
-        "path": "vision.field.red_b_range",
+      "field.red_hue_lo_deg": {
+        "path": "vision.field.red_hue_range_deg",
         "kind": "number",
         "index": 0
       },
-      "field.red_b_max": {
-        "path": "vision.field.red_b_range",
+      "field.red_hue_hi_deg": {
+        "path": "vision.field.red_hue_range_deg",
         "kind": "number",
         "index": 1
+      },
+      "field.red_chroma_ratio_min": {
+        "path": "vision.field.red_chroma_ratio_min",
+        "kind": "number"
       },
       "field.red_L_min": {
         "path": "vision.field.red_L_min",
@@ -359,27 +339,27 @@
         "path": "vision.field.use_blue_interior",
         "kind": "boolean"
       },
-      "field.blue_a_min": {
-        "path": "vision.field.blue_a_min",
-        "kind": "number"
-      },
-      "field.blue_chroma_min": {
-        "path": "vision.field.blue_chroma_min",
-        "kind": "number"
-      },
-      "field.blue_b_min": {
-        "path": "vision.field.blue_b_range",
+      "field.blue_hue_lo_deg": {
+        "path": "vision.field.blue_hue_range_deg",
         "kind": "number",
         "index": 0
       },
-      "field.blue_b_max": {
-        "path": "vision.field.blue_b_range",
+      "field.blue_hue_hi_deg": {
+        "path": "vision.field.blue_hue_range_deg",
         "kind": "number",
         "index": 1
+      },
+      "field.blue_chroma_ratio_min": {
+        "path": "vision.field.blue_chroma_ratio_min",
+        "kind": "number"
       },
       "field.blue_L_min": {
         "path": "vision.field.blue_L_min",
         "kind": "number"
+      },
+      "field.interior_open_ksize": {
+        "path": "vision.field.interior_open_ksize",
+        "kind": "integer"
       },
       "field.bev_border_margin_frac": {
         "path": "vision.field.bev_border_margin_frac",
@@ -404,10 +384,6 @@
       "field.corner_ema_alpha": {
         "path": "vision.field.corner_ema_alpha",
         "kind": "number"
-      },
-      "field.seg_mode": {
-        "path": "vision.field.seg_mode",
-        "kind": "integer"
       },
       "field.edge_samples": {
         "path": "vision.field.edge_samples",
@@ -922,13 +898,9 @@
     "vision.field.bev_px_per_m": "number",
     "vision.field.bev_width": "integer",
     "vision.field.bev_height": "integer",
-    "vision.field.purple_a_min": "number",
-    "vision.field.purple_b_max": "number",
-    "vision.field.purple_chroma_min": "number",
+    "vision.field.purple_hue_range_deg": "numbers",
+    "vision.field.purple_chroma_ratio_min": "number",
     "vision.field.purple_L_range": "numbers",
-    "vision.field.purple_sat_min": "number",
-    "vision.field.purple_hue_range": "numbers",
-    "vision.field.purple_use_hue": "boolean",
     "vision.field.morph_close_ksize": "integer",
     "vision.field.morph_close_iter": "integer",
     "vision.field.morph_dilate_ksize": "integer",
@@ -960,22 +932,20 @@
     "vision.field.black_max_offset_frac": "number",
     "vision.field.split_ema_alpha": "number",
     "vision.field.split_jump_frac": "number",
-    "vision.field.red_a_min": "number",
-    "vision.field.red_chroma_min": "number",
-    "vision.field.red_b_range": "numbers",
+    "vision.field.red_hue_range_deg": "numbers",
+    "vision.field.red_chroma_ratio_min": "number",
     "vision.field.red_L_min": "number",
     "vision.field.use_blue_interior": "boolean",
-    "vision.field.blue_a_min": "number",
-    "vision.field.blue_chroma_min": "number",
-    "vision.field.blue_b_range": "numbers",
+    "vision.field.blue_hue_range_deg": "numbers",
+    "vision.field.blue_chroma_ratio_min": "number",
     "vision.field.blue_L_min": "number",
+    "vision.field.interior_open_ksize": "integer",
     "vision.field.bev_border_margin_frac": "number",
     "vision.field.locate_hits_needed": "integer",
     "vision.field.lost_frames_to_search": "integer",
     "vision.field.refit_every": "integer",
     "vision.field.track_window_scale": "number",
     "vision.field.corner_ema_alpha": "number",
-    "vision.field.seg_mode": "integer",
     "vision.field.edge_samples": "integer",
     "vision.field.edge_probe_radius": "integer",
     "vision.field.edge_support_min": "number",
@@ -1087,9 +1057,9 @@
       "vision.field.purple_L_min",
       "vision.field.purple_L_max"
     ],
-    "vision.field.purple_hue_range": [
-      "vision.field.purple_hue_min",
-      "vision.field.purple_hue_max"
+    "vision.field.purple_hue_range_deg": [
+      "vision.field.purple_hue_lo_deg",
+      "vision.field.purple_hue_hi_deg"
     ],
     "vision.field.min_rect_ratio_range": [
       "vision.field.min_rect_ratio_lo",
@@ -1107,13 +1077,13 @@
       "vision.field.black_row_lo",
       "vision.field.black_row_hi"
     ],
-    "vision.field.red_b_range": [
-      "vision.field.red_b_min",
-      "vision.field.red_b_max"
+    "vision.field.red_hue_range_deg": [
+      "vision.field.red_hue_lo_deg",
+      "vision.field.red_hue_hi_deg"
     ],
-    "vision.field.blue_b_range": [
-      "vision.field.blue_b_min",
-      "vision.field.blue_b_max"
+    "vision.field.blue_hue_range_deg": [
+      "vision.field.blue_hue_lo_deg",
+      "vision.field.blue_hue_hi_deg"
     ]
   }
 }
