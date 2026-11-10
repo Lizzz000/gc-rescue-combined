@@ -218,6 +218,10 @@ bridge:
   input_timeout_s: 0.25
   # 速度仅按本机单调到达龄判新鲜，单位秒。
   velocity_timeout_s: 0.3
+  # 安全区中心保持，单位秒，(0, input_timeout_s]：最近一次有效 field 中心到达后该时长内持续发 0x182，
+  # 期间的分区不可靠帧不撤销它，消除逐帧闪烁；源帧龄仍受 input_timeout_s 约束。
+  # 入口校验 safety_hold_s + 1/vision.detect.field_max_fps < 0.25 s（STM32 中心接收期限）。
+  safety_hold_s: 0.2
   # 发送帧入队后的单调寿命，单位秒；同 ID 合并和背压重试都不续期。
   tx_queue_timeout_s: 0.1
   # 单调秒；外层超时必须大于下游。

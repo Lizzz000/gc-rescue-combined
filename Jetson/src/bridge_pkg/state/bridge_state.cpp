@@ -66,6 +66,14 @@ BridgeState::BridgeState(BridgeStateConfig config)
     throw std::invalid_argument("Bridge image dimensions must be 1..INT_MAX");
   }
   validateTimeouts(config_.input_timeout_s, config_.velocity_timeout_s);
+  if (!std::isfinite(config_.safety_hold_s) || config_.safety_hold_s <= 0 ||
+    config_.safety_hold_s > config_.input_timeout_s || !std::isfinite(config_.field_max_fps) ||
+    config_.field_max_fps <= 0 ||
+    config_.safety_hold_s + 1.0 / config_.field_max_fps >= CanProtocol::STM32_CENTER_TIMEOUT_S)
+  {
+    throw std::invalid_argument(
+      "Bridge safety hold must be in (0, input_timeout_s] and hold + 1/field_max_fps < 0.25 s");
+  }
   if (config_.target_classes.empty() || std::any_of(
       config_.target_classes.begin(), config_.target_classes.end(), [](const std::string & class_id) {
         return class_id.empty() || RecognitionValueValidation::classId(class_id) != class_id;
@@ -86,6 +94,7 @@ void BridgeState::resetInputs(BridgeSourceTime current)
   // 断线／恢复重新建立感知基线；任务、运输阶段与到达保持不属于本次清理范围。
   target_ = Center{};
   safety_ = Center{};
+  safety_hold_ = Center{};
   velocity_ = Velocity{};
   // ROS 源时钟回拨也不能重新放行会话切换前的旧帧；等待时钟追上原截止后再恢复中心。
   cutoff_.ns = std::max(cutoff_.ns, current.ns);
@@ -104,6 +113,7 @@ BridgeStateUpdate BridgeState::task(const BridgeTaskState & input, BridgeSourceT
   cutoff_.ns = std::max(cutoff_.ns, input.stamp.ns);
   target_ = Center{};
   safety_ = Center{};
+  safety_hold_ = Center{};
   releaseCoordinates(current);
   return {true, true};
 }
@@ -130,6 +140,7 @@ BridgeStateUpdate BridgeState::mission(
   if (changed) {
     target_ = Center{};
     safety_ = Center{};
+    safety_hold_ = Center{};
     cutoff_.ns = std::max(cutoff_.ns, input.stamp.ns);
   }
   mission_ = input;
@@ -196,11 +207,13 @@ bool BridgeState::safety(
   center.frame = input.frame;
   center.side = input.side;
   // SafetyTarget 已提供归一化中心，直接乘 10000；这里不再除图像宽高。
-  center.valid = !(safety_.have_frame && safety_.frame != center.frame) && input.valid &&
+  const bool changed_frame = safety_.have_frame && safety_.frame != center.frame;
+  center.valid = !changed_frame && input.valid &&
     (input.side == static_cast<std::uint8_t>(BridgeDestination::Left) ||
     input.side == static_cast<std::uint8_t>(BridgeDestination::Right)) &&
     bridge_scale::fixedPoint(input.x, 10000.0, center.x) &&
     bridge_scale::fixedPoint(input.y, 10000.0, center.y);
+  if (center.valid) {safety_hold_ = center;} else if (changed_frame) {safety_hold_ = Center{};}
   safety_ = std::move(center);
   return true;
 }
@@ -229,6 +242,16 @@ bool BridgeState::fresh(
          config_.input_timeout_s;
 }
 
+bool BridgeState::held(BridgeSourceTime current, BridgeMonotonicTime now) const
+{
+  // 保持中心与最近接收帧同源；源龄按 input_timeout_s，本机到达龄按 safety_hold_s，边界取等号。
+  const auto & center = safety_hold_;
+  return center.valid && center.frame == safety_.frame && current.ns >= center.stamp.ns &&
+         current.ns - center.stamp.ns <= config_.input_timeout_s * 1e9 &&
+         std::chrono::duration<double>(now.value - center.arrival.value).count() <=
+         config_.safety_hold_s;
+}
+
 bool BridgeState::idle() const
 {
   return mission_ && mission_->operation == BridgeOperation::Idle;
@@ -253,10 +276,10 @@ BridgeCenterOutput BridgeState::safetyOutput(
     mission_->cycle_phase == BridgeCyclePhase::NavigatingSafety &&
     mission_->outcome == BridgeOutcome::Success &&
     mission_->destination != BridgeDestination::None &&
-    static_cast<std::uint8_t>(mission_->destination) == safety_.side &&
-    fresh(safety_, current, now);
-  return {allowed, safety_.x, safety_.y,
-    static_cast<std::uint32_t>((safety_.stamp.ns / 1000000) & 0xffffff)};
+    static_cast<std::uint8_t>(mission_->destination) == safety_hold_.side &&
+    held(current, now);
+  return {allowed, safety_hold_.x, safety_hold_.y,
+    static_cast<std::uint32_t>((safety_hold_.stamp.ns / 1000000) & 0xffffff)};
 }
 
 BridgeVelocityOutput BridgeState::velocityOutput(BridgeMonotonicTime now) const
@@ -280,6 +303,7 @@ void BridgeState::holdCoordinates(BridgeSourceTime current, bool until_search)
   held_generation_ = mission_ ? mission_->cycle_generation : 0;
   target_ = Center{};
   safety_ = Center{};
+  safety_hold_ = Center{};
   cutoff_.ns = std::max(cutoff_.ns, current.ns);
 }
 
@@ -310,6 +334,7 @@ void BridgeState::releaseCoordinates(BridgeSourceTime current)
   // 新授权代次不依赖订阅者收到中间态；同代心跳不能解锁，等待期旧缓存不能复活。
   target_ = Center{};
   safety_ = Center{};
+  safety_hold_ = Center{};
   cutoff_.ns = std::max(cutoff_.ns, current.ns);
 }
 

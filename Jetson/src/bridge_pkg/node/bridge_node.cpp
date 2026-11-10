@@ -120,6 +120,10 @@ BridgeNode::StartupSettings BridgeNode::declareAndValidateParameters()
     *this, "input_timeout_s", descriptor);
   state_config.velocity_timeout_s = rescue::declareRequired<double>(
     *this, "velocity_timeout_s", descriptor);
+  state_config.safety_hold_s = rescue::declareRequired<double>(
+    *this, "safety_hold_s", descriptor);
+  state_config.field_max_fps = rescue::declareRequired<double>(
+    *this, "field_max_fps", descriptor);
   const auto queue_timeout = rescue::declareRequired<double>(
     *this, "tx_queue_timeout_s", descriptor);
   const auto request_timeout = rescue::declareRequired<double>(

@@ -91,6 +91,12 @@ struct BridgeStateConfig
 {
   std::int64_t image_width{1920}, image_height{1080};
   double input_timeout_s{1.0}, velocity_timeout_s{0.30};
+  // 安全区中心保持：最近一次有效 field 中心在本机到达后该秒数内持续可发，期间的无效帧不撤销它；
+  // 须在 (0, input_timeout_s]，且 safety_hold_s + 1/field_max_fps < STM32 中心接收期限 0.25 s，
+  // 保证两个新源帧之间的间隔不触发 STM32 重置；源帧龄仍受 input_timeout_s 约束。
+  double safety_hold_s{0.20};
+  // field 帧率上限（vision.detect.field_max_fps），只用于上面的入口校验，须 > 0。
+  double field_max_fps{100.0};
   std::vector<std::string> target_classes{"0", "2", "3"};
   std::string first_class{"0"};
   // 类别使用无前导零的非负十进制编号，重复类别仍允许；BridgeState 构造时统一校验。
@@ -155,7 +161,8 @@ public:
   bool target(
     const BridgeTargetInput & input, BridgeSourceTime current,
     BridgeMonotonicTime arrival, bool socket_open);
-  // 输入中心已归一化；只接收 field 帧，目的侧匹配在输出时检查。
+  // 输入中心已归一化；只接收 field 帧，目的侧匹配在输出时检查。有效帧刷新保持中心，
+  // 无效帧只推进源时间水位，不撤销保持；frame_id 改变时撤销。
   bool safety(
     const BridgeSafetyInput & input, BridgeSourceTime current,
     BridgeMonotonicTime arrival, bool socket_open);
@@ -193,12 +200,14 @@ private:
   };
   bool sourceStamp(BridgeSourceTime stamp, BridgeSourceTime current, const Center & center) const;
   bool fresh(const Center & center, BridgeSourceTime current, BridgeMonotonicTime now) const;
+  bool held(BridgeSourceTime current, BridgeMonotonicTime now) const;
   bool idle() const;
   bool movingPhase() const;
   void releaseCoordinates(BridgeSourceTime current);
   BridgeStateConfig config_;
   BridgeSourceTime cutoff_;
-  Center target_, safety_;
+  // safety_ 是最近接收的 field 帧（源时间水位与 frame_id），safety_hold_ 是最近一次有效中心。
+  Center target_, safety_, safety_hold_;
   Velocity velocity_;
   std::optional<BridgeTaskState> task_;
   std::optional<BridgeMissionState> mission_;

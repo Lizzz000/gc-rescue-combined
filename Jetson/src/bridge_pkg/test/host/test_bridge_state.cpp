@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -270,4 +271,90 @@ void testBridgeState()
   // begin 不清除上一次 bind 的 request_id。新 bind 之前超时，撤单编号仍是 7。
   CHECK(expired && expired->generation == 2 && expired->command == 1 && expired->request_id == 7 && !request.waiting());
   CHECK(request.begin({t0}, std::chrono::milliseconds(50), 3) && request.cancel()->command == 3 && !request.cancel());
+}
+
+void testSafetyHold()
+{
+  Group group("BridgeState safety hold");
+  using std::chrono::milliseconds;
+  const std::int64_t now_ns = 10 * kSecond;
+  const BridgeSourceTime now{now_ns};
+  // 前往左侧安全区且结果成功；makeState 的 safety_hold_s 为默认 0.20 s、input_timeout_s 为 1.0 s。
+  auto navigatingState = [&]() {
+      BridgeState state = makeState();
+      BridgeTaskState field;
+      field.stamp = {now_ns - 3000};
+      field.task = "field";
+      field.epoch = 1;
+      state.task(field, now);
+      state.mission(missionAt(now_ns - 2000, BridgeCyclePhase::NavigatingSafety,
+        BridgeTransportPhase::First, 5, BridgeDestination::Left, BridgeOutcome::Success), now);
+      return state;
+    };
+  auto frame = [&](std::int64_t stamp_ns, bool valid, double x) {
+      BridgeSafetyInput input;
+      input.stamp = {stamp_ns};
+      input.frame = "field";
+      input.valid = valid;
+      input.side = 1;
+      input.x = x;
+      input.y = 0.5;
+      return input;
+    };
+  const auto t0 = monoAt(std::chrono::seconds(10));
+
+  // 有效中心到达后 0.20 s 内可发（含边界），之后撤销。
+  BridgeState state = navigatingState();
+  CHECK(state.safety(frame(now_ns - 1000, true, 0.25), now, t0, true));
+  const auto measured = state.safetyOutput(now, monoAt(milliseconds(10200)));
+  CHECK(measured.valid);
+  CHECK(!state.safetyOutput(now, monoAt(milliseconds(10201))).valid);
+
+  // 分区不可靠的无效帧不撤销保持中心，下一帧有效中心替换它。
+  CHECK(state.safety(frame(now_ns - 900, false, 0.0), now, monoAt(milliseconds(10050)), true));
+  auto output = state.safetyOutput(now, monoAt(milliseconds(10100)));
+  CHECK(output.valid && output.x == 2500);
+  // 保持帧发的是最近一次实测：source_frame 不随无效帧前移，STM32 按同一源帧去重。
+  CHECK(output.source_frame == measured.source_frame);
+  CHECK(state.safety(frame(now_ns - 800, true, 0.30), now, monoAt(milliseconds(10150)), true));
+  output = state.safetyOutput(now, monoAt(milliseconds(10340)));
+  CHECK(output.valid && output.x == 3000);
+
+  // 无效帧仍推进源时间水位：更旧的帧被拒，不能复活保持。
+  CHECK(!state.safety(frame(now_ns - 850, true, 0.40), now, monoAt(milliseconds(10160)), true));
+
+  // frame_id 改变立即撤销保持。
+  auto other = frame(now_ns - 700, true, 0.30);
+  other.frame = "other";
+  CHECK(state.safety(other, now, monoAt(milliseconds(10170)), true));
+  CHECK(!state.safetyOutput(now, monoAt(milliseconds(10170))).valid);
+
+  // 源帧龄仍按 input_timeout_s：保持期内但源时间过旧也不可发。
+  BridgeState stale = navigatingState();
+  CHECK(stale.safety(frame(now_ns - 1000, true, 0.25), now, t0, true));
+  CHECK(!stale.safetyOutput({now_ns + kSecond}, monoAt(milliseconds(10100))).valid);
+
+  // 任务阶段变化清掉保持。
+  BridgeState reset = navigatingState();
+  CHECK(reset.safety(frame(now_ns - 1000, true, 0.25), now, t0, true));
+  reset.mission(missionAt(now_ns - 500, BridgeCyclePhase::SearchingTarget,
+    BridgeTransportPhase::First, 6), now);
+  CHECK(!reset.safetyOutput(now, t0).valid);
+
+  // 入口校验：保持须在 (0, input_timeout_s]，且保持加一个 field 帧周期短于 STM32 的 0.25 s。
+  auto rejects = [](double hold_s, double fps) {
+      BridgeStateConfig config;
+      config.input_timeout_s = 0.25;
+      config.safety_hold_s = hold_s;
+      config.field_max_fps = fps;
+      try {BridgeState state(config);} catch (const std::invalid_argument &) {return true;}
+      return false;
+    };
+  CHECK(rejects(0.0, 100.0));
+  CHECK(rejects(0.26, 100.0));
+  CHECK(rejects(std::nan(""), 100.0));
+  CHECK(rejects(0.24, 100.0));
+  CHECK(rejects(0.2, 0.0));
+  CHECK(rejects(0.2, 20.0));
+  CHECK(!rejects(0.2, 100.0));
 }

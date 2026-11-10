@@ -807,6 +807,14 @@
         "path": "bridge.velocity_timeout_s",
         "kind": "number"
       },
+      "safety_hold_s": {
+        "path": "bridge.safety_hold_s",
+        "kind": "number"
+      },
+      "field_max_fps": {
+        "path": "vision.detect.field_max_fps",
+        "kind": "number"
+      },
       "tx_queue_timeout_s": {
         "path": "bridge.tx_queue_timeout_s",
         "kind": "number"
@@ -1030,6 +1038,7 @@
     "bridge.can_interface": "string",
     "bridge.input_timeout_s": "number",
     "bridge.velocity_timeout_s": "number",
+    "bridge.safety_hold_s": "number",
     "bridge.tx_queue_timeout_s": "number",
     "bridge.request_timeout_s": "number",
     "bridge.velocity_topic": "string",

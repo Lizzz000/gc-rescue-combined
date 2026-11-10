@@ -58,6 +58,8 @@ public:
   static constexpr canid_t VELOCITY_ID = 0x180;
   static constexpr canid_t TARGET_ID = 0x181;
   static constexpr canid_t SAFETY_ID = 0x182;
+  // STM32 图像中心接收期限（jetson_auto_config.h JETSON_AUTO_LINK_TIMEOUT_MS），两端须一致。
+  static constexpr double STM32_CENTER_TIMEOUT_S = 0.25;
   // STM32 → Jetson 运输握手；旧 0x201/0x202 不再受理，不能绕过转向和搬运确认。
   static constexpr canid_t ARRIVAL_ID = 0x200;
   static constexpr canid_t TURN_COMPLETED_ID = 0x203;
