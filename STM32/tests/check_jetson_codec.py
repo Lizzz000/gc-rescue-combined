@@ -1,4 +1,4 @@
-"""只读加载 Jetson 现行 codec 与手动 0x17F 发送脚本，离线核对本库真实 C 解码；不连接硬件或网络。"""
+"""只读加载 Jetson 现行 codec 与手动 0x17F 链路封包，离线核对本库真实 C 解码；不连接硬件或网络。"""
 
 import argparse
 import copy
@@ -38,23 +38,23 @@ def load_codec(jetson_root):
 
 
 def load_manual_sender(jetson_root):
-    """读取 Jetson 端独立手动脚本，只调用其 USB-CAN 封包函数，不打开设备。"""
-    source = jetson_root.resolve(strict=True) / "src" / "teleop_pkg" / "move_timed.py"
-    spec = importlib.util.spec_from_file_location("jetson_manual_sender", source)
+    """读取 Jetson 端手动链路模块，只调用其 0x17F 封包函数，不打开设备。"""
+    source = jetson_root.resolve(strict=True) / "src" / "teleop_pkg" / "manual" / "link.py"
+    spec = importlib.util.spec_from_file_location("jetson_manual_link", source)
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"无法加载手动发送脚本: {source}")
+        raise RuntimeError(f"无法加载手动链路模块: {source}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def manual_wire(sender, values, valid):
-    """把达妙 USB-CAN 串口包还原为 ID#HEX：ID 在 13..16 字节，DLC 在 18，载荷从 21 起。"""
-    packet = sender.make_packet(values, valid)
+def manual_wire(sender, valid, vx_milli, vy_milli, wz_milli):
+    """把达妙 USB-CAN 30 字节封装还原为 ID#HEX：ID 在 13..16 字节，DLC 在 18，载荷从 21 起。"""
+    packet = sender.manual_packet(valid, vx_milli, vy_milli, wz_milli)
     identifier = int.from_bytes(packet[13:17], "little")
     length = packet[18]
     if identifier != MANUAL_ID or length != VELOCITY_DLC:
-        raise AssertionError(f"手动脚本封包 ID/DLC 不符: 0x{identifier:X}/{length}")
+        raise AssertionError(f"手动链路封包 ID/DLC 不符: 0x{identifier:X}/{length}")
     return f"{identifier:03X}#{bytes(packet[21:21 + length]).hex().upper()}"
 
 
@@ -169,12 +169,12 @@ def scenarios(codec, sender):
     for malformed in ("180#000000000000", "180#02000000000000", "180#0000000000000000"):
         heartbeat(malformed, label=f"畸形 0x180 不保活: {malformed}")
 
-    # 0x17F：由 Jetson 端 move_timed.py 的真实封包函数生成，只进入手动快照。
-    for values in ((0.0, 0.0, 0.0), (0.08, 0.0, 0.0), (-0.125, 0.25, -0.8), (-32.768, 32.767, -0.001)):
-        manual(manual_wire(sender, values, True))
-    manual(manual_wire(sender, (0.0, 0.0, 0.0), False), label="手动 valid=0 停车撤权")
-    manual(manual_wire(sender, (0.0, 0.0, 0.0), True))
-    seed = manual_wire(sender, (-0.125, 0.25, -0.8), True)
+    # 0x17F：由 Jetson 端 manual/link.py 的真实封包函数生成（速度为 ×1000 整数），只进入手动快照。
+    for milli in ((0, 0, 0), (80, 0, 0), (-125, 250, -800), (-32768, 32767, -1)):
+        manual(manual_wire(sender, True, *milli))
+    manual(manual_wire(sender, False, 0, 0, 0), label="手动 valid=0 停车撤权")
+    manual(manual_wire(sender, True, 0, 0, 0))
+    seed = manual_wire(sender, True, -125, 250, -800)
     identifier, payload = seed.split("#")
     for malformed in (f"{identifier}#", f"{identifier}#{payload[:-2]}",
                       f"{identifier}#02{payload[2:]}", f"{identifier}#{payload}00"):
@@ -282,7 +282,7 @@ def main():
             if actual != expected:
                 raise AssertionError(f"第 {index} 帧互验失败 ({label})\n"
                                      f"期望: {expected}\n实际: {actual}")
-    print(f"PASS: Jetson 现行 codec/手动脚本与真实 C 解码互验，7 种下行 + 0x17F、{len(cases)} 帧；无硬件操作")
+    print(f"PASS: Jetson 现行 codec/手动链路封包与真实 C 解码互验，7 种下行 + 0x17F、{len(cases)} 帧；无硬件操作")
 
 
 if __name__ == "__main__":
