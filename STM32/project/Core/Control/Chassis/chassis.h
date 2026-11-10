@@ -19,6 +19,8 @@
 #define CHASSIS_STRAIGHT_YAW_OUTPUT_LIMIT 0.8f
 #define CHASSIS_VECTOR_MAX_WZ_RAD_S 2.0f
 #define CHASSIS_VECTOR_ACCEL_RAD_S2 1.6f
+/* 三轮反馈最大允许年龄，ms；停车确认与电机就绪检查共用。 */
+#define CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS 30U
 
 /* 旧车 chassis_turn.h：保留原一圈角度值、独立 PID 与连续到位条件。 */
 #define CHASSIS_TURN_LEFT_ANGLE_DEG 360.0f
@@ -95,6 +97,12 @@ void Chassis_Stop(void);
  * @note 定时平移制动成功时可在随后失能前查询。轮速只能判断车轮是否停转。
  */
 uint8_t Chassis_Is_Stopped(void);
+
+/** @brief 检查三轮是否已使能、速度有限且反馈未超过 30 ms，供手动与自动控制复用。
+ * @return 三轮均满足返回 1，否则 0。
+ * @note 只读电机反馈，不改变底盘状态。
+ */
+uint8_t Chassis_Motors_Ready(void);
 
 /** @brief 从零速待命启动锁航向直行，等价八向接口的 FORWARD。
  * @param[in] speed 合速度，m/s，有限且 (0,0.50]。

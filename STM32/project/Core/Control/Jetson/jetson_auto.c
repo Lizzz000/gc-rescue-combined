@@ -6,7 +6,6 @@
 #include "image_tracker.h"
 #include "INS_task.h"
 #include "jetson_can.h"
-#include "jetson_control.h"
 #include "transport_servo.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -260,7 +259,7 @@ static float Update_Image(const Jetson_CAN_Center_t *center)
     /* 按源帧间隔更新滤波，避免 CAN 调度抖动变成虚假的图像速度。 */
     uint32_t elapsed = vision.previous.valid ?
         (center->source_frame - vision.previous.source_frame) & 0xffffffU : 0U;
-    if (!vision.tracker.initialized || elapsed >= JETSON_VELOCITY_TIMEOUT_MS)
+    if (!vision.tracker.initialized || elapsed >= JETSON_AUTO_LINK_TIMEOUT_MS)
     {
         Image_Tracker_Init(&vision.tracker, JETSON_AUTO_APPROACH_SIGMA_X_Q,
                            JETSON_AUTO_APPROACH_SIGMA_Y_Q, JETSON_AUTO_APPROACH_SIGMA_ACCEL_Q_S2);
@@ -305,7 +304,7 @@ static uint8_t Repeated_Outside(Window_Evidence_t *evidence, int8_t side,
     if (side == 0)
         return 0U;
     const uint8_t repeated = side == evidence->side &&
-        (uint32_t)(now_ms - evidence->received_ms) < JETSON_VELOCITY_TIMEOUT_MS;
+        (uint32_t)(now_ms - evidence->received_ms) < JETSON_AUTO_LINK_TIMEOUT_MS;
     *evidence = (Window_Evidence_t){.received_ms = received_ms, .side = side};
     return repeated;
 }
@@ -348,7 +347,7 @@ static uint8_t Approach(const Jetson_CAN_Center_t *center, const Image_Window_t 
     }
 
     const uint8_t newer = Received_After(center->sequence, center_boundary);
-    const uint8_t recent = (uint32_t)(now_ms - center->received_ms) < JETSON_VELOCITY_TIMEOUT_MS;
+    const uint8_t recent = (uint32_t)(now_ms - center->received_ms) < JETSON_AUTO_LINK_TIMEOUT_MS;
     const uint8_t fresh = center->valid && newer && recent;
     if (vision.phase == VISION_VERIFY)
     {
@@ -395,7 +394,7 @@ static uint8_t Approach(const Jetson_CAN_Center_t *center, const Image_Window_t 
             if (vision.previous.valid && center->source_frame == vision.previous.source_frame)
                 return 0U;
             const uint8_t arrived = inside && vision.previous.valid &&
-                (uint32_t)(now_ms - vision.previous.received_ms) < JETSON_VELOCITY_TIMEOUT_MS &&
+                (uint32_t)(now_ms - vision.previous.received_ms) < JETSON_AUTO_LINK_TIMEOUT_MS &&
                 Window_Side(goal_x - vision.previous.x, x_tol) == 0 &&
                 Window_Side(goal_y - vision.previous.y, y_tol) == 0;
             /* 分轴保留证据；一轴回到窗内或另一轴越界都不覆盖该轴的最近越界。 */
@@ -424,7 +423,7 @@ static uint8_t Approach(const Jetson_CAN_Center_t *center, const Image_Window_t 
         (!window->verify_pair ||
          (fabsf(raw_x_error) <= 0.5f * x_tol && fabsf(raw_y_error) <= 0.5f * y_tol) ||
          (vision.previous.valid && center->source_frame != vision.previous.source_frame &&
-          (uint32_t)(now_ms - vision.previous.received_ms) < JETSON_VELOCITY_TIMEOUT_MS &&
+          (uint32_t)(now_ms - vision.previous.received_ms) < JETSON_AUTO_LINK_TIMEOUT_MS &&
           Window_Side(goal_x - vision.previous.x, x_tol) == 0 &&
           Window_Side(goal_y - vision.previous.y, y_tol) == 0)))
     {
@@ -542,7 +541,7 @@ static uint8_t Timed_Move_Stopped(uint32_t now_ms)
         return 0U;
     if (Chassis_Is_Stopped())
         return 1U;
-    if ((uint32_t)(now_ms - stage_started_ms) >= JETSON_BRAKE_TIMEOUT_MS)
+    if ((uint32_t)(now_ms - stage_started_ms) >= JETSON_AUTO_BRAKE_TIMEOUT_MS)
         Halt(now_ms);
     return 0U;
 }
@@ -686,7 +685,7 @@ static void Service_Stage(const Jetson_CAN_Data_t *data, uint32_t now_ms)
 #else
             Start_Servo(TRANSPORT_SERVO_OPEN, OPENING, now_ms);
 #endif
-        else if ((uint32_t)(now_ms - stage_started_ms) >= JETSON_PREPARE_TIMEOUT_MS)
+        else if ((uint32_t)(now_ms - stage_started_ms) >= JETSON_AUTO_PREPARE_TIMEOUT_MS)
             Halt(now_ms);
         break;
     case OPENING:
@@ -818,7 +817,7 @@ void Jetson_Auto_Loop(void)
     {
         const uint32_t now_ms = (uint32_t)xTaskGetTickCount();
         if (Chassis_Is_Enabled() && (Chassis_Is_Stopped() ||
-            (uint32_t)(now_ms - stage_started_ms) >= JETSON_BRAKE_TIMEOUT_MS))
+            (uint32_t)(now_ms - stage_started_ms) >= JETSON_AUTO_BRAKE_TIMEOUT_MS))
             Chassis_Disable();
         return;
     }
@@ -831,7 +830,7 @@ void Jetson_Auto_Loop(void)
     const uint8_t mission_lost = data.mission_loss_sequence != mission_loss_sequence;
     mission_loss_sequence = data.mission_loss_sequence;
     const uint8_t link = !mission_lost && data.heartbeat_seen &&
-        (uint32_t)(now_ms - data.heartbeat_received_ms) < JETSON_VELOCITY_TIMEOUT_MS;
+        (uint32_t)(now_ms - data.heartbeat_received_ms) < JETSON_AUTO_LINK_TIMEOUT_MS;
     if (stage == WAIT_LINK)
     {
         INS_control_data_t imu;
@@ -841,7 +840,7 @@ void Jetson_Auto_Loop(void)
         return;
     }
 
-    if (!link || !Chassis_Is_Enabled() || (stage != ARMING && !Jetson_Control_Motors_Ready()))
+    if (!link || !Chassis_Is_Enabled() || (stage != ARMING && !Chassis_Motors_Ready()))
         Halt(now_ms);
     else
         Service_Stage(&data, now_ms);

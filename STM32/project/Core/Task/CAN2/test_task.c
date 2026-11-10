@@ -6,8 +6,8 @@
 #include "chassis.h"
 #include "jetson_auto.h"
 #include "jetson_can.h"
-#include "jetson_control.h"
 #include "manual_can.h"
+#include "manual_control.h"
 #include "transport_servo.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -16,7 +16,7 @@
 volatile float battery_voltage = NAN;
 
 /**
- * @brief 初始化共用 CAN1，以已有 5 ms 任务调度Jetson速度、底盘、板载提示与电压采样。
+ * @brief 初始化共用 CAN1，以已有 5 ms 任务调度手动或自动控制、底盘、板载提示与电压采样。
  * @param[in] argument CMSIS-RTOS 保留参数，未使用。
  * @return 不返回。
  * @note 任务入口沿用教程第 18 章；调用第 2/5/7 章 LED、蜂鸣器、ADC 接口。
@@ -35,7 +35,7 @@ void test_task(void const *argument)
 #if JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST
     Jetson_Auto_Init();
 #else
-    Jetson_Control_Init();
+    Manual_Control_Init();
 #endif
     can_filter_init();
     buzzer_off();
@@ -46,15 +46,15 @@ void test_task(void const *argument)
     {
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(5U));
 #if !(JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST)
-        Jetson_Control_Loop();
+        Manual_Control_Loop();
 #endif
         Chassis_Loop();
 #if JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST
         Jetson_Auto_Loop();
 #else
-        const Jetson_Control_State_t state = jetson_control_state;
-        const uint8_t servo_allowed = (state == JETSON_DISARMED && !Chassis_Is_Enabled()) ||
-                                      (state == JETSON_READY && Chassis_Is_Stopped());
+        const Manual_Control_State_t state = manual_control_state;
+        const uint8_t servo_allowed = (state == MANUAL_DISARMED && !Chassis_Is_Enabled()) ||
+                                      (state == MANUAL_READY && Chassis_Is_Stopped());
         Transport_Servo_Calibration_Loop(servo_allowed);
 #endif
         if (++period_ticks % 20U == 0U)

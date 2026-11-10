@@ -19,7 +19,6 @@
 #define CONTROL_PERIOD_MS 10U
 #define STOP_SPEED_RAD_S 0.20f
 #define STOP_GROUPS 3U
-#define STOP_MAX_AGE_MS 30U
 #define TIMED_BRAKE_LIMIT_MS 500U
 #define DEG_TO_RAD 0.01745329251994329577f
 #define CHASSIS_TURN_DEG_TO_RAD 0.01745329251994329577
@@ -97,12 +96,12 @@ static void Update_Stop_Feedback(uint8_t baseline)
         if (seq[i] == stop_seq[i])
             fresh_group = 0U;
         if (dm_motor[i].state != 1U || !(fabsf(dm_motor[i].velocity) <= STOP_SPEED_RAD_S) ||
-            (uint32_t)(now_ms - dm_motor[i].feedback_time_ms) > STOP_MAX_AGE_MS)
+            (uint32_t)(now_ms - dm_motor[i].feedback_time_ms) > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS)
             quiet = 0U;
     }
     taskEXIT_CRITICAL();
 
-    if (baseline || !quiet || (uint32_t)(now_ms - last_stop_group_ms) > STOP_MAX_AGE_MS)
+    if (baseline || !quiet || (uint32_t)(now_ms - last_stop_group_ms) > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS)
         stop_groups = 0U;
     if (baseline || !quiet || fresh_group)
         for (unsigned i = 0U; i < 3U; ++i)
@@ -124,6 +123,21 @@ uint8_t Chassis_Is_Stopped(void)
         return 0U;
     Update_Stop_Feedback(0U);
     return stop_groups == STOP_GROUPS;
+}
+
+/** @brief 用与反馈 ISR 相同的时基核对三轮使能状态与反馈年龄；约束见头文件。 */
+uint8_t Chassis_Motors_Ready(void)
+{
+    uint8_t ready = 1U;
+    taskENTER_CRITICAL();
+    uint32_t now_ms = (uint32_t)xTaskGetTickCount();
+    for (unsigned i = 0U; i < 3U; ++i)
+        if (dm_motor[i].id != motor_id[i] || dm_motor[i].state != 1U ||
+            !isfinite(dm_motor[i].velocity) ||
+            (uint32_t)(now_ms - dm_motor[i].feedback_time_ms) > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS)
+            ready = 0U;
+    taskEXIT_CRITICAL();
+    return ready;
 }
 
 /** @brief 沿旧 Drive_Enter_Zero 清除运动目标和 PID，保留电机使能状态。

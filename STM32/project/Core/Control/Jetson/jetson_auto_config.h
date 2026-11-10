@@ -49,6 +49,11 @@
 #define JETSON_AUTO_APPROACH_I_GAIN 2.0f
 #define JETSON_AUTO_APPROACH_I_LIMIT_MPS 0.05f
 
+/* 心跳与图像中心的接收期限、使能准备期限、故障制动期限，单位 ms。 */
+#define JETSON_AUTO_LINK_TIMEOUT_MS 250U
+#define JETSON_AUTO_PREPARE_TIMEOUT_MS 1000U
+#define JETSON_AUTO_BRAKE_TIMEOUT_MS 500U
+
 /* 正常视觉入窗后的停车确认期限，ms；不改变故障制动期限或停稳轮速门限。 */
 #define JETSON_AUTO_VISION_STOP_TIMEOUT_MS 1000U
 /* 停稳后的核验等待：Jetson 源帧龄上限 250 ms，另留 20 ms 链路余量。 */

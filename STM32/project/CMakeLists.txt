@@ -60,7 +60,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Control/Chassis/chassis.c
     Core/Control/Jetson/image_tracker.c
     Core/Control/Jetson/jetson_auto.c
-    Core/Control/Jetson/jetson_control.c
+    Core/Control/Manual/manual_control.c
     Core/Devices/BMI088/BMI088driver.c
     Core/Devices/BMI088/BMI088Middleware.c
     Core/Devices/IST8310/ist8310driver.c
@@ -86,6 +86,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Communication/Manual
     Core/Control/Chassis
     Core/Control/Jetson
+    Core/Control/Manual
     Core/Devices/BMI088
     Core/Devices/IST8310
     Core/Devices/DM_Motor

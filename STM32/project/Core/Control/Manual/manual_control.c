@@ -2,15 +2,14 @@
  * F407/RTOS 适配：ISR 只保存协议快照，现有 test_task 唯一调用底盘接口。
  * 不引入旧车的命令队列、输入框架或新任务；本轮不启用运输动作。
  */
-#include "jetson_control.h"
+#include "manual_control.h"
 #include "manual_can.h"
 #include "chassis.h"
-#include "dm_motor.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <math.h>
 
-volatile Jetson_Control_State_t jetson_control_state;
+volatile Manual_Control_State_t manual_control_state;
 static uint32_t blocked_sequence, invalid_sequence, zero_sequence, state_started_ms;
 static uint8_t preparing_after_stop;
 
@@ -23,23 +22,6 @@ static uint8_t Is_Zero(const Manual_CAN_Velocity_t *velocity)
     return velocity->vx == 0 && velocity->vy == 0 && velocity->wz == 0;
 }
 
-/** @brief 用与反馈 ISR 相同的时基核对三轮是否使能且反馈仍新鲜。
- * @return 三轮反馈存在、状态正常且年龄不超过 30 ms 时返回 1。
- */
-uint8_t Jetson_Control_Motors_Ready(void)
-{
-    uint8_t ready = 1U;
-    taskENTER_CRITICAL();
-    uint32_t now_ms = (uint32_t)xTaskGetTickCount();
-    for (unsigned i = 0U; i < 3U; ++i)
-        if (dm_motor[i].id != i + 1U || dm_motor[i].state != 1U ||
-            !isfinite(dm_motor[i].velocity) ||
-            (uint32_t)(now_ms - dm_motor[i].feedback_time_ms) > JETSON_MOTOR_TIMEOUT_MS)
-            ready = 0U;
-    taskEXIT_CRITICAL();
-    return ready;
-}
-
 /** @brief 锁定本轮停车，清除目标；后续报文不能延长制动截止。
  * @param[in] now_ms 当前 RTOS 毫秒。
  * @return 无。
@@ -48,7 +30,7 @@ static void Begin_Braking(uint32_t now_ms)
 {
     Chassis_Stop();
     state_started_ms = now_ms;
-    jetson_control_state = JETSON_BRAKING;
+    manual_control_state = MANUAL_BRAKING;
 }
 
 /** @brief 撤销使能并记住失能后的接收边界，禁止停车期间的零速自动重启。
@@ -60,19 +42,19 @@ static void Disarm(void)
     Chassis_Disable();
     Manual_CAN_Get_Velocity(&boundary);
     blocked_sequence = boundary.sequence;
-    jetson_control_state = JETSON_DISARMED;
+    manual_control_state = MANUAL_DISARMED;
 }
 
 /** @brief 清除本模块状态；底盘初始化由同一任务完成。 @return 无。 */
-void Jetson_Control_Init(void)
+void Manual_Control_Init(void)
 {
     blocked_sequence = invalid_sequence = zero_sequence = state_started_ms = 0U;
     preparing_after_stop = 0U;
-    jetson_control_state = JETSON_DISARMED;
+    manual_control_state = MANUAL_DISARMED;
 }
 
 /** @brief 处理一次最新速度及保护期限；接口条件见头文件。 @return 无。 */
-void Jetson_Control_Loop(void)
+void Manual_Control_Loop(void)
 {
     Manual_CAN_Velocity_t velocity;
     Manual_CAN_Get_Velocity(&velocity);
@@ -82,17 +64,17 @@ void Jetson_Control_Loop(void)
     invalid_sequence = velocity.invalid_sequence;
     zero_sequence = velocity.zero_sequence;
     const uint8_t fresh = velocity.valid &&
-        (uint32_t)(now_ms - velocity.received_ms) < JETSON_VELOCITY_TIMEOUT_MS;
+        (uint32_t)(now_ms - velocity.received_ms) < MANUAL_VELOCITY_TIMEOUT_MS;
     const uint8_t zero = Is_Zero(&velocity);
 
-    if (jetson_control_state == JETSON_BRAKING)
+    if (manual_control_state == MANUAL_BRAKING)
     {
         if (!Chassis_Is_Enabled() || Chassis_Is_Stopped() ||
-            (uint32_t)(now_ms - state_started_ms) >= JETSON_BRAKE_TIMEOUT_MS)
+            (uint32_t)(now_ms - state_started_ms) >= MANUAL_BRAKE_TIMEOUT_MS)
             Disarm();
         return;
     }
-    if (jetson_control_state == JETSON_DISARMED)
+    if (manual_control_state == MANUAL_DISARMED)
     {
         if (velocity.sequence == blocked_sequence)
             return;
@@ -101,7 +83,7 @@ void Jetson_Control_Loop(void)
         {
             state_started_ms = now_ms;
             preparing_after_stop = 0U;
-            jetson_control_state = JETSON_PREPARING;
+            manual_control_state = MANUAL_PREPARING;
         }
         return;
     }
@@ -109,24 +91,24 @@ void Jetson_Control_Loop(void)
     {
         /* 底盘自身的姿态/CAN 保护已经失能；不能由缓存里的零帧恢复。 */
         blocked_sequence = velocity.sequence;
-        jetson_control_state = JETSON_DISARMED;
+        manual_control_state = MANUAL_DISARMED;
         return;
     }
     /* 按协议用除法还原定点值，避免缩放系数预先舍入影响合法边界。 */
-    const float vx = velocity.vx / 1000.0f;
-    const float vy = velocity.vy / 1000.0f;
-    const float wz = velocity.wz / 1000.0f;
+    const float vx = velocity.vx / MANUAL_VELOCITY_FIXED_POINT_SCALE;
+    const float vy = velocity.vy / MANUAL_VELOCITY_FIXED_POINT_SCALE;
+    const float wz = velocity.wz / MANUAL_VELOCITY_FIXED_POINT_SCALE;
     if (revoked || !fresh || hypotf(vx, vy) > CHASSIS_STRAIGHT_MAX_SPEED_MPS ||
         fabsf(wz) > CHASSIS_VECTOR_MAX_WZ_RAD_S)
     {
         Begin_Braking(now_ms);
         return;
     }
-    if (jetson_control_state == JETSON_PREPARING)
+    if (manual_control_state == MANUAL_PREPARING)
     {
         /* 使能握手须保持零速；运行后停车可忽略早到的非零帧，但反馈仍须正常。 */
-        if ((uint32_t)(now_ms - state_started_ms) >= JETSON_PREPARE_TIMEOUT_MS ||
-            (preparing_after_stop ? !Jetson_Control_Motors_Ready() : !zero))
+        if ((uint32_t)(now_ms - state_started_ms) >= MANUAL_PREPARE_TIMEOUT_MS ||
+            (preparing_after_stop ? !Chassis_Motors_Ready() : !zero))
             Begin_Braking(now_ms);
         else if (Chassis_Is_Stopped())
         {
@@ -136,28 +118,28 @@ void Jetson_Control_Loop(void)
                 Manual_CAN_Get_Velocity(&velocity);
                 blocked_sequence = velocity.sequence;
             }
-            jetson_control_state = JETSON_READY;
+            manual_control_state = MANUAL_READY;
         }
         return;
     }
-    if (!Jetson_Control_Motors_Ready())
+    if (!Chassis_Motors_Ready())
     {
         Begin_Braking(now_ms);
         return;
     }
     /* 运行中同一批收到全零和非零时，仍执行明确的零速停车。 */
-    if (jetson_control_state == JETSON_RUNNING && (zero || stop_requested))
+    if (manual_control_state == MANUAL_RUNNING && (zero || stop_requested))
     {
         Chassis_Stop();
         state_started_ms = now_ms;
         preparing_after_stop = 1U;
-        jetson_control_state = JETSON_PREPARING;
+        manual_control_state = MANUAL_PREPARING;
         return;
     }
-    if (zero || (jetson_control_state == JETSON_READY && velocity.sequence == blocked_sequence))
+    if (zero || (manual_control_state == MANUAL_READY && velocity.sequence == blocked_sequence))
         return;
     if (Chassis_Set_Velocity(vx, vy, wz))
-        jetson_control_state = JETSON_RUNNING;
+        manual_control_state = MANUAL_RUNNING;
     else
         Begin_Braking(now_ms);
 }
