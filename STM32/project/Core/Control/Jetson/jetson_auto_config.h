@@ -38,7 +38,7 @@
 #define JETSON_AUTO_APPROACH_GAIN 0.80f
 #define JETSON_AUTO_APPROACH_SPEED_MPS 0.50f
 /* 离开窗口时用于克服静摩擦的最小轴速度，按实车标定。 */
-#define JETSON_AUTO_APPROACH_MIN_SPEED_MPS 0.005f
+#define JETSON_AUTO_APPROACH_MIN_SPEED_MPS 0.015f
 #define JETSON_AUTO_SEARCH_WZ_RAD_S 2.0f
 
 /* 图像卡尔曼的坐标噪声和过程加速度标准差，单位为定点单位及定点单位/s²。 */
