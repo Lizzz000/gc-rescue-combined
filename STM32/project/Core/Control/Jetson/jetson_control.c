@@ -1,9 +1,9 @@
-/* 协议来源：Jetson/bridge_pkg 的 0x180；控制与参数复用本车 chassis。
+/* 协议来源：独立手动 0x17F（与 Jetson 0x180 同格式）；控制与参数复用本车 chassis。
  * F407/RTOS 适配：ISR 只保存协议快照，现有 test_task 唯一调用底盘接口。
  * 不引入旧车的命令队列、输入框架或新任务；本轮不启用运输动作。
  */
 #include "jetson_control.h"
-#include "jetson_can.h"
+#include "manual_can.h"
 #include "chassis.h"
 #include "dm_motor.h"
 #include "FreeRTOS.h"
@@ -15,12 +15,12 @@ static uint32_t blocked_sequence, invalid_sequence, zero_sequence, state_started
 static uint8_t preparing_after_stop;
 
 /** @brief 判断原始定点三分量是否均为零。
- * @param[in] data 当前协议快照，非空。
+ * @param[in] velocity 当前手动速度快照，非空。
  * @return 全零返回 1，否则 0。
  */
-static uint8_t Is_Zero(const Jetson_CAN_Data_t *data)
+static uint8_t Is_Zero(const Manual_CAN_Velocity_t *velocity)
 {
-    return data->velocity.vx == 0 && data->velocity.vy == 0 && data->velocity.wz == 0;
+    return velocity->vx == 0 && velocity->vy == 0 && velocity->wz == 0;
 }
 
 /** @brief 用与反馈 ISR 相同的时基核对三轮是否使能且反馈仍新鲜。
@@ -56,10 +56,10 @@ static void Begin_Braking(uint32_t now_ms)
  */
 static void Disarm(void)
 {
-    Jetson_CAN_Data_t boundary;
+    Manual_CAN_Velocity_t boundary;
     Chassis_Disable();
-    Jetson_CAN_Get_Data(&boundary);
-    blocked_sequence = boundary.velocity.sequence;
+    Manual_CAN_Get_Velocity(&boundary);
+    blocked_sequence = boundary.sequence;
     jetson_control_state = JETSON_DISARMED;
 }
 
@@ -74,16 +74,16 @@ void Jetson_Control_Init(void)
 /** @brief 处理一次最新速度及保护期限；接口条件见头文件。 @return 无。 */
 void Jetson_Control_Loop(void)
 {
-    Jetson_CAN_Data_t data;
-    Jetson_CAN_Get_Data(&data);
+    Manual_CAN_Velocity_t velocity;
+    Manual_CAN_Get_Velocity(&velocity);
     const uint32_t now_ms = (uint32_t)xTaskGetTickCount();
-    const uint8_t revoked = data.velocity.invalid_sequence != invalid_sequence;
-    const uint8_t stop_requested = data.velocity.zero_sequence != zero_sequence;
-    invalid_sequence = data.velocity.invalid_sequence;
-    zero_sequence = data.velocity.zero_sequence;
-    const uint8_t fresh = data.velocity.valid &&
-        (uint32_t)(now_ms - data.velocity.received_ms) < JETSON_VELOCITY_TIMEOUT_MS;
-    const uint8_t zero = Is_Zero(&data);
+    const uint8_t revoked = velocity.invalid_sequence != invalid_sequence;
+    const uint8_t stop_requested = velocity.zero_sequence != zero_sequence;
+    invalid_sequence = velocity.invalid_sequence;
+    zero_sequence = velocity.zero_sequence;
+    const uint8_t fresh = velocity.valid &&
+        (uint32_t)(now_ms - velocity.received_ms) < JETSON_VELOCITY_TIMEOUT_MS;
+    const uint8_t zero = Is_Zero(&velocity);
 
     if (jetson_control_state == JETSON_BRAKING)
     {
@@ -94,9 +94,9 @@ void Jetson_Control_Loop(void)
     }
     if (jetson_control_state == JETSON_DISARMED)
     {
-        if (data.velocity.sequence == blocked_sequence)
+        if (velocity.sequence == blocked_sequence)
             return;
-        blocked_sequence = data.velocity.sequence;
+        blocked_sequence = velocity.sequence;
         if (fresh && zero && Chassis_Enable())
         {
             state_started_ms = now_ms;
@@ -108,14 +108,14 @@ void Jetson_Control_Loop(void)
     if (!Chassis_Is_Enabled())
     {
         /* 底盘自身的姿态/CAN 保护已经失能；不能由缓存里的零帧恢复。 */
-        blocked_sequence = data.velocity.sequence;
+        blocked_sequence = velocity.sequence;
         jetson_control_state = JETSON_DISARMED;
         return;
     }
     /* 按协议用除法还原定点值，避免缩放系数预先舍入影响合法边界。 */
-    const float vx = data.velocity.vx / 1000.0f;
-    const float vy = data.velocity.vy / 1000.0f;
-    const float wz = data.velocity.wz / 1000.0f;
+    const float vx = velocity.vx / 1000.0f;
+    const float vy = velocity.vy / 1000.0f;
+    const float wz = velocity.wz / 1000.0f;
     if (revoked || !fresh || hypotf(vx, vy) > CHASSIS_STRAIGHT_MAX_SPEED_MPS ||
         fabsf(wz) > CHASSIS_VECTOR_MAX_WZ_RAD_S)
     {
@@ -133,8 +133,8 @@ void Jetson_Control_Loop(void)
             if (preparing_after_stop)
             {
                 /* 停稳后再取接收边界，不能把停车期间最后一帧留给 READY 执行。 */
-                Jetson_CAN_Get_Data(&data);
-                blocked_sequence = data.velocity.sequence;
+                Manual_CAN_Get_Velocity(&velocity);
+                blocked_sequence = velocity.sequence;
             }
             jetson_control_state = JETSON_READY;
         }
@@ -154,7 +154,7 @@ void Jetson_Control_Loop(void)
         jetson_control_state = JETSON_PREPARING;
         return;
     }
-    if (zero || (jetson_control_state == JETSON_READY && data.velocity.sequence == blocked_sequence))
+    if (zero || (jetson_control_state == JETSON_READY && velocity.sequence == blocked_sequence))
         return;
     if (Chassis_Set_Velocity(vx, vy, wz))
         jetson_control_state = JETSON_RUNNING;

@@ -1,21 +1,22 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2019 RoboMaster.
  * 来源：https://github.com/RoboMaster/Development-Board-C-Examples/blob/master/14.CAN/bsp/boards/bsp_can.c
- * 沿用滤波、启动及通知流程；CAN1 共用适配在同一 FIFO0 入口分流电机与 Jetson。
+ * 沿用滤波、启动及通知流程；CAN1 共用适配在同一 FIFO0 入口分流电机、手动与 Jetson。
  */
 #include "bsp_can.h"
 #include "dm_motor.h"
 #include "jetson_can.h"
+#include "manual_can.h"
 
-/** @brief 用两组 16 位列表筛选标准数据帧，再启动 CAN1 的 FIFO0 接收。
+/** @brief 用三组 16 位列表筛选标准数据帧，再启动 CAN1 的 FIFO0 接收。
  * @return 无；任一滤波组配置失败时不启动 CAN1。
  */
 void can_filter_init(void)
 {
     static const uint16_t ids[][4] = {
-        {0x000U, 0x180U, 0x181U, 0x182U},
+        {0x000U, JETSON_CAN_HEARTBEAT_ID, 0x181U, 0x182U},
         {0x190U, 0x191U, 0x192U, 0x193U},
-        {JETSON_CAN_MANUAL_ID, JETSON_CAN_MANUAL_ID, JETSON_CAN_MANUAL_ID, JETSON_CAN_MANUAL_ID},
+        {MANUAL_CAN_VELOCITY_ID, MANUAL_CAN_VELOCITY_ID, MANUAL_CAN_VELOCITY_ID, MANUAL_CAN_VELOCITY_ID},
     };
     CAN_FilterTypeDef filter = {0};
     filter.FilterActivation = ENABLE;
@@ -64,14 +65,13 @@ HAL_StatusTypeDef Jetson_CAN_Try_Send_Uplink(uint16_t id, uint32_t token)
 /** @brief 按 Jetson can_protocol.hpp 识别七种下行帧 ID。
  * @param[in] id 标准 CAN ID，范围 0～0x7FF。
  * @return 已知下行 ID 返回 1，其余返回 0。
- * @note 长度与载荷交由 Jetson_CAN_Receive 严格检查，畸形速度帧也能使旧指令失效。
+ * @note 长度与载荷交由 Jetson_CAN_Receive 严格检查；手动 0x17F 不属于此列。
  */
 static uint8_t Is_Jetson_Frame(uint32_t id)
 {
     switch (id)
     {
-    case JETSON_CAN_MANUAL_ID:
-    case 0x180U:
+    case JETSON_CAN_HEARTBEAT_ID:
     case 0x181U:
     case 0x182U:
     case 0x190U:
@@ -87,7 +87,8 @@ static uint8_t Is_Jetson_Frame(uint32_t id)
 /** @brief 沿教程 FIFO0 回调取尽 CAN1 待收帧，按标准数据帧 ID 分流。
  * @param[in,out] hcan HAL 提供的句柄；仅处理共用的 CAN1，CAN2 不启动业务。
  * @return 无；中断内仅更新接收数据，不执行底盘动作或发送报文。
- * @note 本工程共总线适配：电机反馈仍为 StdID=0、DLC=8；Jetson 仅接收约定下行帧。
+ * @note 本工程共总线适配：电机反馈仍为 StdID=0、DLC=8；0x17F 只进手动快照，
+ *       Jetson 仅接收约定下行帧。
  */
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
@@ -103,6 +104,8 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
             continue;
         if (header.StdId == 0U && header.DLC == 8U)
             DM_Motor_ReceiveFeedback(data);
+        else if (header.StdId == MANUAL_CAN_VELOCITY_ID)
+            Manual_CAN_Receive(data, (uint8_t)header.DLC);
         else if (Is_Jetson_Frame(header.StdId))
             Jetson_CAN_Receive((uint16_t)header.StdId, data, (uint8_t)header.DLC);
     }

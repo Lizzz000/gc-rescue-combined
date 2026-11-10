@@ -56,6 +56,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Bsp/Transport_Servo/transport_servo.c
     Core/Communication/VOFA/vofa.c
     Core/Communication/Jetson/jetson_can.c
+    Core/Communication/Manual/manual_can.c
     Core/Control/Chassis/chassis.c
     Core/Control/Jetson/image_tracker.c
     Core/Control/Jetson/jetson_auto.c
@@ -82,6 +83,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Bsp/Transport_Servo
     Core/Communication/VOFA
     Core/Communication/Jetson
+    Core/Communication/Manual
     Core/Control/Chassis
     Core/Control/Jetson
     Core/Devices/BMI088

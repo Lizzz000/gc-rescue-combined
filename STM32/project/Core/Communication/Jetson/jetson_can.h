@@ -7,23 +7,20 @@
  * STM32 接收快照由 CAN 中断写入、任务临界区读取。
  * received_ms 使用现有 1 kHz FreeRTOS 时基，不是总线事务编号。
  */
-#define JETSON_CAN_MANUAL_ID              0x17FU
+#define JETSON_CAN_HEARTBEAT_ID           0x180U
+#define JETSON_CAN_VELOCITY_DLC           7U
 #define JETSON_CAN_ARRIVAL_ID             0x200U
 #define JETSON_CAN_TURN_COMPLETED_ID      0x203U
 #define JETSON_CAN_SAFETY_ARRIVED_ID      0x204U
 #define JETSON_CAN_START_SEARCH_ID        0x205U
 #define JETSON_CAN_DELIVERY_COMPLETED_ID  0x206U
 
+/* 速度帧格式：valid:uint8 + vx/vy/wz:int16 小端；0x180 心跳与手动 0x17F 共用。 */
 typedef struct
 {
-    uint8_t valid;
-    uint8_t well_formed; /**< DLC 和标志合法，包括 valid=0 的周期报文。 */
-    int16_t vx, vy, wz;  /**< 原始定点值：vx/vy 为 0.001 m/s，wz 为 0.001 rad/s。 */
-    uint32_t received_ms;
-    uint32_t sequence;   /**< 每条 0x180/手动 0x17F（含无效/畸形）递增，按 uint32_t 自然回绕。 */
-    uint32_t invalid_sequence; /**< 仅无效/畸形速度帧递增；保留同一接收批次的撤权事件。 */
-    uint32_t zero_sequence;    /**< 仅有效全零 0x180 递增；保留同一接收批次的停车事件。 */
-} Jetson_CAN_Velocity_t;
+    uint8_t valid;       /**< 格式合法且有效字节为 1。 */
+    int16_t vx, vy, wz;  /**< 原始定点值：vx/vy 为 0.001 m/s，wz 为 0.001 rad/s；无效时为 0。 */
+} Jetson_CAN_Velocity_Frame_t;
 
 typedef struct
 {
@@ -72,13 +69,12 @@ typedef struct
 
 typedef struct
 {
-    Jetson_CAN_Velocity_t velocity;
     Jetson_CAN_Center_t target, safety;
     Jetson_CAN_Arrival_Ack_t arrival_ack;
     Jetson_CAN_ROI_Reply_t roi_reply;
     Jetson_CAN_Command_Reply_t command_reply; /**< 等待时按请求匹配并保留首个受理回执。 */
     Jetson_CAN_Turn_Request_t turn_to_safety;
-    uint32_t rx_sequence; /**< 每条已知 ID 递增并自然回绕；非速度快照记录接收时的值。 */
+    uint32_t rx_sequence; /**< 每条已知 ID 递增并自然回绕；各快照记录接收时的值。 */
     uint32_t heartbeat_received_ms; /**< 最近一条格式合法的 0x180 到达时刻，RTOS ms。 */
     uint8_t heartbeat_seen;         /**< 已收到格式合法的 0x180。 */
     uint32_t mission_loss_sequence; /**< 空 0x180 失联标志计数，防止被紧随的心跳覆盖。 */
@@ -91,11 +87,28 @@ typedef struct
 void Jetson_CAN_Init(void);
 
 /**
+ * @brief 判断速度帧格式是否合法：DLC 为 7、有效字节为 0 或 1。
+ * @param[in] data 可读 len 字节；空指针视为不合法。
+ * @param[in] len CAN DLC。
+ * @return 合法返回 1，否则 0；valid=0 的周期帧也算合法。
+ */
+uint8_t Jetson_CAN_Is_Velocity_Frame(const uint8_t *data, uint8_t len);
+
+/**
+ * @brief 解码速度帧的有效位与三个定点分量，不做缩放和限幅。
+ * @param[in] data 可读 len 字节；空指针按畸形帧处理。
+ * @param[in] len CAN DLC。
+ * @param[out] frame 非空；格式不合法或 valid=0 时整帧清零。
+ * @return 无。
+ */
+void Jetson_CAN_Decode_Velocity(const uint8_t *data, uint8_t len, Jetson_CAN_Velocity_Frame_t *frame);
+
+/**
  * @brief 在 CAN RX 中断内解析单帧；不调用底盘、不排队、不发送回复。
  * @param[in] id 已由 BSP 核验的 11 位标准数据帧 ID。
  * @param[in] data 可读 len 字节；空指针按对应 ID 的畸形帧处理。
- * @param[in] len CAN DLC，必须精确匹配协议；0x180 错误时撤销旧速度。
- * @return 无；未知 ID 不改变快照，已知坏帧按对应报文处理。
+ * @param[in] len CAN DLC，必须精确匹配协议；0x180 只作心跳，空载荷表示任务失联。
+ * @return 无；未知 ID（含手动 0x17F）不改变快照，已知坏帧按对应报文处理。
  */
 void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len);
 

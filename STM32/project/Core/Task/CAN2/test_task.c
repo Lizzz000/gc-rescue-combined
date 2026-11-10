@@ -7,6 +7,7 @@
 #include "jetson_auto.h"
 #include "jetson_can.h"
 #include "jetson_control.h"
+#include "manual_can.h"
 #include "transport_servo.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -30,6 +31,7 @@ void test_task(void const *argument)
     (void)argument;
     Chassis_Init();
     Jetson_CAN_Init();
+    Manual_CAN_Init();
 #if JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST
     Jetson_Auto_Init();
 #else

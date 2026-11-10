@@ -1,5 +1,4 @@
 #include "jetson_can.h"
-#include "jetson_auto_config.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <stddef.h>
@@ -34,6 +33,24 @@ static uint32_t Read_Token(const uint8_t *data)
            ((uint32_t)data[2] << 16U) | ((uint32_t)data[3] << 24U);
 }
 
+/** @brief 校验速度帧格式；约束见头文件。 */
+uint8_t Jetson_CAN_Is_Velocity_Frame(const uint8_t *data, uint8_t len)
+{
+    return data != NULL && len == JETSON_CAN_VELOCITY_DLC && data[0] <= 1U;
+}
+
+/** @brief 解码速度帧；格式错误或 valid=0 时输出全零无效帧。 */
+void Jetson_CAN_Decode_Velocity(const uint8_t *data, uint8_t len, Jetson_CAN_Velocity_Frame_t *frame)
+{
+    *frame = (Jetson_CAN_Velocity_Frame_t){0};
+    if (!Jetson_CAN_Is_Velocity_Frame(data, len) || data[0] != 1U)
+        return;
+    frame->valid = 1U;
+    frame->vx = Read_Signed(data + 1U);
+    frame->vy = Read_Signed(data + 3U);
+    frame->wz = Read_Signed(data + 5U);
+}
+
 /** @brief 初始化接收快照；调用时机和返回值见头文件。 */
 void Jetson_CAN_Init(void)
 {
@@ -47,54 +64,27 @@ void Jetson_CAN_Init(void)
 /**
  * @brief 解析 Jetson 下行标准数据帧；详细输入约束见头文件。
  * @note ISR 只更新最新状态；现有 FreeRTOS tick 为 1 ms，不进行业务调度。
- * @return 无；无效速度立即覆盖旧值，其他报文互不改变。
+ * @return 无；各报文只更新各自快照，互不改变。
  */
 void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len)
 {
-#if JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST
-    /* 独立手动帧不参与自动搬运状态、心跳或接收序号。 */
-    if (id == JETSON_CAN_MANUAL_ID)
-        return;
-#endif
     uint32_t now_ms = (uint32_t)xTaskGetTickCountFromISR();
     switch (id)
     {
-    case JETSON_CAN_MANUAL_ID:
-    case 0x180U:
-    {
-        Jetson_CAN_Velocity_t velocity = {0};
+    case JETSON_CAN_HEARTBEAT_ID:
         ++jetson_data.rx_sequence;
-        velocity.received_ms = now_ms;
-        velocity.sequence = jetson_data.velocity.sequence + 1U;
-        velocity.invalid_sequence = jetson_data.velocity.invalid_sequence;
-        velocity.zero_sequence = jetson_data.velocity.zero_sequence;
-        velocity.well_formed = data != NULL && len == 7U && data[0] <= 1U;
-        if (id == 0x180U && velocity.well_formed)
+        if (Jetson_CAN_Is_Velocity_Frame(data, len))
         {
             jetson_data.heartbeat_received_ms = now_ms;
             jetson_data.heartbeat_seen = 1U;
         }
-        else if (id == 0x180U && len == 0U)
+        else if (len == 0U)
         {
             /* Jetson 以空 0x180 明确报告任务失联，不能等待普通心跳超时。 */
             jetson_data.heartbeat_seen = 0U;
             ++jetson_data.mission_loss_sequence;
         }
-        if (velocity.well_formed && data[0] == 1U)
-        {
-            velocity.valid = 1U;
-            velocity.vx = Read_Signed(data + 1U);
-            velocity.vy = Read_Signed(data + 3U);
-            velocity.wz = Read_Signed(data + 5U);
-            if (velocity.vx == 0 && velocity.vy == 0 && velocity.wz == 0)
-                ++velocity.zero_sequence;
-        }
-        else
-            ++velocity.invalid_sequence;
-        /* valid=0、错误布尔、错误 DLC 或空指针均不保留上条速度。 */
-        jetson_data.velocity = velocity;
         break;
-    }
     case 0x181U:
     case 0x182U:
     {
