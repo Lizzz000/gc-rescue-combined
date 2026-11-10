@@ -6,7 +6,7 @@
 #include "chassis.h"
 #include "jetson_auto.h"
 #include "jetson_can.h"
-#include "jetson_control.h"
+#include "manual_can.h"
 #include "task.h"
 #include "transport_servo.h"
 
@@ -78,7 +78,7 @@ uint8_t Chassis_Is_Enabled(void) { return enabled; }
 uint8_t Chassis_Is_Stopped(void) { return enabled && stopped; }
 
 /** @brief 提供可单独断开的三轮反馈条件。 @return 反馈正常为 1。 */
-uint8_t Jetson_Control_Motors_Ready(void) { return motors_ready; }
+uint8_t Chassis_Motors_Ready(void) { return motors_ready; }
 
 /** @brief 提供可独立设置样本年龄的姿态。 @param[out] data 姿态快照。 @return 有效为 1。 */
 uint8_t INS_Get_Data(INS_control_data_t *data)
@@ -287,16 +287,16 @@ static void Wait_For_Count(const unsigned *counter, unsigned count)
 /** @brief 模拟一次有效心跳开机，并确认停车反馈前不启动舵机或导航。 */
 static void Start_Automatic(void)
 {
-    /* 手动帧不触发自动心跳或速度快照。 */
+    /* 0x17F 对自动快照是未知 ID：不触发心跳，不推进接收序号。 */
     const uint8_t manual[7] = {1U, 80U, 0U, 0U, 0U, 0U, 0U};
     for (unsigned i = 0U; i < 60U; ++i)
     {
-        Jetson_CAN_Receive(JETSON_CAN_MANUAL_ID, manual, sizeof(manual));
+        Jetson_CAN_Receive(MANUAL_CAN_VELOCITY_ID, manual, sizeof(manual));
         Step(0U);
     }
     Jetson_CAN_Data_t snapshot;
     Jetson_CAN_Get_Data(&snapshot);
-    assert(!snapshot.heartbeat_seen && snapshot.velocity.sequence == 0U);
+    assert(!snapshot.heartbeat_seen && snapshot.rx_sequence == 0U);
     assert(!enabled && !enables && !servo_commands && !velocity_requests);
     Steps(3U, 0U);
     const uint8_t malformed[6] = {0};
@@ -695,7 +695,7 @@ static void Test_Transport(uint8_t destination, uint32_t token, uint8_t stuck)
     assert(stops == before_push_stop + 1U && servo_position == TRANSPORT_SERVO_CLOSED);
     if (stuck)
     {
-        Steps((2U * JETSON_BRAKE_TIMEOUT_MS) / 5U + 1U, 1U);
+        Steps((2U * JETSON_AUTO_BRAKE_TIMEOUT_MS) / 5U + 1U, 1U);
         assert(!enabled && disables == 1U && servo_position == TRANSPORT_SERVO_CLOSED);
         return;
     }
@@ -877,12 +877,12 @@ static void Test_Auto_Heartbeat_Age(void)
         assert(last_vx > 0.0f);
         const unsigned before = stops;
         const uint8_t malformed[6] = {0U};
-        for (unsigned elapsed = 5U; elapsed <= JETSON_VELOCITY_TIMEOUT_MS; elapsed += 5U)
+        for (unsigned elapsed = 5U; elapsed <= JETSON_AUTO_LINK_TIMEOUT_MS; elapsed += 5U)
         {
             test_tick += 5U;
             Jetson_CAN_Receive(0x180U, malformed, sizeof(malformed));
             Jetson_Auto_Loop();
-            assert(enabled && stops == before + (elapsed == JETSON_VELOCITY_TIMEOUT_MS));
+            assert(enabled && stops == before + (elapsed == JETSON_AUTO_LINK_TIMEOUT_MS));
         }
         stopped = 1U;
         Step(1U);

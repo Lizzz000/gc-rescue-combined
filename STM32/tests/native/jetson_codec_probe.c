@@ -1,4 +1,5 @@
 #include "jetson_can.h"
+#include "manual_can.h"
 #include "task.h"
 #include <assert.h>
 #include <errno.h>
@@ -7,7 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* 仅供离线跨项目互验：输入 ID#HEX，调用真实解码模块，逐行输出完整 JSON 快照。 */
+/* 仅供离线跨项目互验：输入 ID#HEX，按 bsp_can 分流调用真实解码模块，逐行输出完整 JSON 快照。
+ * 0x17F 额外送入 Jetson 模块一次，证明它不改变自动快照。 */
 uint32_t test_tick;
 static unsigned critical_depth;
 
@@ -96,12 +98,18 @@ static void Print_Center(const char *name, const Jetson_CAN_Center_t *center)
 static void Print_Snapshot(void)
 {
     Jetson_CAN_Data_t state;
+    Manual_CAN_Velocity_t manual;
     Jetson_CAN_Get_Data(&state);
-    printf("{\"velocity\":{\"valid\":%u,\"vx\":%d,\"vy\":%d,\"wz\":%d,"
-           "\"received_ms\":%" PRIu32 ",\"sequence\":%" PRIu32 ",\"invalid_sequence\":%" PRIu32 "},",
-           (unsigned)state.velocity.valid, (int)state.velocity.vx,
-           (int)state.velocity.vy, (int)state.velocity.wz, state.velocity.received_ms,
-           state.velocity.sequence, state.velocity.invalid_sequence);
+    Manual_CAN_Get_Velocity(&manual);
+    printf("{\"manual\":{\"valid\":%u,\"vx\":%d,\"vy\":%d,\"wz\":%d,"
+           "\"received_ms\":%" PRIu32 ",\"sequence\":%" PRIu32 ",\"invalid_sequence\":%" PRIu32
+           ",\"zero_sequence\":%" PRIu32 "},",
+           (unsigned)manual.valid, (int)manual.vx, (int)manual.vy, (int)manual.wz, manual.received_ms,
+           manual.sequence, manual.invalid_sequence, manual.zero_sequence);
+    printf("\"heartbeat\":{\"seen\":%u,\"received_ms\":%" PRIu32 ",\"mission_loss_sequence\":%" PRIu32 "},"
+           "\"rx_sequence\":%" PRIu32 ",",
+           (unsigned)state.heartbeat_seen, state.heartbeat_received_ms, state.mission_loss_sequence,
+           state.rx_sequence);
     Print_Center("target", &state.target);
     printf(",");
     Print_Center("safety", &state.safety);
@@ -127,6 +135,7 @@ int main(void)
 {
     char line[128];
     Jetson_CAN_Init();
+    Manual_CAN_Init();
     while (fgets(line, sizeof(line), stdin) != NULL)
     {
         uint16_t id;
@@ -138,6 +147,8 @@ int main(void)
         }
         ++test_tick;
         Jetson_CAN_Receive(id, data, length);
+        if (id == MANUAL_CAN_VELOCITY_ID)
+            Manual_CAN_Receive(data, length);
         Print_Snapshot();
     }
     return ferror(stdin) || ferror(stdout) ? 1 : 0;

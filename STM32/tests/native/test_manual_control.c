@@ -3,7 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 #include "jetson_can.h"
-#include "jetson_control.h"
+#include "manual_can.h"
+#include "manual_control.h"
 #include "chassis.h"
 #include "motor_chassis.h"
 #include "dm_motor.h"
@@ -11,7 +12,7 @@
 #include "tim.h"
 #include "task.h"
 
-/* 编译真实协议、Jetson 控制、底盘、几何与 PID；只模拟时钟、IMU、反馈和 CAN 入队。
+/* 编译真实协议、手动控制、底盘、几何与 PID；只模拟时钟、IMU、反馈和 CAN 入队。
  * 返回 HAL_OK 仅代表模拟入队，不代表实物执行，也不以理想反馈代替实车验收。
  */
 CAN_HandleTypeDef hcan1, hcan2;
@@ -159,7 +160,7 @@ static void Service(Feedback_Mode_t feedback, uint8_t complete_can)
     }
     if (feedback != NO_FEEDBACK)
         Feedback(feedback == QUIET_FEEDBACK ? 0.0f : 1.0f, 1U);
-    Jetson_Control_Loop();
+    Manual_Control_Loop();
     Chassis_Loop();
     assert(critical_depth == 0U);
 }
@@ -184,7 +185,7 @@ static void Receive(int16_t vx, int16_t vy, int16_t wz, uint8_t valid, uint8_t l
         data[1U + 2U * i] = (uint8_t)bits[i];
         data[2U + 2U * i] = (uint8_t)(bits[i] >> 8U);
     }
-    Jetson_CAN_Receive(0x180U, data, len);
+    Manual_CAN_Receive(data, len);
 }
 
 /** @brief 提交一条有效全零速度。 @return 无。 */
@@ -208,8 +209,9 @@ static void Reset(uint32_t milliseconds, uint32_t microseconds)
     memset((void *)dm_motor, 0, sizeof(dm_motor));
     Chassis_Init();
     Jetson_CAN_Init();
-    Jetson_Control_Init();
-    assert(!Chassis_Is_Enabled() && jetson_control_state == JETSON_DISARMED);
+    Manual_CAN_Init();
+    Manual_Control_Init();
+    assert(!Chassis_Is_Enabled() && manual_control_state == MANUAL_DISARMED);
     assert(controls == 0U && enables == 0U && disables == 0U);
 }
 
@@ -228,13 +230,13 @@ static void Prepare_Zero(void)
     uint32_t before_controls = controls, before_enables = enables;
     Receive_Zero();
     Service(NO_FEEDBACK, 1U);
-    assert(jetson_control_state == JETSON_PREPARING && Chassis_Is_Enabled());
+    assert(manual_control_state == MANUAL_PREPARING && Chassis_Is_Enabled());
     assert(controls == before_controls + 3U && enables == before_enables);
     Assert_Zero_Target();
     Step(QUIET_FEEDBACK);
     assert(enables == before_enables + 3U && !Chassis_Is_Stopped());
     Step(QUIET_FEEDBACK);
-    assert(!Chassis_Is_Stopped() && jetson_control_state == JETSON_PREPARING);
+    assert(!Chassis_Is_Stopped() && manual_control_state == MANUAL_PREPARING);
 }
 
 /** @brief 零速基线之后提供恰好三组新停车反馈，验证前两组不足以起步。
@@ -245,7 +247,7 @@ static void Confirm_Ready(void)
     for (unsigned group = 0U; group < 3U; ++group)
     {
         Step(QUIET_FEEDBACK);
-        assert(jetson_control_state == (group == 2U ? JETSON_READY : JETSON_PREPARING));
+        assert(manual_control_state == (group == 2U ? MANUAL_READY : MANUAL_PREPARING));
         assert(Chassis_Is_Stopped() == (group == 2U));
         Assert_Zero_Target();
     }
@@ -262,9 +264,9 @@ static void Start_Moving(int16_t vx, int16_t vy, int16_t wz)
 {
     Receive(vx, vy, wz, 1U, 7U);
     Service(QUIET_FEEDBACK, 1U);
-    assert(jetson_control_state == JETSON_RUNNING && Chassis_Is_Enabled());
+    assert(manual_control_state == MANUAL_RUNNING && Chassis_Is_Enabled());
     Step(MOVING_FEEDBACK);
-    assert(jetson_control_state == JETSON_RUNNING && nonzero_controls > 0U);
+    assert(manual_control_state == MANUAL_RUNNING && nonzero_controls > 0U);
 }
 
 /** @brief 持续刷新同一速度，保留真实斜坡至给定周期数。
@@ -278,7 +280,7 @@ static void Run_Target(int16_t vx, int16_t vy, int16_t wz, unsigned periods)
         Advance(10U);
         Receive(vx, vy, wz, 1U, 7U);
         Service(MOVING_FEEDBACK, 1U);
-        assert(jetson_control_state == JETSON_RUNNING && Chassis_Is_Enabled());
+        assert(manual_control_state == MANUAL_RUNNING && Chassis_Is_Enabled());
     }
 }
 
@@ -293,22 +295,22 @@ static void Test_Startup(void)
     Service(QUIET_FEEDBACK, 1U);
     for (unsigned i = 0U; i < 4U; ++i)
         Step(QUIET_FEEDBACK);
-    assert(jetson_control_state == JETSON_DISARMED && !Chassis_Is_Enabled());
+    assert(manual_control_state == MANUAL_DISARMED && !Chassis_Is_Enabled());
     assert(controls == 0U && enables == 0U);
     Receive_Zero();
     Receive(100, 0, 0, 1U, 7U);
     Step(QUIET_FEEDBACK);
-    assert(jetson_control_state == JETSON_DISARMED && !Chassis_Is_Enabled());
+    assert(manual_control_state == MANUAL_DISARMED && !Chassis_Is_Enabled());
 
     Reset(0U, 0U);
     Prepare_Zero();
-    Jetson_CAN_Data_t data;
-    Jetson_CAN_Get_Data(&data);
-    assert(data.velocity.valid && data.velocity.sequence == 1U && data.velocity.received_ms == 0U);
+    Manual_CAN_Velocity_t data;
+    Manual_CAN_Get_Velocity(&data);
+    assert(data.valid && data.sequence == 1U && data.received_ms == 0U);
     for (unsigned i = 0U; i < 3U; ++i)
     {
         Step(NO_FEEDBACK);
-        assert(jetson_control_state == JETSON_PREPARING && !Chassis_Is_Stopped());
+        assert(manual_control_state == MANUAL_PREPARING && !Chassis_Is_Stopped());
     }
     Confirm_Ready();
     assert(nonzero_controls == 0U);
@@ -319,7 +321,7 @@ static void Test_Startup(void)
     Prepare_Zero();
     Receive(100, 0, 0, 1U, 7U);
     Step(QUIET_FEEDBACK);
-    assert(jetson_control_state == JETSON_BRAKING && nonzero_controls == 0U);
+    assert(manual_control_state == MANUAL_BRAKING && nonzero_controls == 0U);
 }
 
 /** @brief 验证运行后收到单帧全零仍立即清目标，停稳前非零不得执行或触发失能。
@@ -340,7 +342,7 @@ static void Test_Stop_Before_Reverse(uint8_t repeat, uint8_t batch)
         Receive(0, -500, 0, 1U, 7U);
     const uint32_t stop_ms = test_tick;
     Service(MOVING_FEEDBACK, 1U);
-    assert(jetson_control_state == JETSON_PREPARING);
+    assert(manual_control_state == MANUAL_PREPARING);
     Step(MOVING_FEEDBACK);
     Assert_Zero_Target();
 
@@ -348,7 +350,7 @@ static void Test_Stop_Before_Reverse(uint8_t repeat, uint8_t batch)
     assert(test_tick - stop_ms == 20U);
     Receive(0, -500, 0, 1U, 7U);
     Service(MOVING_FEEDBACK, 1U);
-    assert(jetson_control_state == JETSON_PREPARING && Chassis_Is_Enabled());
+    assert(manual_control_state == MANUAL_PREPARING && Chassis_Is_Enabled());
     Assert_Zero_Target();
 
     for (unsigned group = 0U; group < 3U; ++group)
@@ -357,12 +359,12 @@ static void Test_Stop_Before_Reverse(uint8_t repeat, uint8_t batch)
         if (repeat)
             Receive(0, -500, 0, 1U, 7U);
         Service(QUIET_FEEDBACK, 1U);
-        assert(jetson_control_state == (group == 2U ? JETSON_READY : JETSON_PREPARING));
+        assert(manual_control_state == (group == 2U ? MANUAL_READY : MANUAL_PREPARING));
         assert(Chassis_Is_Enabled());
         Assert_Zero_Target();
     }
     Step(QUIET_FEEDBACK);
-    assert(jetson_control_state == JETSON_READY && nonzero_controls == before_nonzero);
+    assert(manual_control_state == MANUAL_READY && nonzero_controls == before_nonzero);
     assert(disables == 0U && aborts == 0U);
     Assert_Zero_Target();
     if (repeat)
@@ -384,22 +386,22 @@ static void Test_Stop_Preparing_Protection(void)
         Start_Moving(0, 500, 0);
         Receive_Zero();
         Service(MOVING_FEEDBACK, 1U);
-        assert(jetson_control_state == JETSON_PREPARING);
+        assert(manual_control_state == MANUAL_PREPARING);
 
-        const uint32_t deadline = stale_feedback ? JETSON_MOTOR_TIMEOUT_MS + 1U : JETSON_PREPARE_TIMEOUT_MS;
+        const uint32_t deadline = stale_feedback ? CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS + 1U : MANUAL_PREPARE_TIMEOUT_MS;
         const Feedback_Mode_t feedback = stale_feedback ? NO_FEEDBACK : MOVING_FEEDBACK;
         for (uint32_t elapsed = 10U; elapsed < deadline; elapsed += 10U)
         {
             Advance(10U);
             Receive(0, -500, 0, 1U, 7U);
             Service(feedback, 1U);
-            assert(jetson_control_state == JETSON_PREPARING);
+            assert(manual_control_state == MANUAL_PREPARING);
             Assert_Zero_Target();
         }
         Advance(stale_feedback ? 1U : 10U);
         Receive(0, -500, 0, 1U, 7U);
         Service(feedback, 1U);
-        assert(jetson_control_state == JETSON_BRAKING && Chassis_Is_Enabled());
+        assert(manual_control_state == MANUAL_BRAKING && Chassis_Is_Enabled());
         Assert_Zero_Target();
     }
 }
@@ -434,7 +436,7 @@ static void Assert_Braking_Locked(uint32_t braking_start)
         else
             Receive(100, 0, 0, 1U, 7U);
         Service(MOVING_FEEDBACK, 1U);
-        assert(jetson_control_state == JETSON_BRAKING && Chassis_Is_Enabled());
+        assert(manual_control_state == MANUAL_BRAKING && Chassis_Is_Enabled());
         Assert_Zero_Target();
     }
     uint32_t elapsed = test_tick - braking_start;
@@ -442,23 +444,23 @@ static void Assert_Braking_Locked(uint32_t braking_start)
     Advance(499U - elapsed);
     Receive_Zero();
     Service(MOVING_FEEDBACK, 1U);
-    assert(jetson_control_state == JETSON_BRAKING && Chassis_Is_Enabled());
+    assert(manual_control_state == MANUAL_BRAKING && Chassis_Is_Enabled());
     Advance(1U);
     Service(MOVING_FEEDBACK, 1U);
-    assert(jetson_control_state == JETSON_DISARMED && !Chassis_Is_Enabled());
+    assert(manual_control_state == MANUAL_DISARMED && !Chassis_Is_Enabled());
     /* 即使当前缓存是有效新零，也必须在失能完成后再来一帧零。 */
     for (unsigned i = 0U; i < 3U; ++i)
     {
         Step(QUIET_FEEDBACK);
-        assert(jetson_control_state == JETSON_DISARMED && !Chassis_Is_Enabled());
+        assert(manual_control_state == MANUAL_DISARMED && !Chassis_Is_Enabled());
     }
     assert(disables == 3U);
     Receive(100, 0, 0, 1U, 7U);
     Step(QUIET_FEEDBACK);
-    assert(jetson_control_state == JETSON_DISARMED && !Chassis_Is_Enabled());
+    assert(manual_control_state == MANUAL_DISARMED && !Chassis_Is_Enabled());
     Receive_Zero();
     Service(QUIET_FEEDBACK, 1U);
-    assert(jetson_control_state == JETSON_PREPARING && Chassis_Is_Enabled());
+    assert(manual_control_state == MANUAL_PREPARING && Chassis_Is_Enabled());
 }
 
 /** @brief 无效或畸形帧与有效零、非零同批到达时，仍执行撤权制动。
@@ -476,11 +478,11 @@ static void Test_Invalid_Batch(void)
         Receive_Zero();
         Receive(100, 0, 0, malformed ? 1U : 0U, malformed ? 6U : 7U);
         Receive(200, 0, 0, 1U, 7U);
-        Jetson_CAN_Data_t data;
-        Jetson_CAN_Get_Data(&data);
-        assert(data.velocity.valid && data.velocity.vx == 200 && data.velocity.invalid_sequence == 1U);
+        Manual_CAN_Velocity_t data;
+        Manual_CAN_Get_Velocity(&data);
+        assert(data.valid && data.vx == 200 && data.invalid_sequence == 1U);
         Service(MOVING_FEEDBACK, 1U);
-        assert(jetson_control_state == JETSON_BRAKING && nonzero_controls == before_nonzero);
+        assert(manual_control_state == MANUAL_BRAKING && nonzero_controls == before_nonzero);
         Assert_Zero_Target();
         Assert_Braking_Locked(test_tick);
     }
@@ -504,11 +506,11 @@ static void Test_Timeout(uint8_t wrap)
     Advance(249U);
     Service(MOVING_FEEDBACK, 1U);
     assert((uint32_t)(test_tick - received_ms) == 249U);
-    assert(jetson_control_state == JETSON_RUNNING && Chassis_Is_Enabled());
+    assert(manual_control_state == MANUAL_RUNNING && Chassis_Is_Enabled());
     uint32_t before_nonzero = nonzero_controls;
     Advance(1U);
     Service(MOVING_FEEDBACK, 1U);
-    assert(jetson_control_state == JETSON_BRAKING && nonzero_controls == before_nonzero);
+    assert(manual_control_state == MANUAL_BRAKING && nonzero_controls == before_nonzero);
     uint32_t braking_start = test_tick;
     Step(MOVING_FEEDBACK);
     Assert_Zero_Target();
@@ -532,7 +534,7 @@ static void Test_Feedback_And_IMU(void)
             for (unsigned i = 0U; i < 3U; ++i)
                 dm_motor[i].feedback_time_ms = test_tick - 30U;
             Service(NO_FEEDBACK, 1U);
-            assert(jetson_control_state == JETSON_RUNNING);
+            assert(manual_control_state == MANUAL_RUNNING);
             Advance(1U);
         }
         else if (fault == 1U)
@@ -543,14 +545,14 @@ static void Test_Feedback_And_IMU(void)
         {
             imu_age_ms = 20U;
             Service(NO_FEEDBACK, 1U);
-            assert(jetson_control_state == JETSON_RUNNING);
+            assert(manual_control_state == MANUAL_RUNNING);
             imu_age_ms = 21U;
         }
         else
             imu_ready = 0U;
         uint32_t before_nonzero = nonzero_controls;
         Service(NO_FEEDBACK, 1U);
-        assert(jetson_control_state == JETSON_BRAKING && nonzero_controls == before_nonzero);
+        assert(manual_control_state == MANUAL_BRAKING && nonzero_controls == before_nonzero);
         Step(MOVING_FEEDBACK);
         Assert_Zero_Target();
     }
@@ -586,11 +588,11 @@ static void Test_Chassis_Protection(void)
         assert(!Chassis_Is_Enabled() && aborts == 1U && nonzero_controls == before_nonzero);
         Advance(5U);
         Service(QUIET_FEEDBACK, 1U);
-        assert(jetson_control_state == JETSON_DISARMED && !Chassis_Is_Enabled());
+        assert(manual_control_state == MANUAL_DISARMED && !Chassis_Is_Enabled());
         for (unsigned i = 0U; i < 4U; ++i)
         {
             Step(QUIET_FEEDBACK);
-            assert(jetson_control_state == JETSON_DISARMED && !Chassis_Is_Enabled());
+            assert(manual_control_state == MANUAL_DISARMED && !Chassis_Is_Enabled());
         }
         assert(disables == 3U && nonzero_controls == before_nonzero);
     }
@@ -621,7 +623,7 @@ static void Test_Ranges(void)
         Prepare_Ready();
         Receive(rejected[i][0], rejected[i][1], rejected[i][2], 1U, 7U);
         Step(QUIET_FEEDBACK);
-        assert(jetson_control_state == JETSON_BRAKING && nonzero_controls == 0U);
+        assert(manual_control_state == MANUAL_BRAKING && nonzero_controls == 0U);
     }
     Reset(0U, 0U);
     Prepare_Ready();
@@ -632,6 +634,54 @@ static void Test_Ranges(void)
     Motor_Chassis_Forward(wheels, body);
     assert(fabsf(body[0] - 0.5f) < 0.00001f && fabsf(body[1]) < 0.00001f);
     assert(fabsf(body[2] - 1.0f) < 0.00001f);
+}
+
+/** @brief 发送一组 0x180 心跳流量：有效全零、有效非零、valid=0 全零、畸形和空帧。 @return 无。 */
+static void Receive_Heartbeat_Traffic(void)
+{
+    const uint8_t zero[7] = {1U};
+    const uint8_t moving[7] = {1U, 0xF4U, 0x01U};
+    const uint8_t empty[7] = {0U};
+    const uint8_t malformed[7] = {2U};
+    Jetson_CAN_Receive(0x180U, zero, sizeof(zero));
+    Jetson_CAN_Receive(0x180U, moving, sizeof(moving));
+    Jetson_CAN_Receive(0x180U, empty, sizeof(empty));
+    Jetson_CAN_Receive(0x180U, malformed, sizeof(malformed));
+    Jetson_CAN_Receive(0x180U, NULL, 0U);
+}
+
+/** @brief 手动固件中 0x180 不能使能、撤权、停车或续期 0x17F：只看手动快照。 @return 无。 */
+static void Test_Heartbeat_Isolated(void)
+{
+    Reset(0U, 0U);
+    for (unsigned i = 0U; i < 10U; ++i)
+    {
+        Receive_Heartbeat_Traffic();
+        Step(QUIET_FEEDBACK);
+        assert(manual_control_state == MANUAL_DISARMED && !Chassis_Is_Enabled() && enables == 0U);
+    }
+    Manual_CAN_Velocity_t velocity;
+    Manual_CAN_Get_Velocity(&velocity);
+    assert(velocity.sequence == 0U && !velocity.invalid_sequence && !velocity.zero_sequence);
+
+    Prepare_Ready();
+    Start_Moving(100, 0, 0);
+    Receive(100, 0, 0, 1U, 7U);
+    const uint32_t received_ms = test_tick;
+    /* 0x180 持续到达期间，手动运行既不被撤权也不被延长：最后一条 0x17F 起 250 ms 制动。 */
+    while ((uint32_t)(test_tick - received_ms) < MANUAL_VELOCITY_TIMEOUT_MS - 10U)
+    {
+        Advance(10U);
+        Receive_Heartbeat_Traffic();
+        Service(MOVING_FEEDBACK, 1U);
+        assert(manual_control_state == MANUAL_RUNNING && Chassis_Is_Enabled());
+    }
+    const uint32_t before_nonzero = nonzero_controls;
+    Advance(MANUAL_VELOCITY_TIMEOUT_MS - (test_tick - received_ms));
+    Receive_Heartbeat_Traffic();
+    Service(MOVING_FEEDBACK, 1U);
+    assert((uint32_t)(test_tick - received_ms) == MANUAL_VELOCITY_TIMEOUT_MS);
+    assert(manual_control_state == MANUAL_BRAKING && nonzero_controls == before_nonzero);
 }
 
 /** @brief 验证真实协议到 CAN 目标提交的通信控制组合。 @return 成功返回 0。 */
@@ -649,6 +699,7 @@ int main(void)
     Test_Feedback_And_IMU();
     Test_Chassis_Protection();
     Test_Ranges();
-    puts("PASS Jetson control: real codec/chassis startup, invalid batches, deadlines, guards and wraparound");
+    Test_Heartbeat_Isolated();
+    puts("PASS Manual control: 0x17F codec/chassis startup, invalid batches, deadlines, guards, wraparound, 0x180 isolation");
     return 0;
 }

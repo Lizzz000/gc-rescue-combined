@@ -12,7 +12,8 @@
 #include "bsp_led.h"
 #include "bsp_buzzer.h"
 #include "jetson_can.h"
-#include "jetson_control.h"
+#include "manual_can.h"
+#include "manual_control.h"
 #include "transport_servo.h"
 
 static CAN_TypeDef can1_regs, can2_regs;
@@ -35,24 +36,26 @@ static uint32_t rx_head, rx_tail, rx_pending;
 static uint32_t jetson_rx_count;
 static uint16_t jetson_rx_id;
 static uint8_t jetson_rx_length, jetson_rx_data[8];
+static uint32_t manual_rx_count;
+static uint8_t manual_rx_length, manual_rx_data[8];
 static uint32_t tx_count, rx_count, loops, setup_steps;
 static uint32_t tx_mailboxes_free = 3U;
 static uint32_t chassis_inits, chassis_loops;
-static uint32_t jetson_can_inits, jetson_control_inits, jetson_control_loops;
-volatile Jetson_Control_State_t jetson_control_state;
+static uint32_t jetson_can_inits, manual_can_inits, manual_control_inits, manual_control_loops;
+volatile Manual_Control_State_t manual_control_state;
 static uint32_t calibration_case, calibration_loops;
 static const struct
 {
-    Jetson_Control_State_t state;
+    Manual_Control_State_t state;
     uint8_t enabled, stopped, allowed;
 } calibration_cases[] = {
-    {JETSON_DISARMED,  0U, 0U, 1U},
-    {JETSON_PREPARING, 1U, 1U, 0U},
-    {JETSON_READY,     1U, 1U, 1U},
-    {JETSON_READY,     1U, 0U, 0U},
-    {JETSON_RUNNING,   1U, 0U, 0U},
-    {JETSON_BRAKING,   1U, 1U, 0U},
-    {JETSON_DISARMED,  1U, 0U, 0U},
+    {MANUAL_DISARMED,  0U, 0U, 1U},
+    {MANUAL_PREPARING, 1U, 1U, 0U},
+    {MANUAL_READY,     1U, 1U, 1U},
+    {MANUAL_READY,     1U, 0U, 0U},
+    {MANUAL_RUNNING,   1U, 0U, 0U},
+    {MANUAL_BRAKING,   1U, 1U, 0U},
+    {MANUAL_DISARMED,  1U, 0U, 0U},
 };
 static HAL_StatusTypeDef start_result = HAL_OK;
 static HAL_StatusTypeDef tx_result = HAL_OK;
@@ -84,6 +87,18 @@ void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t length)
     ++jetson_rx_count;
 }
 
+/** @brief 捕获共用入口交给手动模块的 0x17F。
+ * @param[in] data 数据。 @param[in] length 字节数。 @return 无。
+ */
+void Manual_CAN_Receive(const uint8_t *data, uint8_t length)
+{
+    assert(length <= 8U);
+    manual_rx_length = length;
+    memset(manual_rx_data, 0, sizeof(manual_rx_data));
+    memcpy(manual_rx_data, data, length);
+    ++manual_rx_count;
+}
+
 /** @brief 把当前测试帧放入模拟 FIFO，可连续放入多帧验证同次回调分流。
  * @return 无。
  */
@@ -109,17 +124,20 @@ void Chassis_Init(void) { assert(setup_steps == 0U && test_tick == 0U); ++chassi
 /** @brief 核对协议初始化先于 CAN 中断。 @return 无。 */
 void Jetson_CAN_Init(void)
 { assert(chassis_inits == 1U && setup_steps == 0U); ++jetson_can_inits; }
+/** @brief 核对手动快照初始化先于 CAN 中断。 @return 无。 */
+void Manual_CAN_Init(void)
+{ assert(jetson_can_inits == 1U && setup_steps == 0U); ++manual_can_inits; }
 /** @brief 核对控制初始化先于 CAN 中断。 @return 无。 */
-void Jetson_Control_Init(void)
-{ assert(jetson_can_inits == 1U && setup_steps == 0U); ++jetson_control_inits; }
+void Manual_Control_Init(void)
+{ assert(manual_can_inits == 1U && setup_steps == 0U); ++manual_control_inits; }
 /** @brief 核对通信控制在同一任务且先于底盘周期执行。 @return 无。 */
-void Jetson_Control_Loop(void)
+void Manual_Control_Loop(void)
 {
-    assert(jetson_control_inits == 1U && test_tick == 5U * (jetson_control_loops + 1U));
-    assert(chassis_loops == jetson_control_loops);
-    calibration_case = jetson_control_loops % (sizeof(calibration_cases) / sizeof(calibration_cases[0]));
-    jetson_control_state = calibration_cases[calibration_case].state;
-    ++jetson_control_loops;
+    assert(manual_control_inits == 1U && test_tick == 5U * (manual_control_loops + 1U));
+    assert(chassis_loops == manual_control_loops);
+    calibration_case = manual_control_loops % (sizeof(calibration_cases) / sizeof(calibration_cases[0]));
+    manual_control_state = calibration_cases[calibration_case].state;
+    ++manual_control_loops;
 }
 /** @brief 核对原任务每5ms调用一次底盘调度；动作算法另由chassis suite编译验证。
  * @return 无。
@@ -127,7 +145,7 @@ void Jetson_Control_Loop(void)
 void Chassis_Loop(void)
 {
     assert(test_tick == 5U * (chassis_loops + 1U));
-    assert(jetson_control_loops == chassis_loops + 1U);
+    assert(manual_control_loops == chassis_loops + 1U);
     ++chassis_loops;
 }
 
@@ -347,7 +365,7 @@ int main(void)
     Receive_Current_Frame();
     assert(dm_motor[0].feedback_seq == 1U && dm_motor[1].feedback_seq == 1U && dm_motor[2].feedback_seq == 1U);
     assert(dm_motor[0].feedback_time_ms == 12U && dm_motor[1].feedback_time_ms == 0U && dm_motor[2].feedback_time_ms == 27U);
-    assert(jetson_rx_count == 0U);
+    assert(jetson_rx_count == 0U && manual_rx_count == 0U);
 
     /* 同次 FIFO0 回调先处理电机反馈，再接收速度和转向授权，不能互相覆盖。 */
     test_tick = 51U;
@@ -368,9 +386,21 @@ int main(void)
     assert(jetson_rx_count == 2U && jetson_rx_id == 0x193U && jetson_rx_length == 6U);
     assert(memcmp(jetson_rx_data, turn, 6) == 0);
 
-    /* 所有下行 ID 可达协议层；畸形长度仍交给协议层撤销旧速度。 */
-    const uint16_t jetson_ids[] = {0x17FU, 0x180U, 0x181U, 0x182U, 0x190U, 0x191U, 0x192U, 0x193U};
-    const uint8_t jetson_lengths[] = {7U, 7U, 5U, 5U, 1U, 3U, 6U, 6U};
+    /* 0x17F 只进手动模块，任意长度都交给它撤销旧速度，不进入 Jetson 协议层。 */
+    rx_header.StdId = 0x17FU;
+    for (unsigned length = 0U; length <= 8U; ++length)
+    {
+        rx_header.DLC = length;
+        memcpy(rx_data, velocity, 8);
+        Receive_Current_Frame();
+        assert(manual_rx_count == length + 1U && manual_rx_length == length);
+        assert(memcmp(manual_rx_data, velocity, length) == 0);
+    }
+    assert(jetson_rx_count == 2U);
+
+    /* 七种 Jetson 下行 ID 可达协议层，不进入手动模块。 */
+    const uint16_t jetson_ids[] = {0x180U, 0x181U, 0x182U, 0x190U, 0x191U, 0x192U, 0x193U};
+    const uint8_t jetson_lengths[] = {7U, 5U, 5U, 1U, 3U, 6U, 6U};
     for (unsigned i = 0U; i < sizeof(jetson_ids) / sizeof(jetson_ids[0]); ++i)
     {
         rx_header.StdId = jetson_ids[i]; rx_header.DLC = jetson_lengths[i];
@@ -384,7 +414,7 @@ int main(void)
         Receive_Current_Frame();
         assert(jetson_rx_id == 0x180U && jetson_rx_length == length);
     }
-    assert(jetson_rx_count == 19U && dm_motor[0].feedback_seq == 2U);
+    assert(jetson_rx_count == 18U && manual_rx_count == 9U && dm_motor[0].feedback_seq == 2U);
 
     /* 不属于下行的握手、未知 ID、扩展帧、远程帧与超长帧不进入任一解析器。 */
     const uint16_t rejected_ids[] = {1U, 3U, 0x183U, 0x200U, 0x203U, 0x204U, 0x205U, 0x206U, 0x7FFU};
@@ -400,7 +430,7 @@ int main(void)
     Receive_Current_Frame();
     rx_header.RTR = CAN_RTR_DATA; rx_header.DLC = 9U;
     Receive_Current_Frame();
-    assert(jetson_rx_count == 19U && dm_motor[0].feedback_seq == 2U);
+    assert(jetson_rx_count == 18U && manual_rx_count == 9U && dm_motor[0].feedback_seq == 2U);
     assert(dm_motor[1].feedback_seq == 1U && dm_motor[2].feedback_seq == 1U);
     DM_Motor_ReceiveFeedback(NULL);
     assert(dm_motor[0].feedback_seq == 2U);
@@ -414,7 +444,7 @@ int main(void)
     assert(pwm_starts == 0U && buzzer_starts == 0U && buzzer_stops == 1U);
     assert(led_toggles == 2U && battery_reads == 11U);
     assert(chassis_inits == 1U && chassis_loops == 200U);
-    assert(jetson_can_inits == 1U && jetson_control_inits == 1U && jetson_control_loops == 200U);
+    assert(jetson_can_inits == 1U && manual_can_inits == 1U && manual_control_inits == 1U && manual_control_loops == 200U);
     assert(calibration_loops == 200U);
     assert(fabsf(battery_voltage - 24.11f) < 0.0001f);
     puts("PASS CAN: hardware ID filters, shared FIFO routing, MIT feedback and 5ms task ordering");

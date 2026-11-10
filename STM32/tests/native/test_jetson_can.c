@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "jetson_can.h"
+#include "manual_can.h"
 #include "task.h"
 
 uint32_t test_tick;
@@ -48,63 +49,81 @@ static Jetson_CAN_Data_t Snapshot(void)
     return snapshot;
 }
 
-/** @brief 核对小端负数、全范围定点原值及无效帧即时覆盖旧指令。 */
-static void Check_Velocity(void)
+/** @brief 核对速度帧格式校验与解码：小端负数、全范围原值，无效或畸形整帧清零。 */
+static void Check_Velocity_Decode(void)
 {
-    Jetson_CAN_Init();
-    Jetson_CAN_Data_t data = Snapshot();
-    assert(!data.velocity.valid && data.velocity.sequence == 0U &&
-           !data.velocity.invalid_sequence && !data.velocity.zero_sequence);
-    test_tick = 123U;
-    Jetson_CAN_Receive(0x180U, velocity_frame, sizeof(velocity_frame));
-    data = Snapshot();
-    assert(data.velocity.valid && data.velocity.vx == -500 && data.velocity.vy == 250);
-    assert(data.velocity.wz == -1000 && data.velocity.received_ms == 123U);
-    assert(data.velocity.sequence == 1U && !data.velocity.invalid_sequence);
+    Jetson_CAN_Velocity_Frame_t frame;
+    Jetson_CAN_Decode_Velocity(velocity_frame, sizeof(velocity_frame), &frame);
+    assert(frame.valid && frame.vx == -500 && frame.vy == 250 && frame.wz == -1000);
     const uint8_t extremes[7] = {1U, 0U, 0x80U, 0xFFU, 0x7FU, 0xFFU, 0xFFU};
-    Jetson_CAN_Receive(0x180U, extremes, sizeof(extremes));
-    data = Snapshot();
-    assert(data.velocity.vx == INT16_MIN && data.velocity.vy == INT16_MAX);
-    assert(data.velocity.wz == -1 && data.velocity.sequence == 2U);
-    for (uint8_t valid = 0U; valid <= 2U; valid += 2U)
+    Jetson_CAN_Decode_Velocity(extremes, sizeof(extremes), &frame);
+    assert(frame.vx == INT16_MIN && frame.vy == INT16_MAX && frame.wz == -1);
+    const uint8_t invalid[7] = {0U, 1U, 2U, 3U, 4U, 5U, 6U};
+    const uint8_t malformed[7] = {2U, 1U, 2U, 3U, 4U, 5U, 6U};
+    assert(Jetson_CAN_Is_Velocity_Frame(invalid, sizeof(invalid)));
+    assert(!Jetson_CAN_Is_Velocity_Frame(malformed, sizeof(malformed)));
+    assert(!Jetson_CAN_Is_Velocity_Frame(NULL, 7U));
+    for (uint8_t len = 0U; len <= 8U; ++len)
+        assert(Jetson_CAN_Is_Velocity_Frame(velocity_frame, len) == (len == 7U));
+    const uint8_t *frames[] = {invalid, malformed, NULL, velocity_frame};
+    const uint8_t lengths[] = {7U, 7U, 7U, 6U};
+    for (unsigned i = 0U; i < sizeof(frames) / sizeof(frames[0]); ++i)
     {
-        uint8_t invalid[7] = {valid, 1U, 2U, 3U, 4U, 5U, 6U};
-        uint32_t sequence = data.velocity.sequence;
-        uint32_t invalid_sequence = data.velocity.invalid_sequence;
-        ++test_tick;
-        Jetson_CAN_Receive(0x180U, invalid, sizeof(invalid));
-        data = Snapshot();
-        assert(!data.velocity.valid && !data.velocity.vx && !data.velocity.vy && !data.velocity.wz);
-        assert(data.velocity.sequence == sequence + 1U && data.velocity.received_ms == test_tick);
-        assert(data.velocity.invalid_sequence == invalid_sequence + 1U);
-        assert(data.velocity.zero_sequence == 0U);
+        Jetson_CAN_Decode_Velocity(velocity_frame, sizeof(velocity_frame), &frame);
+        Jetson_CAN_Decode_Velocity(frames[i], lengths[i], &frame);
+        assert(!frame.valid && !frame.vx && !frame.vy && !frame.wz);
     }
-    Jetson_CAN_Receive(0x180U, zero_frame, sizeof(zero_frame));
-    data = Snapshot();
-    assert(data.velocity.valid && !data.velocity.vx && !data.velocity.vy && !data.velocity.wz);
-    assert(data.velocity.zero_sequence == 1U);
-    uint32_t sequence = data.velocity.sequence;
-    test_tick = UINT32_MAX;
-    Jetson_CAN_Receive(0x180U, NULL, 7U);
-    data = Snapshot();
-    assert(!data.velocity.valid && data.velocity.sequence == sequence + 1U);
-    assert(data.velocity.received_ms == UINT32_MAX && data.velocity.zero_sequence == 1U);
-    test_tick = 0U;
-    Jetson_CAN_Receive(0x180U, velocity_frame, sizeof(velocity_frame));
-    assert(Snapshot().velocity.received_ms == 0U);
-    /* 两次接收之间不运行任务：末条有效速度不能抹去前条撤权。 */
-    uint32_t invalid_sequence = Snapshot().velocity.invalid_sequence;
-    Jetson_CAN_Receive(0x180U, NULL, 0U);
-    Jetson_CAN_Receive(0x180U, velocity_frame, sizeof(velocity_frame));
-    data = Snapshot();
-    assert(data.velocity.valid && data.velocity.vx == -500);
-    assert(data.velocity.invalid_sequence == invalid_sequence + 1U && data.velocity.zero_sequence == 1U);
-    Jetson_CAN_Receive(0x180U, zero_frame, sizeof(zero_frame));
-    data = Snapshot();
-    assert(data.velocity.invalid_sequence == invalid_sequence + 1U && data.velocity.zero_sequence == 2U);
 }
 
-/** @brief 逐项验证精确 DLC；任何错误长度均不得沿用上一条有效数据。 */
+/** @brief 0x180 只作心跳：合法格式（含 valid=0 全零）保活，畸形不保活，空帧计失联。 */
+static void Check_Heartbeat(void)
+{
+    Jetson_CAN_Init();
+    const uint8_t empty_heartbeat[7] = {0U};
+    test_tick = 10U;
+    Jetson_CAN_Receive(0x180U, empty_heartbeat, sizeof(empty_heartbeat));
+    Jetson_CAN_Data_t data = Snapshot();
+    assert(data.heartbeat_seen && data.heartbeat_received_ms == 10U && data.rx_sequence == 1U);
+    test_tick = 20U;
+    Jetson_CAN_Receive(0x180U, velocity_frame, sizeof(velocity_frame));
+    data = Snapshot();
+    assert(data.heartbeat_seen && data.heartbeat_received_ms == 20U && data.rx_sequence == 2U);
+    const uint8_t malformed[7] = {2U};
+    test_tick = 30U;
+    Jetson_CAN_Receive(0x180U, malformed, sizeof(malformed));
+    Jetson_CAN_Receive(0x180U, empty_heartbeat, 6U);
+    Jetson_CAN_Receive(0x180U, NULL, 7U);
+    data = Snapshot();
+    assert(data.heartbeat_seen && data.heartbeat_received_ms == 20U && data.rx_sequence == 5U);
+    assert(data.mission_loss_sequence == 0U);
+    /* 空帧失联后紧跟心跳：心跳恢复，但失联计数保留给任务。 */
+    Jetson_CAN_Receive(0x180U, NULL, 0U);
+    data = Snapshot();
+    assert(!data.heartbeat_seen && data.mission_loss_sequence == 1U && data.rx_sequence == 6U);
+    Jetson_CAN_Receive(0x180U, empty_heartbeat, sizeof(empty_heartbeat));
+    data = Snapshot();
+    assert(data.heartbeat_seen && data.heartbeat_received_ms == 30U && data.mission_loss_sequence == 1U);
+}
+
+/** @brief 手动 0x17F 对 Jetson 模块是未知 ID：不产生或清除心跳，不推进接收序号。 */
+static void Check_Manual_Ignored(void)
+{
+    Jetson_CAN_Init();
+    Jetson_CAN_Receive(0x180U, velocity_frame, sizeof(velocity_frame));
+    const Jetson_CAN_Data_t before = Snapshot();
+    const uint8_t zero_17f[7] = {1U};
+    Jetson_CAN_Receive(MANUAL_CAN_VELOCITY_ID, velocity_frame, sizeof(velocity_frame));
+    Jetson_CAN_Receive(MANUAL_CAN_VELOCITY_ID, zero_17f, sizeof(zero_17f));
+    Jetson_CAN_Receive(MANUAL_CAN_VELOCITY_ID, NULL, 0U);
+    const Jetson_CAN_Data_t after = Snapshot();
+    assert(memcmp(&before, &after, sizeof(before)) == 0);
+    Jetson_CAN_Init();
+    Jetson_CAN_Receive(MANUAL_CAN_VELOCITY_ID, velocity_frame, sizeof(velocity_frame));
+    const Jetson_CAN_Data_t idle = Snapshot();
+    assert(!idle.heartbeat_seen && !idle.rx_sequence && !idle.mission_loss_sequence);
+}
+
+/** @brief 逐项验证精确 DLC；错误长度不得沿用上一条有效数据，也不刷新心跳。 */
 static void Check_Lengths(void)
 {
     const uint16_t ids[] = {0x180U, 0x181U, 0x182U, 0x190U, 0x191U, 0x192U, 0x193U};
@@ -112,8 +131,6 @@ static void Check_Lengths(void)
     const uint8_t frame[8] = {1U, 1U, 1U, 0U, 0U, 0U, 0U, 0U};
     for (unsigned i = 0U; i < sizeof(ids) / sizeof(ids[0]); ++i)
     {
-        if (ids[i] != 0x180U)
-            Jetson_CAN_Receive(0x180U, velocity_frame, sizeof(velocity_frame));
         for (uint8_t len = 0U; len <= 8U; ++len)
         {
             if (len == lengths[i])
@@ -125,8 +142,8 @@ static void Check_Lengths(void)
             switch (ids[i])
             {
             case 0x180U:
-                assert(!data.velocity.valid && !data.velocity.vx);
-                assert(data.velocity.sequence == before.velocity.sequence + 1U);
+                assert(data.heartbeat_received_ms == before.heartbeat_received_ms);
+                assert(data.heartbeat_seen == (len != 0U));
                 break;
             case 0x181U: assert(!data.target.valid && !data.target.x && !data.target.y); break;
             case 0x182U: assert(!data.safety.valid && !data.safety.x && !data.safety.y); break;
@@ -136,14 +153,7 @@ static void Check_Lengths(void)
             case 0x193U: assert(!data.turn_to_safety.valid && !data.turn_to_safety.token); break;
             default: assert(0);
             }
-            if (ids[i] != 0x180U)
-            {
-                assert(data.velocity.valid == before.velocity.valid);
-                assert(data.velocity.vx == -500 && data.velocity.vy == 250 && data.velocity.wz == -1000);
-                assert(data.velocity.sequence == before.velocity.sequence);
-                assert(data.velocity.invalid_sequence == before.velocity.invalid_sequence);
-                assert(data.velocity.received_ms == before.velocity.received_ms);
-            }
+            assert(data.rx_sequence == before.rx_sequence + 1U);
         }
     }
 }
@@ -240,17 +250,16 @@ static void Check_Snapshot(void)
     assert(critical_entries == entries);
     receive_on_enter = receive_on_exit = 1U;
     Jetson_CAN_Data_t before = Snapshot();
-    assert(before.velocity.valid && before.velocity.vx == -500 && before.velocity.wz == -1000);
+    assert(before.heartbeat_seen && before.heartbeat_received_ms == test_tick);
     Jetson_CAN_Data_t after = Snapshot();
-    assert(after.velocity.valid && !after.velocity.vx && !after.velocity.wz);
-    assert(after.velocity.sequence == before.velocity.sequence + 1U);
+    assert(after.rx_sequence == before.rx_sequence + 1U);
     const uint16_t ignored[] = {0U, 0x200U, 0x201U, 0x202U, 0x203U, 0x7FFU, 0x1180U};
     for (unsigned i = 0U; i < sizeof(ignored) / sizeof(ignored[0]); ++i)
         Jetson_CAN_Receive(ignored[i], NULL, 255U);
-    assert(Snapshot().velocity.sequence == after.velocity.sequence);
+    assert(Snapshot().rx_sequence == after.rx_sequence);
     Jetson_CAN_Init();
     after = Snapshot();
-    assert(!after.velocity.valid && !after.velocity.sequence && !after.velocity.received_ms);
+    assert(!after.heartbeat_seen && !after.rx_sequence && !after.heartbeat_received_ms);
     assert(!after.target.valid && !after.safety.valid && !after.arrival_ack.valid);
     assert(!after.roi_reply.valid && !after.command_reply.valid && !after.turn_to_safety.valid);
 }
@@ -289,35 +298,31 @@ static void Check_Uplink(void)
     assert(Jetson_CAN_Encode_Uplink(0x200U, 0U, NULL) == 0U);
 }
 
-/** @brief 同一毫秒内区分速度心跳、已知帧到达顺序与未知帧。 */
+/** @brief 同一毫秒内区分心跳、已知帧到达顺序与未知帧。 */
 static void Check_Receive_Sequence(void)
 {
     Jetson_CAN_Init();
     test_tick = 42U;
     Jetson_CAN_Receive(0x180U, zero_frame, sizeof(zero_frame));
     Jetson_CAN_Data_t data = Snapshot();
-    assert(data.rx_sequence == 1U && data.velocity.sequence == 1U);
-    assert(data.velocity.well_formed && data.velocity.valid);
+    assert(data.rx_sequence == 1U);
     assert(data.heartbeat_seen && data.heartbeat_received_ms == 42U);
 
     const uint8_t invalid[7] = {0U};
     ++test_tick;
     Jetson_CAN_Receive(0x180U, invalid, sizeof(invalid));
     data = Snapshot();
-    assert(data.rx_sequence == 2U && data.velocity.sequence == 2U);
-    assert(data.velocity.well_formed && !data.velocity.valid && data.velocity.invalid_sequence == 1U);
+    assert(data.rx_sequence == 2U);
     assert(data.heartbeat_seen && data.heartbeat_received_ms == 43U);
     const uint8_t malformed[7] = {2U};
     ++test_tick;
     Jetson_CAN_Receive(0x180U, malformed, sizeof(malformed));
     data = Snapshot();
-    assert(data.rx_sequence == 3U && data.velocity.sequence == 3U);
-    assert(!data.velocity.well_formed && !data.velocity.valid && data.velocity.invalid_sequence == 2U);
+    assert(data.rx_sequence == 3U);
     assert(data.heartbeat_received_ms == 43U);
     Jetson_CAN_Receive(0x180U, zero_frame, sizeof(zero_frame) - 1U);
     data = Snapshot();
-    assert(data.rx_sequence == 4U && data.velocity.sequence == 4U);
-    assert(!data.velocity.well_formed);
+    assert(data.rx_sequence == 4U && data.heartbeat_received_ms == 43U);
 
     const uint8_t frame[8] = {1U, 1U, 1U};
     Jetson_CAN_Receive(0x181U, frame, 8U);
@@ -328,7 +333,7 @@ static void Check_Receive_Sequence(void)
     Jetson_CAN_Receive(0x193U, frame, 6U);
     Jetson_CAN_Receive(0x194U, frame, 6U);
     data = Snapshot();
-    assert(data.rx_sequence == 10U && data.velocity.sequence == 4U);
+    assert(data.rx_sequence == 10U);
     assert(data.target.sequence == 5U && data.target.received_ms == test_tick);
     assert(data.safety.sequence == 6U && data.safety.received_ms == test_tick);
     assert(data.arrival_ack.sequence == 7U && data.arrival_ack.received_ms == test_tick);
@@ -374,15 +379,9 @@ static void Check_Command_Expectation(void)
 /** @brief 运行实际 Jetson 编解码模块的离线边界测试。 @return 全部通过返回 0。 */
 int main(void)
 {
-    /* 手动 ID 可控速度，但不能产生或清除自动心跳。 */
-    Jetson_CAN_Init();
-    Jetson_CAN_Receive(JETSON_CAN_MANUAL_ID, velocity_frame, sizeof(velocity_frame));
-    Jetson_CAN_Data_t manual = Snapshot();
-    assert(manual.velocity.valid && manual.velocity.vx == -500 && !manual.heartbeat_seen);
-    Jetson_CAN_Receive(JETSON_CAN_MANUAL_ID, NULL, 0U);
-    manual = Snapshot();
-    assert(!manual.velocity.valid && !manual.heartbeat_seen && manual.mission_loss_sequence == 0U);
-    Check_Velocity();
+    Check_Velocity_Decode();
+    Check_Heartbeat();
+    Check_Manual_Ignored();
     Check_Lengths();
     Check_Centers_And_ROI();
     Check_Handshake();

@@ -1,4 +1,4 @@
-"""编译实际业务C文件，验证底盘、CAN、传感器、姿态算法和VOFA；产物仅放临时目录。"""
+"""编译实际业务C文件，验证底盘、CAN、手动/自动控制、传感器、姿态算法和VOFA；产物仅放临时目录。"""
 from pathlib import Path
 import argparse
 import shutil
@@ -20,8 +20,11 @@ def main():
     suites = {
         "image_tracker": ["tests/native/test_image_tracker.c", "project/Core/Control/Jetson/image_tracker.c"],
         "jetson_can": ["tests/native/test_jetson_can.c", "project/Core/Communication/Jetson/jetson_can.c"],
-        "jetson_control": ["tests/native/test_jetson_control.c", "project/Core/Communication/Jetson/jetson_can.c",
-                           "project/Core/Control/Jetson/jetson_control.c", "project/Core/Control/Chassis/chassis.c",
+        "manual_can": ["tests/native/test_manual_can.c", "project/Core/Communication/Manual/manual_can.c",
+                       "project/Core/Communication/Jetson/jetson_can.c"],
+        "manual_control": ["tests/native/test_manual_control.c", "project/Core/Communication/Jetson/jetson_can.c",
+                           "project/Core/Communication/Manual/manual_can.c",
+                           "project/Core/Control/Manual/manual_control.c", "project/Core/Control/Chassis/chassis.c",
                            "project/Core/Algorithm/Chassis/motor_chassis.c", "project/Core/Algorithm/PID/pid.c"],
         "can": ["tests/native/test_can.c", "project/Core/Bsp/CAN/bsp_can.c", "project/Core/Devices/DM_Motor/dm_motor.c",
                 "project/Core/Task/CAN2/test_task.c"],
@@ -56,7 +59,8 @@ def main():
                 "project/Core/Algorithm/AHRS", "project/Core/Communication/VOFA", "project/Core/Algorithm/PID",
                 "project/Core/Bsp/IMU_PWM", "project/Core/Bsp/ADC", "project/Core/Bsp/LED", "project/Core/Bsp/Buzzer",
                 "project/Core/Algorithm/Chassis", "project/Core/Control/Chassis",
-                "project/Core/Communication/Jetson", "project/Core/Control/Jetson",
+                "project/Core/Communication/Jetson", "project/Core/Communication/Manual",
+                "project/Core/Control/Jetson", "project/Core/Control/Manual",
                 "project/Core/Bsp/Transport_Servo"]
     with tempfile.TemporaryDirectory(prefix="cboard_native_", dir=args.temp_dir) as build:
         for name, sources in suites.items():

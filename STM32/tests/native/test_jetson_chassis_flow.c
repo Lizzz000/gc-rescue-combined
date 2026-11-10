@@ -7,7 +7,6 @@
 #include "chassis.h"
 #include "jetson_auto.h"
 #include "jetson_can.h"
-#include "jetson_control.h"
 #include "task.h"
 #include "transport_servo.h"
 
@@ -79,7 +78,7 @@ uint8_t Chassis_Is_Enabled(void) { return enabled; }
 uint8_t Chassis_Is_Stopped(void) { return enabled && stopped; }
 
 /** @brief 提供可单独断开的三轮反馈条件。 @return 反馈正常为 1。 */
-uint8_t Jetson_Control_Motors_Ready(void) { return motors_ready; }
+uint8_t Chassis_Motors_Ready(void) { return motors_ready; }
 
 /** @brief 提供可独立设置样本年龄的姿态。 @param[out] data 姿态快照。 @return 有效为 1。 */
 uint8_t INS_Get_Data(INS_control_data_t *data)
