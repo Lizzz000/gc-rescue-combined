@@ -9,8 +9,11 @@ MAX_LINEAR_MPS = 0.5
 MAX_ANGULAR_RADPS = 2.0
 # 租约上限须小于 STM32 手动帧 250 ms 超时。
 MAX_LEASE_S = 0.2
-# STM32 使能握手要求先收到零速；从空闲开始运动前发零速的时长（沿用原 move_timed）。
-PREPARE_S = 0.5
+# STM32 在上电、valid=0、超时或自身保护（姿态/CAN、超速、电机反馈超时）后为 DISARMED，
+# 上位机看不到，须先收到 valid=1 全零帧才使能。每次从空闲或停车序列起步都先发；
+# 运动会话中指令零速再起步不发。默认值须实车确认，太短表现为起步即制动。
+DEFAULT_ARM_ZERO_S = 0.1
+MAX_ARM_ZERO_S = 1.0
 # 停车：先发零速 valid=1，再转入 valid=0。
 STOP_ZERO_S = 0.3
 MAX_TIMED_S = 3600.0
@@ -19,7 +22,7 @@ _SCALE = 1000
 
 class Phase(enum.Enum):
     IDLE = 'idle'          # valid=0
-    PREPARE = 'prepare'    # 零速 valid=1，之后进入 ACTIVE
+    PREPARE = 'prepare'    # 使能零速 valid=1，之后进入 ACTIVE
     ACTIVE = 'active'      # 指令速度 valid=1
     STOPPING = 'stopping'  # 零速 valid=1，之后进入 IDLE
 
@@ -37,12 +40,15 @@ def quantize(vx, vy, wz):
 
 
 class ManualCommand:
-    """线程安全的指令状态。hold 续租约；timed 定时；stop 或过期进入停车序列。"""
+    """线程安全的指令状态。hold 续租约；timed 定时；stop 或过期进入停车序列，之后起步重新使能。"""
 
-    def __init__(self, lease_s):
+    def __init__(self, lease_s, arm_zero_s):
         if not 0.0 < lease_s <= MAX_LEASE_S:
             raise ValueError(f'lease_s 须在 (0, {MAX_LEASE_S}] 秒内')
+        if not 0.0 < arm_zero_s <= MAX_ARM_ZERO_S:
+            raise ValueError(f'arm_zero_s 须在 (0, {MAX_ARM_ZERO_S}] 秒内')
         self._lease_s = lease_s
+        self._arm_zero_s = arm_zero_s
         self._lock = threading.Lock()
         self._phase = Phase.IDLE
         self._phase_until = 0.0
@@ -59,8 +65,8 @@ class ManualCommand:
             raise ValueError(f'seconds 须在 (0, {MAX_TIMED_S:g}] 秒内')
         velocity = quantize(vx, vy, wz)
         with self._lock:
-            # 定时从运动开始计时，准备阶段不占用时长。
-            prepare = PREPARE_S if self._phase in (Phase.IDLE, Phase.PREPARE) else 0.0
+            # 定时从运动开始计时，使能零速不占用时长。
+            prepare = 0.0 if self._phase is Phase.ACTIVE else self._arm_zero_s
         self._start(velocity, now + prepare + seconds, now)
 
     def stop(self, now):
@@ -87,10 +93,8 @@ class ManualCommand:
     def _start(self, velocity, deadline, now):
         with self._lock:
             self._advance(now)
-            if self._phase is Phase.IDLE:
-                self._phase, self._phase_until = Phase.PREPARE, now + PREPARE_S
-            elif self._phase is Phase.STOPPING:
-                self._phase = Phase.ACTIVE
+            if self._phase in (Phase.IDLE, Phase.STOPPING):
+                self._phase, self._phase_until = Phase.PREPARE, now + self._arm_zero_s
             self._velocity = velocity
             self._deadline = deadline
 

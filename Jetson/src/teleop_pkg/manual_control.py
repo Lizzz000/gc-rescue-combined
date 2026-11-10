@@ -11,7 +11,8 @@ import sys
 import threading
 import time
 
-from manual.command import MAX_LEASE_S, STOP_ZERO_S, ManualCommand
+from manual.command import (
+    DEFAULT_ARM_ZERO_S, MAX_ARM_ZERO_S, MAX_LEASE_S, STOP_ZERO_S, ManualCommand)
 from manual.link import DamiaoLink, LinkError, manual_packet
 from web.server import BIND_ADDRESS, ManualServer
 
@@ -31,6 +32,8 @@ def parse_arguments():
     parser.add_argument('--rate-hz', type=float, default=DEFAULT_RATE_HZ, help='0x17F 发送频率')
     parser.add_argument('--lease-s', type=float, default=MAX_LEASE_S,
                         help=f'按住指令租约，(0, {MAX_LEASE_S}] 秒')
+    parser.add_argument('--arm-zero-s', type=float, default=DEFAULT_ARM_ZERO_S,
+                        help=f'从 valid=0 起步前的使能零速时长，(0, {MAX_ARM_ZERO_S}] 秒；需实车确认')
     args = parser.parse_args()
     if not 0 <= args.port <= 65535:
         parser.error('端口须在 0..65535')
@@ -38,6 +41,8 @@ def parse_arguments():
         parser.error('发送频率须在 [10, 1000] Hz')
     if not 0.0 < args.lease_s <= MAX_LEASE_S:
         parser.error(f'租约须在 (0, {MAX_LEASE_S}] 秒')
+    if not 0.0 < args.arm_zero_s <= MAX_ARM_ZERO_S:
+        parser.error(f'使能零速须在 (0, {MAX_ARM_ZERO_S}] 秒')
     return args
 
 
@@ -78,7 +83,7 @@ class Sender:
 
 def main():
     args = parse_arguments()
-    command = ManualCommand(args.lease_s)
+    command = ManualCommand(args.lease_s, args.arm_zero_s)
     try:
         link = DamiaoLink(args.device)
     except OSError as error:
