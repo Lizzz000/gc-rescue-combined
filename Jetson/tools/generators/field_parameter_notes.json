@@ -482,18 +482,6 @@
       "unit": "无量纲比例",
       "purpose": "黑带测量中点偏离鸟瞰几何中心超过此比例时标记split_suspect；可靠测量仍用于分区。"
     },
-    "split_ema_alpha": {
-      "group": "split",
-      "level": "高级",
-      "unit": "无量纲比例",
-      "purpose": "小抖动时上下端点的最低测量权重；位移增大时提高权重，无可靠测量时清历史。"
-    },
-    "split_jump_frac": {
-      "group": "split",
-      "level": "高级",
-      "unit": "无量纲比例",
-      "purpose": "端点位移相对BEV宽度的平滑尺度；达到尺度直接采用当前测量，不作硬拒绝。"
-    },
     "bev_border_margin_frac": {
       "group": "split",
       "level": "高级",

@@ -70,17 +70,21 @@ Outcome runScene(Scene scene, const FieldConfig & config)
   return out;
 }
 
-struct Case {std::string group, name; Scene scene; bool positive;};
+// POSITIVE：须完整有效且中线准确；OCCLUDED：中线在可见内部被物块完全盖住，可以不输出，
+// 但输出时必须准确；NEGATIVE：任何一帧都不能提交外框。
+enum class Expect {POSITIVE, OCCLUDED, NEGATIVE};
+
+struct Case {std::string group, name; Scene scene; Expect expect;};
 
 std::vector<Case> matrix()
 {
   std::vector<Case> cases;
   const cv::Scalar black(28, 28, 30), white(235, 235, 232), blue(170, 80, 30), yellow(40, 200, 220), green(60, 160, 60);
-  auto add = [&](const std::string & g, const std::string & n, Scene s, bool positive = true) {
+  auto add = [&](const std::string & g, const std::string & n, Scene s, Expect expect = Expect::POSITIVE) {
       for (unsigned seed = 1; seed <= 3; ++seed) {
         Scene v = s; v.seed = seed * 7919 + unsigned(cases.size());
         v.cam_x += 0.03 * (int(seed) - 2); v.cam_d += 0.04 * (int(seed) - 2);
-        cases.push_back({g, n, v, positive});
+        cases.push_back({g, n, v, expect});
       }
     };
   Scene base;
@@ -104,11 +108,12 @@ std::vector<Case> matrix()
   // 杂物
   {Scene s = base; s.clutter = 4; add("杂物", "红紫杂物", s);}
   // 物块
-  {Scene s = base; s.blocks = {{0.0, 0.2, 0.05, 0.05, black}}; add("物块", "黑块压线", s);}
-  {Scene s = base; s.blocks = {{0.0, 0.15, 0.05, 0.05, white}}; add("物块", "白块压线", s);}
+  // 相机高 0.22 m 时 5 cm 立方体压在中线上，可见内部范围内中线整段被挡住。
+  {Scene s = base; s.blocks = {{0.0, 0.2, 0.05, 0.05, black}}; add("物块", "黑块压线", s, Expect::OCCLUDED);}
+  {Scene s = base; s.blocks = {{0.0, 0.15, 0.05, 0.05, white}}; add("物块", "白块压线", s, Expect::OCCLUDED);}
   {Scene s = base; s.blocks = {{0.045, 0.2, 0.05, 0.05, blue}}; add("物块", "蓝块贴线", s);}
   {Scene s = base; s.blocks = {{-0.15, 0.12, 0.05, 0.05, black}, {0.12, 0.25, 0.05, 0.05, yellow},
-     {0.02, 0.08, 0.04, 0.04, green}}; add("物块", "多块", s);}
+     {0.02, 0.08, 0.04, 0.04, green}}; add("物块", "多块", s, Expect::OCCLUDED);}
   // 距离/视角/出画
   {Scene s = base; s.cam_d = 1.1; s.cam_h = 0.3; add("视角", "远", s);}
   {Scene s = base; s.cam_d = 0.3; s.cam_h = 0.18; add("视角", "近", s);}
@@ -124,15 +129,15 @@ std::vector<Case> matrix()
   {Scene s = base; s.exposure = 0.6; s.contrast = 0.7; s.jpeg = 40; s.motion_blur = 7; s.clutter = 3;
    s.blocks = {{0.08, 0.22, 0.05, 0.05, white}}; add("组合", "暗+低对比+模糊+杂物+物块", s);}
   // 负例
-  {Scene s = base; s.tray = false; s.clutter = 6; add("负例", "无场地+红紫杂物", s, false);}
-  {Scene s = base; s.interior = false; add("负例", "只有紫框", s, false);}
-  {Scene s = base; s.purple_frame = false; add("负例", "只有红板", s, false);}
+  {Scene s = base; s.tray = false; s.clutter = 6; add("负例", "无场地+红紫杂物", s, Expect::NEGATIVE);}
+  {Scene s = base; s.interior = false; add("负例", "只有紫框", s, Expect::NEGATIVE);}
+  {Scene s = base; s.purple_frame = false; add("负例", "只有红板", s, Expect::NEGATIVE);}
   // 机位低于围边视线，内部完全被围边挡住：看不到安全区就不能提交。
-  {Scene s = base; s.cam_h = 0.12; add("负例", "低机位内部不可见", s, false);}
+  {Scene s = base; s.cam_h = 0.12; add("负例", "低机位内部不可见", s, Expect::NEGATIVE);}
   return cases;
 }
 
-struct Totals {int scenes = 0, frames = 0, committed = 0, split = 0, measured = 0; double corner = 0, split_err = 0, ms = 0;};
+struct Totals {Expect expect = Expect::POSITIVE; int scenes = 0, frames = 0, committed = 0, split = 0, measured = 0; double corner = 0, split_err = 0, ms = 0;};
 
 std::map<std::string, Totals> evaluate(bool report)
 {
@@ -142,6 +147,7 @@ std::map<std::string, Totals> evaluate(bool report)
   for (const auto & c : matrix()) {
     const Outcome o = runScene(c.scene, config);
     auto & t = by_name[c.group + "/" + c.name];
+    t.expect = c.expect;
     ++t.scenes; t.frames += o.frames; t.committed += o.committed; t.split += o.split;
     t.corner += o.corner_err; t.split_err += o.split_err; t.measured += o.measured; t.ms += o.ms;
   }
@@ -162,13 +168,15 @@ void testFieldRobustness(bool report)
   Group group("field robustness");
   const auto results = evaluate(report);
   for (const auto & [name, t] : results) {
-    if (name.rfind("负例", 0) == 0) {
+    if (t.expect == Expect::NEGATIVE) {
       // 负例：任何一帧提交外框都是误检
       CHECK(t.committed == 0);
       continue;
     }
-    // 正例：最后几帧的完整有效率不低于 3/4，中线误差均值不超过 4 像素（约 1 cm）
-    const bool ok = t.split * 4 >= t.frames * 3 && (t.measured == 0 || t.split_err / t.measured <= 4.0);
+    // 中线误差均值不超过 4 像素（约 1 cm）；正例另要求最后几帧的完整有效率不低于 3/4。
+    const bool accurate = t.measured == 0 || t.split_err / t.measured <= 4.0;
+    const bool complete = t.expect == Expect::OCCLUDED || t.split * 4 >= t.frames * 3;
+    const bool ok = accurate && complete;
     if (!ok) {std::fprintf(stderr, "场景未达标: %s split=%d/%d\n", name.c_str(), t.split, t.frames);}
     CHECK(ok);
   }

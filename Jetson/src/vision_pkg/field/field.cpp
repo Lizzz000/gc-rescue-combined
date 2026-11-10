@@ -42,7 +42,6 @@ void FieldLocator::reset()
   prev_good_.clear();
   pending_.clear();
   pending_hits_ = 0;
-  split_top_ = split_bottom_ = -1.0;
 }
 
 // quad 已平移回处理图坐标；评分与实测边数仍来自该搜索区域，不能把偏移再加一次。
@@ -399,27 +398,12 @@ void FieldLocator::buildOutput(
       res.split_measured = (split.top_x + split.bottom_x) * 0.5;
       res.split_suspect = std::abs(res.split_measured - res.bev.cols / 2.0) >
         cfg_.black_max_offset_frac * res.bev.cols;
-      if (!ok || !res.committed || split_top_ < 0 || split_bottom_ < 0) {
-        split_top_ = split.top_x; split_bottom_ = split.bottom_x;
-      } else {
-        // 小抖动平滑；可靠黑带移动超过跳变尺度时直接采用，避免角点改变后分界仍滞留旧位置。
-        const double movement = std::max(std::abs(split.top_x - split_top_),
-          std::abs(split.bottom_x - split_bottom_));
-        const double scale = std::max(1.0, cfg_.split_jump_frac * res.bev.cols);
-        const double alpha = std::max(cfg_.split_ema_alpha, std::min(1.0, movement / scale));
-        split_top_ += alpha * (split.top_x - split_top_);
-        split_bottom_ += alpha * (split.bottom_x - split_bottom_);
-      }
-      res.split_top_x = split_top_; res.split_bottom_x = split_bottom_;
-      res.split_x = (split_top_ + split_bottom_) * 0.5;
-      // 被拒外框仍可生成诊断 BEV，但其坐标系不能成为下一次正式分区的平滑历史。
-      if (!ok || !res.committed) {split_top_ = split_bottom_ = -1.0;}
-    } else {
-      // 没有完整黑带时保留外框历史，清分割历史；不能把中线先验冒充本帧左右区域。
-      split_top_ = split_bottom_ = -1.0;
-      if (ok && res.committed) {
-        res.reason += (res.reason.empty() ? "" : "; ") + std::string("黑带证据不足, 不输出左右分区");
-      }
+      // 逐帧实测，不做跨帧平滑：跨帧保持在桥接层按时间处理。
+      res.split_top_x = split.top_x; res.split_bottom_x = split.bottom_x;
+      res.split_x = (split.top_x + split.bottom_x) * 0.5;
+    } else if (ok && res.committed) {
+      // 没有完整黑带时不能把中线先验冒充本帧左右区域。
+      res.reason += (res.reason.empty() ? "" : "; ") + std::string("黑带证据不足, 不输出左右分区");
     }
     res.approx_field_h_px = field_size_px.second;
   }
@@ -452,7 +436,7 @@ void FieldLocator::updateTracking(
     // 阈值前保留 hits_：历史仍有效时 TRACK 不应因一次丢失退回 LOCATE；清历史时才一起归零。
     ++lost_;
     if (lost_ >= cfg_.lost_frames_to_search) {
-      state_ = "SEARCH"; has_corners_ = false; corners_.clear(); split_top_ = split_bottom_ = -1.0;
+      state_ = "SEARCH"; has_corners_ = false; corners_.clear();
       last_good_.clear(); prev_good_.clear();
       lost_ = 0; hits_ = 0; hold_frames_ = 0;
     } else {
@@ -495,7 +479,6 @@ void FieldLocator::updateTracking(
       last_good_ = quad;
       corners_ = quad;
       has_corners_ = true;
-      split_top_ = split_bottom_ = -1.0;
       lost_ = 0; hold_frames_ = 0; hits_ = std::max(hits_, cfg_.locate_hits_needed);
       state_ = "TRACK";
       pending_.clear(); pending_hits_ = 0;
@@ -539,7 +522,6 @@ void FieldLocator::updateTracking(
       corners_.clear();
       last_good_.clear();
       prev_good_.clear();
-      split_top_ = split_bottom_ = -1.0;
       lost_ = 0; hits_ = 0; hold_frames_ = 0;
       res.committed = false;
       buildOutput(evidence, candidate, res, false, "none", fail + " (当前几何已无紫框证据, 回到 SEARCH)");
@@ -555,7 +537,6 @@ void FieldLocator::updateTracking(
       corners_.clear();
       last_good_.clear();
       prev_good_.clear();
-      split_top_ = split_bottom_ = -1.0;
       lost_ = 0; hits_ = 0; hold_frames_ = 0;
       buildOutput(evidence, candidate, res, false, "none", fail + " 且保持超时, 回到 SEARCH");
     } else {

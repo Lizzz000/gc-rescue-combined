@@ -254,12 +254,45 @@ std::string rejectCandidate(
 // ---- 鸟瞰黑带证据与左右分区 ----
 // 黑带按“相对两侧内部颜色的局部色度下陷”测量：反光或进光会把黑带提亮到接近内部亮度，
 // 但不会给它红/蓝色度，因此判据只和同一行紧邻两侧比较，不依赖全局灰度阈值或绝对亮度。
-// 只有两侧紧邻都是内部颜色的像素才有资格成为证据，紫色围边立面和场外自然排除；
-// 物块遮住黑带或贴在一侧时，该行两侧不全是内部颜色，不计入资格行，只缩小分母而不制造反证；
-// 宽于带宽上限的暗物块内部没有两侧参照，不形成下陷。跨行用投票+稳健直线拟合，
+// 至少一侧紧邻是内部颜色才有资格成为证据，紫色围边立面和场外自然排除；物块贴在一侧时用另一侧作参照。
+// 宽于带宽上限的暗区（暗物块）按完整无色区测宽后丢弃。两侧都是内部颜色且本列也是内部颜色的位置，
+// 才算“应见黑带却见红色”的反证；被物块盖住的行只缩小分母。跨行用投票 + 稳健直线拟合，
 // 允许局部反光/遮挡行缺失，但覆盖率、首末分段、残差和选优歧义仍须满足。
 namespace field_detail {
 namespace {
+
+// 黑带测量的算法常量集中在此；可调的物理量（深度、覆盖率、带宽、亮度抬升）在 FieldConfig。
+// 参照段中内部颜色占比下限：允许参照段边缘一两列被噪声或混色占掉。
+constexpr double kReferenceShare = 0.8;
+// 放宽参照资格：与本帧内部平均色相夹角 ≤ 约 35°（cos 0.82），相对色度达到内部下限的 1/4。
+constexpr double kReferenceHueCos = 0.82;
+constexpr double kReferenceChromaShare = 0.25;
+// 本帧内部颜色像素少于窗口 2% 时没有可靠参照色相。
+constexpr double kMinReferencePixels = 0.02;
+// 一行内部颜色达到搜索窗宽 1/4 才算“内部行”，用于置信度中的遮挡比例。
+constexpr double kInteriorRowShare = 0.25;
+// 验收所需的最少行数：BEV 高度的 12%，且不少于 8 行。
+constexpr double kMinRowsFrac = 0.12;
+constexpr int kMinRowsFloor = 8;
+// 投票斜率网格：BEV 已按外框矫正，黑带斜率在 ±0.25 内；21 格步长 0.025，在内部行内约 1 px。
+constexpr int kSlopeBins = 21;
+constexpr double kMaxSlope = 0.25;
+// 段中心离候选线的容差，覆盖斜率步长带来的约 1 px 偏差。
+constexpr double kLineTolerancePx = 2.0;
+// 最多依次验收的投票峰数；次优达到最优该比例时两条都像分界，判歧义。
+constexpr int kPeakAttempts = 4;
+constexpr double kAmbiguityRatio = 0.8;
+// 残差验收：90% 分位不超过 max(1.5 px, 带宽中位数的一半)。
+constexpr double kResidualQuantile = 0.9;
+constexpr double kResidualFloorPx = 1.5;
+constexpr double kResidualWidthShare = 0.5;
+// 沿线支持段的宽度须在中位宽度的 [1/1.5, 1.5] 倍内。
+constexpr double kWidthSpread = 1.5;
+// 无色区两端外侧在该像素数内须出现内部颜色：紧贴物块的黑带被盖住一部分，中心有偏，按未知处理。
+constexpr int kBandEdgeProbePx = 2;
+// 八位 Lab 的 L8 = L×2.55，a、b 偏移 128。
+constexpr double kLightTo8bit = 2.55;
+constexpr int kLabOffset = 128;
 
 /** @brief 单行内一段连续色度下陷，坐标是搜索窗内列号。 */
 struct SplitRun {int y; float x, width, depth;};
@@ -267,16 +300,214 @@ struct SplitRun {int y; float x, width, depth;};
 /** @brief 候选直线 x = top + slope * y（搜索窗内坐标）的验收结果。 */
 struct SplitLine {bool valid = false; double top = 0, slope = 0, confidence = 0;};
 
+/** @brief 搜索窗与带参照余量的上下文窗（BEV 坐标），half 是带宽上限的一半。 */
+struct SplitWindow {cv::Rect window, context; int half = 0, pad_lo = 0;};
+
+/** @brief 上下文窗内的逐像素证据：纵向平滑后的色度与亮度、放宽后的内部颜色（参照资格）。 */
+struct SplitEvidence {cv::Mat chroma, light, reference;};
+
+bool splitWindow(const cv::Mat & bev, const FieldConfig & cfg, SplitWindow & out)
+{
+  const int bw = bev.cols, bh = bev.rows;
+  const int x0 = int(cfg.black_search_lo * bw), x1 = int(cfg.black_search_hi * bw);
+  const int y0 = int(cfg.black_row_lo * bh), y1 = int(cfg.black_row_hi * bh);
+  // 带宽上限的一半同时决定两侧参照段的偏移与长度：超宽暗区的参照段落在暗区内，不形成下陷。
+  out.half = std::max(2, cvRound(0.5 * cfg.black_max_width_frac * bw));
+  if (bev.empty() || bev.type() != CV_8UC3 || x1 - x0 < 4 * out.half + 8 || y1 - y0 < 8) {return false;}
+  out.window = cv::Rect(x0, y0, x1 - x0, y1 - y0);
+  // 参照段可伸出搜索窗，但不超出 BEV。
+  out.pad_lo = std::min(x0, 2 * out.half);
+  const int pad_hi = std::min(bw - x1, 2 * out.half);
+  out.context = cv::Rect(x0 - out.pad_lo, y0, out.window.width + out.pad_lo + pad_hi, out.window.height);
+  return true;
+}
+
+// 本帧严格内部颜色像素的平均 (a,b) 方向作参照色相，随整体光照偏色自适应。
+bool referenceHue(const cv::Mat & lab, const cv::Mat & interior, cv::Vec2d & hue)
+{
+  double sum_a = 0, sum_b = 0;
+  int count = 0;
+  for (int y = 0; y < lab.rows; ++y) {
+    const auto * pixel = lab.ptr<uchar>(y);
+    const auto * in = interior.ptr<uchar>(y);
+    for (int x = 0; x < lab.cols; ++x, pixel += 3) {
+      if (in[x] != 0) {sum_a += pixel[1] - kLabOffset; sum_b += pixel[2] - kLabOffset; ++count;}
+    }
+  }
+  const double norm = std::hypot(sum_a, sum_b);
+  if (count < kMinReferencePixels * lab.total() || norm < 1e-6) {return false;}
+  hue = cv::Vec2d(sum_a / norm, sum_b / norm);
+  return true;
+}
+
+// 参照资格：严格内部颜色，或非紫色、相对色度达到内部下限的 1/4 且色相接近本帧参照色相。
+// 局部反光/阴影使红色略出扇区时仍可作参照；紫色围边、低色度地面与黑带、其他颜色物块不能。
+bool splitEvidence(const cv::Mat & bgr, const FieldConfig & cfg, SplitEvidence & out)
+{
+  cv::Mat lab, purple;
+  cv::cvtColor(bgr, lab, cv::COLOR_BGR2Lab);
+  FieldLocator::segment(bgr, cfg, purple, out.reference);
+  cv::Vec2d hue;
+  if (!referenceHue(lab, out.reference, hue)) {return false;}
+  const double chroma_per_light = kReferenceChromaShare / kLightTo8bit *
+    (cfg.use_blue_interior ? cfg.blue_chroma_ratio_min : cfg.red_chroma_ratio_min);
+  out.chroma.create(lab.size(), CV_32F);
+  out.light.create(lab.size(), CV_32F);
+  for (int y = 0; y < lab.rows; ++y) {
+    const auto * pixel = lab.ptr<uchar>(y);
+    const auto * violet = purple.ptr<uchar>(y);
+    auto * reference = out.reference.ptr<uchar>(y);
+    auto * c = out.chroma.ptr<float>(y);
+    auto * l = out.light.ptr<float>(y);
+    for (int x = 0; x < lab.cols; ++x, pixel += 3) {
+      const int a = pixel[1] - kLabOffset, b = pixel[2] - kLabOffset;
+      l[x] = pixel[0];
+      c[x] = float(std::abs(a) + std::abs(b));
+      if (violet[x] == 0 && c[x] >= chroma_per_light * pixel[0] &&
+        a * hue[0] + b * hue[1] >= kReferenceHueCos * std::hypot(a, b)) {reference[x] = 255;}
+    }
+  }
+  // 只沿黑带方向（纵向）平滑压缩噪声，横向不扩散，带宽保持实测。
+  cv::blur(out.chroma, out.chroma, cv::Size(1, 3));
+  cv::blur(out.light, out.light, cv::Size(1, 3));
+  return true;
+}
+
+/** @brief 一行的前缀和，参照段均值 O(1)。 */
+struct RowSums
+{
+  RowSums(const float * chroma, const float * light, const uchar * reference, int width)
+  : c(width + 1), l(width + 1), r(width + 1)
+  {
+    for (int x = 0; x < width; ++x) {
+      c[x + 1] = c[x] + chroma[x]; l[x + 1] = l[x] + light[x]; r[x + 1] = r[x] + (reference[x] != 0);
+    }
+  }
+  static double mean(const std::vector<double> & sum, int a, int b) {return (sum[b] - sum[a]) / (b - a);}
+  std::vector<double> c, l, r;
+};
+
+/** @brief 单列相对参照的色度下陷；two_sided 表示两侧参照都合格。 */
+struct ColumnDip {double depth = 0, reference = 0; bool two_sided = false;};
+
+// 参照段 [cx-2h, cx-h) 与 (cx+h, cx+2h]，各长 h 像素。合格的一侧或两侧给出参照色度（两侧取小）与亮度上限；
+// 高光条带也会失去色度，但亮度明显高于参照，超过 (1+black_max_lift) 倍不算下陷。
+ColumnDip columnDip(
+  const RowSums & sums, const float * chroma, const float * light, int cx, int half,
+  const FieldConfig & cfg)
+{
+  ColumnDip dip;
+  const int la = cx - 2 * half, lb = cx - half, ra = cx + half + 1, rb = cx + 2 * half + 1;
+  const bool left = RowSums::mean(sums.r, la, lb) >= kReferenceShare;
+  const bool right = RowSums::mean(sums.r, ra, rb) >= kReferenceShare;
+  if (!left && !right) {return dip;}
+  dip.two_sided = left && right;
+  const double cl = RowSums::mean(sums.c, la, lb), cr = RowSums::mean(sums.c, ra, rb);
+  const double ll = RowSums::mean(sums.l, la, lb), lr = RowSums::mean(sums.l, ra, rb);
+  const double reference = dip.two_sided ? std::min(cl, cr) : (left ? cl : cr);
+  const double brightest = dip.two_sided ? std::max(ll, lr) : (left ? ll : lr);
+  if (reference > 1.0 && light[cx] <= brightest * (1.0 + cfg.black_max_lift)) {
+    dip.depth = 1.0 - chroma[cx] / reference;
+    dip.reference = reference;
+  }
+  return dip;
+}
+
+// 无色区 [left,right) 两端外侧 kBandEdgeProbePx 内都有内部颜色资格像素。
+bool bandEdgesVisible(const uchar * reference, int left, int right, int context_width)
+{
+  auto any = [&](int from, int step) {
+      for (int k = 0; k < kBandEdgeProbePx; ++k) {
+        const int x = from + step * k;
+        if (x >= 0 && x < context_width && reference[x] != 0) {return true;}
+      }
+      return false;
+    };
+  return any(left - 1, -1) && any(right, 1);
+}
+
+// 连续下陷段 [start,end)（上下文列号）收尾：宽度按同一色度门槛向两侧延伸的完整无色区测量，
+// 不受参照资格截断，宽暗物块中心恰有资格的一两列不能冒充窄黑带；两端须紧邻内部颜色，
+// 被物块盖住一侧的黑带中心有偏，不作证据；中心按无色区内的下陷加权。
+bool measureRun(
+  const float * chroma, const uchar * reference_mask, int width_limit, int context_width,
+  int start, int end, double reference, double depth, const FieldConfig & cfg, int y, int pad_lo,
+  SplitRun & run)
+{
+  const double limit = (1.0 - cfg.black_min_depth) * reference;
+  int left = start, right = end;
+  while (left > 0 && chroma[left - 1] <= limit && right - left <= width_limit) {--left;}
+  while (right < context_width && chroma[right] <= limit && right - left <= width_limit) {++right;}
+  if (right - left > width_limit || !bandEdgesVisible(reference_mask, left, right, context_width)) {
+    return false;
+  }
+  double weight = 0, moment = 0;
+  for (int x = left; x < right; ++x) {
+    const double w = std::max(0.0, reference - chroma[x]);
+    weight += w; moment += w * x;
+  }
+  if (weight <= 0) {return false;}
+  run = {y, float(moment / weight - pad_lo), float(right - left), float(depth)};
+  return true;
+}
+
+// 一行内的下陷段写入 runs；两侧参照都合格且本列也有内部颜色资格的位置记入 eligible（可作反证）。
+void rowRuns(
+  const SplitEvidence & evidence, const SplitWindow & window, const FieldConfig & cfg, int y,
+  std::vector<SplitRun> & runs, uchar * eligible)
+{
+  const auto * chroma = evidence.chroma.ptr<float>(y);
+  const auto * light = evidence.light.ptr<float>(y);
+  const auto * reference = evidence.reference.ptr<uchar>(y);
+  const int width = window.context.width, half = window.half, pad_lo = window.pad_lo;
+  const RowSums sums(chroma, light, reference, width);
+  int start = -1;
+  double depth_sum = 0, reference_sum = 0;
+  auto close = [&](int end) {
+      SplitRun run;
+      const int count = end - start;
+      if (measureRun(chroma, reference, 2 * half, width, start + pad_lo, end + pad_lo,
+        reference_sum / count, depth_sum / count, cfg, y, pad_lo, run)) {runs.push_back(run);}
+      start = -1; depth_sum = reference_sum = 0;
+    };
+  for (int x = 0; x < window.window.width; ++x) {
+    const int cx = x + pad_lo;
+    ColumnDip dip;
+    if (cx - 2 * half >= 0 && cx + 2 * half + 1 <= width) {
+      dip = columnDip(sums, chroma, light, cx, half, cfg);
+      if (dip.two_sided && reference[cx] != 0) {eligible[x] = 255;}
+    }
+    if (dip.depth >= cfg.black_min_depth) {
+      if (start < 0) {start = x;}
+      depth_sum += dip.depth; reference_sum += dip.reference;
+    } else if (start >= 0) {
+      close(x);
+    }
+  }
+  if (start >= 0) {close(window.window.width);}
+}
+
+int interiorRows(const cv::Mat & interior, const SplitWindow & window)
+{
+  const int cols = window.window.width;
+  int rows = 0;
+  for (int y = 0; y < interior.rows; ++y) {
+    if (cv::countNonZero(interior.row(y).colRange(window.pad_lo, window.pad_lo + cols)) >=
+      kInteriorRowShare * cols) {++rows;}
+  }
+  return rows;
+}
+
 /** @brief 统计直线沿线的资格行与支持行，检查覆盖、分段、残差，并用 Huber 拟合精修。 */
 SplitLine acceptLine(
   const std::vector<SplitRun> & runs, const cv::Mat & eligible, double top, double slope,
-  double tolerance, const FieldConfig & cfg, int min_rows, int interior_rows)
+  const FieldConfig & cfg, int min_rows, int interior_rows)
 {
   SplitLine result;
   const int rows = eligible.rows, cols = eligible.cols;
   // 每行最多取一个离线最近的段；同一行多段只算一次支持。
   std::vector<int> best(rows, -1);
-  std::vector<double> best_distance(rows, tolerance);
+  std::vector<double> best_distance(rows, kLineTolerancePx);
   for (int i = 0; i < static_cast<int>(runs.size()); ++i) {
     const auto & run = runs[i];
     const double distance = std::abs(run.x - (top + slope * run.y));
@@ -290,6 +521,18 @@ SplitLine acceptLine(
     if (best[y] >= 0 || (x >= 0 && x < cols && eligible.at<uchar>(y, x) != 0)) {eligible_rows.push_back(y);}
   }
   if (static_cast<int>(eligible_rows.size()) < min_rows) {return result;}
+  // 黑带在 BEV 中宽度恒定：宽度偏离沿线中位数超过 kWidthSpread 倍的段是贴线物块或噪声，不算支持。
+  std::vector<float> line_widths;
+  for (int y : eligible_rows) {
+    if (best[y] >= 0) {line_widths.push_back(runs[best[y]].width);}
+  }
+  if (line_widths.empty()) {return result;}
+  const double typical_width = upperMedian(line_widths);
+  auto consistent = [&](int y) {
+      if (best[y] < 0) {return false;}
+      const double width = runs[best[y]].width;
+      return width <= kWidthSpread * typical_width && width * kWidthSpread >= typical_width;
+    };
   std::vector<cv::Point2f> centers;
   std::vector<double> widths;
   double depth_sum = 0;
@@ -298,13 +541,16 @@ SplitLine acceptLine(
   for (int y : eligible_rows) {
     const int third = std::min(2, (y - first) * 3 / span);
     ++thirds_total[third];
-    if (best[y] < 0) {continue;}
+    if (!consistent(y)) {continue;}
     ++thirds_hit[third];
     const auto & run = runs[best[y]];
     centers.emplace_back(run.x, float(y)); widths.push_back(run.width); depth_sum += run.depth;
   }
   const double coverage = double(centers.size()) / eligible_rows.size();
   if (coverage < cfg.black_score_frac) {return result;}
+  // 支持行的首末跨度也须达到内部行的同一比例：物块盖住一端时，剩下的短暗条与场内暗物体无法区分。
+  const double support_span = centers.back().y - centers.front().y + 1;
+  if (support_span < cfg.black_score_frac * interior_rows) {return result;}
   // 首末两段必须有支持，中段被物块整段遮住时可以没有资格行；有资格行的分段都要达到覆盖率的一半。
   // 局部反光或物块可以缺行，但只在一端出现的短暗物体不能替代完整分界。
   if (thirds_hit[0] == 0 || thirds_hit[2] == 0) {return result;}
@@ -319,9 +565,9 @@ SplitLine acceptLine(
   std::vector<double> residuals;
   residuals.reserve(centers.size());
   for (const auto & point : centers) {residuals.push_back(std::abs(point.x - result.top - result.slope * point.y));}
-  const auto tail = residuals.begin() + residuals.size() * 9 / 10;
+  const auto tail = residuals.begin() + static_cast<long>(residuals.size() * kResidualQuantile);
   std::nth_element(residuals.begin(), tail, residuals.end());
-  if (*tail > std::max(1.5, upperMedian(widths) * 0.5)) {return result;}
+  if (*tail > std::max(kResidualFloorPx, upperMedian(widths) * kResidualWidthShare)) {return result;}
   const double depth = depth_sum / centers.size();
   result.valid = true;
   // 置信度 = 下陷强度 × 资格行覆盖率 × 资格行占内部行比例：被遮挡越多、证据越短，置信度越低，
@@ -331,180 +577,70 @@ SplitLine acceptLine(
   return result;
 }
 
-}  // namespace
-
-SplitMeasurement detectSplitBlack(const cv::Mat & bev, const FieldConfig & cfg)
+// 投票：每段对 (中点列, 斜率) 网格投一票；依次取峰值验收，已验收线附近 2h 内的峰被抑制。
+std::vector<SplitLine> candidateLines(
+  const std::vector<SplitRun> & runs, const cv::Mat & eligible, int half, const FieldConfig & cfg,
+  int min_rows, int interior_rows)
 {
-  const int bw = bev.cols, bh = bev.rows;
-  // 纯核心调用也须拒绝无效采样范围，不能把非法浮点转换为 ROI 整数。
-  if (!std::isfinite(cfg.black_search_lo) || !std::isfinite(cfg.black_search_hi) ||
-    !std::isfinite(cfg.black_row_lo) || !std::isfinite(cfg.black_row_hi) ||
-    cfg.black_search_lo < 0 || cfg.black_search_hi > 1 ||
-    cfg.black_row_lo < 0 || cfg.black_row_hi > 1 ||
-    cfg.black_search_lo >= cfg.black_search_hi || cfg.black_row_lo >= cfg.black_row_hi) {return {};}
-  const int x0 = int(cfg.black_search_lo * bw), x1 = int(cfg.black_search_hi * bw);
-  const int y0 = int(cfg.black_row_lo * bh), y1 = int(cfg.black_row_hi * bh);
-  // 带宽上限的一半同时决定两侧参照段的偏移与长度：超宽暗区的参照段落在暗区内，不形成下陷。
-  const int half = std::max(2, cvRound(0.5 * cfg.black_max_width_frac * bw));
-  if (bev.empty() || bev.type() != CV_8UC3 || x1 - x0 < 4 * half + 8 || y1 - y0 < 8) {return {};}
-  const cv::Rect window(x0, y0, x1 - x0, y1 - y0);
-  const int rows = window.height, cols = window.width;
-  // 两侧参照段须属于内部颜色；参照段可伸出搜索窗，但不超出 BEV。
-  const int pad_lo = std::min(x0, 2 * half), pad_hi = std::min(bw - x1, 2 * half);
-  const cv::Rect context(x0 - pad_lo, y0, cols + pad_lo + pad_hi, rows);
-  cv::Mat lab;
-  cv::cvtColor(bev(context), lab, cv::COLOR_BGR2Lab);
-  cv::Mat purple, interior;
-  FieldLocator::segment(bev(context), cfg, purple, interior);
-  // 本帧内部颜色的平均色相 (a,b) 作参照：严格阈值内的像素决定场地本色，随整体光照偏色自适应。
-  double ref_a = 0, ref_b = 0, ref_n = 0;
-  for (int y = 0; y < rows; ++y) {
-    const auto * pixel = lab.ptr<uchar>(y);
-    const auto * in = interior.ptr<uchar>(y);
-    for (int x = 0; x < context.width; ++x, pixel += 3) {
-      if (in[x] != 0) {ref_a += pixel[1] - 128; ref_b += pixel[2] - 128; ++ref_n;}
-    }
-  }
-  if (ref_n < 0.02 * context.area()) {return {};}
-  const double ref_norm = std::hypot(ref_a, ref_b);
-  if (ref_norm < 1e-6) {return {};}
-  ref_a /= ref_norm; ref_b /= ref_norm;
-  // 参照段资格：严格内部颜色，或非紫色、相对色度达到内部下限的 1/4 且色相与本色夹角在约 35° 内。
-  // 局部反光/阴影使红色略出严格阈值时仍可作参照；紫色围边、低色度地面与黑带、其他颜色物块不能。
-  // 八位 L 换回 0..100 后乘相对色度下限。
-  const double chroma_per_light = 0.25 / 2.55 *
-    (cfg.use_blue_interior ? cfg.blue_chroma_ratio_min : cfg.red_chroma_ratio_min);
-  constexpr double hue_cos = 0.82;
-  cv::Mat chroma(context.size(), CV_32F), light(context.size(), CV_32F);
-  for (int y = 0; y < rows; ++y) {
-    const auto * pixel = lab.ptr<uchar>(y);
-    const auto * violet = purple.ptr<uchar>(y);
-    auto * in = interior.ptr<uchar>(y);
-    auto * c = chroma.ptr<float>(y);
-    auto * l = light.ptr<float>(y);
-    for (int x = 0; x < context.width; ++x, pixel += 3) {
-      l[x] = pixel[0];
-      c[x] = float(std::abs(pixel[1] - 128) + std::abs(pixel[2] - 128));
-      const int a = pixel[1] - 128, b = pixel[2] - 128;
-      if (violet[x] == 0 && c[x] >= chroma_per_light * pixel[0] && a * ref_a + b * ref_b >= hue_cos * std::hypot(a, b)) {in[x] = 255;}
-    }
-  }
-  // 只沿黑带方向（纵向）平滑压缩噪声，横向不扩散，带宽保持实测。
-  cv::blur(chroma, chroma, cv::Size(1, 3));
-  cv::blur(light, light, cv::Size(1, 3));
-  cv::Mat eligible = cv::Mat::zeros(rows, cols, CV_8U);
-  std::vector<SplitRun> runs;
-  const int n = context.width + 1;
-  std::vector<double> sum_c(n), sum_l(n), sum_i(n);
-  for (int y = 0; y < rows; ++y) {
-    const auto * c = chroma.ptr<float>(y);
-    const auto * l = light.ptr<float>(y);
-    const auto * in = interior.ptr<uchar>(y);
-    for (int x = 0; x < context.width; ++x) {
-      sum_c[x + 1] = sum_c[x] + c[x]; sum_l[x + 1] = sum_l[x] + l[x]; sum_i[x + 1] = sum_i[x] + (in[x] != 0);
-    }
-    // 参照段 [x-2h, x-h) 与 (x+h, x+2h]，各长 h 像素。
-    auto mean = [&](const std::vector<double> & sum, int a, int b) {return (sum[b] - sum[a]) / (b - a);};
-    auto * ok = eligible.ptr<uchar>(y);
-    int run_start = -1;
-    double depth_sum = 0, reference_sum = 0;
-    auto close = [&](int end) {
-        // 宽度按同一色度门槛向两侧延伸的完整无色区测量，不受参照资格截断：
-        // 宽暗物块中心恰有资格的一两列不能冒充窄黑带。
-        const double limit = (1.0 - cfg.black_min_depth) * reference_sum / (end - run_start);
-        int left = run_start + pad_lo, right = end + pad_lo;
-        while (left > 0 && c[left - 1] <= limit && right - left <= 2 * half) {--left;}
-        while (right < context.width && c[right] <= limit && right - left <= 2 * half) {++right;}
-        const int width = right - left;
-        if (width <= 2 * half) {
-          // 中心按完整无色区内的色度下陷加权：参照资格被旁边物块截断时，只用资格像素会偏向一侧。
-          const double reference = reference_sum / (end - run_start);
-          double weight = 0, moment = 0;
-          for (int x = left; x < right; ++x) {
-            const double w = std::max(0.0, reference - c[x]);
-            weight += w; moment += w * x;
-          }
-          if (weight > 0) {
-            runs.push_back({y, float(moment / weight - pad_lo), float(width), float(depth_sum / (end - run_start))});
-          }
-        }
-        run_start = -1; depth_sum = reference_sum = 0;
-      };
-    for (int x = 0; x < cols; ++x) {
-      const int cx = x + pad_lo;
-      double depth = 0, current_reference = 0;
-      if (cx - 2 * half >= 0 && cx + 2 * half + 1 <= context.width) {
-        const int la = cx - 2 * half, lb = cx - half, ra = cx + half + 1, rb = cx + 2 * half + 1;
-        // 两侧参照段须绝大部分是内部颜色；物块压线或贴边时该行不计入资格行，只缩小分母。
-        const double cl = mean(sum_c, la, lb), cr = mean(sum_c, ra, rb);
-        if (mean(sum_i, la, lb) >= 0.8 && mean(sum_i, ra, rb) >= 0.8) {
-          // 本列本身也是内部颜色才算“应见黑带却没见到”的反证；被非内部色物块盖住只是未知。
-          if (in[cx] != 0) {ok[x] = 255;}
-          const double reference = std::min(cl, cr);
-          const double lift = std::max(mean(sum_l, la, lb), mean(sum_l, ra, rb)) * (1.0 + cfg.black_max_lift);
-          // 高光条带也会失去色度，但亮度明显高于两侧；黑带被提亮也不应超过两侧太多。
-          if (reference > 1.0 && l[cx] <= lift) {depth = 1.0 - c[cx] / reference; current_reference = reference;}
-        }
-      }
-      if (depth >= cfg.black_min_depth) {
-        if (run_start < 0) {run_start = x;}
-        depth_sum += depth; reference_sum += current_reference;
-      } else if (run_start >= 0) {
-        close(x);
-      }
-    }
-    if (run_start >= 0) {close(cols);}
-  }
-  const int min_rows = std::max(8, static_cast<int>(std::ceil(0.12 * bh)));
-  int interior_rows = 0;
-  for (int y = 0; y < rows; ++y) {
-    if (cv::countNonZero(interior.row(y).colRange(pad_lo, pad_lo + cols)) >= 0.25 * cols) {++interior_rows;}
-  }
-  if (static_cast<int>(runs.size()) < min_rows) {return {};}
-  // 投票：每段对 (中点列, 斜率) 网格投一票，斜率限制在 ±0.25 以内（BEV 已按外框矫正）。
-  constexpr int slope_bins = 21;
-  constexpr double max_slope = 0.25;
+  const int rows = eligible.rows, cols = eligible.cols;
   const double middle = 0.5 * (rows - 1);
-  cv::Mat votes = cv::Mat::zeros(slope_bins, cols, CV_32F);
+  auto slopeOf = [](int bin) {return kMaxSlope * (2.0 * bin / (kSlopeBins - 1) - 1.0);};
+  cv::Mat votes = cv::Mat::zeros(kSlopeBins, cols, CV_32F);
   for (const auto & run : runs) {
-    for (int k = 0; k < slope_bins; ++k) {
-      const double slope = max_slope * (2.0 * k / (slope_bins - 1) - 1.0);
-      const int x = cvRound(run.x - slope * (run.y - middle));
+    for (int k = 0; k < kSlopeBins; ++k) {
+      const int x = cvRound(run.x - slopeOf(k) * (run.y - middle));
       if (x >= 0 && x < cols) {votes.at<float>(k, x) += 1.0f;}
     }
   }
   cv::blur(votes, votes, cv::Size(3, 1), cv::Point(-1, -1), cv::BORDER_CONSTANT);
-  // 段中心离直线的容差：投票斜率步长 0.025 在内部行内最多带来约 1px 偏差。
-  const double tolerance = 2.0;
-  // 依次取峰值验收，已验收线附近 2h 内的峰被抑制；按置信度选优。
-  // 次优线置信度达到最优的 0.8 倍时两条都像分界，视为歧义拒绝；明显弱的暗物体边缘不影响选优。
   std::vector<SplitLine> accepted;
-  for (int attempt = 0; attempt < 4; ++attempt) {
+  for (int attempt = 0; attempt < kPeakAttempts; ++attempt) {
     cv::Point peak;
     double peak_votes = 0;
     cv::minMaxLoc(votes, nullptr, &peak_votes, nullptr, &peak);
+    // 峰值票数低于“三段之一达到覆盖率”所需的行数时，后面的峰只会更弱。
     if (peak_votes * 3.0 < min_rows * cfg.black_score_frac) {break;}
-    const double slope = max_slope * (2.0 * peak.y / (slope_bins - 1) - 1.0);
-    const double top = peak.x - slope * middle;
-    const auto line = acceptLine(runs, eligible, top, slope, tolerance, cfg, min_rows, interior_rows);
+    const double slope = slopeOf(peak.y);
+    const auto line = acceptLine(runs, eligible, peak.x - slope * middle, slope, cfg, min_rows,
+      interior_rows);
     const double center = line.valid ? line.top + line.slope * middle : double(peak.x);
-    cv::Mat suppressed = votes.colRange(std::max(0, cvRound(center) - 2 * half),
-      std::min(cols, cvRound(center) + 2 * half + 1));
-    suppressed.setTo(0);
+    votes.colRange(std::max(0, cvRound(center) - 2 * half),
+      std::min(cols, cvRound(center) + 2 * half + 1)).setTo(0);
     if (line.valid) {accepted.push_back(line);}
   }
-  if (accepted.empty()) {return {};}
-  std::sort(accepted.begin(), accepted.end(),
+  return accepted;
+}
+
+}  // namespace
+
+SplitMeasurement detectSplitBlack(const cv::Mat & bev, const FieldConfig & cfg)
+{
+  SplitWindow window;
+  if (!splitWindow(bev, cfg, window)) {return {};}
+  SplitEvidence evidence;
+  if (!splitEvidence(bev(window.context), cfg, evidence)) {return {};}
+  cv::Mat eligible = cv::Mat::zeros(window.window.size(), CV_8U);
+  std::vector<SplitRun> runs;
+  for (int y = 0; y < window.window.height; ++y) {
+    rowRuns(evidence, window, cfg, y, runs, eligible.ptr<uchar>(y));
+  }
+  const int min_rows = std::max(kMinRowsFloor, static_cast<int>(std::ceil(kMinRowsFrac * bev.rows)));
+  if (static_cast<int>(runs.size()) < min_rows) {return {};}
+  auto lines = candidateLines(runs, eligible, window.half, cfg, min_rows,
+    interiorRows(evidence.reference, window));
+  if (lines.empty()) {return {};}
+  std::sort(lines.begin(), lines.end(),
     [](const SplitLine & a, const SplitLine & b) {return a.confidence > b.confidence;});
-  if (accepted.size() > 1 && accepted[1].confidence >= 0.8 * accepted[0].confidence) {return {};}
-  const auto & line = accepted.front();
+  if (lines.size() > 1 && lines[1].confidence >= kAmbiguityRatio * lines[0].confidence) {return {};}
+  const auto & line = lines.front();
   // 窗内直线外推到 BEV 顶/底边，端点须落在鸟瞰图内。
+  const int x0 = window.window.x, y0 = window.window.y;
   SplitMeasurement measurement;
   measurement.top_x = x0 + line.top - line.slope * y0;
-  measurement.bottom_x = measurement.top_x + line.slope * (bh - 1);
+  measurement.bottom_x = measurement.top_x + line.slope * (bev.rows - 1);
   if (!std::isfinite(measurement.top_x) || !std::isfinite(measurement.bottom_x) ||
     measurement.top_x < 0 || measurement.bottom_x < 0 ||
-    measurement.top_x > bw - 1 || measurement.bottom_x > bw - 1) {return {};}
+    measurement.top_x > bev.cols - 1 || measurement.bottom_x > bev.cols - 1) {return {};}
   measurement.valid = true;
   measurement.confidence = line.confidence;
   return measurement;

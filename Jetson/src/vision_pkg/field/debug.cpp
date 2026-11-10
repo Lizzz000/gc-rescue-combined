@@ -235,8 +235,7 @@ void validateFieldConfig(const FieldConfig & c)
   FRACTION(min_area_frac); FRACTION(min_fill_ratio); FRACTION(edge_band_frac);
   FRACTION(prior_corner_tol_frac); FRACTION(quad_min_area_frac);
   FRACTION(black_min_depth); FRACTION(black_score_frac); FRACTION(black_max_width_frac);
-  FRACTION(black_max_offset_frac); FRACTION(split_ema_alpha);
-  FRACTION(split_jump_frac); FRACTION(corner_ema_alpha);
+  FRACTION(black_max_offset_frac); FRACTION(corner_ema_alpha);
   FRACTION(edge_support_min); FRACTION(edge_support_strong); FRACTION(min_total_score);
   FRACTION(min_purple_score); FRACTION(purple_lost_threshold); FRACTION(red_inside_min);
   FRACTION(red_outside_max); FRACTION(expand_frac); FRACTION(red_cell_min);

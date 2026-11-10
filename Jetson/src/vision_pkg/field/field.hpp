@@ -96,7 +96,7 @@ struct FieldConfig
   bool use_aspect_check = false;
   double quad_max_aspect_err = 2.0;
 
-  // ---- [分组] 黑带与分区: 找 split_x + 平滑与跳变保护 ----
+  // ---- [分组] 黑带与分区: 逐帧实测 split_x，跨帧保持由桥接层按时间处理 ----
   // 黑带直线：BEV 内部行中相对两侧内部颜色的局部色度下陷，投票+稳健拟合成唯一直线；
   // 不用全局灰度阈值，反光提亮的黑带仍可测；平滑上下端点，偏心只保留诊断。
   double black_search_lo = 0.14;
@@ -105,12 +105,10 @@ struct FieldConfig
   double black_row_hi = 0.88;
   double black_min_depth = 0.35;         // 色度相对同行两侧内部颜色的下陷深度下限 1-C/C_side
   double black_conf_depth = 0.70;        // 平均下陷到该深度算满置信度
-  double black_score_frac = 0.60;        // 沿线资格行中有黑带支持的比例下限；三分段各须达到其一半
+  double black_score_frac = 0.60;        // 沿线支持比例下限；三分段各须达到其一半，支持跨度须达到内部行的该比例
   double black_max_width_frac = 0.06;    // 黑带最大宽度/BEV 宽度；其一半也是两侧参照段偏移与长度
   double black_max_lift = 0.25;          // 黑带亮度最多高出两侧较亮参照的比例，更亮视为高光条带
   double black_max_offset_frac = 0.04;     // 黑带中点偏离几何中心超过该比例时标记 suspect，仍使用可靠实测
-  double split_ema_alpha = 0.30;
-  double split_jump_frac = 0.03;
 
   // ---- [分组] 内部颜色证据：默认红色，blue 模式使用下方独立扇区 ----
   // 内部颜色与紫色扇区独立判定，并不显式减去紫色掩膜；扇区应避免与紫框重叠。
@@ -216,8 +214,6 @@ struct FieldConfig
   X(double, black_max_width_frac) \
   X(double, black_max_lift) \
   X(double, black_max_offset_frac) \
-  X(double, split_ema_alpha) \
-  X(double, split_jump_frac) \
   X(double, red_hue_lo_deg) \
   X(double, red_hue_hi_deg) \
   X(double, red_chroma_ratio_min) \
@@ -275,12 +271,12 @@ struct FieldResult
   cv::Mat bev;                         // 透视矫正结果
   cv::Mat homography;                  // 处理分辨率 -> 鸟瞰图
   cv::Mat homography_inv;
-  double split_x = 0.0;                // 平滑后黑带线在 BEV 中间行的 x；斜线的上下端点可不同
+  double split_x = 0.0;                // 本帧实测黑带线在 BEV 中间行的 x；斜线的上下端点可不同
   double split_measured = 0.0;         // 原始黑带线中点；无测量时为 0，须同时检查 split_valid/conf
   bool split_suspect = false;          // 黑带偏离几何中线的诊断，不再据此用中线替代实测
   double split_conf = 0.0;
   bool split_valid = false;            // 本帧具有完整且唯一的黑带证据；外框 ok 不等于分区有效
-  double split_top_x = 0.0, split_bottom_x = 0.0; // 平滑后 BEV 顶/底边交点，正式几何共用这两个端点
+  double split_top_x = 0.0, split_bottom_x = 0.0; // 本帧实测 BEV 顶/底边交点，正式几何共用这两个端点
   double red_ratio = 0.0;
   double quad_area = 0.0;
   double approx_field_h_px = 0.0;
@@ -348,7 +344,6 @@ private:
   std::vector<cv::Point2f> last_good_, prev_good_;     // 最近两次成功提交的角点
   std::vector<cv::Point2f> pending_;            // 大跳变候选（门槛为 max(2, switch_confirm_frames) 次确认）
   int pending_hits_ = 0;
-  double split_top_ = -1.0, split_bottom_ = -1.0;
 
   std::vector<cv::Point2f> predictQuad() const;     // last + gain*(last-prev)
 };

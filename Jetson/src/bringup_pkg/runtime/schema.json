@@ -309,14 +309,6 @@
         "path": "vision.field.black_max_offset_frac",
         "kind": "number"
       },
-      "field.split_ema_alpha": {
-        "path": "vision.field.split_ema_alpha",
-        "kind": "number"
-      },
-      "field.split_jump_frac": {
-        "path": "vision.field.split_jump_frac",
-        "kind": "number"
-      },
       "field.red_hue_lo_deg": {
         "path": "vision.field.red_hue_range_deg",
         "kind": "number",
@@ -930,8 +922,6 @@
     "vision.field.black_max_width_frac": "number",
     "vision.field.black_max_lift": "number",
     "vision.field.black_max_offset_frac": "number",
-    "vision.field.split_ema_alpha": "number",
-    "vision.field.split_jump_frac": "number",
     "vision.field.red_hue_range_deg": "numbers",
     "vision.field.red_chroma_ratio_min": "number",
     "vision.field.red_L_min": "number",

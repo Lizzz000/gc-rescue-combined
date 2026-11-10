@@ -117,7 +117,7 @@ vision:
     # 黑带色度相对同行两侧内部颜色的下陷深度 1-C/C_side；不看绝对灰度，反光提亮仍可测。
     black_min_depth: 0.35
     black_conf_depth: 0.7
-    # 沿线资格行（两侧紧邻均为内部颜色）中有黑带支持的比例；三个纵向分段各需达到其一半。
+    # 沿线资格行中有黑带支持的比例；三个纵向分段各需达到其一半，支持行首末跨度也须达到内部行的该比例。
     black_score_frac: 0.6
     # 黑带最大宽度/BEV宽度；其一半同时是两侧参照段的偏移与长度。
     black_max_width_frac: 0.06
@@ -125,9 +125,6 @@ vision:
     black_max_lift: 0.25
     # 仅标记split_suspect；可靠偏心线仍采用实测，不回退几何中线。
     black_max_offset_frac: 0.04
-    # 小抖动平滑上下端点；位移相对split_jump_frac增大时提高当前帧权重。
-    split_ema_alpha: 0.3
-    split_jump_frac: 0.03
     bev_border_margin_frac: 0.04
     # 红色内部 Lab 色相扇区，度，[下限,上限]；下限 -12 覆盖冷光，上限 46 把木纹/橙色地面挡在外面。待现场标定。
     red_hue_range_deg: [-12.0, 46.0]
