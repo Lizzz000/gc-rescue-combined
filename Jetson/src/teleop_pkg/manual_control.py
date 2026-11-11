@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """独立手动控制程序：独占达妙 USB-CAN，以固定频率发送 0x17F，网页经 HTTP 下发速度。
 
+舵机转角只走本程序自己的 S288 串口，不经过 CAN，也不参与自动搬运。
 不启动 ROS，必须先停止 bridge（两者以 flock + TIOCEXCL 互斥）。STM32 须运行手动固件。
 访问：在 PC 上 ssh -L 8090:127.0.0.1:8090 nvidia@<jetson>，浏览器打开 http://127.0.0.1:8090/。
 """
@@ -14,6 +15,7 @@ import time
 from manual.command import (
     DEFAULT_ARM_ZERO_S, MAX_ARM_ZERO_S, MAX_LEASE_S, STOP_ZERO_S, ManualCommand)
 from manual.link import DamiaoLink, LinkError, manual_packet
+from servo.s288 import ServoSession
 from web.server import BIND_ADDRESS, ManualServer
 
 # 与 bringup_pkg/config/rescue.yaml 的 bridge.serial_device 相同，两处须一致。
@@ -22,6 +24,8 @@ DEFAULT_PORT = 8090
 DEFAULT_RATE_HZ = 100.0
 # 退出前 valid=0 的发送时长，让 STM32 先看到明确撤销再进入超时。
 EXIT_INVALID_S = 0.1
+# 板上当前单总线适配器。留空启动时不打开它，测试和只控底盘都不会碰舵机。
+BOARD_SERVO_DEVICE = '/dev/serial/by-id/usb-Artery_AT32_Virtual_Com_Port_26BDB9203057-if00'
 
 
 def parse_arguments():
@@ -34,6 +38,11 @@ def parse_arguments():
                         help=f'按住指令租约，(0, {MAX_LEASE_S}] 秒')
     parser.add_argument('--arm-zero-s', type=float, default=DEFAULT_ARM_ZERO_S,
                         help=f'从 valid=0 起步前的使能零速时长，(0, {MAX_ARM_ZERO_S}] 秒；需实车确认')
+    parser.add_argument('--servo-device', default='',
+                        help=f'S288 串口。当前板端适配器是 {BOARD_SERVO_DEVICE} ；留空则只控底盘')
+    parser.add_argument('--servo-id', type=int, default=0, help='S288 ID，默认 0')
+    parser.add_argument('--servo-kp', type=float, default=1.0, help='输出位置刚度，默认 1')
+    parser.add_argument('--servo-kd', type=float, default=0.05, help='输出速度刚度，默认 0.05')
     args = parser.parse_args()
     if not 0 <= args.port <= 65535:
         parser.error('端口须在 0..65535')
@@ -89,9 +98,12 @@ def main():
     except OSError as error:
         print(f'USB-CAN 不可用：{error}。请确认 bridge 已停止且设备可访问。', file=sys.stderr)
         return 1
+    servo = ServoSession(args.servo_device, args.servo_id, args.servo_kp, args.servo_kd)
+    if args.servo_device and not servo.available:
+        print(f'舵机未打开：{servo.message}。底盘控制仍可使用。', file=sys.stderr)
     sender = Sender(link, command, args.rate_hz)
     server = ManualServer(args.port, command, lambda: {
-        'device': args.device, 'frames': sender.frames, 'last_frame': list(sender.last)})
+        'device': args.device, 'frames': sender.frames, 'last_frame': list(sender.last)}, servo)
     stop_event = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_: stop_event.set())
@@ -109,6 +121,7 @@ def main():
         if code == 0:
             sender.shutdown()
         link.close()
+        servo.close()
         server.shutdown()
         server.server_close()
     print('已停车并退出。', flush=True)

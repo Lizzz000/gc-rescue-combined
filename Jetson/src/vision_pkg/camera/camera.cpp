@@ -108,6 +108,10 @@ std::string vision_camera::gstreamerPipeline(const CameraConfig & config)
   const bool mjpeg = isMjpegFourcc(config.fourcc);
   std::ostringstream pipeline;
   pipeline << "v4l2src device=" << config.device << " io-mode=2";
+  if (config.brightness >= 0) {
+    // 由相机驱动设置亮度；采集重连时自动管线会再次应用。
+    pipeline << " extra-controls=\"c,brightness=" << config.brightness << "\"";
+  }
   if (mjpeg) {
     // jpegparse只按SOI/EOI恢复边界，不证明熵数据或RST完整；已缺失的数据不会被补回。
     pipeline << " ! image/jpeg,width=" << config.width << ",height=" << config.height

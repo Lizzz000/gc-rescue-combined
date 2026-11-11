@@ -38,6 +38,7 @@
   .stop { width: 100%; height: 56px; border: 0; border-radius: 10px; background: var(--danger); color: #fff;
     font-size: 17px; font-weight: 600; cursor: pointer; }
   .stop:active { filter: brightness(.9); }
+  .gap-top { margin-top: 8px; }
   .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 600;
     background: #eceff3; color: var(--muted); }
   .badge.idle { background: #eceff3; color: var(--muted); }
@@ -113,6 +114,21 @@
       <button class="submit" id="timed">执行</button>
       <div id="timed_error" class="error"></div>
     </section>
+    <section class="card">
+      <h2>舵机转角</h2>
+      <p class="keys">相对当前输出端角度转动，到时停机。不走 CAN，也不参与自动搬运。</p>
+      <div class="timed">
+        <label>角度（°）<input id="servo_deg" type="number" step="1" value="30"></label>
+        <label>时长（s）<input id="servo_s" type="number" step="0.1" value="2"></label>
+      </div>
+      <button class="submit" id="servo_move">转动</button>
+      <button class="stop gap-top" id="servo_stop">舵机停机</button>
+      <div id="servo_error" class="error"></div>
+      <div class="stats gap-top">
+        <div class="stat"><div class="label">舵机</div><div class="value small" id="servo_state">–</div></div>
+        <div class="stat"><div class="label">反馈位置（°）</div><div class="value" id="servo_pos">–</div></div>
+      </div>
+    </section>
   </div>
 </main>
 <script>
@@ -146,16 +162,20 @@ function highlight() {
   }
 }
 
-async function post(path, body) {
+async function postJson(path, body, errorId) {
   try {
     const response = await fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body || {})});
     const data = await response.json();
-    $('error').textContent = response.ok ? '' : data.error;
+    $(errorId).textContent = response.ok ? '' : data.error;
     if (response.ok) { show(data); }
   } catch (error) {
-    $('error').textContent = '连接失败：' + error;
+    $(errorId).textContent = '连接失败：' + error;
   }
+}
+
+function post(path, body) {
+  return postJson(path, body, 'error');
 }
 
 function velocity() {
@@ -227,6 +247,14 @@ $('timed').addEventListener('click', () => {
   if (problems.length === 0) { post('/api/timed', body); }
 });
 
+function postServo(path, body) {
+  return postJson(path, body, 'servo_error');
+}
+$('servo_move').addEventListener('click', () => {
+  postServo('/api/servo', {degrees: Number($('servo_deg').value), seconds: Number($('servo_s').value)});
+});
+$('servo_stop').addEventListener('click', () => { postServo('/api/servo/stop'); });
+
 // 发送频率由相邻两次轮询的帧数差估算（POST 回包不参与，避免间隔过短）。
 let lastCount = null;
 const fixed = (value, digits) => Number(value).toFixed(digits);
@@ -248,6 +276,19 @@ function show(state) {
   $('last_frame').textContent = `valid=${valid ? 1 : 0}  ${fx} ${fy} ${fw}`;
   $('frames').textContent = state.frames;
   $('device').textContent = state.device;
+  if (state.servo) {
+    let servoText = '未连接';
+    if (state.servo.busy) {
+      servoText = '转动中';
+    } else if (state.servo.message) {
+      servoText = state.servo.message;
+    } else if (state.servo.available) {
+      servoText = '就绪';
+    }
+    $('servo_state').textContent = servoText;
+    $('servo_pos').textContent = state.servo.position_deg === null || state.servo.position_deg === undefined
+      ? '–' : fixed(state.servo.position_deg, 2);
+  }
 }
 function rate(state) {
   const now = performance.now();

@@ -65,6 +65,14 @@ ros2 launch bringup_pkg rescue.launch.py run:=all
 
 默认请求相机以 1920×1080 MJPG、120 FPS 采集；分割、场地识别、原图发布和 HTTP 图传的上限为 100 FPS，CAN 三种周期帧错开约 3.33 ms 轮发，每种帧以 10 ms 为目标周期。实际帧率与总线负载需在 Jetson 和相机上实测。
 
+自动 GStreamer 相机管线每次打开设备时应用 `rescue_advanced.yaml` 中的 `vision.detect.camera_brightness`；当前标定值为 150，设为 -1 可不修改设备亮度。该值只适用于自动 GStreamer 管线，其他后端或自定义管线需自行配置亮度；不同相机的支持范围和其他光照下的效果需实测。
+
+当前现场固定光照下，亮度 150 在远景和近景的短时采样均保持有效，无安全区画面的采样没有误报；这是识别有效率，不代表位置已按真实坐标标定。使用旧版完整配置快照时，需要补充 `vision.detect.camera_brightness` 字段。
+
+搬运实测中，车辆横向对准安全区后连续 796 帧未得到有效场地观测；不能据此进行自动到位或判断物块落区，仍需调整并在不同视角下验证。
+
+手动网页可通过启动参数 `--servo-device` 连接 S288，并用 `--servo-kp`、`--servo-kd` 配置刚度。相对转角动作结束后舵机进入 Stop 模式，不再主动保持夹持力；该手动功能未接入自动搬运状态机。实际夹持、松爪位置和力矩须在现场确认。
+
 `run:=vision` 只启动检测和图传。`run:=all` 启动上一节的 7 个进程。图传地址和端口来自 `rescue.yaml` 的 `stream_address`、`stream_port`，当前是 `0.0.0.0:8080`。
 
 - `http://<板端>:8080/healthz`

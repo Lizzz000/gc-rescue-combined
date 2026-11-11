@@ -126,6 +126,7 @@ void DetectNode::declareParameters()
   rescue::declareRequired<int>(*this, "camera_width");
   rescue::declareRequired<int>(*this, "camera_height");
   rescue::declareRequired<int>(*this, "camera_fps");
+  rescue::declareRequired<int>(*this, "camera_brightness");
   rescue::declareRequired<std::string>(*this, "camera_fourcc");
   rescue::declareRequired<int>(*this, "camera_buffer_size");
   rescue::declareRequired<std::string>(*this, "camera_backend");
@@ -202,6 +203,7 @@ void DetectNode::loadParameters()
   camera_config_.width = checkedInt(*this, "camera_width", 0, 16384);
   camera_config_.height = checkedInt(*this, "camera_height", 0, 16384);
   camera_config_.fps = checkedInt(*this, "camera_fps", 0, 1000);
+  camera_config_.brightness = checkedInt(*this, "camera_brightness", -1, 255);
   camera_config_.fourcc = get_parameter("camera_fourcc").as_string();
   camera_config_.buffer_size =
     checkedInt(*this, "camera_buffer_size", 0, 64);
@@ -213,6 +215,11 @@ void DetectNode::loadParameters()
   {
     throw rescue::ConfigurationError("camera_backend must be v4l2, gstreamer or file; got '" +
       camera_config_.backend + "'");
+  }
+  if (camera_config_.brightness >= 0 &&
+    (camera_config_.backend != "gstreamer" || !camera_config_.pipeline.empty()))
+  {
+    RCLCPP_WARN(get_logger(), "camera_brightness only applies to the automatic GStreamer pipeline");
   }
   // 统一入口之外的独立role/组件同样检查；仅校验实际会消费该格式的后端。
   // 自动GStreamer的caps格式名可为RGB/GRAY8，不能误套V4L2的4字节约束。

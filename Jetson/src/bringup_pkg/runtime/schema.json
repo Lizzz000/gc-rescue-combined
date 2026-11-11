@@ -77,6 +77,10 @@
         "path": "vision.detect.camera_fps",
         "kind": "integer"
       },
+      "camera_brightness": {
+        "path": "vision.detect.camera_brightness",
+        "kind": "integer"
+      },
       "camera_fourcc": {
         "path": "vision.detect.camera_fourcc",
         "kind": "string"
@@ -881,6 +885,7 @@
     "shared.image.width": "integer",
     "shared.image.height": "integer",
     "vision.detect.camera_fps": "integer",
+    "vision.detect.camera_brightness": "integer",
     "vision.detect.camera_fourcc": "string",
     "vision.detect.camera_buffer_size": "integer",
     "vision.detect.camera_backend": "string",

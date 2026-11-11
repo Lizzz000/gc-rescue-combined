@@ -31,6 +31,8 @@ struct CameraConfig
   int width{1920};
   int height{1080};
   int fps{60};
+  /// 自动 GStreamer 管线的 V4L2 亮度；-1 表示不设置。
+  int brightness{-1};
   /// V4L2 四字符像素格式；MJPG 用于压缩传输，实际支持能力由相机决定。
   std::string fourcc{"YUYV"};
   /// 请求的驱动队列深度；驱动可能忽略该属性，较浅队列用于减少旧帧积压。

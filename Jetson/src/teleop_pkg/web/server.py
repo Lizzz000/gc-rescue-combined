@@ -3,7 +3,9 @@
 POST /api/hold  {"vx","vy","wz"}            按住中的速度，租约内须续发
 POST /api/timed {"vx","vy","wz","seconds"}  定时动作
 POST /api/stop                              停车
-GET  /api/state                             阶段、速度、链路计数与限幅
+POST /api/servo {"degrees","seconds"}       手动舵机相对转角，与底盘无关
+POST /api/servo/stop                        停止当前舵机转角
+GET  /api/state                             阶段、速度、链路计数、限幅与舵机状态
 GET  /                                       控制页面
 """
 
@@ -23,11 +25,12 @@ _MAX_BODY = 1024
 class ManualServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port, command, status):
-        """command 为 ManualCommand；status() 返回链路诊断字典。"""
+    def __init__(self, port, command, status, servo):
+        """command 为 ManualCommand；status() 返回链路诊断；servo 只处理手动转角。"""
         super().__init__((BIND_ADDRESS, port), _Handler)
         self.command = command
         self.status = status
+        self.servo = servo
 
 
 def _numbers(body, names):
@@ -55,14 +58,17 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.NOT_FOUND, {'error': 'not found'})
 
     def do_POST(self):
-        actions = {'/api/hold': self._hold, '/api/timed': self._timed, '/api/stop': self._stop}
+        actions = {
+            '/api/hold': self._hold, '/api/timed': self._timed, '/api/stop': self._stop,
+            '/api/servo': self._servo, '/api/servo/stop': self._servo_stop,
+        }
         action = actions.get(self.path)
         if action is None:
             self._json(HTTPStatus.NOT_FOUND, {'error': 'not found'})
             return
         try:
             action(self._body(), time.monotonic())
-        except ValueError as error:
+        except (ValueError, TimeoutError, OSError, RuntimeError) as error:
             self._json(HTTPStatus.BAD_REQUEST, {'error': str(error)})
             return
         self._json(HTTPStatus.OK, self._state())
@@ -75,6 +81,13 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _stop(self, body, now):
         self.server.command.stop(now)
+
+    def _servo(self, body, now):
+        degrees, seconds = _numbers(body, ('degrees', 'seconds'))
+        self.server.servo.move(degrees, seconds)
+
+    def _servo_stop(self, body, now):
+        self.server.servo.stop()
 
     def _body(self):
         length = int(self.headers.get('Content-Length') or 0)
@@ -91,7 +104,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _state(self):
         return {**self.server.command.snapshot(time.monotonic()), **self.server.status(),
-                'limits': {'linear_mps': MAX_LINEAR_MPS, 'angular_radps': MAX_ANGULAR_RADPS}}
+                'limits': {'linear_mps': MAX_LINEAR_MPS, 'angular_radps': MAX_ANGULAR_RADPS},
+                'servo': self.server.servo.snapshot()}
 
     def _json(self, status, payload):
         self._reply(status, json.dumps(payload, ensure_ascii=False).encode(), 'application/json')
