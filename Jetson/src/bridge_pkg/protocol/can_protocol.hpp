@@ -52,7 +52,7 @@ static inline bool fixedPoint(double value, double scale, std::int16_t & output)
 class CanProtocol
 {
 public:
-  // 坐标只走后两帧。0x181 是目标框几何中心，0x182 是安全区四顶点等权中心。0x180 是速度，不是坐标。
+  // 坐标只走后两帧。0x181 是目标框几何中心，0x182 是安全区透视中心。0x180 是速度，不是坐标。
   // 改 ID 或 10000 倍缩放必须同时改 docs/reference/can-protocol.md，并与 STM32 接收一致。
   // 中心先 round 再检查 int16；量化越界时中心帧置无效并清零载荷，不截断或裁剪。
   static constexpr canid_t VELOCITY_ID = 0x180;

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "field/field.hpp"
+#include "../../../interface_pkg/app/core/projective_center.hpp"
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
@@ -106,13 +107,20 @@ inline std::optional<double> inFrameCornerError(const std::vector<cv::Point2f> &
   return sum / n;
 }
 
-// 暂用口径：BEV 左右半区几何中心投回处理图。J6 纯函数落地后改为调用该函数。
-inline std::array<cv::Point2f, 2> halfCenters(const FieldResult & r)
+// 与任务节点共用对角线交点算法，先投影实际区域四角再计算中心。
+inline std::optional<std::array<cv::Point2f, 2>> halfCenters(const FieldResult & r)
 {
-  const float mid = 0.5f * float(r.split_top_x + r.split_bottom_x), h = 0.5f * float(r.bev.rows - 1);
-  std::vector<cv::Point2f> bev{{0.5f * mid, h}, {0.5f * (mid + float(r.bev.cols - 1)), h}}, img;
+  const float w = float(r.bev.cols - 1), h = float(r.bev.rows - 1);
+  const float top = float(r.split_top_x), bottom = float(r.split_bottom_x);
+  std::vector<cv::Point2f> bev{{0, 0}, {top, 0}, {w, 0}, {0, h}, {bottom, h}, {w, h}}, img;
   cv::perspectiveTransform(bev, img, r.homography_inv);
-  return {img[0], img[1]};
+  const std::array<cv::Point2f, 4> left{img[0], img[1], img[4], img[3]};
+  const std::array<cv::Point2f, 4> right{img[1], img[2], img[5], img[4]};
+  double lx, ly, rx, ry;
+  if (!FieldGeometry::projectiveCenter(left, lx, ly) || !FieldGeometry::projectiveCenter(right, rx, ry)) {
+    return std::nullopt;
+  }
+  return std::array<cv::Point2f, 2>{cv::Point2f(float(lx), float(ly)), cv::Point2f(float(rx), float(ry))};
 }
 
 // 有效↔无效的切换次数。

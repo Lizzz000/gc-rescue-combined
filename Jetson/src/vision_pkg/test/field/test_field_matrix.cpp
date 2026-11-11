@@ -225,7 +225,8 @@ void scoreFrame(Stats & st, const FieldResult & r, const field_scene::Truth & tr
   st.split_err.push_back(std::abs(err));
   st.wrong_label += std::abs(err) > kSplitLabelTolPx;
   const auto centers = halfCenters(r);
-  st.center_err.push_back(0.5 * (cv::norm(centers[0] - inner.left_center) + cv::norm(centers[1] - inner.right_center)));
+  if (!centers) {++st.wrong_label; return;}
+  st.center_err.push_back(0.5 * (cv::norm((*centers)[0] - inner.left_center) + cv::norm((*centers)[1] - inner.right_center)));
 }
 
 // 第 k 个种子：独立噪声，相机位置按 0 为中心对称微扰。

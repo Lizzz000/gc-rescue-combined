@@ -19,6 +19,7 @@ $watch = [Diagnostics.Stopwatch]::StartNew()
   "$here\test_main.cpp" `
   "$here\test_mission.cpp" `
   "$here\test_roi.cpp" `
+  "$here\test_field_geometry.cpp" `
   "$package\control\controller.cpp" `
   "$package\roi\roi.cpp" `
   "-o$out\mission_host_tests.exe" *> $log

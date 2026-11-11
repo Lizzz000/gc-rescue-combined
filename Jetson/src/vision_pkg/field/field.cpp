@@ -237,6 +237,11 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
     scoreEdges(purple_probe, fit_result.quad, cfg_, score);
     // 内部颜色只在内沿地面四边形里计：外沿四边形还含围边立面，远/低视角时围边占去大半。
     const InnerQuad inner = fitInnerQuad(interior_mask, fit_result.quad, cfg_);
+    if (inner.measured_edges == 0) {
+      if (!reasons.empty()) {reasons += "; ";}
+      reasons += "没有可测的内沿";
+      continue;
+    }
     score.red_inside = redInsideGrid(interior_mask, inner.quad, cfg_, score.cells_red);
     score.red_outside = redOutsideRing(interior_mask, fit_result.quad, cfg_);
     score.crosses_interior = crossesInterior(interior_mask, purple_probe, fit_result.quad, cfg_);

@@ -23,7 +23,7 @@
 
 // ---- SafetyNode：构造与参数 ----
 
-// 接收场地观测，按 Mission 已提交的目的区生成安全中心；四角等权且不裁剪。
+// 接收场地观测，按 Mission 已提交的目的区计算透视中心；坐标不裁剪。
 
 SafetyNode::SafetyNode(const rclcpp::NodeOptions & options)
 : Node("safety_node", options), settings_(loadParameters())
@@ -197,9 +197,8 @@ interface_pkg::msg::SafetyTarget SafetyNode::makeSafetyTarget(
   {
     const auto & points = destination_ == interface_pkg::msg::MissionStatus::DEST_LEFT ?
       output.left_region : output.right_region;
-    FieldGeometry::detail::normalizedCenter(
+    target.valid = FieldGeometry::detail::normalizedCenter(
       points, settings_.image_width, settings_.image_height, target.x, target.y);
-    target.valid = true;
   }
   // 无效结果仍携带源 header 和当前 side，但坐标归零，接收端必须检查 valid。
   if (!target.valid) {target.x = 0; target.y = 0;}

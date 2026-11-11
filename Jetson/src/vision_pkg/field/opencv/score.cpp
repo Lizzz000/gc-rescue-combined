@@ -244,7 +244,10 @@ std::string rejectCandidate(
   if (sc.purple < cfg.min_purple_score) {return "紫框边证据不足";}
   if (sc.red_inside < cfg.red_inside_min) {return "内部红色不足";}
   if (sc.cells_red < cfg.red_cells_min) {return "内部红色格数不足";}
-  if (sc.red_outside > cfg.red_outside_max) {return "四边形外部也是红色 (框到场地内部了)";}
+  // 与红色地面相邻时，四边均有强紫边实测可证明边界，不以外侧同色直接否决。
+  if (sc.red_outside > cfg.red_outside_max && !(measured == 4 && sc.edges_ok == 4 && sc.purple >= 0.95)) {
+    return "四边形外部也是红色 (框到场地内部了)";
+  }
   if (sc.edges_ok < 2) {return "紫色边支持度合格的边少于 2 条";}
   if (sc.edges_ok == 2 && sc.top2_min < cfg.edge_support_strong &&
     !(tracking && sc.temporal >= 0.9)) {return "只有 2 条边有证据, 且强度/时序一致性不足";}
@@ -492,13 +495,19 @@ void rowRuns(
   if (start >= 0) {close(window.window.width);}
 }
 
-int interiorRows(const cv::Mat & interior, const SplitWindow & window)
+struct InteriorRows {int count = 0, first = -1, last = -1;};
+
+InteriorRows interiorRows(const cv::Mat & interior, const SplitWindow & window)
 {
   const int cols = window.window.width;
-  int rows = 0;
+  InteriorRows rows;
   for (int y = 0; y < interior.rows; ++y) {
     if (cv::countNonZero(interior.row(y).colRange(window.pad_lo, window.pad_lo + cols)) >=
-      kInteriorRowShare * cols) {++rows;}
+      kInteriorRowShare * cols) {
+      if (rows.first < 0) {rows.first = y;}
+      rows.last = y;
+      ++rows.count;
+    }
   }
   return rows;
 }
@@ -506,7 +515,7 @@ int interiorRows(const cv::Mat & interior, const SplitWindow & window)
 /** @brief 统计直线沿线的资格行与支持行，检查覆盖、分段、残差，并用 Huber 拟合精修。 */
 SplitLine acceptLine(
   const std::vector<SplitRun> & runs, const cv::Mat & eligible, double top, double slope,
-  const FieldConfig & cfg, int min_rows, int interior_rows)
+  const FieldConfig & cfg, int min_rows, const InteriorRows & interior_rows)
 {
   SplitLine result;
   const int rows = eligible.rows, cols = eligible.cols;
@@ -555,7 +564,11 @@ SplitLine acceptLine(
   if (coverage < cfg.black_score_frac) {return result;}
   // 支持行的首末跨度也须达到内部行的同一比例：物块盖住一端时，剩下的短暗条与场内暗物体无法区分。
   const double support_span = centers.back().y - centers.front().y + 1;
-  if (support_span < cfg.black_score_frac * interior_rows) {return result;}
+  if (support_span < cfg.black_score_frac * interior_rows.count) {return result;}
+  // 分段必须覆盖实际内部区域的远、近端；不能只把残存短线自身分成三段。
+  const double interior_span = interior_rows.last - interior_rows.first + 1.0;
+  if (interior_rows.count == 0 || centers.front().y >= interior_rows.first + interior_span / 3.0 ||
+    centers.back().y < interior_rows.first + 2.0 * interior_span / 3.0) {return result;}
   // 首末两段必须有支持，中段被物块整段遮住时可以没有资格行；有资格行的分段都要达到覆盖率的一半。
   // 局部反光或物块可以缺行，但只在一端出现的短暗物体不能替代完整分界。
   if (thirds_hit[0] == 0 || thirds_hit[2] == 0) {return result;}
@@ -578,14 +591,14 @@ SplitLine acceptLine(
   // 置信度 = 下陷强度 × 资格行覆盖率 × 资格行占内部行比例：被遮挡越多、证据越短，置信度越低，
   // 选优时完整分界线优先于只在物块高度内成立的短暗边。
   result.confidence = std::min(1.0, depth / cfg.black_conf_depth) * coverage *
-    std::min(1.0, double(eligible_rows.size()) / std::max(1, interior_rows));
+    std::min(1.0, double(eligible_rows.size()) / std::max(1, interior_rows.count));
   return result;
 }
 
 // 投票：每段对 (中点列, 斜率) 网格投一票；依次取峰值验收，已验收线附近 2h 内的峰被抑制。
 std::vector<SplitLine> candidateLines(
   const std::vector<SplitRun> & runs, const cv::Mat & eligible, int half, const FieldConfig & cfg,
-  int min_rows, int interior_rows)
+  int min_rows, const InteriorRows & interior_rows)
 {
   const int rows = eligible.rows, cols = eligible.cols;
   const double middle = 0.5 * (rows - 1);

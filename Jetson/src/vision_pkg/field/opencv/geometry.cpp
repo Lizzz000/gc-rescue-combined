@@ -618,7 +618,21 @@ InnerQuad fitInnerQuad(
   Line lines[3];
   for (int i = 0; i < 3; ++i) {
     Line line; int inliers = 0;
-    if (fitLineRobust(sides[i].scan, cfg, line, inliers) && inliers >= cfg.min_side_inliers) {
+    bool measured = fitLineRobust(sides[i].scan, cfg, line, inliers) && inliers >= cfg.min_side_inliers;
+    if (measured && i > 0) {
+      // 边缘被遮挡时，内部物块的竖边可能被误认为侧内沿；侧线不得穿入对侧区域。
+      if (std::abs(line.a) < 1e-6) {
+        measured = false;
+      } else {
+        const double far_x = -(line.b * ty + line.c) / line.a;
+        const double near_x = -(line.b * h + line.c) / line.a;
+        const double boundary = (i == 1 ? 0.75 : 0.25) * w;
+        measured = std::isfinite(far_x) && std::isfinite(near_x) &&
+          (i == 1 ? (far_x >= boundary && near_x >= boundary) :
+          (far_x <= boundary && near_x <= boundary));
+      }
+    }
+    if (measured) {
       lines[i] = line;
       ++out.measured_edges;
     } else {

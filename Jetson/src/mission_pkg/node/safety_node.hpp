@@ -20,7 +20,7 @@
 
 // ---- SafetyNode：场地观测与目的区中心 ----
 // 目的区沿用 MissionStatus；实际 field、导航就绪和源时间截止共同约束有效目标。
-// 中心由 FieldGeometry 按四角等权计算，不裁剪到 [0,1]；无效结果的坐标归零。
+// 中心由 FieldGeometry 计算对角线交点，不裁剪到 [0,1]；无效结果的坐标归零。
 // 默认互斥回调组中先发观测、再发目标，两次发布成功后才记录源帧历史。
 class SafetyNode : public rclcpp::Node
 {

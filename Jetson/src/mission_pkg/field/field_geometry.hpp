@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <interface_pkg/app/core.hpp>
+#include <interface_pkg/app/core/projective_center.hpp>
 
 
 // ---- 安全区消息入口几何与内部中心计算 ----
@@ -36,16 +37,20 @@ bool validObservation(const Observation & value)
 
 namespace detail
 {
-// 入口已保证点有限，这里不再扫一遍。
+// 矩形的透视中心是投影后对角线的交点，不是四个图像顶点的均值。
 template<class Points>
-void normalizedCenter(const Points & points, double width, double height, double & x, double & y)
+bool normalizedCenter(const Points & points, double width, double height, double & x, double & y)
 {
-  x = 0;
-  y = 0;
-  for (const auto & point : points) {
-    x += static_cast<double>(point.x) / width / 4.0;
-    y += static_cast<double>(point.y) / height / 4.0;
-  }
+  if (points.size() != 4 || !finitePoints(points) || !std::isfinite(width) ||
+    !std::isfinite(height) || width <= 0 || height <= 0) {return false;}
+  double center_x, center_y;
+  if (!projectiveCenter(points, center_x, center_y)) {return false;}
+  center_x /= width;
+  center_y /= height;
+  if (!std::isfinite(center_x) || !std::isfinite(center_y)) {return false;}
+  x = center_x;
+  y = center_y;
+  return true;
 }
 }  // namespace detail
 }  // namespace FieldGeometry

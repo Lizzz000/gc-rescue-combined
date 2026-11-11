@@ -4,6 +4,7 @@
 #include "field_scene.hpp"
 #include "production_config.hpp"
 #include "field/field.hpp"
+#include "../../../interface_pkg/app/core/projective_center.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -34,12 +35,15 @@ double lineXAt(const cv::Point2f & a, const cv::Point2f & b, double y)
   return a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y);
 }
 
-cv::Point2f mean4(const cv::Point2f & a, const cv::Point2f & b, const cv::Point2f & c, const cv::Point2f & d)
+cv::Point2f regionCenter(const cv::Point2f & a, const cv::Point2f & b, const cv::Point2f & c, const cv::Point2f & d)
 {
-  return (a + b + c + d) * 0.25f;
+  const std::array<cv::Point2f, 4> points{a, b, c, d};
+  double x = 0, y = 0;
+  if (!FieldGeometry::projectiveCenter(points, x, y)) {return {NAN, NAN};}
+  return {static_cast<float>(x), static_cast<float>(y)};
 }
 
-// 左右区域中心（四顶点均值，与 safety_node 的 0x182 中心同口径）相对真值内部地面两半的平均误差，处理图像素。
+// 左右区域透视中心相对真值内部地面两半的平均误差，处理图像素。
 double regionCentreError(const FieldResult & r, const field_scene::Truth & truth)
 {
   const float w = r.bev.cols - 1.f, h = r.bev.rows - 1.f;
@@ -47,8 +51,8 @@ double regionCentreError(const FieldResult & r, const field_scene::Truth & truth
   std::vector<cv::Point2f> bev{{0, 0}, {xt, 0}, {w, 0}, {0, h}, {xb, h}, {w, h}}, p;
   cv::perspectiveTransform(bev, p, r.homography_inv);
   const auto & in = truth.inner;
-  const double left = cv::norm(mean4(p[0], p[1], p[4], p[3]) - mean4(in[0], truth.split_far, truth.split_near, in[3]));
-  const double right = cv::norm(mean4(p[1], p[2], p[5], p[4]) - mean4(truth.split_far, in[1], in[2], truth.split_near));
+  const double left = cv::norm(regionCenter(p[0], p[1], p[4], p[3]) - regionCenter(in[0], truth.split_far, truth.split_near, in[3]));
+  const double right = cv::norm(regionCenter(p[1], p[2], p[5], p[4]) - regionCenter(truth.split_far, in[1], in[2], truth.split_near));
   return 0.5 * (left + right);
 }
 

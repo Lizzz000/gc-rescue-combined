@@ -35,7 +35,7 @@
 
 ## 一次运输
 
-相机帧进入 `detect_node`。seg 阶段发布检测，`track_node` 维持轨迹，`select_node` 选出一个目标。到达后 `mission_node` 调用 `target_node` 做 ROI。首趟只接受一个绿色；通过后目的地为左或右，并停在等待转向。命令 1 切到 field，服务成功且任务状态也变成 field 之后进入安全区导航。`safety_node` 取对应侧四个顶点的均值，再除以画幅宽高，得到中心。`bridge_node` 把目标中心、安全区中心和握手报文送到 CAN。命令 4 把 `transport_phase` 记为 Later，阶段仍是等待送达。命令 3 切回 seg 并重新寻找，此时黑色和橙色也可以被选中。
+相机帧进入 `detect_node`。seg 阶段发布检测，`track_node` 维持轨迹，`select_node` 选出一个目标。到达后 `mission_node` 调用 `target_node` 做 ROI。首趟只接受一个绿色；通过后目的地为左或右，并停在等待转向。命令 1 切到 field，服务成功且任务状态也变成 field 之后进入安全区导航。`safety_node` 计算对应区域对角线的交点，再除以画幅宽高，得到透视中心。`bridge_node` 把目标中心、安全区中心和握手报文送到 CAN。命令 4 把 `transport_phase` 记为 Later，阶段仍是等待送达。命令 3 切回 seg 并重新寻找，此时黑色和橙色也可以被选中。
 
 ## 阅读顺序
 
@@ -88,6 +88,12 @@ python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/move_timed.py sto
 常用话题：`/detect_node/status`、`/detect_node/seg/detections`、`/detect_node/field/results`、`/detect_node/active_task`、`/track_node/seg/tracks`、`/select_node/target`、`/mission_node/status`、`/safety_node/target`、`/bridge_node/status`。`/detect_node/active_task` 和 `/mission_node/status` 是 `transient_local`。
 
 服务：`/detect_node/set_field`、`/target_node/check_roi`、`/mission_node/arrived`、`/mission_node/command`。
+
+### 安全区识别验证状态
+
+`grok未验证` 分支的安全区识别仍需实车校准。左右区域沿黑带中心线分割，安全区目标为各区域四边形对角线的交点；对矩形区域，这对应矩形中心经过透视投影后的位置。仿真真值排除了黑带宽度，与当前消息中包含半条黑带的区域定义不同，中心误差不能直接解释为实车偏差。
+
+主机仿真中，静止和自动曝光序列通过；反光、强阴影、相近颜色背景及部分视野等场景仍有未达标情况。贴线物块场景暂不作为当前调优重点，测试仍然保留。尚无标注的实车回放数据，不能据此确认识别成功率、目标精度或车辆运动表现；上车后应根据实际画面和运动情况校准，并检查 CAN 与电机反馈。
 
 ## 术语
 
