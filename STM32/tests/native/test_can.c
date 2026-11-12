@@ -17,8 +17,7 @@
 #include "manual_control.h"
 
 /* 同一用例分别以手动与自动编译模式运行，核对各自只开本模式的滤波和分流。 */
-#define TEST_CAN_AUTO (JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST)
-#if TEST_CAN_AUTO
+#if JETSON_AUTO_CAN_ENABLED
 #define TEST_FILTER_BANKS 2U
 #else
 #define TEST_FILTER_BANKS 1U
@@ -137,7 +136,7 @@ void Manual_Control_Loop(void)
 void Chassis_Loop(void)
 {
     assert(test_tick == 5U * (chassis_loops + 1U));
-#if TEST_CAN_AUTO
+#if JETSON_AUTO_CAN_ENABLED
     assert(jetson_auto_loops == chassis_loops);
 #else
     assert(manual_control_loops == chassis_loops + 1U);
@@ -272,7 +271,7 @@ int main(void)
     start_result = HAL_OK;
     can_filter_init();
     assert(filter_count == TEST_FILTER_BANKS && setup_steps == 7U);
-#if TEST_CAN_AUTO
+#if JETSON_AUTO_CAN_ENABLED
     const uint16_t accepted_ids[TEST_FILTER_BANKS][4] = {
         {0x000U, 0x180U, 0x181U, 0x182U},
         {0x190U, 0x191U, 0x192U, 0x193U},
@@ -369,7 +368,7 @@ int main(void)
     memcpy(rx_data, low, 8);
     Queue_Current_Frame();
     const uint8_t velocity[8] = {1, 0xE8, 3, 0, 0, 0x18, 0xFC, 0};
-    rx_header.StdId = TEST_CAN_AUTO ? 0x180U : 0x17FU; rx_header.DLC = 7U;
+    rx_header.StdId = JETSON_AUTO_CAN_ENABLED ? 0x180U : 0x17FU; rx_header.DLC = 7U;
     memcpy(rx_data, velocity, 8);
     Queue_Current_Frame();
     rx_header.StdId = 0x193U; rx_header.DLC = 6U;
@@ -380,7 +379,7 @@ int main(void)
     HAL_CAN_RxFifo0MsgPendingCallback(&hcan1);
     assert(rx_pending == 0U && rx_count == previous_rx + 3U);
     assert(dm_motor[0].feedback_seq == 2U && dm_motor[0].feedback_time_ms == 51U);
-#if TEST_CAN_AUTO
+#if JETSON_AUTO_CAN_ENABLED
     assert(jetson_rx_count == 2U && manual_rx_count == 0U);
     assert(jetson_rx_id == 0x193U && jetson_rx_length == 6U && memcmp(jetson_rx_data, turn, 6) == 0);
 #else
@@ -396,13 +395,13 @@ int main(void)
         rx_header.DLC = length;
         memcpy(rx_data, velocity, 8);
         Receive_Current_Frame();
-#if !TEST_CAN_AUTO
+#if !JETSON_AUTO_CAN_ENABLED
         assert(manual_rx_count == manual_before + length + 1U && manual_rx_length == length);
         assert(memcmp(manual_rx_data, velocity, length) == 0);
 #endif
     }
     assert(jetson_rx_count == jetson_before);
-    assert(manual_rx_count == manual_before + (TEST_CAN_AUTO ? 0U : 9U));
+    assert(manual_rx_count == manual_before + (JETSON_AUTO_CAN_ENABLED ? 0U : 9U));
 
     /* 七种 Jetson 下行 ID 只在自动固件到达协议层，手动固件丢弃。 */
     const uint16_t jetson_ids[] = {0x180U, 0x181U, 0x182U, 0x190U, 0x191U, 0x192U, 0x193U};
@@ -411,7 +410,7 @@ int main(void)
     {
         rx_header.StdId = jetson_ids[i]; rx_header.DLC = jetson_lengths[i];
         Receive_Current_Frame();
-#if TEST_CAN_AUTO
+#if JETSON_AUTO_CAN_ENABLED
         assert(jetson_rx_id == jetson_ids[i] && jetson_rx_length == jetson_lengths[i]);
 #endif
     }
@@ -420,12 +419,12 @@ int main(void)
     {
         rx_header.DLC = length;
         Receive_Current_Frame();
-#if TEST_CAN_AUTO
+#if JETSON_AUTO_CAN_ENABLED
         assert(jetson_rx_id == 0x180U && jetson_rx_length == length);
 #endif
     }
-    const uint32_t jetson_expected = jetson_before + (TEST_CAN_AUTO ? 16U : 0U);
-    const uint32_t manual_expected = manual_before + (TEST_CAN_AUTO ? 0U : 9U);
+    const uint32_t jetson_expected = jetson_before + (JETSON_AUTO_CAN_ENABLED ? 16U : 0U);
+    const uint32_t manual_expected = manual_before + (JETSON_AUTO_CAN_ENABLED ? 0U : 9U);
     assert(jetson_rx_count == jetson_expected && manual_rx_count == manual_expected);
     assert(dm_motor[0].feedback_seq == 2U);
 
@@ -457,7 +456,7 @@ int main(void)
     assert(pwm_starts == 0U && buzzer_starts == 0U && buzzer_stops == 1U);
     assert(led_toggles == 2U && battery_reads == 11U);
     assert(chassis_inits == 1U && chassis_loops == 200U);
-#if TEST_CAN_AUTO
+#if JETSON_AUTO_CAN_ENABLED
     assert(jetson_can_inits == 1U && jetson_auto_inits == 1U && jetson_auto_loops == 200U);
     assert(manual_can_inits == 0U && manual_control_inits == 0U && manual_control_loops == 0U);
 #else
@@ -465,7 +464,7 @@ int main(void)
     assert(jetson_can_inits == 0U && jetson_auto_inits == 0U && jetson_auto_loops == 0U);
 #endif
     assert(fabsf(battery_voltage - 24.11f) < 0.0001f);
-    puts(TEST_CAN_AUTO ? "PASS CAN auto: Jetson-only filters and routing, MIT feedback and 5ms task ordering"
+    puts(JETSON_AUTO_CAN_ENABLED ? "PASS CAN auto: Jetson-only filters and routing, MIT feedback and 5ms task ordering"
                        : "PASS CAN manual: 0x17F-only filters and routing, MIT feedback and 5ms task ordering");
     return 0;
 }

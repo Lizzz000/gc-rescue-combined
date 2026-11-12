@@ -7,7 +7,7 @@
 #include "dm_motor.h"
 #include "jetson_auto_config.h"
 #include "jetson_can.h"
-#if !(JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST)
+#if !JETSON_AUTO_CAN_ENABLED
 #include "manual_can.h"
 #endif
 
@@ -17,7 +17,7 @@
  */
 void can_filter_init(void)
 {
-#if JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST
+#if JETSON_AUTO_CAN_ENABLED
     static const uint16_t ids[][4] = {
         {0x000U, JETSON_CAN_HEARTBEAT_ID, JETSON_CAN_TARGET_CENTER_ID, JETSON_CAN_SAFETY_CENTER_ID},
         {JETSON_CAN_ARRIVAL_REPLY_ID, JETSON_CAN_ROI_REPLY_ID, JETSON_CAN_COMMAND_REPLY_ID, JETSON_CAN_TURN_REQUEST_ID},
@@ -71,7 +71,7 @@ HAL_StatusTypeDef Jetson_CAN_Try_Send_Uplink(uint16_t id, uint32_t argument)
     return HAL_CAN_AddTxMessage(&MOTOR_CAN, &header, data, &mailbox);
 }
 
-#if JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST
+#if JETSON_AUTO_CAN_ENABLED
 /** @brief 按 Jetson can_protocol.hpp 识别七种下行帧 ID。
  * @param[in] id 标准 CAN ID，范围 0～0x7FF。
  * @return 已知下行 ID 返回 1，其余返回 0。
@@ -115,7 +115,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
             continue;
         if (header.StdId == 0U && header.DLC == 8U)
             DM_Motor_ReceiveFeedback(data);
-#if JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST
+#if JETSON_AUTO_CAN_ENABLED
         else if (Is_Jetson_Frame(header.StdId))
             Jetson_CAN_Receive((uint16_t)header.StdId, data, (uint8_t)header.DLC);
 #else

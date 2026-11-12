@@ -1,6 +1,6 @@
 #include "jetson_auto.h"
 
-#if JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST
+#if JETSON_AUTO_CAN_ENABLED
 #include "bsp_can.h"
 #include "chassis.h"
 #include "image_tracker.h"

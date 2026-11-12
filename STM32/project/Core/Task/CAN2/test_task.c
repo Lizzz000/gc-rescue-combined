@@ -5,7 +5,7 @@
 #include "bsp_led.h"
 #include "chassis.h"
 #include "jetson_auto.h"
-#if JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST
+#if JETSON_AUTO_CAN_ENABLED
 #include "jetson_can.h"
 #else
 #include "manual_can.h"
@@ -33,7 +33,7 @@ void test_task(void const *argument)
 {
     (void)argument;
     Chassis_Init();
-#if JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST
+#if JETSON_AUTO_CAN_ENABLED
     Jetson_CAN_Init();
     Jetson_Auto_Init();
 #else
@@ -48,11 +48,11 @@ void test_task(void const *argument)
     for (;;)
     {
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(5U));
-#if !(JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST)
+#if !JETSON_AUTO_CAN_ENABLED
         Manual_Control_Loop();
 #endif
         Chassis_Loop();
-#if JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST
+#if JETSON_AUTO_CAN_ENABLED
         Jetson_Auto_Loop();
 #endif
         if (++period_ticks % 20U == 0U)

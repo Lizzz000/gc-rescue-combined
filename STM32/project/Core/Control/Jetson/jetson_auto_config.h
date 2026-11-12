@@ -13,6 +13,8 @@
 #if JETSON_AUTO_ENABLED && JETSON_AUTO_CHASSIS_TEST
 #error "Select either full transport or chassis-only test"
 #endif
+/* 自动搬运或底盘联调固件：CAN1 收 Jetson 下行并运行自动流程；否则为 0x17F 手动固件。 */
+#define JETSON_AUTO_CAN_ENABLED (JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST)
 #define JETSON_AUTO_CHASSIS_TEST_TIMEOUT_MS 90000U
 
 /* 到位窗口为 x、y 设定点及各轴允许误差。单位为原图宽/高的比例，0 待标定。 */

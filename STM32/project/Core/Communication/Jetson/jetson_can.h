@@ -29,7 +29,7 @@
 #define JETSON_CAN_POINT_RELEASE          2U
 #define JETSON_CAN_POINT_REPLY_COMMAND    5U
 
-/* 速度帧格式：valid:uint8 + vx/vy/wz:int16 小端；0x180 心跳与手动 0x17F 共用。 */
+/* 速度载荷：valid:uint8 + vx/vy/wz:int16 小端，共 7 字节；手动 0x17F 即此载荷（DLC 7），0x180 心跳为此 7 字节加 data[7] pause（DLC 8）。 */
 typedef struct
 {
     uint8_t valid;       /**< 格式合法且有效字节为 1。 */

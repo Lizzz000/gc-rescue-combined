@@ -8,7 +8,7 @@
 #define MOTOR_CAN_FILTER_BANK 0U
 
 /**
- * @brief 沿用教程例程 can_filter_init 入口，配置并启动电机与 Jetson 共用的 CAN1。
+ * @brief 沿用教程例程 can_filter_init 入口，按编译模式配置并启动电机与本模式通信共用的 CAN1。
  * @return 无。
  * @note 在CubeMX的CAN初始化之后调用一次；当前仅启动CAN1。
  */
