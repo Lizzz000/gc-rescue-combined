@@ -3,7 +3,7 @@
 <package format="3">
   <name>bridge_pkg</name>
   <version>0.0.0</version>
-  <description>SocketCAN bridge for centers, velocity, and STM32 transport-cycle handshakes.</description>
+  <description>CAN bridge for centers, 0x180 heartbeat, and STM32 transport-cycle handshakes.</description>
   <maintainer email="li@todo.todo">li</maintainer>
   <license>Apache-2.0</license>
 
@@ -12,7 +12,6 @@
   <depend>rclcpp</depend>
   <depend>rclcpp_components</depend>
   <depend>std_msgs</depend>
-  <depend>geometry_msgs</depend>
   <depend>rcl_interfaces</depend>
   <depend>vision_msgs</depend>
   <depend>interface_pkg</depend>

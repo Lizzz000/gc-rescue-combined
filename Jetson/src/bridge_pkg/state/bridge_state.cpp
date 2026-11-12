@@ -15,18 +15,14 @@
 namespace
 {
 /**
- * @brief 在构造入口按同一规则校验感知输入和速度的有效期限。
+ * @brief 在构造入口校验感知输入有效期限。
  * @param[in] input_timeout_s 感知输入有效期，单位秒，须有限且位于(0,3600]。
- * @param[in] velocity_timeout_s 速度有效期，单位秒，须有限且位于(0,3600]。
- * @throws std::invalid_argument 任一期限非法；不修改配置或运行状态。
+ * @throws std::invalid_argument 期限非法；不修改配置或运行状态。
  */
-void validateTimeouts(double input_timeout_s, double velocity_timeout_s)
+void validateTimeouts(double input_timeout_s)
 {
-  const double timeouts_s[] = {input_timeout_s, velocity_timeout_s};
-  for (const double timeout_s : timeouts_s) {
-    if (!std::isfinite(timeout_s) || timeout_s <= 0 || timeout_s > 3600) {
-      throw std::invalid_argument("Bridge input and velocity timeouts must be finite in (0, 3600]");
-    }
+  if (!std::isfinite(input_timeout_s) || input_timeout_s <= 0 || input_timeout_s > 3600) {
+    throw std::invalid_argument("Bridge input timeout must be finite in (0, 3600]");
   }
 }
 }  // namespace
@@ -47,7 +43,6 @@ BridgeRoiResult BridgeRoiResult::checked(bool valid, bool passed, const cargo::C
 // 坐标能不能发出，看 targetOutput / safetyOutput，四项都要成立：
 //   没有本地保持，操作是空闲，实际阶段匹配（目标要 seg，安全区要 field），
 //   Mission 阶段也匹配（目标是寻找，安全区是前往安全区且结果成功、左右一致），帧还新鲜。
-// 速度不看这些门，只看量化是否有效和到达年龄。
 // holdCoordinates 清掉两路中心并记住当时的 cycle_generation。
 // releaseCoordinates 要求新代次及可移动阶段；205 放弃后只允许新的寻找阶段解除。
 
@@ -65,7 +60,7 @@ BridgeState::BridgeState(BridgeStateConfig config)
   {
     throw std::invalid_argument("Bridge image dimensions must be 1..INT_MAX");
   }
-  validateTimeouts(config_.input_timeout_s, config_.velocity_timeout_s);
+  validateTimeouts(config_.input_timeout_s);
   if (!std::isfinite(config_.safety_hold_s) || config_.safety_hold_s <= 0 ||
     config_.safety_hold_s > config_.input_timeout_s || !std::isfinite(config_.field_max_fps) ||
     config_.field_max_fps <= 0 ||
@@ -95,7 +90,6 @@ void BridgeState::resetInputs(BridgeSourceTime current)
   target_ = Center{};
   safety_ = Center{};
   safety_hold_ = Center{};
-  velocity_ = Velocity{};
   // ROS 源时钟回拨也不能重新放行会话切换前的旧帧；等待时钟追上原截止后再恢复中心。
   cutoff_.ns = std::max(cutoff_.ns, current.ns);
 }
@@ -218,20 +212,6 @@ bool BridgeState::safety(
   return true;
 }
 
-bool BridgeState::velocity(
-  double x, double y, double yaw, BridgeMonotonicTime arrival, bool socket_open)
-{
-  if (!socket_open) {return false;}
-  // 每条新 Twist 都替换旧值；某一分量量化失败时整个速度帧无效，不沿用旧有效速度。
-  Velocity velocity;
-  velocity.arrival = arrival;
-  velocity.valid = bridge_scale::fixedPoint(x, 1000.0, velocity.x) &&
-    bridge_scale::fixedPoint(y, 1000.0, velocity.y) &&
-    bridge_scale::fixedPoint(yaw, 1000.0, velocity.yaw);
-  velocity_ = velocity;
-  return true;
-}
-
 bool BridgeState::fresh(
   const Center & center, BridgeSourceTime current, BridgeMonotonicTime now) const
 {
@@ -280,15 +260,6 @@ BridgeCenterOutput BridgeState::safetyOutput(
     held(current, now);
   return {allowed, safety_hold_.x, safety_hold_.y,
     static_cast<std::uint32_t>((safety_hold_.stamp.ns / 1000000) & 0xffffff)};
-}
-
-BridgeVelocityOutput BridgeState::velocityOutput(BridgeMonotonicTime now) const
-{
-  // 速度不叠加任务、运输或到达保持门控；只看量化有效性与到达龄，断线清理走 resetInputs。
-  const bool valid = velocity_.valid &&
-    std::chrono::duration<double>(now.value - velocity_.arrival.value).count() <=
-    config_.velocity_timeout_s;
-  return {valid, velocity_.x, velocity_.y, velocity_.yaw};
 }
 
 void BridgeState::holdCoordinates(BridgeSourceTime current, bool until_search)

@@ -807,10 +807,6 @@
         "path": "bridge.input_timeout_s",
         "kind": "number"
       },
-      "velocity_timeout_s": {
-        "path": "bridge.velocity_timeout_s",
-        "kind": "number"
-      },
       "safety_hold_s": {
         "path": "bridge.safety_hold_s",
         "kind": "number"
@@ -826,10 +822,6 @@
       "request_timeout_s": {
         "path": "bridge.request_timeout_s",
         "kind": "number"
-      },
-      "velocity_topic": {
-        "path": "bridge.velocity_topic",
-        "kind": "string"
       },
       "target_topic": {
         "path": "bridge.target_topic",
@@ -1042,11 +1034,9 @@
     "bridge.can_bitrate": "integer",
     "bridge.can_interface": "string",
     "bridge.input_timeout_s": "number",
-    "bridge.velocity_timeout_s": "number",
     "bridge.safety_hold_s": "number",
     "bridge.tx_queue_timeout_s": "number",
     "bridge.request_timeout_s": "number",
-    "bridge.velocity_topic": "string",
     "bridge.target_topic": "string",
     "bridge.safety_topic": "string",
     "bridge.task_topic": "string",

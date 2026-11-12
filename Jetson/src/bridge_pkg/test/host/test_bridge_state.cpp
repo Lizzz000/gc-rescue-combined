@@ -16,7 +16,6 @@ BridgeState makeState()
   config.image_width = 1920;
   config.image_height = 1080;
   config.input_timeout_s = 1.0;
-  config.velocity_timeout_s = 0.30;
   config.target_classes = {"0", "2", "3"};
   config.first_class = "0";
   return BridgeState(config);
@@ -157,20 +156,6 @@ void testBridgeState()
   CHECK(fresh.target(edge, now, monoAt(std::chrono::seconds(9)), true));
   CHECK(fresh.targetOutput(now, monoAt(std::chrono::seconds(10))).valid);
   CHECK(!fresh.targetOutput(now, monoAt(std::chrono::milliseconds(10001))).valid);
-
-  // 速度不看任务门。零速度有效。量化失败整帧无效，但这次输入已经被接收。
-  CHECK(!fresh.velocity(0, 0, 0, arrival, false));
-  CHECK(fresh.velocity(0, 0, 0, arrival, true));
-  CHECK(fresh.velocityOutput(arrival).valid && fresh.velocityOutput(arrival).x == 0);
-  CHECK(fresh.velocity(40, 0, 0, arrival, true));
-  CHECK(!fresh.velocityOutput(arrival).valid);
-  const auto velocity_arrival = monoAt(std::chrono::seconds(10));
-  CHECK(fresh.velocity(0.25, -0.25, 0, velocity_arrival, true));
-  const BridgeMonotonicTime velocity_at_300{velocity_arrival.value + std::chrono::milliseconds(300)};
-  const BridgeMonotonicTime velocity_at_301{velocity_arrival.value + std::chrono::milliseconds(301)};
-  CHECK(fresh.velocityOutput(velocity_at_300).valid);
-  CHECK(!fresh.velocityOutput(velocity_at_301).valid);
-  CHECK(fresh.velocityOutput(velocity_arrival).x == 250 && fresh.velocityOutput(velocity_arrival).y == -250);
 
   // 同代心跳不解闭锁。新代次且仍在寻找 + seg 才放行，旧中心不复活。
   fresh.holdCoordinates(now, false);

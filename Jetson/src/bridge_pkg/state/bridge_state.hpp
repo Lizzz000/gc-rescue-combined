@@ -90,7 +90,7 @@ struct BridgeMissionState
 struct BridgeStateConfig
 {
   std::int64_t image_width{1920}, image_height{1080};
-  double input_timeout_s{1.0}, velocity_timeout_s{0.30};
+  double input_timeout_s{1.0};
   // 安全区中心保持：最近一次有效 field 中心在本机到达后该秒数内持续可发，期间的无效帧不撤销它；
   // 须在 (0, input_timeout_s]，且 safety_hold_s + 1/field_max_fps < STM32 中心接收期限 0.25 s，
   // 保证两个新源帧之间的间隔不触发 STM32 重置；源帧龄仍受 input_timeout_s 约束。
@@ -133,13 +133,6 @@ struct BridgeCenterOutput
   std::uint32_t source_frame{0};  // ROS 源时间的低 24 位毫秒。
 };
 
-struct BridgeVelocityOutput
-{
-  // 线速度和角速度均乘 1000 量化；是否有效与分量恰好为零是不同含义。
-  bool valid{false};
-  std::int16_t x{0}, y{0}, yaw{0};
-};
-
 // 纯值状态不自行读时钟、开线程或发送 CAN；调用方负责串行更新及输出资格检查。
 class BridgeState
 {
@@ -150,7 +143,7 @@ public:
    * @throws std::invalid_argument 配置非法，对象未构造，不保存输入。
    */
   explicit BridgeState(BridgeStateConfig config = {});
-  // 链路恢复清理中心和速度，接收截止只前移；保留任务、运输阶段及到达保持。
+  // 链路恢复清理中心，接收截止只前移；保留任务、运输阶段及到达保持。
   void resetInputs(BridgeSourceTime current);
   // 被接受的 TaskState 清中心：完全重复忽略，同模式但新源时间／epoch 仍接收。
   // task 本身不能解除到达保持；还须 Mission 进入新的可移动阶段，epoch 不要求递增。
@@ -166,12 +159,9 @@ public:
   bool safety(
     const BridgeSafetyInput & input, BridgeSourceTime current,
     BridgeMonotonicTime arrival, bool socket_open);
-  // Twist 无源时间，只按单调到达龄过期；合法零速度仍为有效输入。
-  bool velocity(double x, double y, double yaw, BridgeMonotonicTime arrival, bool socket_open);
   // 读取时再次检查任务、任务忙碌状态及两种帧龄，防止排队后才过期的输入被发送。
   BridgeCenterOutput targetOutput(BridgeSourceTime current, BridgeMonotonicTime now) const;
   BridgeCenterOutput safetyOutput(BridgeSourceTime current, BridgeMonotonicTime now) const;
-  BridgeVelocityOutput velocityOutput(BridgeMonotonicTime now) const;
   // 本地到达立即闭锁；同代次心跳不能解锁。恢复需新授权代次、可移动终态、匹配模式及后续新帧。
   // until_search用于205放弃运输，迟到field提交不能解除；等待新的SearchingTarget。
   void holdCoordinates(BridgeSourceTime current, bool until_search = false);
@@ -192,12 +182,6 @@ private:
     BridgeMonotonicTime arrival;
     std::uint8_t side{0};
   };
-  struct Velocity
-  {
-    bool valid{false};
-    std::int16_t x{0}, y{0}, yaw{0};
-    BridgeMonotonicTime arrival;
-  };
   bool sourceStamp(BridgeSourceTime stamp, BridgeSourceTime current, const Center & center) const;
   bool fresh(const Center & center, BridgeSourceTime current, BridgeMonotonicTime now) const;
   bool held(BridgeSourceTime current, BridgeMonotonicTime now) const;
@@ -208,7 +192,6 @@ private:
   BridgeSourceTime cutoff_;
   // safety_ 是最近接收的 field 帧（源时间水位与 frame_id），safety_hold_ 是最近一次有效中心。
   Center target_, safety_, safety_hold_;
-  Velocity velocity_;
   std::optional<BridgeTaskState> task_;
   std::optional<BridgeMissionState> mission_;
   bool coordinates_held_{false};

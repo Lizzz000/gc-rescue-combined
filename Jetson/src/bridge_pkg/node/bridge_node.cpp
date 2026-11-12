@@ -25,7 +25,7 @@
 struct BridgeNode::StartupSettings
 {
   // 端口名称在构造期固定；本对象只用于一次装配，不保存运行期业务状态。
-  std::string target_topic, safety_topic, velocity_topic, task_topic, mission_topic;
+  std::string target_topic, safety_topic, task_topic, mission_topic;
   std::string roi_service, command_service;
   // 配置与ROS端口分别移交给Runtime，避免两层重复读取参数。
   std::string transport, serial_device;
@@ -118,8 +118,6 @@ BridgeNode::StartupSettings BridgeNode::declareAndValidateParameters()
     *this, "image_height", descriptor);
   state_config.input_timeout_s = rescue::declareRequired<double>(
     *this, "input_timeout_s", descriptor);
-  state_config.velocity_timeout_s = rescue::declareRequired<double>(
-    *this, "velocity_timeout_s", descriptor);
   state_config.safety_hold_s = rescue::declareRequired<double>(
     *this, "safety_hold_s", descriptor);
   state_config.field_max_fps = rescue::declareRequired<double>(
@@ -146,8 +144,6 @@ BridgeNode::StartupSettings BridgeNode::declareAndValidateParameters()
     *this, "target_topic", descriptor);
   settings.safety_topic = rescue::declareRequired<std::string>(
     *this, "safety_topic", descriptor);
-  settings.velocity_topic = rescue::declareRequired<std::string>(
-    *this, "velocity_topic", descriptor);
   settings.task_topic = rescue::declareRequired<std::string>(
     *this, "task_topic", descriptor);
   settings.mission_topic = rescue::declareRequired<std::string>(
@@ -159,15 +155,15 @@ BridgeNode::StartupSettings BridgeNode::declareAndValidateParameters()
   const auto target_class_ids = rescue::declareRequired<std::vector<std::int64_t>>(
     *this, "target_class_ids", descriptor);
   if (!validTopicName(settings.target_topic) || !validTopicName(settings.safety_topic) ||
-    !validTopicName(settings.velocity_topic) || !validTopicName(settings.task_topic) ||
+    !validTopicName(settings.task_topic) ||
     !validTopicName(settings.mission_topic) || !validTopicName(settings.roi_service) ||
     !validTopicName(settings.command_service))
   {
     RCLCPP_ERROR(
       get_logger(),
       "Topic and service parameters must be non-empty names without whitespace: target='%s', "
-      "safety='%s', velocity='%s', task='%s', mission_status='%s', roi='%s', command='%s'",
-      settings.target_topic.c_str(), settings.safety_topic.c_str(), settings.velocity_topic.c_str(),
+      "safety='%s', task='%s', mission_status='%s', roi='%s', command='%s'",
+      settings.target_topic.c_str(), settings.safety_topic.c_str(),
       settings.task_topic.c_str(), settings.mission_topic.c_str(), settings.roi_service.c_str(),
       settings.command_service.c_str());
     throw rescue::ConfigurationError("invalid topic parameter");
@@ -198,9 +194,6 @@ void BridgeNode::createRosInterfaces(StartupSettings & settings)
   safety_sub_ = create_subscription<interface_pkg::msg::SafetyTarget>(
     settings.safety_topic, rclcpp::SensorDataQoS().keep_last(1),
     [this](interface_pkg::msg::SafetyTarget::ConstSharedPtr msg) {runtime_->safetyCallback(msg);});
-  velocity_sub_ = create_subscription<geometry_msgs::msg::Twist>(
-    settings.velocity_topic, rclcpp::QoS(1).reliable().durability_volatile(),
-    [this](geometry_msgs::msg::Twist::ConstSharedPtr msg) {runtime_->velocityCallback(msg);});
   const auto control_qos = rclcpp::QoS(1).reliable().transient_local();
   task_sub_ = create_subscription<interface_pkg::msg::TaskState>(
     settings.task_topic, control_qos,

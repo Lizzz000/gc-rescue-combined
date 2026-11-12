@@ -41,7 +41,8 @@ void testCanProtocol()
 {
   Group group("CanProtocol");
 
-  // 0x180：valid、vx、vy、角速度，int16 小端。负数走补码，不看主机字节序。
+  // 0x180 布局：valid、vx、vy、角速度，int16 小端。负数走补码，不看主机字节序。
+  // 生产路径只发 valid=0 全零；此处仍核验编码器对 valid=1 与 valid=0 的字节布局。
   const std::uint8_t velocity_bytes[] = {1, 0xfe, 0xff, 0x00, 0x00, 0xe8, 0x03};
   CHECK(bytesEqual(CanProtocol::velocity(true, -2, 0, 1000), CanProtocol::VELOCITY_ID, 7, velocity_bytes));
   const std::uint8_t velocity_invalid[] = {0, 0, 0, 0, 0, 0, 0};

@@ -155,25 +155,17 @@ void testHeartbeatEncoding()
   CHECK(payload_zero);
 }
 
-// 心跳化后 BridgeState 不再接收速度输入（bridge 不订阅 /cmd_vel）。在此之前只报告待办，不判失败。
+// 心跳化后 BridgeState 不再接收速度输入，bridge 不订阅 /cmd_vel。
 template<typename T, typename = void>
 struct AcceptsVelocity : std::false_type {};
 template<typename T>
 struct AcceptsVelocity<T, std::void_t<decltype(std::declval<T &>().velocity(
     0.0, 0.0, 0.0, BridgeMonotonicTime{}, true))>> : std::true_type {};
 
-int g_pending = 0;
-
 void testHeartbeatOnly()
 {
   Group group("M7 0x180 恒为心跳");
-  if constexpr (AcceptsVelocity<BridgeState>::value) {
-    ++g_pending;
-    std::printf("PENDING M7：BridgeState 仍有 velocity() 输入（bridge 仍订阅速度话题），待 Jetson 端心跳化后自动启用判定\n");
-  } else {
-    BridgeState state;
-    CHECK(!state.velocityOutput(BridgeMonotonicTime{}).valid);
-  }
+  CHECK((!AcceptsVelocity<BridgeState>::value));
 }
 
 }  // namespace
@@ -186,6 +178,5 @@ int main()
   testNeverManualId();
   testHeartbeatEncoding();
   testHeartbeatOnly();
-  std::printf("pending: %d\n", g_pending);
   return finishTests("bridge damiao exclusive");
 }

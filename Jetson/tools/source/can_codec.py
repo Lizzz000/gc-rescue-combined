@@ -7,7 +7,8 @@ import json
 import math
 import struct
 
-# 坐标和速度缩放保持原协议；任务采用显式握手，不接受旧 0x201/0x202。
+# 坐标和速度缩放保持原协议；0x180 布局仍为 valid + vx/vy/wz（生产路径 valid=0 且速度为 0）。
+# 任务采用显式握手，不接受旧 0x201/0x202。
 IDS = {'velocity': 0x180, 'target': 0x181, 'safety': 0x182,
        'arrival_ack': 0x190, 'roi_reply': 0x191, 'command_reply': 0x192,
        'turn_to_safety': 0x193, 'arrival': 0x200,

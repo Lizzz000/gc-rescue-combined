@@ -146,12 +146,6 @@ void BridgeRuntime::safetyCallback(interface_pkg::msg::SafetyTarget::ConstShared
   state_.safety(input, current, {Clock::now()}, can_->socketOpen());
 }
 
-void BridgeRuntime::velocityCallback(geometry_msgs::msg::Twist::ConstSharedPtr msg)
-{
-  // Twist 没有源时间，只按本机单调到达时间限制速度有效期。
-  state_.velocity(msg->linear.x, msg->linear.y, msg->angular.z, {Clock::now()}, can_->socketOpen());
-}
-
 // 周期收发和到达握手在 bridge_io.cpp。
 
 // ---- BridgeRuntime：排队、输出与诊断 ----
@@ -181,7 +175,7 @@ void BridgeRuntime::refreshTurnRequest(Clock::time_point current, bool force)
 
 can_frame BridgeRuntime::currentFrame(canid_t id) const
 {
-  // Mission 超时不能继续发送可保活的速度帧或有效坐标。
+  // Mission 超时不能继续发送可保活的心跳或有效坐标。
   const bool mission_alive = mission_watchdog_.alive({Clock::now()});
   if (!mission_alive && id == CanProtocol::VELOCITY_ID) {
     can_frame frame{};
@@ -194,8 +188,8 @@ can_frame BridgeRuntime::currentFrame(canid_t id) const
   // 周期帧提交前重新检查新鲜度；一次回复使用最近 armReply() 保存的快照。
   if (CanProtocol::replyId(id)) {return replies_.frame(id);}
   if (id == CanProtocol::VELOCITY_ID) {
-    const auto velocity = state_.velocityOutput({Clock::now()});
-    return CanProtocol::velocity(velocity.valid, velocity.x, velocity.y, velocity.yaw);
+    // 任务在线：写出前当场编码 DLC 7 心跳，valid=0，速度字节全零。
+    return CanProtocol::velocity(false, 0, 0, 0);
   }
   const BridgeSourceTime current{now().nanoseconds()};
   const BridgeMonotonicTime monotonic{Clock::now()};

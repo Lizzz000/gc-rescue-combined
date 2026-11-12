@@ -11,7 +11,6 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(rcl_interfaces REQUIRED)
 find_package(std_msgs REQUIRED)
-find_package(geometry_msgs REQUIRED)
 find_package(vision_msgs REQUIRED)
 find_package(interface_pkg REQUIRED)
 
@@ -20,7 +19,7 @@ function(configure_bridge_ros target)
   target_include_directories(${target} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_features(${target} PUBLIC cxx_std_17)
   ament_target_dependencies(${target} rclcpp rclcpp_components rcl_interfaces
-    std_msgs geometry_msgs vision_msgs interface_pkg)
+    std_msgs vision_msgs interface_pkg)
 endfunction()
 
 add_library(bridge_protocol INTERFACE)
