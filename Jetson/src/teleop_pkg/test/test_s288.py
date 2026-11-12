@@ -1,15 +1,11 @@
 """手动 S288 协议和转角会话。不打开真实串口，也不接触自动搬运。"""
 
 import math
-from pathlib import Path
 import struct
-import sys
 import threading
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from servo.s288 import (  # noqa: E402
+from servo.s288 import (
     FEEDBACK_BYTES, FEEDBACK_MARK, ServoSession, _take_feedback, check_move, control_packet, crc32)
 
 

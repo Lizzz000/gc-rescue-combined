@@ -6,6 +6,13 @@ import s288_protocol as protocol
 
 
 class S288ProtocolTest(unittest.TestCase):
+    def test_forwards_unique_protocol(self):
+        from servo import s288
+        self.assertIs(protocol.control_packet, s288.control_packet)
+        self.assertIs(protocol.parse_feedback, s288.parse_feedback)
+        self.assertIs(protocol.crc32, s288.crc32)
+        self.assertIs(protocol.RATIO, s288.RATIO)
+
     def test_vendor_control_vector(self):
         packet = protocol.control_packet(2, 1, 1, 0.1, 0.2, 0.3, 1.0, 0.1)
         self.assertEqual(packet.hex(), 'feee9200590017004ae206000f009a005e72f7ee')
@@ -17,12 +24,13 @@ class S288ProtocolTest(unittest.TestCase):
 
     def test_feedback_and_corruption(self):
         body = struct.pack('<BbBBhhiIHBB', 0x12, -5, 200, 25, -100, 30, -1234, 4, 0xA123, 0, 0)
-        packet = b'\xfc\xee' + body + struct.pack('<I', protocol.crc32(body))
+        packet = protocol.FEEDBACK_MARK + body + struct.pack('<I', protocol.crc32(body))
+        self.assertEqual(len(packet), protocol.FEEDBACK_BYTES)
         feedback = protocol.parse_feedback(packet, 2)
         self.assertEqual(feedback['winding_temperature'], 200)
         self.assertEqual(feedback['voltage'], 12.5)
         self.assertEqual(feedback['error'], 4)
-        self.assertAlmostEqual(feedback['position'], -1234 * 2 * math.pi / (32768 * protocol.RATIO))
+        self.assertAlmostEqual(feedback['position'], -1234 * 2 * math.pi / (protocol._POSITION_SCALE * protocol.RATIO))
         with self.assertRaises(ValueError):
             protocol.parse_feedback(packet, 3)
         corrupt = bytearray(packet)

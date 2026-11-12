@@ -22,7 +22,7 @@ class FakePort:
         if self.mode == 1:
             self.position = struct.unpack_from('<i', packet, 8)[0]
         body = struct.pack('<BbBBhhiIHBB', mode << 4, 30, 35, 24, 0, 0, position, 0, 0, 0, 0)
-        self.pending = b'\xfc\xee' + body + struct.pack('<I', s288_protocol.crc32(body))
+        self.pending = s288_protocol.FEEDBACK_MARK + body + struct.pack('<I', s288_protocol.crc32(body))
         return len(packet)
 
     def read(self, count):
@@ -40,7 +40,7 @@ class S288DebugTest(unittest.TestCase):
         positions = [struct.unpack_from('<i', command, 8)[0] for command in port.commands
                      if (command[2] >> 4) & 7 == 1]
         self.assertTrue(positions)
-        self.assertAlmostEqual(positions[0] * 2 * math.pi / (32768 * s288_protocol.RATIO),
+        self.assertAlmostEqual(positions[0] * 2 * math.pi / (s288_protocol._POSITION_SCALE * s288_protocol.RATIO),
                                math.pi / 6, places=4)
         self.assertEqual(port.mode, 0)
         self.assertGreaterEqual(sum(1 for command in port.commands[-3:] if command[2] == 0), 2)

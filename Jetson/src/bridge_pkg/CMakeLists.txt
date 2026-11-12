@@ -62,10 +62,16 @@ install(TARGETS bridge_components LIBRARY DESTINATION lib ARCHIVE DESTINATION li
 # 主机测试：达妙串口独占（M5）与 0x17F/0x180 心跳不变量（M7），pty 代替 USB-CAN，仅 Linux
 if(BUILD_TESTING)
   find_package(ament_cmake_test REQUIRED)
+  find_package(teleop_pkg REQUIRED)
   add_executable(test_damiao_exclusive test/host/test_damiao_exclusive.cpp)
   target_include_directories(test_damiao_exclusive PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test/host)
   target_link_libraries(test_damiao_exclusive bridge_transport bridge_state util)
   ament_add_test(test_damiao_exclusive COMMAND $<TARGET_FILE:test_damiao_exclusive>
+    GENERATE_RESULT_FOR_RETURN_CODE_ZERO TIMEOUT 60)
+  # S288 薄转发：协议实现只在 teleop_pkg/servo/s288.py
+  ament_add_test(test_s288_forward
+    COMMAND python3 -m unittest -v test_s288_protocol test_s288_debug
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/gripper
     GENERATE_RESULT_FOR_RETURN_CODE_ZERO TIMEOUT 60)
 endif()
 

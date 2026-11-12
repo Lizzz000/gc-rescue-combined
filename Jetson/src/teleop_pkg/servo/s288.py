@@ -1,7 +1,8 @@
-"""宇树 S288 单总线，只供 teleop 手动网页转角。
+"""宇树 S288 单总线协议；这是仓库里唯一的协议实现。
 
-不导入 bridge，不发送 CAN，也不读取自动搬运的开合参数。
-角度、速度和力矩都是输出端单位。6 Mbps 用 termios2，数值在 Orin aarch64 上核对过。
+手动网页与 bridge_pkg/gripper 薄转发都使用本模块。
+不导入 bridge，不发送 CAN。角度、速度和力矩都是输出端单位。
+6 Mbps 用 termios2，数值在 Orin aarch64 上核对过。
 """
 
 import math
@@ -21,6 +22,7 @@ MAX_MOVE_SECONDS = 10.0
 FEEDBACK_WAIT_S = 0.2
 STOP_ATTEMPTS = 3
 COMMAND_PERIOD_S = 0.02
+CONTROL_MARK = b'\xfe\xee'
 FEEDBACK_MARK = b'\xfc\xee'
 FEEDBACK_BYTES = 26
 READ_BYTES = 64
@@ -80,7 +82,7 @@ def control_packet(motor_id, mode, timeout, torque, speed, position, kp, kd):
         round(kd / (RATIO * RATIO) * _KD_SCALE),
     )
     try:
-        payload = struct.pack('<2sBBhhihh', b'\xfe\xee', motor_id | mode << 4 | timeout << 7, 0, *raw)
+        payload = struct.pack('<2sBBhhihh', CONTROL_MARK, motor_id | mode << 4 | timeout << 7, 0, *raw)
     except struct.error as error:
         raise ValueError('控制量超出 S288 协议范围') from error
     return payload + struct.pack('<I', crc32(payload))
@@ -99,8 +101,8 @@ def parse_feedback(packet, expected_id):
     return {
         'id': mode & 15, 'mode': (mode >> 4) & 7, 'timeout': bool(mode & 128),
         'temperature': temperature, 'winding_temperature': winding, 'voltage': voltage / 2.0,
-        'torque': torque * RATIO / 256000, 'speed': speed * (2 * math.pi) / (2.56 * RATIO),
-        'position': position * (2 * math.pi) / (32768 * RATIO),
+        'torque': torque * RATIO / _TORQUE_SCALE, 'speed': speed * (2 * math.pi) / (_SPEED_SCALE * RATIO),
+        'position': position * (2 * math.pi) / (_POSITION_SCALE * RATIO),
         'output_encoder': output & 0x1FFF, 'warning': output >> 13, 'error': error,
     }
 
