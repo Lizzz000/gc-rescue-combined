@@ -10,7 +10,6 @@
 #else
 #include "manual_can.h"
 #include "manual_control.h"
-#include "transport_servo.h"
 #endif
 #include "FreeRTOS.h"
 #include "task.h"
@@ -28,7 +27,7 @@ volatile float battery_voltage = NAN;
  *       不表示 IMU 已完成预热或标定；底盘内部每 10 ms 控制一次，默认失能。
  *       动作接口与 Chassis_Loop 均由本任务调用，不在中断内调用。
  *       手动联调与自动搬运按编译模式二选一，只初始化本模式的协议快照。
- *       舵机标定和自动上行均在底盘调度之后处理。
+ *       自动上行在底盘调度之后处理。
  */
 void test_task(void const *argument)
 {
@@ -55,11 +54,6 @@ void test_task(void const *argument)
         Chassis_Loop();
 #if JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST
         Jetson_Auto_Loop();
-#else
-        const Manual_Control_State_t state = manual_control_state;
-        const uint8_t servo_allowed = (state == MANUAL_DISARMED && !Chassis_Is_Enabled()) ||
-                                      (state == MANUAL_READY && Chassis_Is_Stopped());
-        Transport_Servo_Calibration_Loop(servo_allowed);
 #endif
         if (++period_ticks % 20U == 0U)
             battery_voltage = get_battery_voltage();

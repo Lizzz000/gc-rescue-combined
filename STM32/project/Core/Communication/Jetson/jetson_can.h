@@ -15,11 +15,19 @@
 #define JETSON_CAN_COMMAND_REPLY_ID       0x192U
 #define JETSON_CAN_TURN_REQUEST_ID        0x193U
 #define JETSON_CAN_VELOCITY_DLC           7U
+/* 0x180 心跳：前 7 字节沿用速度帧布局，data[7] 为通用 pause（0/1）。 */
+#define JETSON_CAN_HEARTBEAT_DLC          8U
+#define JETSON_CAN_HEARTBEAT_PAUSE_BYTE   7U
 #define JETSON_CAN_ARRIVAL_ID             0x200U
 #define JETSON_CAN_TURN_COMPLETED_ID      0x203U
 #define JETSON_CAN_SAFETY_ARRIVED_ID      0x204U
 #define JETSON_CAN_START_SEARCH_ID        0x205U
 #define JETSON_CAN_DELIVERY_COMPLETED_ID  0x206U
+/* 0x208 到点：data[0] 为到点类型，由 0x192 命令 5（token=0）受理。 */
+#define JETSON_CAN_POINT_REACHED_ID       0x208U
+#define JETSON_CAN_POINT_GRASP            1U
+#define JETSON_CAN_POINT_RELEASE          2U
+#define JETSON_CAN_POINT_REPLY_COMMAND    5U
 
 /* 速度帧格式：valid:uint8 + vx/vy/wz:int16 小端；0x180 心跳与手动 0x17F 共用。 */
 typedef struct
@@ -58,8 +66,8 @@ typedef struct
 {
     uint8_t valid;       /**< 结构合法标记；accepted=0 仍是合法拒绝回复。 */
     uint8_t accepted;
-    uint8_t command;     /**< 1 转向完成，2 安全区到达，3 重新搜索，4 投送完成。 */
-    uint32_t token;      /**< 0..UINT32_MAX 均合法；命令 3 必须为 0。 */
+    uint8_t command;     /**< 1 转向完成，2 安全区到达，3 重新搜索，4 投送完成，5 到点受理。 */
+    uint32_t token;      /**< 0..UINT32_MAX 均合法；命令 3、5 必须为 0。 */
     uint32_t received_ms;
     uint32_t sequence;
 } Jetson_CAN_Command_Reply_t;
@@ -82,7 +90,9 @@ typedef struct
     Jetson_CAN_Turn_Request_t turn_to_safety;
     uint32_t rx_sequence; /**< 每条已知 ID 递增并自然回绕；各快照记录接收时的值。 */
     uint32_t heartbeat_received_ms; /**< 最近一条格式合法的 0x180 到达时刻，RTOS ms。 */
+    uint32_t heartbeat_sequence;    /**< 最近一条格式合法的 0x180 的接收序号。 */
     uint8_t heartbeat_seen;         /**< 已收到格式合法的 0x180。 */
+    uint8_t heartbeat_pause;        /**< 最近合法心跳的通用 pause；1 时不开始下一段运动。 */
     uint32_t mission_loss_sequence; /**< 空 0x180 失联标志计数，防止被紧随的心跳覆盖。 */
 } Jetson_CAN_Data_t;
 
@@ -113,15 +123,15 @@ void Jetson_CAN_Decode_Velocity(const uint8_t *data, uint8_t len, Jetson_CAN_Vel
  * @brief 在 CAN RX 中断内解析单帧；不调用底盘、不排队、不发送回复。
  * @param[in] id 已由 BSP 核验的 11 位标准数据帧 ID。
  * @param[in] data 可读 len 字节；空指针按对应 ID 的畸形帧处理。
- * @param[in] len CAN DLC，必须精确匹配协议；0x180 只作心跳，空载荷表示任务失联。
+ * @param[in] len CAN DLC，必须精确匹配协议；0x180 只认 DLC 8 心跳，空载荷表示任务失联。
  * @return 无；未知 ID（含手动 0x17F）不改变快照，已知坏帧按对应报文处理。
  */
 void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len);
 
 /**
  * @brief 首次提交命令后设置 0x192 匹配，丢弃前一请求的回执快照。
- * @param[in] request_id 上行 0x203 至 0x206，传 0 结束等待并恢复最新帧快照。
- * @param[in] token 本趟 ROI 请求号低 32 位，0x205 固定按无 token 匹配。
+ * @param[in] request_id 上行 0x203 至 0x206 或 0x208，传 0 结束等待并恢复最新帧快照。
+ * @param[in] token 本趟 ROI 请求号低 32 位，0x205 与 0x208 固定按无 token 匹配。
  * @return 无；活动期只更新合法匹配帧，首个受理帧保留到本次等待结束。
  * @note 由自动任务在首次成功提交的同一临界区内设置，重试时不重新设置。
  */
@@ -137,10 +147,11 @@ void Jetson_CAN_Get_Data(Jetson_CAN_Data_t *out);
 /**
  * @brief 编码 STM32 上行运输请求的 CAN 载荷。
  * @param[in] id 运输请求的标准帧 ID。
- * @param[in] token 本趟 ROI 请求号低 32 位；到达与重新搜索帧无此字段。
+ * @param[in] argument 0x203/0x204/0x206 为本趟 ROI 请求号低 32 位；0x208 为到点类型
+ *            JETSON_CAN_POINT_GRASP 或 JETSON_CAN_POINT_RELEASE；0x200/0x205 不使用。
  * @param[out] data 非空时须能写 8 字节，DLC 以外清零以适配 HAL 的整缓冲读取。
- * @return 成功返回 DLC 1 或 5，未知 ID 或空指针返回 0，不修改缓冲区。
+ * @return 成功返回 DLC 1 或 5；未知 ID、非法到点类型或空指针返回 0，不修改缓冲区。
  */
-uint8_t Jetson_CAN_Encode_Uplink(uint16_t id, uint32_t token, uint8_t data[8]);
+uint8_t Jetson_CAN_Encode_Uplink(uint16_t id, uint32_t argument, uint8_t data[8]);
 
 #endif

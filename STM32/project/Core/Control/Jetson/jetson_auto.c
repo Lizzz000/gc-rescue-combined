@@ -6,7 +6,6 @@
 #include "image_tracker.h"
 #include "INS_task.h"
 #include "jetson_can.h"
-#include "transport_servo.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <math.h>
@@ -14,10 +13,10 @@
 /* 流程与 Jetson 的 MissionCommand.srv 一致；只由原 test_task 推进。 */
 typedef enum
 {
-    UNCONFIGURED, WAIT_LINK, ARMING, OPENING, APPROACH_TARGET, CLOSING, ROI_BACK,
+    UNCONFIGURED, WAIT_LINK, ARMING, APPROACH_TARGET, WAIT_GRASP_POINT_ACK, ROI_BACK,
     WAIT_ROI, TURN_OUT, WAIT_TURN_ACK, APPROACH_SAFETY, WAIT_SAFETY_ACK, PUSHING,
-    RELEASING, RETRACTING, WAIT_DELIVERY_ACK, TURN_BACK, WAIT_SEARCH_ACK,
-    RECOVERY_OPEN, RECOVERY_BACK, FAULT, TEST_DONE
+    WAIT_RELEASE_POINT_ACK, RETRACTING, WAIT_DELIVERY_ACK, TURN_BACK, WAIT_SEARCH_ACK,
+    RECOVERY_BACK, FAULT, TEST_DONE
 } Auto_Stage_t;
 
 typedef struct
@@ -48,6 +47,7 @@ typedef struct
 typedef struct
 {
     uint16_t id;             /**< 当前待发送或等待回复的标准 CAN ID。 */
+    uint8_t point;           /**< 0x208 的到点类型，其余请求为 0。 */
     uint8_t submitted;       /**< 首次已进入发送邮箱。 */
     uint32_t first_rx;       /**< 首次发送前的接收序号屏障。 */
     uint32_t last_tx_ms;     /**< 最近一次入发送邮箱的 RTOS 毫秒。 */
@@ -93,7 +93,7 @@ static uint8_t Window_Configured(const Image_Window_t *window)
            Positive_Within(window->tolerance_x, 1.0f) && Positive_Within(window->tolerance_y, 1.0f);
 }
 
-/** @brief 检查当前模式使用的参数；底盘单趟测试不使用舵机和定距。
+/** @brief 检查当前模式使用的参数；底盘单趟测试不使用定距。
  * @return 所需参数已配置返回 1；待标定时保持失能。
  */
 static uint8_t Configuration_Ready(void)
@@ -123,9 +123,7 @@ static uint8_t Configuration_Ready(void)
            Positive_Within(JETSON_AUTO_DISTANCE_SPEED_MPS, CHASSIS_DISTANCE_MAX_SPEED_MPS) &&
            Positive_Within(JETSON_AUTO_PUSH_SPEED_MPS, CHASSIS_STRAIGHT_MAX_SPEED_MPS) &&
            JETSON_AUTO_PUSH_DURATION_MS > 0U &&
-           Positive_Within(JETSON_AUTO_RETURN_TURN_DEG, 360.0f) &&
-           JETSON_AUTO_SERVO_OPEN_MS >= 20U && JETSON_AUTO_SERVO_CLOSE_MS >= 20U &&
-           Transport_Servo_Is_Available()
+           Positive_Within(JETSON_AUTO_RETURN_TURN_DEG, 360.0f)
 #endif
            ;
 }
@@ -143,7 +141,7 @@ static void Enter(Auto_Stage_t next, uint32_t now_ms)
     request.id = 0U;
 }
 
-/** @brief 停车并保留夹爪当前 PWM，避免通信故障时自动重复机械动作。
+/** @brief 停车并停在当前阶段，避免通信故障时自动重复运动；夹爪由 Jetson 负责。
  * @param[in] now_ms 当前 RTOS 毫秒，作为制动起点。
  */
 static void Halt(uint32_t now_ms)
@@ -341,7 +339,7 @@ static uint8_t Approach(const Jetson_CAN_Center_t *center, const Image_Window_t 
             vision.phase_started_ms = (uint32_t)xTaskGetTickCount();
             vision.phase = VISION_VERIFY;
         }
-        else if ((uint32_t)(now_ms - vision.phase_started_ms) >= JETSON_AUTO_VISION_STOP_TIMEOUT_MS)
+        else if ((uint32_t)(now_ms - vision.phase_started_ms) >= JETSON_AUTO_SETTLE_TIMEOUT_MS)
             Halt(vision.phase_started_ms);
         return 0U;
     }
@@ -351,11 +349,6 @@ static uint8_t Approach(const Jetson_CAN_Center_t *center, const Image_Window_t 
     const uint8_t fresh = center->valid && newer && recent;
     if (vision.phase == VISION_VERIFY)
     {
-        if (!Chassis_Is_Stopped())
-        {
-            Brake_Approach(now_ms);
-            return 0U;
-        }
         if ((uint32_t)(now_ms - vision.phase_started_ms) < JETSON_AUTO_VERIFY_WAIT_MS)
             return 0U;
         /* 用实际收帧时刻筛选；等待期间收到的旧坐标不能在截止后直接充当核验。 */
@@ -471,29 +464,6 @@ static uint8_t Approach(const Jetson_CAN_Center_t *center, const Image_Window_t 
     return 0U;
 }
 
-/** @brief 在已停车的阶段提交舵机目标，等待宏定义的动作时间。
- * @param[in] position 张开或闭合。
- * @param[in] next 舵机等待阶段。
- * @param[in] now_ms 当前 RTOS 毫秒。
- */
-static void Start_Servo(Transport_Servo_Position_t position, Auto_Stage_t next, uint32_t now_ms)
-{
-    if (Transport_Servo_Command(position, now_ms))
-        Enter(next, now_ms);
-    else
-        Halt(now_ms);
-}
-
-/** @brief 判断设定脉宽的等待时间是否已到。
- * @param[in] now_ms,wait_ms 当前 RTOS 毫秒和配置的等待时长，ms。
- * @return 已提交舵机命令且等待届满返回 1。
- */
-static uint8_t Servo_Elapsed(uint32_t now_ms, uint32_t wait_ms)
-{
-    uint32_t elapsed_ms;
-    return Transport_Servo_Elapsed(now_ms, &elapsed_ms) && elapsed_ms >= wait_ms;
-}
-
 /** @brief 从停稳状态启动一段前进或后退定距。
  * @param[in] direction 底盘前进或后退方向。
  * @param[in] meters 已标定的正距离，m。
@@ -516,7 +486,7 @@ static void Start_Distance(Chassis_Translation_Direction_t direction, float mete
  */
 static void Start_Timed_Move(float speed, Auto_Stage_t next, uint32_t now_ms)
 {
-    if (!Chassis_Is_Stopped() || !Chassis_Set_Velocity(speed, 0.0f, 0.0f))
+    if (!Chassis_Set_Velocity(speed, 0.0f, 0.0f))
     {
         Halt(now_ms);
         return;
@@ -571,28 +541,54 @@ static void Begin_Request(uint16_t id, Auto_Stage_t next, uint32_t now_ms)
     request = (Auto_Request_t){.id = id};
 }
 
-/** @brief 按首次入邮箱时间和接收序号边界判断回执是否及时。
- * @param[in] sequence 回执的 CAN 接收序号。
- * @param[in] received_ms ISR 记录的回执到达时间，RTOS ms。
- * @return 请求已提交且回执在有效期内新到达返回 1。
+/** @brief 停稳后上报 0x208 到点，等待 0x192 命令 5 受理。
+ * @param[in] point JETSON_CAN_POINT_GRASP 或 JETSON_CAN_POINT_RELEASE。
+ * @param[in] next 回执等待阶段。
+ * @param[in] now_ms 当前 RTOS 毫秒，作为总期限起点。
  */
-static uint8_t Reply_In_Request(uint32_t sequence, uint32_t received_ms)
+static void Begin_Point_Request(uint8_t point, Auto_Stage_t next, uint32_t now_ms)
 {
-    return request.submitted && Received_After(sequence, request.first_rx) &&
-           (uint32_t)(received_ms - stage_started_ms) <
-               JETSON_AUTO_REQUEST_TIMEOUT_MS + JETSON_AUTO_REQUEST_LINK_MARGIN_MS;
+    Begin_Request(JETSON_CAN_POINT_REACHED_ID, next, now_ms);
+    request.point = point;
 }
 
-/** @brief 核对发送后收到的命令回执，命令 3 无 token，其余沿用本趟 token。
+/** @brief 通用放行：Jetson 的任何回复只表示受理，不放行运动。
+ * @param[in] data 当前非空接收快照。
+ * @param[in] reply_sequence 放行所依据回复的接收序号。
+ * @return 该回复之后已收到 pause=0 的合法心跳且底盘停稳时返回 1。
+ * @note 等待期间不重发、不计请求期限；Jetson 停发心跳时由链路超时停车。
+ */
+static uint8_t Released_After(const Jetson_CAN_Data_t *data, uint32_t reply_sequence)
+{
+    return !data->heartbeat_pause && Received_After(data->heartbeat_sequence, reply_sequence) &&
+           Chassis_Is_Stopped();
+}
+
+/** @brief 取两个接收序号中较晚的一个。 @param[in] a,b 接收序号。 @return 较晚者。 */
+static uint32_t Later(uint32_t a, uint32_t b)
+{
+    return Received_After(a, b) ? a : b;
+}
+
+/** @brief 按首次入邮箱时的接收序号边界判断回执是否属于本次请求。
+ * @param[in] sequence 回执的 CAN 接收序号。
+ * @return 请求已提交且回执在首次提交之后到达返回 1；期限由 Service_Request 停车处理。
+ */
+static uint8_t Reply_In_Request(uint32_t sequence)
+{
+    return request.submitted && Received_After(sequence, request.first_rx);
+}
+
+/** @brief 核对发送后收到的命令回执，命令 3、5 无 token，其余沿用本趟 token。
  * @param[in] reply 当前非空回执快照。
- * @param[in] command 期望命令，1 至 4。
+ * @param[in] command 期望命令，1 至 5。
  * @return 本次请求得到匹配的成功回执时返回 1。
  */
 static uint8_t Reply_Accepted(const Jetson_CAN_Command_Reply_t *reply, uint8_t command)
 {
-    return Reply_In_Request(reply->sequence, reply->received_ms) &&
+    return Reply_In_Request(reply->sequence) &&
            reply->valid && reply->accepted && reply->command == command &&
-           reply->token == (command == 3U ? 0U : route_token);
+           reply->token == (command == 3U || command == JETSON_CAN_POINT_REPLY_COMMAND ? 0U : route_token);
 }
 
 /** @brief 在空邮箱时非阻塞提交握手；重试截止不因成功入队而延长。
@@ -600,35 +596,34 @@ static uint8_t Reply_Accepted(const Jetson_CAN_Command_Reply_t *reply, uint8_t c
  */
 static void Service_Request(uint32_t now_ms)
 {
-    /* 先由各阶段消费及时到达的回复，再决定超时。首次提交前沿用原 3 s 邮箱期限。 */
-    const uint32_t timeout_ms = JETSON_AUTO_REQUEST_TIMEOUT_MS +
-        (request.submitted ? JETSON_AUTO_REQUEST_LINK_MARGIN_MS : 0U);
-    if ((uint32_t)(now_ms - stage_started_ms) >= timeout_ms)
+    /* 先由各阶段消费已到达的回复，再按停稳后首次尝试提交起算的唯一期限停车。 */
+    if ((uint32_t)(now_ms - stage_started_ms) >= JETSON_AUTO_REQUEST_TIMEOUT_MS)
     {
         Halt(now_ms);
         return;
     }
-    if (!Chassis_Is_Stopped() || (request.submitted &&
-        (uint32_t)(now_ms - request.last_tx_ms) < JETSON_AUTO_REQUEST_RETRY_MS))
+    if (request.submitted && (uint32_t)(now_ms - request.last_tx_ms) < JETSON_AUTO_REQUEST_RETRY_MS)
         return;
 
-    const uint32_t token = request.id == JETSON_CAN_ARRIVAL_ID ||
-                           request.id == JETSON_CAN_START_SEARCH_ID ? 0U : route_token;
+    uint32_t argument = route_token;
+    if (request.id == JETSON_CAN_POINT_REACHED_ID)
+        argument = request.point;
+    else if (request.id == JETSON_CAN_ARRIVAL_ID || request.id == JETSON_CAN_START_SEARCH_ID)
+        argument = 0U;
     /* 在入邮箱前取接收边界，期间不让 RX0 中断改写快照。 */
     Jetson_CAN_Data_t before_send;
     taskENTER_CRITICAL();
     Jetson_CAN_Get_Data(&before_send);
-    const HAL_StatusTypeDef result = Jetson_CAN_Try_Send_Uplink(request.id, token);
+    const HAL_StatusTypeDef result = Jetson_CAN_Try_Send_Uplink(request.id, argument);
     const uint32_t sent_ms = (uint32_t)xTaskGetTickCount();
     if (result == HAL_OK && !request.submitted && request.id != JETSON_CAN_ARRIVAL_ID)
-        Jetson_CAN_Expect_Command_Reply(request.id, token);
+        Jetson_CAN_Expect_Command_Reply(request.id, argument);
     taskEXIT_CRITICAL();
     if (result == HAL_OK)
     {
         if (!request.submitted)
         {
             request.first_rx = before_send.rx_sequence;
-            stage_started_ms = sent_ms;
             request.submitted = 1U;
         }
         request.last_tx_ms = sent_ms;
@@ -637,7 +632,7 @@ static void Service_Request(uint32_t now_ms)
         Halt(now_ms);
 }
 
-/** @brief 消费到达受理、ROI 结果和同侧转向授权。191/193 允许乱序。
+/** @brief 消费到达受理、ROI 结果和同侧转向授权。191/193 允许乱序；拿到结果后按通用放行规则开始运动。
  * @param[in] data 当前非空接收快照。
  * @param[in] now_ms 当前 RTOS 毫秒。
  */
@@ -646,24 +641,29 @@ static void Wait_ROI(const Jetson_CAN_Data_t *data, uint32_t now_ms)
     const Jetson_CAN_Arrival_Ack_t *ack = &data->arrival_ack;
     const Jetson_CAN_ROI_Reply_t *roi = &data->roi_reply;
     const Jetson_CAN_Turn_Request_t *turn = &data->turn_to_safety;
-    if (Reply_In_Request(ack->sequence, ack->received_ms) && ack->valid && Chassis_Is_Stopped())
+    if (Reply_In_Request(ack->sequence) && ack->valid)
     {
-        const uint8_t timely_roi = Reply_In_Request(roi->sequence, roi->received_ms) && roi->valid;
-        if (!ack->accepted || (timely_roi && !roi->passed))
+        const uint8_t current_roi = Reply_In_Request(roi->sequence) && roi->valid;
+        if (!ack->accepted || (current_roi && !roi->passed))
         {
 #if JETSON_AUTO_CHASSIS_TEST
             Halt(now_ms);
 #else
-            Start_Servo(TRANSPORT_SERVO_OPEN, RECOVERY_OPEN, now_ms);
+            if (Released_After(data, ack->accepted ? roi->sequence : ack->sequence))
+                Start_Distance(CHASSIS_TRANSLATION_BACKWARD, JETSON_AUTO_RECOVERY_BACK_M,
+                               RECOVERY_BACK, now_ms);
 #endif
             return;
         }
-        if (timely_roi && roi->passed && turn->valid && turn->destination == roi->destination &&
-            Reply_In_Request(turn->sequence, turn->received_ms))
+        if (current_roi && roi->passed && turn->valid && turn->destination == roi->destination &&
+            Reply_In_Request(turn->sequence))
         {
-            route_token = turn->token;
-            outbound_direction = turn->destination == 1U ? 1 : -1;
-            Start_Turn(outbound_direction, JETSON_AUTO_OUT_TURN_DEG, TURN_OUT, now_ms);
+            if (Released_After(data, Later(Later(ack->sequence, roi->sequence), turn->sequence)))
+            {
+                route_token = turn->token;
+                outbound_direction = turn->destination == 1U ? 1 : -1;
+                Start_Turn(outbound_direction, JETSON_AUTO_OUT_TURN_DEG, TURN_OUT, now_ms);
+            }
             return;
         }
     }
@@ -673,23 +673,21 @@ static void Wait_ROI(const Jetson_CAN_Data_t *data, uint32_t now_ms)
 /** @brief 推进机械动作。定距和转向的停稳结果来自现有底盘控制。
  * @param[in] data 当前非空接收快照。
  * @param[in] now_ms 当前 RTOS 毫秒。
+ * @note 回复之后的转段统一由 Released_After 放行；已在运动的阶段不看 pause。
  */
 static void Service_Stage(const Jetson_CAN_Data_t *data, uint32_t now_ms)
 {
+    const Jetson_CAN_Command_Reply_t *reply = &data->command_reply;
     switch (stage)
     {
     case ARMING:
-        if (Chassis_Is_Stopped())
-#if JETSON_AUTO_CHASSIS_TEST
-            Begin_Approach(APPROACH_TARGET, data, now_ms);
-#else
-            Start_Servo(TRANSPORT_SERVO_OPEN, OPENING, now_ms);
-#endif
-        else if ((uint32_t)(now_ms - stage_started_ms) >= JETSON_AUTO_PREPARE_TIMEOUT_MS)
-            Halt(now_ms);
-        break;
-    case OPENING:
-        if (Servo_Elapsed(now_ms, JETSON_AUTO_SERVO_OPEN_MS))
+        /* 停稳期限只约束底盘；停稳后等 Jetson 解除 pause（如张开夹爪）再接近。 */
+        if (!Chassis_Is_Stopped())
+        {
+            if ((uint32_t)(now_ms - stage_started_ms) >= JETSON_AUTO_SETTLE_TIMEOUT_MS)
+                Halt(now_ms);
+        }
+        else if (!data->heartbeat_pause)
             Begin_Approach(APPROACH_TARGET, data, now_ms);
         break;
     case APPROACH_TARGET:
@@ -699,11 +697,13 @@ static void Service_Stage(const Jetson_CAN_Data_t *data, uint32_t now_ms)
             Begin_Request(JETSON_CAN_ARRIVAL_ID, WAIT_ROI, now_ms);
 #else
         if (Approach(&data->target, &target_window, 1U, now_ms))
-            Start_Servo(TRANSPORT_SERVO_CLOSED, CLOSING, now_ms);
+            Begin_Point_Request(JETSON_CAN_POINT_GRASP, WAIT_GRASP_POINT_ACK, now_ms);
 #endif
         break;
-    case CLOSING:
-        if (Servo_Elapsed(now_ms, JETSON_AUTO_SERVO_CLOSE_MS) && Chassis_Is_Stopped())
+    case WAIT_GRASP_POINT_ACK:
+        if (!Reply_Accepted(reply, JETSON_CAN_POINT_REPLY_COMMAND))
+            Service_Request(now_ms);
+        else if (Released_After(data, reply->sequence))
             Start_Distance(CHASSIS_TRANSLATION_BACKWARD, JETSON_AUTO_ROI_BACK_M, ROI_BACK, now_ms);
         break;
     case ROI_BACK:
@@ -718,17 +718,19 @@ static void Service_Stage(const Jetson_CAN_Data_t *data, uint32_t now_ms)
             Begin_Request(JETSON_CAN_TURN_COMPLETED_ID, WAIT_TURN_ACK, now_ms);
         break;
     case WAIT_TURN_ACK:
-        if (Reply_Accepted(&data->command_reply, 1U))
-            Begin_Approach(APPROACH_SAFETY, data, now_ms);
-        else
+        if (!Reply_Accepted(reply, 1U))
             Service_Request(now_ms);
+        else if (Released_After(data, reply->sequence))
+            Begin_Approach(APPROACH_SAFETY, data, now_ms);
         break;
     case APPROACH_SAFETY:
         if (Approach(&data->safety, &safety_window, 0U, now_ms))
             Begin_Request(JETSON_CAN_SAFETY_ARRIVED_ID, WAIT_SAFETY_ACK, now_ms);
         break;
     case WAIT_SAFETY_ACK:
-        if (Reply_Accepted(&data->command_reply, 2U) && Chassis_Is_Stopped())
+        if (!Reply_Accepted(reply, 2U))
+            Service_Request(now_ms);
+        else if (Released_After(data, reply->sequence))
         {
 #if JETSON_AUTO_CHASSIS_TEST
             Chassis_Disable();
@@ -737,15 +739,15 @@ static void Service_Stage(const Jetson_CAN_Data_t *data, uint32_t now_ms)
             Start_Timed_Move(JETSON_AUTO_PUSH_SPEED_MPS, PUSHING, now_ms);
 #endif
         }
-        else
-            Service_Request(now_ms);
         break;
     case PUSHING:
         if (Timed_Move_Stopped(now_ms))
-            Start_Servo(TRANSPORT_SERVO_OPEN, RELEASING, now_ms);
+            Begin_Point_Request(JETSON_CAN_POINT_RELEASE, WAIT_RELEASE_POINT_ACK, now_ms);
         break;
-    case RELEASING:
-        if (Servo_Elapsed(now_ms, JETSON_AUTO_SERVO_OPEN_MS) && Chassis_Is_Stopped())
+    case WAIT_RELEASE_POINT_ACK:
+        if (!Reply_Accepted(reply, JETSON_CAN_POINT_REPLY_COMMAND))
+            Service_Request(now_ms);
+        else if (Released_After(data, reply->sequence))
             Start_Timed_Move(-JETSON_AUTO_PUSH_SPEED_MPS, RETRACTING, now_ms);
         break;
     case RETRACTING:
@@ -753,10 +755,10 @@ static void Service_Stage(const Jetson_CAN_Data_t *data, uint32_t now_ms)
             Begin_Request(JETSON_CAN_DELIVERY_COMPLETED_ID, WAIT_DELIVERY_ACK, now_ms);
         break;
     case WAIT_DELIVERY_ACK:
-        if (Reply_Accepted(&data->command_reply, 4U) && Chassis_Is_Stopped())
-            Start_Turn(-outbound_direction, JETSON_AUTO_RETURN_TURN_DEG, TURN_BACK, now_ms);
-        else
+        if (!Reply_Accepted(reply, 4U))
             Service_Request(now_ms);
+        else if (Released_After(data, reply->sequence))
+            Start_Turn(-outbound_direction, JETSON_AUTO_RETURN_TURN_DEG, TURN_BACK, now_ms);
         break;
     case TURN_BACK:
     case RECOVERY_BACK:
@@ -764,15 +766,10 @@ static void Service_Stage(const Jetson_CAN_Data_t *data, uint32_t now_ms)
             Begin_Request(JETSON_CAN_START_SEARCH_ID, WAIT_SEARCH_ACK, now_ms);
         break;
     case WAIT_SEARCH_ACK:
-        if (Reply_Accepted(&data->command_reply, 3U))
-            Begin_Approach(APPROACH_TARGET, data, now_ms);
-        else
+        if (!Reply_Accepted(reply, 3U))
             Service_Request(now_ms);
-        break;
-    case RECOVERY_OPEN:
-        if (Servo_Elapsed(now_ms, JETSON_AUTO_SERVO_OPEN_MS) && Chassis_Is_Stopped())
-            Start_Distance(CHASSIS_TRANSLATION_BACKWARD, JETSON_AUTO_RECOVERY_BACK_M,
-                           RECOVERY_BACK, now_ms);
+        else if (Released_After(data, reply->sequence))
+            Begin_Approach(APPROACH_TARGET, data, now_ms);
         break;
     default:
         break;
@@ -835,7 +832,7 @@ void Jetson_Auto_Loop(void)
     {
         INS_control_data_t imu;
         if (link && INS_Get_Data(&imu) &&
-            (uint32_t)((uint32_t)xTaskGetTickCount() - imu.sample_time_ms) <= 20U && Chassis_Enable())
+            (uint32_t)((uint32_t)xTaskGetTickCount() - imu.sample_time_ms) <= JETSON_AUTO_IMU_MAX_AGE_MS && Chassis_Enable())
             Enter(ARMING, now_ms);
         return;
     }

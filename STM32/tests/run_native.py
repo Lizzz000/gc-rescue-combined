@@ -61,8 +61,7 @@ def main():
                 "project/Core/Bsp/IMU_PWM", "project/Core/Bsp/ADC", "project/Core/Bsp/LED", "project/Core/Bsp/Buzzer",
                 "project/Core/Algorithm/Chassis", "project/Core/Control/Chassis",
                 "project/Core/Communication/Jetson", "project/Core/Communication/Manual",
-                "project/Core/Control/Jetson", "project/Core/Control/Manual",
-                "project/Core/Bsp/Transport_Servo"]
+                "project/Core/Control/Jetson", "project/Core/Control/Manual"]
     with tempfile.TemporaryDirectory(prefix="cboard_native_", dir=args.temp_dir) as build:
         for name, sources in suites.items():
             exe = str(Path(build) / (name + ".exe"))

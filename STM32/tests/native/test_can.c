@@ -15,7 +15,6 @@
 #include "jetson_can.h"
 #include "manual_can.h"
 #include "manual_control.h"
-#include "transport_servo.h"
 
 /* 同一用例分别以手动与自动编译模式运行，核对各自只开本模式的滤波和分流。 */
 #define TEST_CAN_AUTO (JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST)
@@ -52,21 +51,6 @@ static uint32_t tx_mailboxes_free = 3U;
 static uint32_t chassis_inits, chassis_loops;
 static uint32_t jetson_can_inits, manual_can_inits, manual_control_inits, manual_control_loops;
 static uint32_t jetson_auto_inits, jetson_auto_loops;
-volatile Manual_Control_State_t manual_control_state;
-static uint32_t calibration_case, calibration_loops;
-static const struct
-{
-    Manual_Control_State_t state;
-    uint8_t enabled, stopped, allowed;
-} calibration_cases[] = {
-    {MANUAL_DISARMED,  0U, 0U, 1U},
-    {MANUAL_PREPARING, 1U, 1U, 0U},
-    {MANUAL_READY,     1U, 1U, 1U},
-    {MANUAL_READY,     1U, 0U, 0U},
-    {MANUAL_RUNNING,   1U, 0U, 0U},
-    {MANUAL_BRAKING,   1U, 1U, 0U},
-    {MANUAL_DISARMED,  1U, 0U, 0U},
-};
 static HAL_StatusTypeDef start_result = HAL_OK;
 static HAL_StatusTypeDef tx_result = HAL_OK;
 static HAL_StatusTypeDef rx_result = HAL_OK;
@@ -75,11 +59,11 @@ static jmp_buf task_finished;
 static const uint8_t uplink_data[8] = {0x01U, 0xEFU, 0xCDU, 0xABU, 0x89U};
 
 /** @brief 用已知编码核对 BSP 对 CAN ID、token 与 8 字节缓冲的传递。 */
-uint8_t Jetson_CAN_Encode_Uplink(uint16_t id, uint32_t token, uint8_t data[8])
+uint8_t Jetson_CAN_Encode_Uplink(uint16_t id, uint32_t argument, uint8_t data[8])
 {
     if (id != 0x203U)
         return 0U;
-    assert(token == 0x89ABCDEFU);
+    assert(argument == 0x89ABCDEFU);
     memcpy(data, uplink_data, sizeof(uplink_data));
     return 5U;
 }
@@ -145,8 +129,6 @@ void Manual_Control_Loop(void)
 {
     assert(manual_control_inits == 1U && test_tick == 5U * (manual_control_loops + 1U));
     assert(chassis_loops == manual_control_loops);
-    calibration_case = manual_control_loops % (sizeof(calibration_cases) / sizeof(calibration_cases[0]));
-    manual_control_state = calibration_cases[calibration_case].state;
     ++manual_control_loops;
 }
 /** @brief 核对原任务每5ms调用一次底盘调度；动作算法另由chassis suite编译验证。
@@ -171,20 +153,6 @@ void Jetson_Auto_Loop(void)
 {
     assert(jetson_auto_inits == 1U && chassis_loops == jetson_auto_loops + 1U);
     ++jetson_auto_loops;
-}
-
-/** @brief 提供标定门禁的模拟底盘使能结果。 @return 当前测试状态。 */
-uint8_t Chassis_Is_Enabled(void) { return calibration_cases[calibration_case].enabled; }
-
-/** @brief 提供标定门禁的模拟停车确认。 @return 当前测试状态。 */
-uint8_t Chassis_Is_Stopped(void) { return calibration_cases[calibration_case].stopped; }
-
-/** @brief 核对舵机标定在底盘之后执行，并仅在指定阶段允许新脉宽。 */
-void Transport_Servo_Calibration_Loop(uint8_t safe_to_move)
-{
-    assert(chassis_loops == calibration_loops + 1U);
-    assert(safe_to_move == calibration_cases[calibration_case].allowed);
-    ++calibration_loops;
 }
 
 /** @brief 捕获不应发生的蜂鸣PWM启动。 @param[in] h TIM4句柄。 @param[in] channel CH3。 @return HAL_OK。 */
@@ -492,11 +460,9 @@ int main(void)
 #if TEST_CAN_AUTO
     assert(jetson_can_inits == 1U && jetson_auto_inits == 1U && jetson_auto_loops == 200U);
     assert(manual_can_inits == 0U && manual_control_inits == 0U && manual_control_loops == 0U);
-    assert(calibration_loops == 0U);
 #else
     assert(manual_can_inits == 1U && manual_control_inits == 1U && manual_control_loops == 200U);
     assert(jetson_can_inits == 0U && jetson_auto_inits == 0U && jetson_auto_loops == 0U);
-    assert(calibration_loops == 200U);
 #endif
     assert(fabsf(battery_voltage - 24.11f) < 0.0001f);
     puts(TEST_CAN_AUTO ? "PASS CAN auto: Jetson-only filters and routing, MIT feedback and 5ms task ordering"

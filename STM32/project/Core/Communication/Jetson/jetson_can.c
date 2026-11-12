@@ -73,10 +73,15 @@ void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len)
     {
     case JETSON_CAN_HEARTBEAT_ID:
         ++jetson_data.rx_sequence;
-        if (Jetson_CAN_Is_Velocity_Frame(data, len))
+        /* 速度帧校验只看前 7 字节，DLC 8 由此处单独检查；0x17F 仍走 DLC 7。 */
+        if (data != NULL && len == JETSON_CAN_HEARTBEAT_DLC &&
+            data[JETSON_CAN_HEARTBEAT_PAUSE_BYTE] <= 1U &&
+            Jetson_CAN_Is_Velocity_Frame(data, JETSON_CAN_VELOCITY_DLC))
         {
             jetson_data.heartbeat_received_ms = now_ms;
+            jetson_data.heartbeat_sequence = jetson_data.rx_sequence;
             jetson_data.heartbeat_seen = 1U;
+            jetson_data.heartbeat_pause = data[JETSON_CAN_HEARTBEAT_PAUSE_BYTE];
         }
         else if (len == 0U)
         {
@@ -141,10 +146,10 @@ void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len)
         reply.received_ms = now_ms;
         reply.sequence = ++jetson_data.rx_sequence;
         if (data != NULL && len == 6U && data[0] <= 1U &&
-            data[1] >= 1U && data[1] <= 4U)
+            data[1] >= 1U && data[1] <= JETSON_CAN_POINT_REPLY_COMMAND)
         {
             uint32_t token = Read_Token(data + 2U);
-            if (data[1] != 3U || token == 0U)
+            if ((data[1] != 3U && data[1] != JETSON_CAN_POINT_REPLY_COMMAND) || token == 0U)
             {
                 reply.valid = 1U;
                 reply.accepted = data[0];
@@ -182,12 +187,15 @@ void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len)
 /** @brief 切换命令回执的接收匹配，参数和行为见头文件。 */
 void Jetson_CAN_Expect_Command_Reply(uint16_t request_id, uint32_t token)
 {
-    const uint8_t command = request_id >= JETSON_CAN_TURN_COMPLETED_ID &&
-                            request_id <= JETSON_CAN_DELIVERY_COMPLETED_ID ?
-        (uint8_t)(request_id - JETSON_CAN_TURN_COMPLETED_ID + 1U) : 0U;
+    uint8_t command = 0U;
+    if (request_id == JETSON_CAN_POINT_REACHED_ID)
+        command = JETSON_CAN_POINT_REPLY_COMMAND;
+    else if (request_id >= JETSON_CAN_TURN_COMPLETED_ID && request_id <= JETSON_CAN_DELIVERY_COMPLETED_ID)
+        command = (uint8_t)(request_id - JETSON_CAN_TURN_COMPLETED_ID + 1U);
     taskENTER_CRITICAL();
     expected_reply_command = command;
-    expected_reply_token = request_id == JETSON_CAN_START_SEARCH_ID ? 0U : token;
+    expected_reply_token = request_id == JETSON_CAN_START_SEARCH_ID ||
+                           request_id == JETSON_CAN_POINT_REACHED_ID ? 0U : token;
     if (command != 0U)
         jetson_data.command_reply = (Jetson_CAN_Command_Reply_t){0};
     taskEXIT_CRITICAL();
@@ -204,7 +212,7 @@ void Jetson_CAN_Get_Data(Jetson_CAN_Data_t *out)
 }
 
 /** @brief 编码上行载荷；帧 ID 与字节数沿用 Jetson 协议。 @return CAN DLC，失败为 0。 */
-uint8_t Jetson_CAN_Encode_Uplink(uint16_t id, uint32_t token, uint8_t data[8])
+uint8_t Jetson_CAN_Encode_Uplink(uint16_t id, uint32_t argument, uint8_t data[8])
 {
     if (data == NULL)
         return 0U;
@@ -216,6 +224,12 @@ uint8_t Jetson_CAN_Encode_Uplink(uint16_t id, uint32_t token, uint8_t data[8])
     case JETSON_CAN_START_SEARCH_ID:
         length = 1U;
         break;
+    case JETSON_CAN_POINT_REACHED_ID:
+        if (argument != JETSON_CAN_POINT_GRASP && argument != JETSON_CAN_POINT_RELEASE)
+            return 0U;
+        memset(data, 0, 8U);
+        data[0] = (uint8_t)argument;
+        return 1U;
     case JETSON_CAN_TURN_COMPLETED_ID:
     case JETSON_CAN_SAFETY_ARRIVED_ID:
     case JETSON_CAN_DELIVERY_COMPLETED_ID:
@@ -229,10 +243,10 @@ uint8_t Jetson_CAN_Encode_Uplink(uint16_t id, uint32_t token, uint8_t data[8])
     data[0] = 1U;
     if (length == 5U)
     {
-        data[1] = (uint8_t)token;
-        data[2] = (uint8_t)(token >> 8U);
-        data[3] = (uint8_t)(token >> 16U);
-        data[4] = (uint8_t)(token >> 24U);
+        data[1] = (uint8_t)argument;
+        data[2] = (uint8_t)(argument >> 8U);
+        data[3] = (uint8_t)(argument >> 16U);
+        data[4] = (uint8_t)(argument >> 24U);
     }
     return length;
 }

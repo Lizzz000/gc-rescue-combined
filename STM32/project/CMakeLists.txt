@@ -53,7 +53,6 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Bsp/CAN/bsp_can.c
     Core/Bsp/IMU_PWM/bsp_imu_pwm.c
     Core/Bsp/LED/bsp_led.c
-    Core/Bsp/Transport_Servo/transport_servo.c
     Core/Communication/VOFA/vofa.c
     Core/Communication/Jetson/jetson_can.c
     Core/Communication/Manual/manual_can.c
@@ -80,7 +79,6 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Bsp/CAN
     Core/Bsp/IMU_PWM
     Core/Bsp/LED
-    Core/Bsp/Transport_Servo
     Core/Communication/VOFA
     Core/Communication/Jetson
     Core/Communication/Manual

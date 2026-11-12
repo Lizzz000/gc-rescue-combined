@@ -1,12 +1,12 @@
 #ifndef JETSON_AUTO_CONFIG_H
 #define JETSON_AUTO_CONFIG_H
 
-/* 标定后改为 1，上电自动搬运；0 为 0x17F 手动遥控固件（含舵机标定）。 */
+/* 标定后改为 1，上电自动搬运；0 为 0x17F 手动遥控固件。夹爪由 Jetson 负责。 */
 #ifndef JETSON_AUTO_ENABLED
 #define JETSON_AUTO_ENABLED 0
 #endif
 
-/* 单次底盘联调：由 SWD 显式启动，物资→规则转向→安全区；不执行夹爪或定距。 */
+/* 单次底盘联调：由 SWD 显式启动，物资→规则转向→安全区；不上报到点，不执行定距。 */
 #ifndef JETSON_AUTO_CHASSIS_TEST
 #define JETSON_AUTO_CHASSIS_TEST 0
 #endif
@@ -14,10 +14,6 @@
 #error "Select either full transport or chassis-only test"
 #endif
 #define JETSON_AUTO_CHASSIS_TEST_TIMEOUT_MS 90000U
-
-/* 旧车 MG90 空载调试范围，单位 μs；开合端点按当前机构实测。 */
-#define TRANSPORT_SERVO_CALIBRATION_MIN_US 1000U
-#define TRANSPORT_SERVO_CALIBRATION_MAX_US 2000U
 
 /* 到位窗口为 x、y 设定点及各轴允许误差。单位为原图宽/高的比例，0 待标定。 */
 #define JETSON_AUTO_TARGET_X 0.5000f
@@ -50,13 +46,14 @@
 #define JETSON_AUTO_APPROACH_I_GAIN 2.0f
 #define JETSON_AUTO_APPROACH_I_LIMIT_MPS 0.05f
 
-/* 心跳与图像中心的接收期限、使能准备期限、故障制动期限，单位 ms。 */
+/* 心跳与图像中心的接收期限、故障制动期限，单位 ms。 */
 #define JETSON_AUTO_LINK_TIMEOUT_MS 250U
-#define JETSON_AUTO_PREPARE_TIMEOUT_MS 1000U
+/* 使能前姿态样本允许的最大年龄，ms。 */
+#define JETSON_AUTO_IMU_MAX_AGE_MS 20U
 #define JETSON_AUTO_BRAKE_TIMEOUT_MS 500U
 
-/* 正常视觉入窗后的停车确认期限，ms；不改变故障制动期限或停稳轮速门限。 */
-#define JETSON_AUTO_VISION_STOP_TIMEOUT_MS 1000U
+/* 使能准备与正常视觉入窗后的停稳期限，ms；不改变故障制动期限或停稳轮速门限。 */
+#define JETSON_AUTO_SETTLE_TIMEOUT_MS 1000U
 /* 停稳后的核验等待 = 中心接收期限 + 发送及计时余量，单位 ms。 */
 #define JETSON_AUTO_VERIFY_MARGIN_MS 20U
 #define JETSON_AUTO_VERIFY_WAIT_MS (JETSON_AUTO_LINK_TIMEOUT_MS + JETSON_AUTO_VERIFY_MARGIN_MS)
@@ -72,16 +69,12 @@
 #define JETSON_AUTO_OUT_TURN_DEG 180.0f
 #define JETSON_AUTO_RETURN_TURN_DEG 180.0f
 
-/* TIM1_CH1 开合高电平脉宽 μs 和动作等待 ms；均留待实车标定。 */
-#define TRANSPORT_SERVO_OPEN_US 0U
-#define TRANSPORT_SERVO_CLOSED_US 0U
-#define JETSON_AUTO_SERVO_OPEN_MS 0U
-#define JETSON_AUTO_SERVO_CLOSE_MS 0U
-
-/* 未入邮箱最多等待 3 s。首次提交后，回执期限覆盖 Jetson 3 s 服务预算及链路余量。 */
-#define JETSON_AUTO_REQUEST_TIMEOUT_MS 3000U
-/* 覆盖 250 ms 重报、20 ms 双向调度、100 ms 回复队列及 CAN 传输，单位 ms。 */
+/* Jetson 处理一次请求的服务预算，ms。 */
+#define JETSON_AUTO_REQUEST_SERVICE_MS 3000U
+/* 覆盖邮箱等待、250 ms 重报、20 ms 双向调度、100 ms 回复队列及 CAN 传输，单位 ms。 */
 #define JETSON_AUTO_REQUEST_LINK_MARGIN_MS 450U
+/* 唯一请求期限：停稳后首次尝试提交起算，含邮箱等待，见 Jetson/docs/can-protocol.md。 */
+#define JETSON_AUTO_REQUEST_TIMEOUT_MS (JETSON_AUTO_REQUEST_SERVICE_MS + JETSON_AUTO_REQUEST_LINK_MARGIN_MS)
 #define JETSON_AUTO_REQUEST_RETRY_MS 250U
 
 #endif

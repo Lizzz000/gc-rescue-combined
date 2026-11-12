@@ -17,10 +17,10 @@ void can_filter_init(void);
 /**
  * @brief CAN1 三个发送邮箱均空闲时尝试提交一条 Jetson 上行运输请求。
  * @param[in] id 运输请求的 11 位标准帧 ID。
- * @param[in] token 本趟 ROI 请求号低 32 位；无 token 的帧忽略此值。
+ * @param[in] argument 帧参数，含义见 Jetson_CAN_Encode_Uplink（token 或 0x208 到点类型）。
  * @return HAL_OK 表示进入邮箱，HAL_BUSY 表示有待发送帧，错误返回对应 HAL 状态。
  * @note 由底盘所在任务在 Chassis_Loop 后调用；失败由调用方按原步骤重试。
  */
-HAL_StatusTypeDef Jetson_CAN_Try_Send_Uplink(uint16_t id, uint32_t token);
+HAL_StatusTypeDef Jetson_CAN_Try_Send_Uplink(uint16_t id, uint32_t argument);
 
 #endif

@@ -11,6 +11,9 @@ static unsigned critical_depth, critical_entries, critical_exits;
 static uint8_t receive_on_enter, receive_on_exit;
 static const uint8_t velocity_frame[7] = {1U, 0x0CU, 0xFEU, 0xFAU, 0U, 0x18U, 0xFCU};
 static const uint8_t zero_frame[7] = {1U, 0U, 0U, 0U, 0U, 0U, 0U};
+/* 0x180 心跳为 DLC 8：前 7 字节同速度帧，data[7] 为 pause。 */
+static const uint8_t heartbeat_frame[8] = {1U, 0x0CU, 0xFEU, 0xFAU, 0U, 0x18U, 0xFCU, 0U};
+static const uint8_t zero_heartbeat[8] = {1U, 0U, 0U, 0U, 0U, 0U, 0U, 0U};
 
 /** @brief 模拟临界区入口；可在屏蔽中断之前接收一帧，复制须包含该帧。 */
 void test_enter_critical(void)
@@ -19,7 +22,7 @@ void test_enter_critical(void)
     if (receive_on_enter)
     {
         receive_on_enter = 0U;
-        Jetson_CAN_Receive(0x180U, velocity_frame, sizeof(velocity_frame));
+        Jetson_CAN_Receive(0x180U, heartbeat_frame, sizeof(heartbeat_frame));
     }
     ++critical_depth;
     ++critical_entries;
@@ -34,7 +37,7 @@ void test_exit_critical(void)
     if (receive_on_exit)
     {
         receive_on_exit = 0U;
-        Jetson_CAN_Receive(0x180U, zero_frame, sizeof(zero_frame));
+        Jetson_CAN_Receive(0x180U, zero_heartbeat, sizeof(zero_heartbeat));
     }
 }
 
@@ -75,32 +78,42 @@ static void Check_Velocity_Decode(void)
     }
 }
 
-/** @brief 0x180 只作心跳：合法格式（含 valid=0 全零）保活，畸形不保活，空帧计失联。 */
+/** @brief 0x180 只认 DLC 8 心跳：data[7] 为 0/1 的 pause；DLC 7、pause 越界或畸形不保活，空帧计失联。 */
 static void Check_Heartbeat(void)
 {
     Jetson_CAN_Init();
-    const uint8_t empty_heartbeat[7] = {0U};
+    uint8_t heartbeat[8] = {0U};
     test_tick = 10U;
-    Jetson_CAN_Receive(0x180U, empty_heartbeat, sizeof(empty_heartbeat));
+    Jetson_CAN_Receive(0x180U, heartbeat, sizeof(heartbeat));
     Jetson_CAN_Data_t data = Snapshot();
     assert(data.heartbeat_seen && data.heartbeat_received_ms == 10U && data.rx_sequence == 1U);
+    assert(data.heartbeat_sequence == 1U && !data.heartbeat_pause);
     test_tick = 20U;
-    Jetson_CAN_Receive(0x180U, velocity_frame, sizeof(velocity_frame));
+    heartbeat[7] = 1U;
+    Jetson_CAN_Receive(0x180U, heartbeat, sizeof(heartbeat));
     data = Snapshot();
-    assert(data.heartbeat_seen && data.heartbeat_received_ms == 20U && data.rx_sequence == 2U);
-    const uint8_t malformed[7] = {2U};
+    assert(data.heartbeat_received_ms == 20U && data.heartbeat_sequence == 2U && data.heartbeat_pause);
+    Jetson_CAN_Receive(0x180U, heartbeat_frame, sizeof(heartbeat_frame));
+    data = Snapshot();
+    assert(data.heartbeat_sequence == 3U && !data.heartbeat_pause);
+
+    /* 旧 DLC 7、pause=2、valid=2 及空指针都不是心跳：不保活、不改 pause，只推进接收序号。 */
     test_tick = 30U;
+    heartbeat[7] = 2U;
+    const uint8_t malformed[8] = {2U};
+    Jetson_CAN_Receive(0x180U, velocity_frame, sizeof(velocity_frame));
+    Jetson_CAN_Receive(0x180U, heartbeat, sizeof(heartbeat));
     Jetson_CAN_Receive(0x180U, malformed, sizeof(malformed));
-    Jetson_CAN_Receive(0x180U, empty_heartbeat, 6U);
-    Jetson_CAN_Receive(0x180U, NULL, 7U);
+    Jetson_CAN_Receive(0x180U, NULL, 8U);
     data = Snapshot();
-    assert(data.heartbeat_seen && data.heartbeat_received_ms == 20U && data.rx_sequence == 5U);
+    assert(data.heartbeat_seen && data.heartbeat_received_ms == 20U && data.rx_sequence == 7U);
+    assert(data.heartbeat_sequence == 3U && !data.heartbeat_pause);
     assert(data.mission_loss_sequence == 0U);
     /* 空帧失联后紧跟心跳：心跳恢复，但失联计数保留给任务。 */
     Jetson_CAN_Receive(0x180U, NULL, 0U);
     data = Snapshot();
-    assert(!data.heartbeat_seen && data.mission_loss_sequence == 1U && data.rx_sequence == 6U);
-    Jetson_CAN_Receive(0x180U, empty_heartbeat, sizeof(empty_heartbeat));
+    assert(!data.heartbeat_seen && data.mission_loss_sequence == 1U && data.rx_sequence == 8U);
+    Jetson_CAN_Receive(0x180U, zero_heartbeat, sizeof(zero_heartbeat));
     data = Snapshot();
     assert(data.heartbeat_seen && data.heartbeat_received_ms == 30U && data.mission_loss_sequence == 1U);
 }
@@ -109,7 +122,7 @@ static void Check_Heartbeat(void)
 static void Check_Manual_Ignored(void)
 {
     Jetson_CAN_Init();
-    Jetson_CAN_Receive(0x180U, velocity_frame, sizeof(velocity_frame));
+    Jetson_CAN_Receive(0x180U, heartbeat_frame, sizeof(heartbeat_frame));
     const Jetson_CAN_Data_t before = Snapshot();
     const uint8_t zero_17f[7] = {1U};
     Jetson_CAN_Receive(MANUAL_CAN_VELOCITY_ID, velocity_frame, sizeof(velocity_frame));
@@ -127,7 +140,7 @@ static void Check_Manual_Ignored(void)
 static void Check_Lengths(void)
 {
     const uint16_t ids[] = {0x180U, 0x181U, 0x182U, 0x190U, 0x191U, 0x192U, 0x193U};
-    const uint8_t lengths[] = {7U, 8U, 8U, 1U, 3U, 6U, 6U};
+    const uint8_t lengths[] = {8U, 8U, 8U, 1U, 3U, 6U, 6U};
     const uint8_t frame[8] = {1U, 1U, 1U, 0U, 0U, 0U, 0U, 0U};
     for (unsigned i = 0U; i < sizeof(ids) / sizeof(ids[0]); ++i)
     {
@@ -207,15 +220,15 @@ static void Check_Handshake(void)
     const uint32_t tokens[] = {0U, 0x89ABCDEFU, UINT32_MAX};
     for (unsigned t = 0U; t < sizeof(tokens) / sizeof(tokens[0]); ++t)
     {
-        for (uint8_t command = 0U; command <= 5U; ++command)
+        for (uint8_t command = 0U; command <= 6U; ++command)
         {
             for (uint8_t accepted = 0U; accepted <= 2U; ++accepted)
             {
                 uint32_t token = tokens[t];
                 uint8_t reply[6] = {accepted, command, (uint8_t)token, (uint8_t)(token >> 8U),
                                     (uint8_t)(token >> 16U), (uint8_t)(token >> 24U)};
-                uint8_t valid = accepted <= 1U && command >= 1U && command <= 4U &&
-                                (command != 3U || token == 0U);
+                uint8_t valid = accepted <= 1U && command >= 1U && command <= 5U &&
+                                ((command != 3U && command != 5U) || token == 0U);
                 Jetson_CAN_Receive(0x192U, reply, sizeof(reply));
                 Jetson_CAN_Data_t data = Snapshot();
                 assert(data.command_reply.valid == valid);
@@ -264,7 +277,7 @@ static void Check_Snapshot(void)
     assert(!after.roi_reply.valid && !after.command_reply.valid && !after.turn_to_safety.valid);
 }
 
-/** @brief 核对五种上行帧的 DLC、小端 token 和 HAL 所需的尾部缓冲。 */
+/** @brief 核对六种上行帧的 DLC、小端 token、0x208 到点类型和 HAL 所需的尾部缓冲。 */
 static void Check_Uplink(void)
 {
     const uint16_t tokenless_ids[] = {0x200U, 0x205U};
@@ -296,6 +309,20 @@ static void Check_Uplink(void)
         assert(memcmp(data, tokenless, sizeof(data)) == 0);
     }
     assert(Jetson_CAN_Encode_Uplink(0x200U, 0U, NULL) == 0U);
+
+    /* 0x208 到点：DLC 1，data[0] 为到点类型；类型越界不编码、不改缓冲区。 */
+    const uint8_t grasp[8] = {0x01U};
+    const uint8_t release[8] = {0x02U};
+    memset(data, 0xAA, sizeof(data));
+    assert(Jetson_CAN_Encode_Uplink(0x208U, 1U, data) == 1U && memcmp(data, grasp, sizeof(data)) == 0);
+    memset(data, 0xAA, sizeof(data));
+    assert(Jetson_CAN_Encode_Uplink(0x208U, 2U, data) == 1U && memcmp(data, release, sizeof(data)) == 0);
+    const uint32_t bad_points[] = {0U, 3U, 0x101U, UINT32_MAX};
+    for (unsigned i = 0U; i < sizeof(bad_points) / sizeof(bad_points[0]); ++i)
+    {
+        assert(Jetson_CAN_Encode_Uplink(0x208U, bad_points[i], data) == 0U);
+        assert(memcmp(data, release, sizeof(data)) == 0);
+    }
 }
 
 /** @brief 同一毫秒内区分心跳、已知帧到达顺序与未知帧。 */
@@ -303,24 +330,24 @@ static void Check_Receive_Sequence(void)
 {
     Jetson_CAN_Init();
     test_tick = 42U;
-    Jetson_CAN_Receive(0x180U, zero_frame, sizeof(zero_frame));
+    Jetson_CAN_Receive(0x180U, zero_heartbeat, sizeof(zero_heartbeat));
     Jetson_CAN_Data_t data = Snapshot();
     assert(data.rx_sequence == 1U);
     assert(data.heartbeat_seen && data.heartbeat_received_ms == 42U);
 
-    const uint8_t invalid[7] = {0U};
+    const uint8_t invalid[8] = {0U};
     ++test_tick;
     Jetson_CAN_Receive(0x180U, invalid, sizeof(invalid));
     data = Snapshot();
     assert(data.rx_sequence == 2U);
     assert(data.heartbeat_seen && data.heartbeat_received_ms == 43U);
-    const uint8_t malformed[7] = {2U};
+    const uint8_t malformed[8] = {2U};
     ++test_tick;
     Jetson_CAN_Receive(0x180U, malformed, sizeof(malformed));
     data = Snapshot();
     assert(data.rx_sequence == 3U);
     assert(data.heartbeat_received_ms == 43U);
-    Jetson_CAN_Receive(0x180U, zero_frame, sizeof(zero_frame) - 1U);
+    Jetson_CAN_Receive(0x180U, zero_frame, sizeof(zero_frame));
     data = Snapshot();
     assert(data.rx_sequence == 4U && data.heartbeat_received_ms == 43U);
 
@@ -371,6 +398,18 @@ static void Check_Command_Expectation(void)
     Jetson_CAN_Expect_Command_Reply(0x205U, UINT32_MAX);
     Jetson_CAN_Receive(0x192U, search_ok, sizeof(search_ok));
     assert(Snapshot().command_reply.command == 3U);
+
+    /* 0x208 等待命令 5 且 token 固定为 0，不接受同 token 的其他命令。 */
+    const uint8_t point_ok[6] = {1U, 5U};
+    const uint8_t point_token[6] = {1U, 5U, 1U};
+    Jetson_CAN_Expect_Command_Reply(0x208U, 7U);
+    assert(!Snapshot().command_reply.valid);
+    Jetson_CAN_Receive(0x192U, search_ok, sizeof(search_ok));
+    Jetson_CAN_Receive(0x192U, point_token, sizeof(point_token));
+    assert(!Snapshot().command_reply.valid);
+    Jetson_CAN_Receive(0x192U, point_ok, sizeof(point_ok));
+    assert(Snapshot().command_reply.valid && Snapshot().command_reply.command == 5U &&
+           !Snapshot().command_reply.token);
     Jetson_CAN_Init();
     Jetson_CAN_Receive(0x192U, delivery_ok, sizeof(delivery_ok));
     assert(Snapshot().command_reply.command == 4U);

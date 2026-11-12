@@ -51,10 +51,10 @@ void can_filter_init(void)
 }
 
 /** @brief 由底盘任务提交一条 Jetson 上行帧；参数和返回值见头文件。 */
-HAL_StatusTypeDef Jetson_CAN_Try_Send_Uplink(uint16_t id, uint32_t token)
+HAL_StatusTypeDef Jetson_CAN_Try_Send_Uplink(uint16_t id, uint32_t argument)
 {
     uint8_t data[8];
-    const uint8_t length = Jetson_CAN_Encode_Uplink(id, token, data);
+    const uint8_t length = Jetson_CAN_Encode_Uplink(id, argument, data);
     if (length == 0U)
         return HAL_ERROR;
     if (HAL_CAN_GetTxMailboxesFreeLevel(&MOTOR_CAN) != 3U)

@@ -8,7 +8,6 @@
 #include "jetson_auto.h"
 #include "jetson_can.h"
 #include "task.h"
-#include "transport_servo.h"
 
 /* 真实下行解析与自主状态机，反馈、机构及 CAN 发送由本测试控制。 */
 CAN_HandleTypeDef hcan1, hcan2;
@@ -23,11 +22,8 @@ static Chassis_Translation_Direction_t last_translation;
 static float last_distance;
 static int8_t last_turn_direction;
 static float last_turn_angle, last_vx, last_vy, last_wz;
-static uint8_t servo_available;
 static uint8_t motors_ready;
-static unsigned servo_commands;
-static uint32_t servo_started, imu_age_ms;
-static Transport_Servo_Position_t servo_position;
+static uint32_t imu_age_ms;
 
 typedef struct
 {
@@ -45,7 +41,7 @@ void test_enter_critical(void)
         assert(critical_depth == 0U);
         can_arrival_before_snapshot = 0U;
         ++test_tick;
-        const uint8_t heartbeat[7] = {0U};
+        const uint8_t heartbeat[8] = {0U};
         const uint8_t target[8] = {1U, 0x88U, 0x13U, 0xA0U, 0x0FU, (uint8_t)test_tick, (uint8_t)(test_tick >> 8U), (uint8_t)(test_tick >> 16U)}; /* (5000,4000) */
         Jetson_CAN_Receive(0x180U, heartbeat, sizeof(heartbeat));
         Jetson_CAN_Receive(0x181U, target, sizeof(target));
@@ -129,47 +125,17 @@ uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg)
     return 1U;
 }
 
-/** @brief 模拟板卡已完成舵机 PWM 配置。 @return 可用为 1。 */
-uint8_t Transport_Servo_Is_Available(void) { return servo_available; }
-
-/** @brief 记录舵机请求；不制造到位或送达反馈。 @return 模拟受理为 1。
- * @param[in] position 请求位置。 @param[in] now_ms 当前模拟毫秒计数。
- */
-uint8_t Transport_Servo_Command(Transport_Servo_Position_t position, uint32_t now_ms)
-{
-    assert(servo_available && Chassis_Is_Stopped() && now_ms == test_tick);
-    if (servo_commands == 0U || position != servo_position)
-    {
-        servo_position = position;
-        servo_started = now_ms;
-    }
-    ++servo_commands;
-    return 1U;
-}
-
-/** @brief 返回上次切换目标后经过的时间。
- * @param[in] now_ms 模拟当前时刻。 @param[out] elapsed_ms 经过时间 ms。
- * @return 有有效指令且输出非空为 1，否则为 0。
- */
-uint8_t Transport_Servo_Elapsed(uint32_t now_ms, uint32_t *elapsed_ms)
-{
-    if (servo_commands == 0U || elapsed_ms == NULL)
-        return 0U;
-    *elapsed_ms = now_ms - servo_started;
-    return 1U;
-}
-
 /** @brief 捕获自主层提交的上行请求。 @return HAL_OK 模拟入队，HAL_BUSY 表示邮箱未就绪。
- * @param[in] id 已有运输协议上行 ID。 @param[in] token 对应本趟身份。
+ * @param[in] id 已有运输协议上行 ID。 @param[in] argument 本趟身份；底盘联调不发 0x208。
  */
-HAL_StatusTypeDef Jetson_CAN_Try_Send_Uplink(uint16_t id, uint32_t token)
+HAL_StatusTypeDef Jetson_CAN_Try_Send_Uplink(uint16_t id, uint32_t argument)
 {
     assert(critical_depth > 0U);
     if (!tx_ready)
         return HAL_BUSY;
     assert(sent_count < sizeof(sent) / sizeof(sent[0]));
     uint8_t payload[8];
-    const uint8_t len = Jetson_CAN_Encode_Uplink(id, token, payload);
+    const uint8_t len = Jetson_CAN_Encode_Uplink(id, argument, payload);
     assert(len == 1U || len == 5U);
     assert(payload[0] == 1U);
     const uint32_t encoded = len == 1U ? 0U : (uint32_t)payload[1] |
@@ -186,9 +152,9 @@ static void Reset(void)
     can_arrival_before_snapshot = 0U;
     enabled = stopped = 0U;
     enables = stops = disables = velocity_requests = 0U;
-    distance_count = turn_count = sent_count = servo_commands = 0U;
+    distance_count = turn_count = sent_count = 0U;
     imu_age_ms = 0U;
-    servo_available = tx_ready = motors_ready = 1U;
+    tx_ready = motors_ready = 1U;
     last_turn_direction = 0;
     last_turn_angle = last_vx = last_vy = last_wz = 0.0f;
     last_distance = 0.0f;
@@ -203,7 +169,7 @@ static void Reset(void)
 static void Step(uint8_t heartbeat)
 {
     test_tick += 5U;
-    const uint8_t bytes[7] = {0};
+    const uint8_t bytes[8] = {0};
     if (heartbeat)
         Jetson_CAN_Receive(0x180U, bytes, sizeof(bytes));
     Jetson_Auto_Loop();
@@ -277,10 +243,10 @@ static void Check_Sent(unsigned index, uint16_t id, uint32_t token)
 }
 
 
-/** @brief 校验本轮任何阶段均未请求舵机或定距动作。 */
+/** @brief 校验本轮任何阶段均未请求定距动作。 */
 static void Flow_No_Actuator(void)
 {
-    assert(servo_commands == 0U && distance_count == 0U);
+    assert(distance_count == 0U);
 }
 
 /** @brief 显式启动联调，保持真实配置的未标定机构参数为零。 */
@@ -288,9 +254,7 @@ static void Flow_Start(void)
 {
     Reset();
     assert(JETSON_AUTO_ENABLED == 0 && JETSON_AUTO_CHASSIS_TEST == 1);
-    assert(TRANSPORT_SERVO_OPEN_US == 0U && TRANSPORT_SERVO_CLOSED_US == 0U);
     assert(JETSON_AUTO_ROI_BACK_M == 0.0f);
-    servo_available = 0U;
     Steps(5U, 1U);
     assert(!enabled && !enables && jetson_test_start == 0U);
     jetson_test_start = 1U;
@@ -457,7 +421,7 @@ static void Flow_Visual_Stop_Wait(void)
     const unsigned stops_before_timeout = stops;
     Steps(120U, 1U);
     assert(enabled && !sent_count && stops == stops_before_timeout);
-    Steps(JETSON_AUTO_VISION_STOP_TIMEOUT_MS / 5U - 121U, 1U);
+    Steps(JETSON_AUTO_SETTLE_TIMEOUT_MS / 5U - 121U, 1U);
     assert(enabled && !sent_count && stops == stops_before_timeout);
     Step(1U); /* 1000ms：超时Halt仍保留最初视觉制动时刻。 */
     assert(enabled && !sent_count && stops == stops_before_timeout + 1U);

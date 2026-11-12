@@ -9,7 +9,7 @@
 #include <string.h>
 
 /* 仅供离线跨项目互验：输入 ID#HEX，按 bsp_can 分流调用真实解码模块，逐行输出完整 JSON 快照。
- * 0x17F 额外送入 Jetson 模块一次，证明它不改变自动快照。 */
+ * 0x17F 额外送入 Jetson 模块一次，证明它不改变自动快照。输入 ^ID:参数 时输出真实上行编码。 */
 uint32_t test_tick;
 static unsigned critical_depth;
 
@@ -106,10 +106,10 @@ static void Print_Snapshot(void)
            ",\"zero_sequence\":%" PRIu32 "},",
            (unsigned)manual.valid, (int)manual.vx, (int)manual.vy, (int)manual.wz, manual.received_ms,
            manual.sequence, manual.invalid_sequence, manual.zero_sequence);
-    printf("\"heartbeat\":{\"seen\":%u,\"received_ms\":%" PRIu32 ",\"mission_loss_sequence\":%" PRIu32 "},"
-           "\"rx_sequence\":%" PRIu32 ",",
-           (unsigned)state.heartbeat_seen, state.heartbeat_received_ms, state.mission_loss_sequence,
-           state.rx_sequence);
+    printf("\"heartbeat\":{\"seen\":%u,\"received_ms\":%" PRIu32 ",\"sequence\":%" PRIu32
+           ",\"pause\":%u,\"mission_loss_sequence\":%" PRIu32 "},\"rx_sequence\":%" PRIu32 ",",
+           (unsigned)state.heartbeat_seen, state.heartbeat_received_ms, state.heartbeat_sequence,
+           (unsigned)state.heartbeat_pause, state.mission_loss_sequence, state.rx_sequence);
     Print_Center("target", &state.target);
     printf(",");
     Print_Center("safety", &state.safety);
@@ -130,6 +130,35 @@ static void Print_Snapshot(void)
            state.turn_to_safety.token, state.turn_to_safety.received_ms);
 }
 
+/**
+ * @brief 按 ^ID:参数 调用真实上行编码，输出 {"uplink":"ID#HEX"}；编码拒绝时 HEX 为空串。
+ * @param[in] line 以 ^ 开头的文本，ID 为十六进制，参数为十进制 uint32。
+ * @return 文本格式正确返回 1；否则返回 0。
+ */
+static int Print_Uplink(const char *line)
+{
+    char *end;
+    errno = 0;
+    unsigned long id = strtoul(line + 1, &end, 16);
+    if (errno != 0 || *end != ':' || id > 0x7FFUL)
+        return 0;
+    unsigned long argument = strtoul(end + 1, &end, 10);
+    if (errno != 0 || (*end != '\0' && *end != '\n' && *end != '\r') || argument > UINT32_MAX)
+        return 0;
+    uint8_t data[8];
+    uint8_t length = Jetson_CAN_Encode_Uplink((uint16_t)id, (uint32_t)argument, data);
+    if (length == 0U)
+    {
+        printf("{\"uplink\":\"\"}\n");
+        return 1;
+    }
+    printf("{\"uplink\":\"%03lX#", id);
+    for (uint8_t byte = 0U; byte < length; ++byte)
+        printf("%02X", (unsigned)data[byte]);
+    printf("\"}\n");
+    return 1;
+}
+
 /** @brief 逐行接收离线报文，每行推进模拟时钟 1 ms。 @return 正常为 0，输入或流错误为 1。 */
 int main(void)
 {
@@ -140,6 +169,15 @@ int main(void)
     {
         uint16_t id;
         uint8_t data[8] = {0}, length;
+        if (line[0] == '^')
+        {
+            if (!Print_Uplink(line))
+            {
+                fprintf(stderr, "Invalid uplink request: %s\n", line);
+                return 1;
+            }
+            continue;
+        }
         if (!Parse_Frame(line, &id, data, &length))
         {
             fprintf(stderr, "Invalid input frame: %s\n", line);

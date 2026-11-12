@@ -1,4 +1,4 @@
-"""只读加载 Jetson 现行 codec 与手动 0x17F 链路封包，离线核对本库真实 C 解码；不连接硬件或网络。"""
+"""只读加载 Jetson 现行 codec 与手动 0x17F 链路封包，离线核对本库真实 C 解码与上行编码；不连接硬件或网络。"""
 
 import argparse
 import copy
@@ -12,7 +12,8 @@ import tempfile
 
 MANUAL_ID = 0x17F
 HEARTBEAT_ID = 0x180
-VELOCITY_DLC = 7
+# 0x17F 为 DLC 7 速度帧；0x180 心跳为 DLC 8，前 7 字节同布局，data[7] 为 pause。
+MANUAL_DLC = 7
 # C 端 Jetson 模块的已知下行 ID；每帧（含畸形）推进 rx_sequence。
 JETSON_DOWNLINK_IDS = {0x180, 0x181, 0x182, 0x190, 0x191, 0x192, 0x193}
 
@@ -53,7 +54,7 @@ def manual_wire(sender, valid, vx_milli, vy_milli, wz_milli):
     packet = sender.manual_packet(valid, vx_milli, vy_milli, wz_milli)
     identifier = int.from_bytes(packet[13:17], "little")
     length = packet[18]
-    if identifier != MANUAL_ID or length != VELOCITY_DLC:
+    if identifier != MANUAL_ID or length != MANUAL_DLC:
         raise AssertionError(f"手动链路封包 ID/DLC 不符: 0x{identifier:X}/{length}")
     return f"{identifier:03X}#{bytes(packet[21:21 + length]).hex().upper()}"
 
@@ -62,7 +63,7 @@ def initial_state():
     """声明接收快照可见字段，初始值均为零。"""
     fields = {
         "manual": "valid vx vy wz received_ms sequence invalid_sequence zero_sequence",
-        "heartbeat": "seen received_ms mission_loss_sequence",
+        "heartbeat": "seen received_ms sequence pause mission_loss_sequence",
         "target": "valid x y received_ms source_frame",
         "safety": "valid x y received_ms source_frame",
         "arrival_ack": "valid accepted received_ms",
@@ -116,7 +117,8 @@ def scenarios(codec, sender):
         if kind == "heartbeat":
             heartbeat = state["heartbeat"]
             if fields["well_formed"]:
-                heartbeat.update(seen=1, received_ms=received_ms)
+                heartbeat.update(seen=1, received_ms=received_ms, sequence=state["rx_sequence"],
+                                 pause=fields["pause"])
             elif fields["empty"]:
                 heartbeat.update(seen=0, mission_loss_sequence=heartbeat["mission_loss_sequence"] + 1)
         elif kind is not None:
@@ -133,22 +135,24 @@ def scenarios(codec, sender):
         cases.append((wire, copy.deepcopy(state), label or wire))
 
     def heartbeat(wire, label=""):
-        """0x180 只作心跳：Jetson codec 能解出即合法格式（含 valid=0），空载荷为失联标志。"""
+        """0x180 只作心跳：Jetson codec 能解出即合法格式（含 valid=0）并带 pause，空载荷为失联标志。"""
         payload = wire.split("#")[1]
         try:
-            codec.decode(wire)
+            pause = codec.decode(wire)["pause"]
             well_formed = True
         except ValueError:
-            well_formed = False
-        append(wire, "heartbeat", {"well_formed": well_formed, "empty": not payload}, label)
+            pause, well_formed = 0, False
+        append(wire, "heartbeat", {"well_formed": well_formed, "empty": not payload, "pause": pause}, label)
 
     def manual(wire, label=""):
-        """0x17F 与 0x180 同格式：以 Jetson 的 0x180 解码语义为期望，坏帧整帧撤销。"""
+        """0x17F 与心跳前 7 字节同布局：补 pause=0 后以 Jetson 的 0x180 解码语义为期望，坏帧整帧撤销。"""
         payload = wire.split("#")[1]
-        try:
-            _, fields = decoded_fields(codec, f"{HEARTBEAT_ID:03X}#{payload}")
-        except ValueError:
-            fields = {"valid": 0}
+        fields = {"valid": 0}
+        if len(payload) == 2 * MANUAL_DLC:
+            try:
+                _, fields = decoded_fields(codec, f"{HEARTBEAT_ID:03X}#{payload}00")
+            except ValueError:
+                pass
         append(wire, "manual", fields, label)
 
     def encoded(kind, values=(), invalid=False):
@@ -160,14 +164,15 @@ def scenarios(codec, sender):
         append(wire, decoded_kind, fields)
         return wire
 
-    # 0x180 心跳：bridge 现行为 valid=0 全零（DLC 7）及空载荷失联；有效帧格式仍算合法心跳。
-    for values in ((0, 0, 0), (-0.125, 0.25, -0.8)):
+    # 0x180 心跳：bridge 现行为 valid=0 全零加 pause（DLC 8）及空载荷失联；有效帧格式仍算合法心跳。
+    for values in ((0, 0, 0), (-0.125, 0.25, -0.8), (0, 0, 0, 1), (0, 0, 0, 0)):
         encoded("velocity", values)
-    encoded("velocity", (0, 0, 0), invalid=True)
+    encoded("velocity", (0, 0, 0, 1), invalid=True)
     heartbeat(f"{HEARTBEAT_ID:03X}#", label="空 0x180 失联标志")
     encoded("velocity", (0, 0, 0), invalid=True)
-    for malformed in ("180#000000000000", "180#02000000000000", "180#0000000000000000"):
-        heartbeat(malformed, label=f"畸形 0x180 不保活: {malformed}")
+    for malformed in ("180#00000000000000", "180#0000000000000002", "180#0200000000000000",
+                      "180#000000000000"):
+        heartbeat(malformed, label=f"畸形 0x180 不保活、不改 pause: {malformed}")
 
     # 0x17F：由 Jetson 端 manual/link.py 的真实封包函数生成（速度为 ×1000 整数），只进入手动快照。
     for milli in ((0, 0, 0), (80, 0, 0), (-125, 250, -800), (-32768, 32767, -1)):
@@ -194,7 +199,8 @@ def scenarios(codec, sender):
         encoded("roi_reply", (destination,))
     encoded("roi_reply", ("left",), invalid=True)
     for command in codec.COMMANDS:
-        tokens = (0,) if command == "start_search" else (0, 1, 0x89ABCDEF, 0xFFFFFFFF)
+        # 命令 3、5 的 token 固定为 0。
+        tokens = (0,) if command in ("start_search", "arrival_point") else (0, 1, 0x89ABCDEF, 0xFFFFFFFF)
         for token in tokens:
             encoded("command_reply", (command, token))
             encoded("command_reply", (command, token), invalid=True)
@@ -229,6 +235,8 @@ def scenarios(codec, sender):
     for kind, malformed in (("roi_reply", "191#010100"),
                             ("command_reply", "192#010000000000"),
                             ("command_reply", "192#010301000000"),
+                            ("command_reply", "192#010501000000"),
+                            ("command_reply", "192#010600000000"),
                             ("turn_to_safety", "193#010000000000"),
                             ("turn_to_safety", "193#000100000000")):
         encoded(kind, seeds[kind])
@@ -241,6 +249,19 @@ def scenarios(codec, sender):
         append(malformed, kind, label=f"矛盾字段撤销 {kind}: {malformed}")
     append("555#0102030405060708", label="未知 ID 不改变任何快照")
     append("201#01", label="废弃运输 ID 不改变任何快照")
+    return cases
+
+
+def uplink_cases(codec):
+    """上行以 Jetson encode 为期望：探针输入 ^ID:参数，输出 C 编码的 ID#HEX。"""
+    cases = [("^200:0", codec.encode("arrival", [])), ("^205:0", codec.encode("start_search", []))]
+    for point in (1, 2):
+        cases.append((f"^208:{point}", codec.encode("arrival_point", [str(point)])))
+    for kind in ("turn_completed", "safety_arrived", "delivery_completed"):
+        for token in (0, 1, 0x89ABCDEF, 0xFFFFFFFF):
+            cases.append((f"^{codec.IDS[kind]:03X}:{token}", codec.encode(kind, [str(token)])))
+    for point in (0, 3):
+        cases.append((f"^208:{point}", ""))
     return cases
 
 
@@ -259,6 +280,7 @@ def main():
     root = Path(__file__).resolve().parents[1]
     codec = load_codec(args.jetson_root)
     cases = scenarios(codec, load_manual_sender(args.jetson_root))
+    uplinks = uplink_cases(codec)
     with tempfile.TemporaryDirectory(prefix="cboard_jetson_codec_", dir=args.temp_dir) as directory:
         executable = Path(directory) / "jetson_codec_probe.exe"
         command = [compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic", "-O0",
@@ -272,17 +294,23 @@ def main():
                    str(root / "project/Core/Communication/Manual/manual_can.c"),
                    "-o", str(executable)]
         subprocess.run(command, check=True, timeout=30)
-        result = subprocess.run([str(executable)], input="\n".join(case[0] for case in cases) + "\n",
+        frames = [case[0] for case in cases] + [case[0] for case in uplinks]
+        result = subprocess.run([str(executable)], input="\n".join(frames) + "\n",
                                 text=True, capture_output=True, check=True, timeout=10)
         lines = result.stdout.splitlines()
-        if len(lines) != len(cases):
-            raise AssertionError(f"快照数量不符: {len(lines)} != {len(cases)}")
+        if len(lines) != len(frames):
+            raise AssertionError(f"输出数量不符: {len(lines)} != {len(frames)}")
+        for line, (request, expected) in zip(lines[len(cases):], uplinks):
+            actual = json.loads(line)["uplink"]
+            if actual != expected:
+                raise AssertionError(f"上行 {request} 编码不符\n期望: {expected!r}\n实际: {actual!r}")
         for index, (line, (_, expected, label)) in enumerate(zip(lines, cases), 1):
             actual = json.loads(line)
             if actual != expected:
                 raise AssertionError(f"第 {index} 帧互验失败 ({label})\n"
                                      f"期望: {expected}\n实际: {actual}")
-    print(f"PASS: Jetson 现行 codec/手动链路封包与真实 C 解码互验，7 种下行 + 0x17F、{len(cases)} 帧；无硬件操作")
+    print(f"PASS: Jetson 现行 codec/手动链路封包与真实 C 编解码互验，7 种下行 + 0x17F、{len(cases)} 帧，"
+          f"6 种上行 {len(uplinks)} 帧；无硬件操作")
 
 
 if __name__ == "__main__":
