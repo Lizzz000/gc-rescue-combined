@@ -105,7 +105,21 @@ def _validate_device_path(name, device, allow_empty):
         raise ConfigurationError(f'{name}: expected printable ASCII /dev/ device path without whitespace or ..')
 
 
-def _validate_gripper(values):
+def _optional_number(name, value, minimum=None):
+    if value is None:
+        return
+    if type(value) is bool or not isinstance(value, (int, float)) or value != value or value in (float('inf'), float('-inf')):
+        raise ConfigurationError(f'{name}: expected a finite number or empty, got {value!r}')
+    if minimum is not None and value <= minimum:
+        raise ConfigurationError(f'{name}: expected > {minimum}, got {value}')
+
+
+# 单次开合时长范围（秒），须与 bridge_pkg/gripper/s288_servo.hpp 及 teleop_pkg/servo/s288.py 一致。
+GRIPPER_MOVE_S_MIN = 0.2
+GRIPPER_MOVE_S_MAX = 10.0
+
+
+def _validate_gripper(values, run):
     _validate_device_path('gripper.device', values['gripper.device'], allow_empty=True)
     ident = values['gripper.id']
     if type(ident) is bool or not isinstance(ident, int) or not 0 <= ident <= 14:
@@ -118,12 +132,24 @@ def _validate_gripper(values):
         value = values[name]
         if type(value) is bool or not isinstance(value, (int, float)) or value != value or value in (float('inf'), float('-inf')):
             raise ConfigurationError(f'{name}: expected a finite number, got {value!r}')
-
+    move_s = values['gripper.move_s']
+    _optional_number('gripper.move_s', move_s)
+    if move_s is not None and not GRIPPER_MOVE_S_MIN <= move_s <= GRIPPER_MOVE_S_MAX:
+        raise ConfigurationError(
+            f'gripper.move_s: expected [{GRIPPER_MOVE_S_MIN:g}, {GRIPPER_MOVE_S_MAX:g}], got {move_s}')
+    # 自动路径在 bridge 角色启用时拒绝空键；手动 teleop 不走本入口。
+    if run in ('all', 'bridge'):
+        missing = [name for name, filled in (
+            ('gripper.device', bool(values['gripper.device'])),
+            ('gripper.move_s', values['gripper.move_s'] is not None),
+        ) if not filled]
+        if missing:
+            raise ConfigurationError(f"{'、'.join(missing)}: 待实车标定")
 
 
 def _validate(values, run):
     # 唯一业务校验入口，由 load_configuration 调用一次；校验顺序决定首个报错。
     _validate_timeouts(values)
     _validate_bridge(values)
-    _validate_gripper(values)
+    _validate_gripper(values, run)
     _validate_connections(values, run)

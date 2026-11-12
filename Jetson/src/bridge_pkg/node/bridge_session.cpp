@@ -3,6 +3,7 @@
 // 帧格式在 protocol/can_protocol.hpp。本文件不声明参数。
 
 #include "node/bridge_node.hpp"
+#include "gripper/s288_servo.hpp"
 #include "transport/socketcan/socketcan.hpp"
 #include "transport/damiao/damiao.hpp"
 
@@ -32,8 +33,27 @@ BridgeRuntime::BridgeRuntime(
   rclcpp::Node & node, Config config, Ports ports, std::unique_ptr<CanTransport> transport)
 : node_(node), can_interface_(std::move(config.can_interface)), can_(std::move(transport)),
   tx_queue_timeout_(config.tx_queue_timeout), request_timeout_(config.request_timeout),
-  state_(std::move(config.state)), next_open_(Clock::now()), ports_(std::move(ports))
+  state_(std::move(config.state)), next_open_(Clock::now()),
+  mission_watchdog_(std::chrono::duration_cast<std::chrono::milliseconds>(
+    config.mission_watchdog_timeout)),
+  gripper_config_(std::move(config.gripper)), ports_(std::move(ports))
 {
+  // 入口已保证 device 与 move_s；打开或启动张开失败则停心跳，不得以 pause=0 继续。
+  pause_ = 1;
+  gripper_ = std::make_unique<s288::Session>(s288::SessionConfig{
+    gripper_config_.device, static_cast<int>(gripper_config_.id),
+    gripper_config_.kp, gripper_config_.kd,
+    gripper_config_.closed_deg, gripper_config_.open_deg});
+  if (!gripper_->available() || !gripper_->start_open(gripper_config_.move_s)) {
+    heartbeat_enabled_ = false;
+    return;
+  }
+  gripper_work_ = GripperWork::ArmingOpen;
+}
+
+BridgeRuntime::~BridgeRuntime()
+{
+  if (gripper_) {gripper_->close();}
 }
 
 // 纯值枚举与消息定义的字节值必须一致。接口升级不能只改一侧。
@@ -170,7 +190,8 @@ void BridgeRuntime::refreshTurnRequest(Clock::time_point current, bool force)
   armReply(CanProtocol::TURN_REQUEST_ID,
     CanProtocol::turnRequest(static_cast<std::uint8_t>(turn_->destination),
     static_cast<std::uint32_t>(turn_->roi_request_id)));
-  next_turn_ = current + std::chrono::milliseconds(250);
+  // 重授间隔与 docs/can-protocol.md 的 250 ms 链路超时为同一来源。
+  next_turn_ = current + CanProtocol::LINK_TIMEOUT;
 }
 
 can_frame BridgeRuntime::currentFrame(canid_t id) const
@@ -188,8 +209,8 @@ can_frame BridgeRuntime::currentFrame(canid_t id) const
   // 周期帧提交前重新检查新鲜度；一次回复使用最近 armReply() 保存的快照。
   if (CanProtocol::replyId(id)) {return replies_.frame(id);}
   if (id == CanProtocol::VELOCITY_ID) {
-    // 任务在线：写出前当场编码 DLC 7 心跳，valid=0，速度字节全零。
-    return CanProtocol::velocity(false, 0, 0, 0);
+    // 任务在线：写出前当场编码 DLC 8 心跳，valid=0，速度字节全零，pause 取当前值。
+    return CanProtocol::velocity(false, 0, 0, 0, pause_);
   }
   const BridgeSourceTime current{now().nanoseconds()};
   const BridgeMonotonicTime monotonic{Clock::now()};
@@ -207,8 +228,15 @@ void BridgeRuntime::finishRoi(BridgeRoiResult result, std::uint64_t request_id)
   if (!route_aborted_ && result.passed && request_id != 0) {
     roi_confirmation_ = TurnIdentity{request_id, result.destination, roi_cycle_generation_};
   }
-  armReply(CanProtocol::ROI_RESULT_ID, CanProtocol::roiResult(
-    result.valid, result.passed, static_cast<std::uint8_t>(result.destination)));
+  const auto frame = CanProtocol::roiResult(
+    result.valid, result.passed, static_cast<std::uint8_t>(result.destination));
+  if (result.passed) {
+    armReply(CanProtocol::ROI_RESULT_ID, frame);
+  } else {
+    // 失败回执前先提交 pause=1 心跳，再开爪；开爪失败则停心跳，不得在闭合时发出 pause=0。
+    queuePauseThenReply(CanProtocol::ROI_RESULT_ID, frame, GripperWork::RejectOpen);
+    submitPendingPauseReply();
+  }
 }
 
 // 回复槽持有载荷，队列持有发送机会；同 ID 的新回复会覆盖快照，因此这里不是逐条可靠交付队列。
@@ -216,8 +244,11 @@ void BridgeRuntime::armReply(canid_t id, const can_frame & frame)
 {
   if (id == CanProtocol::COMMAND_RESULT_ID) {
     // 发送身份随192载荷一起覆盖，不能借用后来另一条成功缓存的资格。
-    command_reply_identity_ = frame.data[0] && frame.data[1] != CanProtocol::START_SEARCH ?
-      accepted_commands_[frame.data[1] - 1] : std::nullopt;
+    const auto command = frame.data[1];
+    command_reply_identity_ = frame.data[0] && command != CanProtocol::START_SEARCH &&
+      command != CanProtocol::ARRIVAL_POINT &&
+      command >= CanProtocol::TURN_COMPLETED && command <= CanProtocol::DELIVERY_COMPLETED ?
+      accepted_commands_[command - 1] : std::nullopt;
   }
   // 替换回复快照但不刷新同 ID 的最早入队时间，仍受原队列 TTL 限制。
   replies_.store(id, frame);
@@ -367,7 +398,7 @@ void BridgeRuntime::handleIoFailure(const std::exception & error)
 {
   // io() 捕获异常后撤掉发送机会；socket、在途服务和已发生的业务状态保留。
   // 周期帧等待新输入，普通应答等待显式查询；0x193 在双授权仍成立时按固定节拍重授。
-  // STM32 按本趟身份去重，重授不重复闭合／后退或重启转向，也不延长本地动作截止。
+  // STM32 按本趟身份去重，重授不重启转向，也不延长本地动作截止。
   last_error_ = error.what();
   dropped_frames_ += queue_.size();
   queue_.reset();
@@ -375,4 +406,104 @@ void BridgeRuntime::handleIoFailure(const std::exception & error)
     get_logger(), "CAN output cycle failed, dropping queued frames: %s",
     error.what());
   publishStatus();
+}
+
+void BridgeRuntime::handleArrivalPoint(std::uint8_t kind)
+{
+  const auto decision = arrival_point_.onRequest(kind);
+  if (decision == ArrivalPointDecision::Discard) {
+    ++dropped_frames_;
+    return;
+  }
+  const auto reply = CanProtocol::commandResult(true, CanProtocol::ARRIVAL_POINT);
+  if (decision == ArrivalPointDecision::Resend) {
+    // 重发只再交命令 5，不再做开合，也不再次把 pause 置 1。
+    armReply(CanProtocol::COMMAND_RESULT_ID, reply);
+    return;
+  }
+  queuePauseThenReply(CanProtocol::COMMAND_RESULT_ID, reply, GripperWork::ArrivalMotion, kind);
+}
+
+void BridgeRuntime::queuePauseThenReply(
+  canid_t id, const can_frame & frame, GripperWork after, std::uint8_t kind)
+{
+  pending_pause_reply_ = PendingPauseReply{id, frame, after, kind};
+}
+
+void BridgeRuntime::submitPendingPauseReply()
+{
+  if (!pending_pause_reply_ || !can_->socketOpen()) {return;}
+  std::string error;
+  const auto result = writePauseHeartbeat(
+    [this, &error](const can_frame & frame) {return can_->write(frame, error);}, pause_);
+  if (result == CanTransport::WriteResult::SENT) {
+    ++tx_frames_;
+    const auto pending = *pending_pause_reply_;
+    pending_pause_reply_.reset();
+    armReply(pending.id, pending.frame);
+    afterPauseReply(pending.after, pending.kind);
+    return;
+  }
+  if (result == CanTransport::WriteResult::BACKPRESSURE) {
+    last_error_ = "CAN transport backpressure";
+    return;
+  }
+  if (result == CanTransport::WriteResult::INTERRUPTED) {return;}
+  closeSocket(error);
+}
+
+void BridgeRuntime::afterPauseReply(GripperWork after, std::uint8_t kind)
+{
+  if (after == GripperWork::ArrivalMotion) {
+    arrival_point_.markReplied();
+    if (!startArrivalGripper(kind)) {
+      arrival_point_.markComplete();
+      stopHeartbeat();
+    }
+    return;
+  }
+  if (after == GripperWork::RejectOpen && !startGripperOpen()) {
+    stopHeartbeat();
+  }
+}
+
+void BridgeRuntime::pollGripper()
+{
+  if (gripper_work_ == GripperWork::None || !gripper_) {return;}
+  const auto status = gripper_->status();
+  if (status == s288::MotionStatus::Busy) {return;}
+  const bool ok = status == s288::MotionStatus::Succeeded;
+  gripper_->acknowledge();
+  if (gripper_work_ == GripperWork::ArrivalMotion) {arrival_point_.markComplete();}
+  gripper_work_ = GripperWork::None;
+  if (ok) {
+    pause_ = 0;
+  } else {
+    stopHeartbeat();
+  }
+}
+
+void BridgeRuntime::stopHeartbeat()
+{
+  heartbeat_enabled_ = false;
+}
+
+bool BridgeRuntime::startGripperOpen()
+{
+  if (!gripper_->available() || !gripper_->start_open(gripper_config_.move_s)) {
+    return false;
+  }
+  gripper_work_ = GripperWork::RejectOpen;
+  return true;
+}
+
+bool BridgeRuntime::startArrivalGripper(std::uint8_t kind)
+{
+  const bool opening = kind == 2;
+  const bool started = opening ?
+    gripper_->start_open(gripper_config_.move_s) :
+    gripper_->start_close(gripper_config_.move_s);
+  if (!started) {return false;}
+  gripper_work_ = GripperWork::ArrivalMotion;
+  return true;
 }

@@ -27,7 +27,7 @@ DEFAULT_PORT = 8090
 DEFAULT_RATE_HZ = 100.0
 # 退出前 valid=0 的发送时长，让 STM32 先看到明确撤销再进入超时。
 EXIT_INVALID_S = 0.1
-_GRIPPER_KEYS = ('device', 'id', 'kp', 'kd', 'closed_deg', 'open_deg')
+_GRIPPER_KEYS = ('device', 'id', 'kp', 'kd', 'closed_deg', 'open_deg', 'move_s')
 
 
 def _mapping(path, document, label):

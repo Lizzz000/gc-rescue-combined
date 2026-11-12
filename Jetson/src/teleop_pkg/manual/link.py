@@ -6,7 +6,8 @@ import struct
 import termios
 import tty
 
-# 0x17F 与 0x180 同格式：DLC 7，valid(u8) + vx/vy/wz(int16 小端，×1000)。
+# 0x17F 保持 DLC 7：valid(u8) + vx/vy/wz(int16 小端，×1000)。
+# 自动 0x180 现为 DLC 8（pause 在 data[7]）；本模块不得与自动心跳共用编解码。
 MANUAL_ID = 0x17F
 MANUAL_DLC = 7
 # 达妙 30 字节发送封装：帧头、长度、命令、发送次数；8 号字节为发送间隔，13..16 为 CAN ID。

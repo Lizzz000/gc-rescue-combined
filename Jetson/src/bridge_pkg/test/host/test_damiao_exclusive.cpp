@@ -1,6 +1,6 @@
 // M5：达妙串口独占。bridge（DamiaoCan）与 teleop（flock + TIOCEXCL）任一方持有设备时，
 //     后打开者必须失败（DamiaoCan 抛 FatalError，入口据此退出）且不向设备写任何字节。
-// M7：bridge 不发 0x17F；0x180 只作心跳（valid=0、DLC7、载荷全零）。
+// M7：bridge 不发 0x17F；0x180 只作心跳（valid=0、DLC 8，data[0..6] 全零，data[7] 为 pause）。
 // 用 pty 代替 USB-CAN；独立可执行文件，自带 main。
 #include "check.hpp"
 #include "protocol/can_protocol.hpp"
@@ -139,20 +139,20 @@ void testNeverManualId()
 void testHeartbeatEncoding()
 {
   Group group("M7 0x180 心跳编码");
-  // 无论调用方传入什么分量，valid=0 时 DLC7 且载荷全零
-  const can_frame frame = CanProtocol::velocity(false, 123, -456, 789);
+  // 无论调用方传入什么分量，valid=0 时 data[0..6] 全零，data[7] 为 pause。
+  const can_frame frame = CanProtocol::velocity(false, 123, -456, 789, 0);
   CHECK(frame.can_id == CanProtocol::VELOCITY_ID);
-  CHECK(frame.len == 7);
+  CHECK(frame.len == 8);
   bool zero = true;
-  for (int i = 0; i < 8; ++i) {zero = zero && frame.data[i] == 0;}
-  CHECK(zero);
-  // 经达妙封装后同样是 ID 0x180、DLC7、零载荷
+  for (int i = 0; i < 7; ++i) {zero = zero && frame.data[i] == 0;}
+  CHECK(zero && frame.data[7] == 0);
+  // 经达妙封装后同样是 ID 0x180、DLC 8、速度字节为零、pause=0
   const auto packet = damiao::encode(frame);
   CHECK(packet[13] == 0x80 && packet[14] == 0x01 && packet[15] == 0 && packet[16] == 0);
-  CHECK(packet[18] == 7);
+  CHECK(packet[18] == 8);
   bool payload_zero = true;
   for (int i = 21; i < 28; ++i) {payload_zero = payload_zero && packet[i] == 0;}
-  CHECK(payload_zero);
+  CHECK(payload_zero && packet[28] == 0);
 }
 
 // 心跳化后 BridgeState 不再接收速度输入，bridge 不订阅 /cmd_vel。

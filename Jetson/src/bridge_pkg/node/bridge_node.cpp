@@ -1,6 +1,7 @@
 #include "node/bridge_node.hpp"
 #include "transport/socketcan/socketcan.hpp"
 #include "transport/damiao/damiao.hpp"
+#include "gripper/s288_servo.hpp"
 
 // ---- 桥接节点实现 ----
 // 职责：装配 ROS 话题和定时器。周期收发在 bridge_io.cpp。
@@ -13,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -126,20 +128,44 @@ BridgeNode::StartupSettings BridgeNode::declareAndValidateParameters()
     *this, "tx_queue_timeout_s", descriptor);
   const auto request_timeout = rescue::declareRequired<double>(
     *this, "request_timeout_s", descriptor);
+  const auto watchdog_timeout = rescue::declareRequired<double>(
+    *this, "mission_watchdog_timeout_s", descriptor);
   if (!std::isfinite(queue_timeout) || queue_timeout <= 0 || queue_timeout > 3600 ||
-    !std::isfinite(request_timeout) || request_timeout <= 0 || request_timeout > 3600)
+    !std::isfinite(request_timeout) || request_timeout <= 0 || request_timeout > 3600 ||
+    !std::isfinite(watchdog_timeout) || watchdog_timeout <= 0 || watchdog_timeout > 3600)
   {
-    throw rescue::ConfigurationError("invalid CAN interface, queue or request timeout");
+    throw rescue::ConfigurationError("invalid CAN interface, queue, request or mission watchdog timeout");
   }
   settings.runtime.tx_queue_timeout = std::chrono::duration_cast<Clock::duration>(
     std::chrono::duration<double>(queue_timeout));
   settings.runtime.request_timeout = std::chrono::duration_cast<Clock::duration>(
     std::chrono::duration<double>(request_timeout));
+  settings.runtime.mission_watchdog_timeout = std::chrono::duration_cast<Clock::duration>(
+    std::chrono::duration<double>(watchdog_timeout));
   if (settings.runtime.tx_queue_timeout <= Clock::duration::zero() ||
-    settings.runtime.request_timeout <= Clock::duration::zero())
+    settings.runtime.request_timeout <= Clock::duration::zero() ||
+    settings.runtime.mission_watchdog_timeout <= Clock::duration::zero())
   {
-    throw rescue::ConfigurationError("CAN queue or request timeout is below clock resolution");
+    throw rescue::ConfigurationError("CAN queue, request or mission watchdog timeout is below clock resolution");
   }
+  settings.runtime.gripper.device = rescue::declareRequired<std::string>(
+    *this, "gripper_device", descriptor);
+  settings.runtime.gripper.id = rescue::declareRequired<std::int64_t>(
+    *this, "gripper_id", descriptor);
+  settings.runtime.gripper.kp = rescue::declareRequired<double>(
+    *this, "gripper_kp", descriptor);
+  settings.runtime.gripper.kd = rescue::declareRequired<double>(
+    *this, "gripper_kd", descriptor);
+  settings.runtime.gripper.closed_deg = rescue::declareRequired<double>(
+    *this, "gripper_closed_deg", descriptor);
+  settings.runtime.gripper.open_deg = rescue::declareRequired<double>(
+    *this, "gripper_open_deg", descriptor);
+  const auto move_s = rescue::declareRequired<double>(
+    *this, "gripper_move_s", descriptor);
+  if (!std::isfinite(move_s) || move_s < s288::kMinMoveS || move_s > s288::kMaxMoveS) {
+    throw rescue::ConfigurationError("invalid gripper_move_s");
+  }
+  settings.runtime.gripper.move_s = move_s;
   settings.target_topic = rescue::declareRequired<std::string>(
     *this, "target_topic", descriptor);
   settings.safety_topic = rescue::declareRequired<std::string>(

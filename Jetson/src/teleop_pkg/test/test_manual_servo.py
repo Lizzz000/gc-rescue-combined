@@ -65,7 +65,7 @@ class ManualConfigTest(unittest.TestCase):
             folder = Path(folder)
             (folder / 'advanced.yaml').write_text(
                 'vision:\n  detect:\n    conf_threshold_seg: 0.5\n'
-                'gripper:\n  kp: 1.0\n  kd: 0.05\n  closed_deg: -40\n  open_deg: 40\n')
+                'gripper:\n  kp: 1.0\n  kd: 0.05\n  closed_deg: -40\n  open_deg: 40\n  move_s:\n')
             basic = folder / 'rescue.yaml'
             basic.write_text(
                 'advanced_config: advanced.yaml\n'
@@ -80,6 +80,12 @@ class ManualConfigTest(unittest.TestCase):
         self.assertEqual(config['kd'], 0.05)
         self.assertEqual(config['closed_deg'], -40)
         self.assertEqual(config['open_deg'], 40)
+
+    def test_official_yaml_empty_move_s_still_loads(self):
+        # 官方 yaml 的 move_s 为空只约束自动路径；手动入口忽略该键。
+        path = Path(__file__).resolve().parents[2] / 'bringup_pkg/config/rescue.yaml'
+        config = manual_control.load_manual_config(path)
+        self.assertTrue(config['gripper_device'].startswith('/dev/'))
 
     def test_config_required_and_old_flags_rejected(self):
         with tempfile.TemporaryDirectory() as folder:

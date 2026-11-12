@@ -41,9 +41,11 @@ set_property(TARGET bridge_state PROPERTY POSITION_INDEPENDENT_CODE ON)
 add_library(bridge_node_obj OBJECT
   node/bridge_node.cpp
   node/bridge_session.cpp
-  node/bridge_io.cpp)
+  node/bridge_io.cpp
+  gripper/s288_servo.cpp)
 configure_bridge_ros(bridge_node_obj)
-target_link_libraries(bridge_node_obj bridge_transport bridge_state)
+find_package(Threads REQUIRED)
+target_link_libraries(bridge_node_obj bridge_transport bridge_state Threads::Threads)
 set_property(TARGET bridge_node_obj PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 add_executable(bridge_runtime app/bridge_runtime.cpp)

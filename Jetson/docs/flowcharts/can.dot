@@ -21,7 +21,7 @@ digraph can {
   f192c [label="0x192\ncommand=4"];
   f205 [label="STM32 → Jetson\n0x205  DLC 1  数据 01\n重新寻找"];
   f192d [label="0x192\ncommand=3，token 填 0"];
-  periodic [label="周期帧（寻找或导航时）\n0x180 心跳 DLC 7（valid=0，速度为 0；失联 DLC 0）\n0x181 目标中心 DLC 8\n0x182 安全区中心 DLC 8", shape=note, fillcolor="#fff8e8"];
+  periodic [label="周期帧（寻找或导航时）\n0x180 心跳 DLC 8（valid=0，速度为 0，data[7]=pause；失联 DLC 0）\n0x181 目标中心 DLC 8\n0x182 安全区中心 DLC 8", shape=note, fillcolor="#fff8e8"];
 
   f200 -> f190 -> f191 -> f193 -> f203 -> f192a -> f204 -> f192b -> f206 -> f192c -> f205 -> f192d;
   note [label="未授权的 0x203 仍回 0x192，accepted=0\n畸形帧和未知 ID 无回包", shape=note, fillcolor="#fff8e8"];

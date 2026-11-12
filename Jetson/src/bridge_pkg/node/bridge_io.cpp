@@ -34,7 +34,10 @@ void BridgeRuntime::io()
     checkRequestTimeouts();
     if (!ensureSocketReady()) {return;}
     if (!readAvailableFrames()) {return;}
+    pollGripper();
     refreshTurnRequest(Clock::now());
+    submitPendingPauseReply();
+    if (!can_->socketOpen()) {return;}
     flushTxQueue();
     if (can_->socketOpen()) {sendPeriodicFrame();}
   } catch (const CanTransport::FatalError & error) {
@@ -51,6 +54,12 @@ void BridgeRuntime::io()
 void BridgeRuntime::sendPeriodicFrame()
 {
   const canid_t id = periodic_schedule_.next();
+  // 夹爪失败停发心跳只走 250 ms 链路超时；任务失联仍由 currentFrame 发 DLC 0。
+  if (id == CanProtocol::VELOCITY_ID && !heartbeat_enabled_ &&
+    mission_watchdog_.alive({Clock::now()}))
+  {
+    return;
+  }
   const can_frame frame = currentFrame(id);
   std::string error;
   const auto result = can_->write(frame, error);
@@ -67,9 +76,9 @@ bool BridgeRuntime::ensureSocketReady()
 {
   // socket 未打开时只按 next_open_ 触发重连（失败后固定 1 秒一次）。
   if (!can_->socketOpen()) {
-    if (Clock::now() >= next_open_) {openSocket();}
-    // 即使本轮刚打开成功也立即结束，下一轮先做接口自检再收发。
-    return false;
+    if (Clock::now() < next_open_) {return false;}
+    openSocket();
+    if (!can_->socketOpen()) {return false;}
   }
   int index = 0;
   // 接口 DOWN／类型变化／ioctl 失败：不再发送，直接关 socket 走 1 秒重连。
@@ -156,6 +165,10 @@ bool BridgeRuntime::handleCommand(const can_frame & frame)
     handleArrival();
     return true;
   }
+  if (command.kind == CanProtocol::CommandKind::ARRIVAL_POINT) {
+    handleArrivalPoint(command.command);
+    return true;
+  }
   // 命令应答只有受理与拒绝两种载荷；拒绝同样回显收到的原始 token，不能替换成当前路由编号。
   const auto reply = [this, &command](bool accepted) {
       armReply(CanProtocol::COMMAND_RESULT_ID,
@@ -170,6 +183,8 @@ bool BridgeRuntime::handleCommand(const can_frame & frame)
     }
     holdCoordinates(true);
     route_aborted_ = true;
+    arrival_point_.reset();
+    pending_pause_reply_.reset();
     roi_confirmation_.reset();
     accepted_commands_[CanProtocol::TURN_COMPLETED - 1].reset();
     accepted_commands_[CanProtocol::SAFETY_ARRIVED - 1].reset();
@@ -233,14 +248,15 @@ bool BridgeRuntime::handleCommand(const can_frame & frame)
   return true;
 }
 
-// STM32 闭合、后退并停车后才200；此前本地动作须自行屏蔽181及独立180，PC仍在寻找。
+// STM32 停稳后发 0x200 请求 ROI。夹爪开合由 0x208 到点触发，不在 0x200 前由 STM32 完成。
 // 首次到达先停坐标并确认，再请求 ROI；重复到达只重发当前轮结果。
 // 待转向时核对授权；仅本进程未尝试过 ROI 才能按已提交状态恢复，失败不能被查询改成成功。
 // 非寻找、检查、待转向或 ROI 失败阶段拒绝到达。
 void BridgeRuntime::handleArrival()
 {
   if (route_aborted_) {
-    armReply(CanProtocol::ARRIVAL_ACK_ID, CanProtocol::arrivalAck(false));
+    queuePauseThenReply(CanProtocol::ARRIVAL_ACK_ID, CanProtocol::arrivalAck(false),
+      GripperWork::RejectOpen);
     return;
   }
   const auto phase = state_.cyclePhase();
@@ -289,7 +305,8 @@ void BridgeRuntime::handleArrival()
     }
     return;
   }
-  armReply(CanProtocol::ARRIVAL_ACK_ID, CanProtocol::arrivalAck(false));
+  queuePauseThenReply(CanProtocol::ARRIVAL_ACK_ID, CanProtocol::arrivalAck(false),
+    GripperWork::RejectOpen);
 }
 
 void BridgeRuntime::holdCoordinates(bool until_search)
@@ -302,7 +319,7 @@ void BridgeRuntime::holdCoordinates(bool until_search)
 // ---- BridgeRuntime：服务请求与身份确认 ----
 
 // ROI 与命令各一等待槽；服务回包和 Mission 状态可乱序，双身份匹配才发193。
-// STM32 已闭合并后退；收齐191通过与193后只启动一次去程转向，191本身不授权转向。
+// 收齐 191 通过与 193 后只启动一次去程转向，191 本身不授权转向。
 
 // 同类请求忙时忽略重复指令；服务缺席或超时均给失败快照，不延长旧等待。
 void BridgeRuntime::requestRoi()
@@ -344,9 +361,14 @@ void BridgeRuntime::onRoiReply(
   if (!roi_request_.complete(generation, {current})) {return;}
   try {
     const auto & checked = result.get()->result;
-    finishRoi(BridgeRoiResult::checked(checked.valid, checked.passed,
-      {checked.green_count, checked.blue_count, checked.black_count,
-        checked.orange_count, checked.other_count}), checked.request_id);
+    BridgeRoiResult outcome;
+    outcome.valid = checked.valid;
+    outcome.passed = checked.valid && checked.passed;
+    if (outcome.passed) {
+      outcome.destination = static_cast<BridgeDestination>(
+        RecognitionValueValidation::cargoSide(checked.orange_count));
+    }
+    finishRoi(outcome, checked.request_id);
     refreshTurnRequest(current);
   } catch (const std::exception & error) {
     last_error_ = error.what();

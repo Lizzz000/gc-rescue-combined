@@ -8,4 +8,8 @@ install(FILES config/rescue.yaml config/rescue_advanced.yaml DESTINATION share/$
 install(FILES launch/rescue.launch.py DESTINATION share/${PROJECT_NAME}/launch)
 # runtime 包按目录整体安装。
 install(DIRECTORY runtime DESTINATION share/${PROJECT_NAME} PATTERN "__pycache__" EXCLUDE)
+if(BUILD_TESTING)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(configuration test/test_configuration.py TIMEOUT 30)
+endif()
 ament_package()

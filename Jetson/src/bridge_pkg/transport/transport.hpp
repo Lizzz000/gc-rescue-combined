@@ -55,14 +55,20 @@ public:
 class CanPeriodicSchedule
 {
 public:
-  static constexpr auto interval = std::chrono::nanoseconds(3333334);
+  // 三个周期 ID 各 10 ms 一轮；向上取整保持既有 3333334 ns（10ms/3 整除会变成 3333333）。
+  static constexpr auto kPeriodicIdPeriod = std::chrono::nanoseconds(10'000'000);
+  static constexpr unsigned kPeriodicIdCount = 3;
+  static constexpr auto interval = std::chrono::nanoseconds(
+    (kPeriodicIdPeriod.count() + kPeriodicIdCount - 1) / kPeriodicIdCount);
+  static_assert(interval.count() == 3333334, "periodic interval must stay 3333334 ns");
 
   canid_t next()
   {
     constexpr canid_t ids[] = {
       CanProtocol::VELOCITY_ID, CanProtocol::TARGET_ID, CanProtocol::SAFETY_ID};
+    static_assert(sizeof(ids) / sizeof(ids[0]) == kPeriodicIdCount);
     const canid_t id = ids[index_];
-    index_ = (index_ + 1U) % 3U;
+    index_ = (index_ + 1U) % kPeriodicIdCount;
     return id;
   }
 

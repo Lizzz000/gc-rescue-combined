@@ -6,6 +6,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <chrono>
+#include <optional>
 #include <array>
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
@@ -24,8 +25,10 @@
 
 #include "transport/transport.hpp"
 #include "state/bridge_state.hpp"
+#include "protocol/arrival_point.hpp"
 
 class BridgeRuntime;
+namespace s288 { class Session; }
 
 // ---- BridgeNode：参数与 ROS 装配 ----
 // 节点创建只读参数、ROS 端口和定时器；CAN 会话与服务等待由 BridgeRuntime 持有。
@@ -62,7 +65,8 @@ private:
 };
 
 // ---- BridgeRuntime：CAN 会话与异步握手 ----
-// 所有入口共用节点默认互斥回调组，不创建执行器或线程；节点必须比运行上下文存活更久。
+// 所有入口共用节点默认互斥回调组，不创建执行器。自动夹爪在进程内用工作线程，不得阻塞 io()。
+// 节点必须比运行上下文存活更久。
 // 销毁前停止执行器访问。七槽队列保存发送机会，回复槽保存载荷；ROI 与命令各有独立等待。
 class BridgeRuntime
 {
@@ -73,6 +77,14 @@ public:
     std::string can_interface;
     // 两者都是单调期限，但前者限制发送机会寿命，后者限制服务等待，不能合成一个超时。
     Clock::duration tx_queue_timeout, request_timeout;
+    // 默认 500 ms，与原硬编码相同；生产路径由 yaml bridge.mission_watchdog_timeout_s 传入。
+    Clock::duration mission_watchdog_timeout{std::chrono::milliseconds(500)};
+    struct GripperConfig
+    {
+      std::string device;
+      std::int64_t id{0};
+      double kp{0}, kd{0}, closed_deg{0}, open_deg{0}, move_s{0};
+    } gripper;
     BridgeStateConfig state;
   };
   struct Ports
@@ -83,6 +95,7 @@ public:
   };
   BridgeRuntime(
     rclcpp::Node & node, Config config, Ports ports, std::unique_ptr<CanTransport> transport);
+  ~BridgeRuntime();
   BridgeRuntime(const BridgeRuntime &) = delete;
   BridgeRuntime & operator=(const BridgeRuntime &) = delete;
 
@@ -100,6 +113,7 @@ public:
 private:
   friend struct BridgeRuntimeTestAccess;
   struct CommandIdentity;
+  enum class GripperWork { None, ArmingOpen, ArrivalMotion, RejectOpen };
   // socket 准入与有界收发；打开失败或接口被替换时本轮不再读写。
   void openSocket();
   void closeSocket(const std::string & reason);
@@ -131,6 +145,14 @@ private:
   void clearRequests();
   void armReply(canid_t id, const can_frame & frame);
   void finishRoi(BridgeRoiResult result = {}, std::uint64_t request_id = 0);
+  void handleArrivalPoint(std::uint8_t kind);
+  void queuePauseThenReply(canid_t id, const can_frame & frame, GripperWork after, std::uint8_t kind = 0);
+  void submitPendingPauseReply();
+  void afterPauseReply(GripperWork after, std::uint8_t kind);
+  void pollGripper();
+  void stopHeartbeat();
+  bool startGripperOpen();
+  bool startArrivalGripper(std::uint8_t kind);
   rclcpp::Time now() const {return node_.now();}
   rclcpp::Logger get_logger() const {return node_.get_logger();}
   rclcpp::Clock::SharedPtr get_clock() {return node_.get_clock();}
@@ -146,6 +168,20 @@ private:
   CanPeriodicSchedule periodic_schedule_;
   Clock::time_point next_open_;
   BridgeMissionWatchdog mission_watchdog_;
+  Config::GripperConfig gripper_config_;
+  bool heartbeat_enabled_{true};
+  std::uint8_t pause_{0};
+  ArrivalPointSession arrival_point_;
+  GripperWork gripper_work_{GripperWork::None};
+  struct PendingPauseReply
+  {
+    canid_t id{0};
+    can_frame frame{};
+    GripperWork after{GripperWork::None};
+    std::uint8_t kind{0};
+  };
+  std::optional<PendingPauseReply> pending_pause_reply_;
+  std::unique_ptr<s288::Session> gripper_;
   std::uint64_t tx_frames_{0}, rx_frames_{0}, bus_errors_{0}, dropped_frames_{0};
   std::string last_error_;
   // ROI 与命令各一等待槽，可同时在途；四个回复快照独立于服务等待。

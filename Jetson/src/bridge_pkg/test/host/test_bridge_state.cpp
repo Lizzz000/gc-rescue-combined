@@ -231,18 +231,6 @@ void testBridgeState()
   const auto safety_output = safety.safetyOutput(now, arrival);
   CHECK(safety_output.valid && safety_output.x == 2500 && safety_output.y == 5000);
 
-  // 桥收到的 ROI 是另一进程的消息，组合和 3 件上限在这里再看一次。
-  const auto left = BridgeRoiResult::checked(true, true, {1, 0, 0, 0, 0});
-  CHECK(left.valid && left.passed && left.destination == BridgeDestination::Left);
-  const auto blue = BridgeRoiResult::checked(true, true, {1, 1, 0, 0, 0});
-  CHECK(blue.valid && !blue.passed && blue.destination == BridgeDestination::None);
-  const auto too_many = BridgeRoiResult::checked(true, true, {3, 0, 1, 0, 0});
-  CHECK(!too_many.passed);
-  const auto right = BridgeRoiResult::checked(true, true, {0, 0, 0, 1, 0});
-  CHECK(right.passed && right.destination == BridgeDestination::Right);
-  const auto not_valid = BridgeRoiResult::checked(false, true, {1, 0, 0, 0, 0});
-  CHECK(!not_valid.valid && !not_valid.passed);
-
   // 服务等待：忙不刷新代次；恰好到截止不能完成，只能由 expire 收尾。
   BridgeServiceRequest request;
   const auto t0 = std::chrono::steady_clock::time_point{};

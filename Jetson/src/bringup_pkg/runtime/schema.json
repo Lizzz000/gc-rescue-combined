@@ -823,6 +823,38 @@
         "path": "bridge.request_timeout_s",
         "kind": "number"
       },
+      "mission_watchdog_timeout_s": {
+        "path": "bridge.mission_watchdog_timeout_s",
+        "kind": "number"
+      },
+      "gripper_device": {
+        "path": "gripper.device",
+        "kind": "string"
+      },
+      "gripper_id": {
+        "path": "gripper.id",
+        "kind": "integer"
+      },
+      "gripper_kp": {
+        "path": "gripper.kp",
+        "kind": "number"
+      },
+      "gripper_kd": {
+        "path": "gripper.kd",
+        "kind": "number"
+      },
+      "gripper_closed_deg": {
+        "path": "gripper.closed_deg",
+        "kind": "number"
+      },
+      "gripper_open_deg": {
+        "path": "gripper.open_deg",
+        "kind": "number"
+      },
+      "gripper_move_s": {
+        "path": "gripper.move_s",
+        "kind": "number"
+      },
       "target_topic": {
         "path": "bridge.target_topic",
         "kind": "string"
@@ -1036,6 +1068,7 @@
     "gripper.kd": "number",
     "gripper.closed_deg": "number",
     "gripper.open_deg": "number",
+    "gripper.move_s": "number",
     "bridge.transport": "string",
     "bridge.can_bitrate": "integer",
     "bridge.can_interface": "string",
@@ -1043,6 +1076,7 @@
     "bridge.safety_hold_s": "number",
     "bridge.tx_queue_timeout_s": "number",
     "bridge.request_timeout_s": "number",
+    "bridge.mission_watchdog_timeout_s": "number",
     "bridge.target_topic": "string",
     "bridge.safety_topic": "string",
     "bridge.task_topic": "string",

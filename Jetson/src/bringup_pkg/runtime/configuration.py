@@ -95,7 +95,9 @@ def load_configuration(config_file, run='all', package_resolver: Callable | None
     if gpu and Path(values['vision.detect.seg_model_path']).suffix.lower() not in ('.trt', '.engine'):
         raise ConfigurationError('vision.detect.seg_model_path: existing TRT engine required; building is disabled')
     # 映射：只为选定节点生成参数，数组端点在此转换为节点既有标量键。
-    nodes = {node: {name: _parameter_value(values, entry) for name, entry in NODE_PARAMETERS[node].items()}
+    # 非自动角色下允许留空的键（如 gripper.move_s）在校验后仍为 None，不写进 ROS 参数文件。
+    nodes = {node: {name: value for name, entry in NODE_PARAMETERS[node].items()
+                    if (value := _parameter_value(values, entry)) is not None}
              for node in selected}
     snapshot = {'configuration': str(path), 'configuration_sha256': sources[0]['sha256'],
                 'configuration_sources': sources,

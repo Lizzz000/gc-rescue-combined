@@ -41,12 +41,15 @@ void testCanProtocol()
 {
   Group group("CanProtocol");
 
-  // 0x180 布局：valid、vx、vy、角速度，int16 小端。负数走补码，不看主机字节序。
-  // 生产路径只发 valid=0 全零；此处仍核验编码器对 valid=1 与 valid=0 的字节布局。
-  const std::uint8_t velocity_bytes[] = {1, 0xfe, 0xff, 0x00, 0x00, 0xe8, 0x03};
-  CHECK(bytesEqual(CanProtocol::velocity(true, -2, 0, 1000), CanProtocol::VELOCITY_ID, 7, velocity_bytes));
-  const std::uint8_t velocity_invalid[] = {0, 0, 0, 0, 0, 0, 0};
-  CHECK(bytesEqual(CanProtocol::velocity(false, -2, 0, 1000), CanProtocol::VELOCITY_ID, 7, velocity_invalid));
+  // 0x180 布局：DLC 8，data[0..6] 为 valid、vx、vy、角速度（int16 小端），data[7] 为 pause。
+  // valid=0 时 data[0..6] 清零，data[7] 仍写 pause。
+  const std::uint8_t velocity_bytes[] = {1, 0xfe, 0xff, 0x00, 0x00, 0xe8, 0x03, 1};
+  CHECK(bytesEqual(CanProtocol::velocity(true, -2, 0, 1000, 1), CanProtocol::VELOCITY_ID, 8, velocity_bytes));
+  const std::uint8_t velocity_invalid[] = {0, 0, 0, 0, 0, 0, 0, 0};
+  CHECK(bytesEqual(CanProtocol::velocity(false, -2, 0, 1000, 0), CanProtocol::VELOCITY_ID, 8, velocity_invalid));
+  const std::uint8_t velocity_pause[] = {0, 0, 0, 0, 0, 0, 0, 1};
+  CHECK(bytesEqual(CanProtocol::velocity(false, -2, 0, 1000, 1), CanProtocol::VELOCITY_ID, 8, velocity_pause));
+  CHECK(threwInvalid([] { CanProtocol::velocity(false, 0, 0, 0, 2); }));
 
   // 坐标帧携带 24 位源帧编号；无效帧仍保留 ID 和 DLC，载荷清零。
   const std::uint8_t center_bytes[] = {1, 0x88, 0x13, 0xff, 0xff, 0x56, 0x34, 0x12};
@@ -103,6 +106,10 @@ void testCanProtocol()
   CHECK(bytesEqual(
     CanProtocol::commandResult(false, CanProtocol::DELIVERY_COMPLETED, 0xa1b2c3d4u),
     CanProtocol::COMMAND_RESULT_ID, 6, command_reject));
+  const std::uint8_t command_arrival[] = {1, CanProtocol::ARRIVAL_POINT, 0, 0, 0, 0};
+  CHECK(bytesEqual(
+    CanProtocol::commandResult(true, CanProtocol::ARRIVAL_POINT, 0xffffffffu),
+    CanProtocol::COMMAND_RESULT_ID, 6, command_arrival));
   CHECK(threwInvalid([] { CanProtocol::commandResult(true, 0, 1); }));
   CHECK(threwInvalid([] { CanProtocol::commandResult(true, 9, 1); }));
 
@@ -111,7 +118,7 @@ void testCanProtocol()
   CHECK(bytesEqual(CanProtocol::turnRequest(2, 0xa1b2c3d4u), CanProtocol::TURN_REQUEST_ID, 6, turn_bytes));
   CHECK(threwInvalid([] { CanProtocol::turnRequest(0, 1); }));
 
-  // 五条入站指令：长度或请求字节不对是 MALFORMED，不读 token。未知 ID 和标志位是 NONE。
+  // 六条入站指令：长度或请求字节不对是 MALFORMED，不读 token。未知 ID 和标志位是 NONE。
   const auto arrival = CanProtocol::parseCommand(commandFrame(CanProtocol::ARRIVAL_ID, 1, 1, 0));
   CHECK(arrival.kind == CanProtocol::CommandKind::ARRIVAL && arrival.token == 0);
   const auto arrival_len = CanProtocol::parseCommand(commandFrame(CanProtocol::ARRIVAL_ID, 2, 1, 0));
@@ -135,6 +142,21 @@ void testCanProtocol()
   const auto search_len = CanProtocol::parseCommand(commandFrame(CanProtocol::START_SEARCH_ID, 5, 1, 1));
   CHECK(search_len.kind == CanProtocol::CommandKind::MALFORMED && search_len.command == CanProtocol::START_SEARCH && search_len.token == 0);
 
+  can_frame arrival_point{};
+  arrival_point.can_id = CanProtocol::ARRIVAL_POINT_ID;
+  arrival_point.len = 1;
+  arrival_point.data[0] = 1;
+  const auto grab = CanProtocol::parseCommand(arrival_point);
+  CHECK(grab.kind == CanProtocol::CommandKind::ARRIVAL_POINT && grab.command == 1);
+  arrival_point.data[0] = 2;
+  const auto place = CanProtocol::parseCommand(arrival_point);
+  CHECK(place.kind == CanProtocol::CommandKind::ARRIVAL_POINT && place.command == 2);
+  arrival_point.data[0] = 3;
+  CHECK(CanProtocol::parseCommand(arrival_point).kind == CanProtocol::CommandKind::MALFORMED);
+  arrival_point.data[0] = 1;
+  arrival_point.len = 2;
+  CHECK(CanProtocol::parseCommand(arrival_point).kind == CanProtocol::CommandKind::MALFORMED);
+
   const auto old_id = CanProtocol::parseCommand(commandFrame(0x201, 1, 1, 0));
   const auto other_id = CanProtocol::parseCommand(commandFrame(0x202, 1, 1, 0));
   CHECK(old_id.kind == CanProtocol::CommandKind::NONE && other_id.kind == CanProtocol::CommandKind::NONE);
@@ -148,7 +170,7 @@ void testCanProtocol()
   CHECK(extended.kind == CanProtocol::CommandKind::NONE && remote.kind == CanProtocol::CommandKind::NONE &&
     error_frame.kind == CanProtocol::CommandKind::NONE);
 
-  // 12 个 ID：三条周期、四条事件、五条指令。旧 0x201 不在任何一类里。
+  // 13 个 ID：三条周期、四条事件、六条指令。旧 0x201 不在任何一类里。
   CHECK(CanProtocol::streamId(CanProtocol::VELOCITY_ID) && CanProtocol::streamId(CanProtocol::TARGET_ID) &&
     CanProtocol::streamId(CanProtocol::SAFETY_ID) && !CanProtocol::streamId(CanProtocol::ARRIVAL_ACK_ID));
   CHECK(CanProtocol::replyId(CanProtocol::ARRIVAL_ACK_ID) && CanProtocol::replyId(CanProtocol::ROI_RESULT_ID) &&
@@ -157,8 +179,9 @@ void testCanProtocol()
   CHECK(CanProtocol::transmitId(CanProtocol::VELOCITY_ID) && CanProtocol::transmitId(CanProtocol::TURN_REQUEST_ID) &&
     !CanProtocol::transmitId(CanProtocol::ARRIVAL_ID) && !CanProtocol::transmitId(0x201));
   const auto filters = CanProtocol::commandFilters();
-  CHECK(filters.size() == 5 && filters[0].can_id == CanProtocol::ARRIVAL_ID &&
+  CHECK(filters.size() == 6 && filters[0].can_id == CanProtocol::ARRIVAL_ID &&
     filters[1].can_id == CanProtocol::TURN_COMPLETED_ID && filters[2].can_id == CanProtocol::SAFETY_ARRIVED_ID &&
     filters[3].can_id == CanProtocol::START_SEARCH_ID && filters[4].can_id == CanProtocol::DELIVERY_COMPLETED_ID &&
+    filters[5].can_id == CanProtocol::ARRIVAL_POINT_ID &&
     filters[0].can_mask == (CAN_SFF_MASK | CAN_EFF_FLAG | CAN_RTR_FLAG));
 }

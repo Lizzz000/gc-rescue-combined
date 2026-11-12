@@ -27,17 +27,6 @@ void validateTimeouts(double input_timeout_s)
 }
 }  // namespace
 
-BridgeRoiResult BridgeRoiResult::checked(bool valid, bool passed, const cargo::Counts & counts)
-{
-  // 首趟限制由 Mission 判断；不能用回包时可能已变化的运输阶段重判。
-  passed = valid && passed &&
-    !cargo::combinationRejection(counts, cargo::kProductionCombination) &&
-    cargo::withinSupplyLimit(counts, cargo::kProductionMaxSupplyCount);
-  return {valid, passed, passed ?
-    static_cast<BridgeDestination>(RecognitionValueValidation::cargoSide(counts.orange)) :
-    BridgeDestination::None};
-}
-
 // 纯值缓存和输出资格。源时间和单调时间都由调用方传入，这里不读时钟、不写 CAN。
 //
 // 坐标能不能发出，看 targetOutput / safetyOutput，四项都要成立：

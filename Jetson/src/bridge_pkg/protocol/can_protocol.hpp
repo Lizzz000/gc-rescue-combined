@@ -38,10 +38,11 @@ static inline bool fixedPoint(double value, double scale, std::int16_t & output)
 // 职责：周期报文和 STM32 指令的编解码。
 // Copyright 2026 li
 // SPDX-License-Identifier: Apache-2.0
-// 周期报文与 STM32 指令的编解码及浮点→int16 定点编码；协议合同见 docs/reference/can-protocol.md。
+// 周期报文与 STM32 指令的编解码及浮点→int16 定点编码；协议合同见 docs/can-protocol.md。
 
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -54,30 +55,33 @@ class CanProtocol
 public:
   // 坐标只走后两帧。0x181 是目标框几何中心，0x182 是安全区透视中心。
   // 0x180 是链路心跳，不是坐标，也不再携带自动速度。
-  // 改 ID 或 10000 倍缩放必须同时改 docs/reference/can-protocol.md，并与 STM32 接收一致。
+  // 改 ID 或 10000 倍缩放必须同时改 docs/can-protocol.md，并与 STM32 接收一致。
   // 中心先 round 再检查 int16；量化越界时中心帧置无效并清零载荷，不截断或裁剪。
   static constexpr canid_t VELOCITY_ID = 0x180;
   static constexpr canid_t TARGET_ID = 0x181;
   static constexpr canid_t SAFETY_ID = 0x182;
-  // STM32 图像中心接收期限（jetson_auto_config.h JETSON_AUTO_LINK_TIMEOUT_MS），两端须一致。
-  static constexpr double STM32_CENTER_TIMEOUT_S = 0.25;
+  // 链路超时，与 docs/can-protocol.md 中的 250 ms 为同一来源。中心接收期限与 0x193 重授间隔都用它。
+  static constexpr double LINK_TIMEOUT_S = 0.25;
+  static constexpr auto LINK_TIMEOUT = std::chrono::milliseconds(250);
+  static constexpr double STM32_CENTER_TIMEOUT_S = LINK_TIMEOUT_S;
   // STM32 → Jetson 运输握手；旧 0x201/0x202 不再受理，不能绕过转向和搬运确认。
   static constexpr canid_t ARRIVAL_ID = 0x200;
   static constexpr canid_t TURN_COMPLETED_ID = 0x203;
   static constexpr canid_t SAFETY_ARRIVED_ID = 0x204;
   static constexpr canid_t START_SEARCH_ID = 0x205;
   static constexpr canid_t DELIVERY_COMPLETED_ID = 0x206;
-  // 0x193 只授权已提交路由的去程转向；闭合与后退在200请求ROI前由STM32完成。
-  // STM32收齐本趟191通过与193后转向，完成才203；重授不重复闭合／后退或重启转向。
+  static constexpr canid_t ARRIVAL_POINT_ID = 0x208;
+  // 0x193 只授权已提交路由的去程转向。夹取/释放到点由 0x208 通知，回执为命令 5。
+  // STM32 收齐本趟 191 通过与 193 后转向，完成才 203。
   static constexpr canid_t ARRIVAL_ACK_ID = 0x190;
   static constexpr canid_t ROI_RESULT_ID = 0x191;
   static constexpr canid_t COMMAND_RESULT_ID = 0x192;
   static constexpr canid_t TURN_REQUEST_ID = 0x193;
   static constexpr std::uint8_t TURN_COMPLETED = 1, SAFETY_ARRIVED = 2, START_SEARCH = 3,
-    DELIVERY_COMPLETED = 4;
+    DELIVERY_COMPLETED = 4, ARRIVAL_POINT = 5;
 
   // NONE 表示不属于本协议的指令；MALFORMED 表示已识别 ID，但长度或请求字节不合法。
-  enum class CommandKind { NONE, MALFORMED, ARRIVAL, MISSION };
+  enum class CommandKind { NONE, MALFORMED, ARRIVAL, MISSION, ARRIVAL_POINT };
 
   struct Command
   {
@@ -117,8 +121,8 @@ public:
     return filter;
   }
 
-  // 套接字只接收五条运输握手指令。空过滤器会丢掉全部数据帧。
-  static std::array<can_filter, 5> commandFilters()
+  // 套接字接收运输握手指令与 0x208 到点。空过滤器会丢掉全部数据帧。
+  static std::array<can_filter, 6> commandFilters()
   {
     return {
       commandFilter(ARRIVAL_ID),
@@ -126,6 +130,7 @@ public:
       commandFilter(SAFETY_ARRIVED_ID),
       commandFilter(START_SEARCH_ID),
       commandFilter(DELIVERY_COMPLETED_ID),
+      commandFilter(ARRIVAL_POINT_ID),
     };
   }
 
@@ -154,20 +159,25 @@ public:
     return frame;
   }
 
-  // 0x180（DLC=7）：data[0]=valid，data[1..2]=vx，data[3..4]=vy，data[5..6]=angular（int16 小端）。
-  // valid=0 时载荷全零。任务在线时生产路径只发 valid=0 的心跳；任务失联由调用方发 DLC 0。
+  // 0x180（DLC=8）：data[0..6] 同原 7 字节布局，data[7] 为 pause（整字节 0/1）。
+  // 见 docs/can-protocol.md。valid=0 时 data[0..6] 清零，data[7] 仍写 pause。
+  // 任务在线时生产路径只发 valid=0 的心跳；任务失联由调用方发 DLC 0。
   static can_frame velocity(
-    bool valid, std::int16_t vx, std::int16_t vy, std::int16_t angular)
+    bool valid, std::int16_t vx, std::int16_t vy, std::int16_t angular, std::uint8_t pause)
   {
+    if (pause != 0 && pause != 1) {
+      throw std::invalid_argument("pause must be 0 or 1");
+    }
     can_frame frame{};
     frame.can_id = VELOCITY_ID;
-    frame.len = 7;
+    frame.len = 8;
     if (valid) {
       frame.data[0] = 1;
       putSigned(frame.data + 1, vx);
       putSigned(frame.data + 3, vy);
       putSigned(frame.data + 5, angular);
     }
+    frame.data[7] = pause;
     return frame;
   }
 
@@ -203,10 +213,10 @@ public:
     return frame;
   }
 
-  // 命令1/2/3成功表示受理，4成功表示已记录送达；实际模式和输出资格仍由 TaskState/MissionStatus 联合确认。
+  // 命令 1/2/3 成功表示受理，4 成功表示已记录送达，5 表示到点受理（token 恒为 0，不是开合到位）。
   static can_frame commandResult(bool accepted, std::uint8_t command, std::uint32_t token = 0)
   {
-    if (command < TURN_COMPLETED || command > DELIVERY_COMPLETED) {
+    if (command < TURN_COMPLETED || command > ARRIVAL_POINT) {
       throw std::invalid_argument("Unknown mission command");
     }
     can_frame frame{};
@@ -214,12 +224,12 @@ public:
     frame.len = 6;
     frame.data[0] = accepted ? 1 : 0;
     frame.data[1] = command;
-    // 命令3没有身份；1/2/4回显请求里的低32位token。
-    if (command != START_SEARCH) {putUnsigned(frame.data + 2, token);}
+    // 命令 3 与命令 5 没有身份，token 写出为 0；1/2/4 回显请求里的低 32 位。
+    if (command != START_SEARCH && command != ARRIVAL_POINT) {putUnsigned(frame.data + 2, token);}
     return frame;
   }
 
-  // 保留 v3 名称和字节；夹爪开合为 STM32 本地子步骤，不增加 CAN 指令。
+  // 保留 v3 名称和字节。到点由 0x208 通知，回执为命令 5。
   static can_frame turnRequest(std::uint8_t destination, std::uint32_t token)
   {
     if (destination != 1 && destination != 2) {
@@ -263,6 +273,13 @@ public:
       command.kind = frame.len == 1 && frame.data[0] == 1 ?
         CommandKind::MISSION : CommandKind::MALFORMED;
       command.command = START_SEARCH;
+      return command;
+    }
+    if (frame.can_id == ARRIVAL_POINT_ID) {
+      const bool ok = frame.len == 1 && (frame.data[0] == 1 || frame.data[0] == 2);
+      command.kind = ok ? CommandKind::ARRIVAL_POINT : CommandKind::MALFORMED;
+      if (ok) {command.command = frame.data[0];}
+      return command;
     }
     return command;
   }

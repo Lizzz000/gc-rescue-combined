@@ -30,13 +30,18 @@ struct BridgeMonotonicTime
 class BridgeMissionWatchdog
 {
 public:
+  // 默认 500 ms，与原硬编码相同，便于主机测试不改数值。生产路径传入 yaml 的 0.5 s。
+  explicit BridgeMissionWatchdog(
+    std::chrono::milliseconds timeout = std::chrono::milliseconds(500))
+  : timeout_(timeout) {}
   void received(BridgeMonotonicTime now) {last_ = now.value;}
   bool alive(BridgeMonotonicTime now) const
   {
-    return last_ && now.value >= *last_ && now.value - *last_ < std::chrono::milliseconds(500);
+    return last_ && now.value >= *last_ && now.value - *last_ < timeout_;
   }
 
 private:
+  std::chrono::milliseconds timeout_;
   std::optional<std::chrono::steady_clock::time_point> last_;
 };
 // 集中 Bridge 输入缓存、阶段／任务门控及双时钟新鲜度，不持有 ROS 消息或 CAN 队列。
@@ -44,12 +49,11 @@ private:
 // 数值与 MissionStatus.msg 相同。Bridge 核心不包含该消息头，所以在此单独声明。
 enum class BridgeDestination : std::uint8_t {None = 0, Left = 1, Right = 2};
 
-// ROI 接收边界的语义结果；保留图像有效位，独立复核货物后才允许通过及目的侧。
+// ROI 接收边界的语义结果。目的侧由服务回包的 passed 与 orange_count 经 cargoSide 得到，不再二次复核货物规则。
 struct BridgeRoiResult
 {
   bool valid{false}, passed{false};
   BridgeDestination destination{BridgeDestination::None};
-  static BridgeRoiResult checked(bool valid, bool passed, const cargo::Counts & counts);
 };
 
 enum class BridgeOperation : std::uint8_t {Idle = 0, Checking = 1, Switching = 2};

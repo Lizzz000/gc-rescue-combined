@@ -228,6 +228,8 @@ bridge:
   tx_queue_timeout_s: 0.1
   # 单调秒；外层超时必须大于下游。
   request_timeout_s: 3.0
+  # 未见 MissionStatus 的失联门限，单位秒。值与原硬编码 500 ms 相同，入口按 *_timeout_s 校验。
+  mission_watchdog_timeout_s: 0.5
   target_topic: /target_node/target
   safety_topic: /safety_node/target
   task_topic: /mission_node/active_task
@@ -242,4 +244,6 @@ gripper:
   # 相对上电位置的闭合角、张开角（度）。待实车核对（装配姿态需板端验证）。
   closed_deg: -40
   open_deg: 40
+  # 自动开或合一次的动作时长（秒）；待实车标定。
+  move_s:
 
