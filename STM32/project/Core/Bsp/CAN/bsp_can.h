@@ -3,7 +3,7 @@
 
 #include "can.h"
 
-/* 电机与 Jetson 共用 CAN1，CAN2 保留初始化但不启动业务。 */
+/* 电机与本模式通信（自动收 Jetson 下行，手动收 0x17F）共用 CAN1；CAN2 保留初始化但不启动业务。 */
 #define MOTOR_CAN hcan1
 #define MOTOR_CAN_FILTER_BANK 0U
 

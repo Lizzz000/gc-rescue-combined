@@ -53,6 +53,7 @@ def main():
         "project/Core/Control/Jetson/jetson_auto.c", "project/Core/Control/Jetson/image_tracker.c",
     ]
     suites["jetson_chassis_bad_window"] = suites["jetson_chassis_flow"]
+    suites["can_auto"] = suites["can"]
     includes = ["tests/native/stubs", "project/Core/Bsp/CAN",
                 "project/Core/Devices/BMI088", "project/Core/Devices/IST8310",
                 "project/Core/Devices/DM_Motor", "project/Core/Task/INS", "project/Core/Task/CAN2",
@@ -70,6 +71,8 @@ def main():
                 command.append("-DINS_USE_MAGNETOMETER=1")
             if name == "can":
                 command.append("-DJETSON_AUTO_ENABLED=0")
+            if name == "can_auto":
+                command.append("-DJETSON_AUTO_ENABLED=1")
             if name.startswith("jetson_auto_"):
                 command += ["-include", str(root / "tests/native/jetson_auto_test_config.h")]
             if name == "jetson_auto_configured":

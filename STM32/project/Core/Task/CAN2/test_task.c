@@ -5,10 +5,13 @@
 #include "bsp_led.h"
 #include "chassis.h"
 #include "jetson_auto.h"
+#if JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST
 #include "jetson_can.h"
+#else
 #include "manual_can.h"
 #include "manual_control.h"
 #include "transport_servo.h"
+#endif
 #include "FreeRTOS.h"
 #include "task.h"
 #include <math.h>
@@ -24,17 +27,18 @@ volatile float battery_voltage = NAN;
  *       每 500 ms 同时翻转，电压每 100 ms 更新。闪烁只表示任务运行，
  *       不表示 IMU 已完成预热或标定；底盘内部每 10 ms 控制一次，默认失能。
  *       动作接口与 Chassis_Loop 均由本任务调用，不在中断内调用。
- *       手动联调与自动搬运二选一。舵机标定和自动上行均在底盘调度之后处理。
+ *       手动联调与自动搬运按编译模式二选一，只初始化本模式的协议快照。
+ *       舵机标定和自动上行均在底盘调度之后处理。
  */
 void test_task(void const *argument)
 {
     (void)argument;
     Chassis_Init();
-    Jetson_CAN_Init();
-    Manual_CAN_Init();
 #if JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST
+    Jetson_CAN_Init();
     Jetson_Auto_Init();
 #else
+    Manual_CAN_Init();
     Manual_Control_Init();
 #endif
     can_filter_init();

@@ -11,10 +11,19 @@
 #include "bsp_adc.h"
 #include "bsp_led.h"
 #include "bsp_buzzer.h"
+#include "jetson_auto.h"
 #include "jetson_can.h"
 #include "manual_can.h"
 #include "manual_control.h"
 #include "transport_servo.h"
+
+/* 同一用例分别以手动与自动编译模式运行，核对各自只开本模式的滤波和分流。 */
+#define TEST_CAN_AUTO (JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST)
+#if TEST_CAN_AUTO
+#define TEST_FILTER_BANKS 2U
+#else
+#define TEST_FILTER_BANKS 1U
+#endif
 
 static CAN_TypeDef can1_regs, can2_regs;
 CAN_HandleTypeDef hcan1 = { &can1_regs };
@@ -22,7 +31,7 @@ CAN_HandleTypeDef hcan2 = { &can2_regs };
 uint32_t test_tick;
 TIM_HandleTypeDef htim4;
 static uint32_t pwm_starts, buzzer_starts, buzzer_stops, led_toggles, battery_reads;
-static CAN_FilterTypeDef filters[3];
+static CAN_FilterTypeDef filters[TEST_FILTER_BANKS];
 static uint32_t filter_count, failed_filter_bank;
 static CAN_TxHeaderTypeDef tx_header;
 static CAN_RxHeaderTypeDef rx_header;
@@ -42,6 +51,7 @@ static uint32_t tx_count, rx_count, loops, setup_steps;
 static uint32_t tx_mailboxes_free = 3U;
 static uint32_t chassis_inits, chassis_loops;
 static uint32_t jetson_can_inits, manual_can_inits, manual_control_inits, manual_control_loops;
+static uint32_t jetson_auto_inits, jetson_auto_loops;
 volatile Manual_Control_State_t manual_control_state;
 static uint32_t calibration_case, calibration_loops;
 static const struct
@@ -126,7 +136,7 @@ void Jetson_CAN_Init(void)
 { assert(chassis_inits == 1U && setup_steps == 0U); ++jetson_can_inits; }
 /** @brief 核对手动快照初始化先于 CAN 中断。 @return 无。 */
 void Manual_CAN_Init(void)
-{ assert(jetson_can_inits == 1U && setup_steps == 0U); ++manual_can_inits; }
+{ assert(chassis_inits == 1U && setup_steps == 0U); ++manual_can_inits; }
 /** @brief 核对控制初始化先于 CAN 中断。 @return 无。 */
 void Manual_Control_Init(void)
 { assert(manual_can_inits == 1U && setup_steps == 0U); ++manual_control_inits; }
@@ -145,8 +155,22 @@ void Manual_Control_Loop(void)
 void Chassis_Loop(void)
 {
     assert(test_tick == 5U * (chassis_loops + 1U));
+#if TEST_CAN_AUTO
+    assert(jetson_auto_loops == chassis_loops);
+#else
     assert(manual_control_loops == chassis_loops + 1U);
+#endif
     ++chassis_loops;
+}
+
+/** @brief 核对自动流程初始化在协议快照之后、CAN 中断之前。 @return 无。 */
+void Jetson_Auto_Init(void)
+{ assert(jetson_can_inits == 1U && setup_steps == 0U); ++jetson_auto_inits; }
+/** @brief 核对自动流程在底盘周期之后执行。 @return 无。 */
+void Jetson_Auto_Loop(void)
+{
+    assert(jetson_auto_inits == 1U && chassis_loops == jetson_auto_loops + 1U);
+    ++jetson_auto_loops;
 }
 
 /** @brief 提供标定门禁的模拟底盘使能结果。 @return 当前测试状态。 */
@@ -182,7 +206,7 @@ float get_battery_voltage(void)
  */
 HAL_StatusTypeDef HAL_CAN_ConfigFilter(CAN_HandleTypeDef *hcan, CAN_FilterTypeDef *filter)
 {
-    assert(hcan == &hcan1 && filter_count < 3U && filter->FilterBank == filter_count);
+    assert(hcan == &hcan1 && filter_count < TEST_FILTER_BANKS && filter->FilterBank == filter_count);
     filters[filter_count++] = *filter;
     setup_steps |= 1U;
     return filter->FilterBank == failed_filter_bank ? HAL_ERROR : HAL_OK;
@@ -190,7 +214,7 @@ HAL_StatusTypeDef HAL_CAN_ConfigFilter(CAN_HandleTypeDef *hcan, CAN_FilterTypeDe
 /** @brief 模拟启动CAN1。 @param[in,out] hcan 句柄。 @return HAL_OK。 */
 HAL_StatusTypeDef HAL_CAN_Start(CAN_HandleTypeDef *hcan)
 {
-    assert(hcan == &hcan1 && filter_count == 3U && setup_steps == 1U);
+    assert(hcan == &hcan1 && filter_count == TEST_FILTER_BANKS && setup_steps == 1U);
     setup_steps |= 2U;
     return start_result;
 }
@@ -266,7 +290,7 @@ static void Check_Uplink_Submission(void)
 int main(void)
 {
     const uint8_t zero[8] = {0x7F,0xFF,0x7F,0xF0,0,0,7,0xFF};
-    for (failed_filter_bank = 0U; failed_filter_bank < 3U; ++failed_filter_bank)
+    for (failed_filter_bank = 0U; failed_filter_bank < TEST_FILTER_BANKS; ++failed_filter_bank)
     {
         can_filter_init();
         assert(filter_count == failed_filter_bank + 1U && setup_steps == 1U);
@@ -275,17 +299,22 @@ int main(void)
     failed_filter_bank = UINT32_MAX;
     start_result = HAL_ERROR;
     can_filter_init();
-    assert(filter_count == 3U && setup_steps == 3U);
+    assert(filter_count == TEST_FILTER_BANKS && setup_steps == 3U);
     setup_steps = filter_count = 0U;
     start_result = HAL_OK;
     can_filter_init();
-    assert(filter_count == 3U && setup_steps == 7U);
-    const uint16_t accepted_ids[3][4] = {
+    assert(filter_count == TEST_FILTER_BANKS && setup_steps == 7U);
+#if TEST_CAN_AUTO
+    const uint16_t accepted_ids[TEST_FILTER_BANKS][4] = {
         {0x000U, 0x180U, 0x181U, 0x182U},
         {0x190U, 0x191U, 0x192U, 0x193U},
-        {0x17FU, 0x17FU, 0x17FU, 0x17FU},
     };
-    for (unsigned bank = 0U; bank < 3U; ++bank)
+#else
+    const uint16_t accepted_ids[TEST_FILTER_BANKS][4] = {
+        {0x000U, 0x17FU, 0x17FU, 0x17FU},
+    };
+#endif
+    for (unsigned bank = 0U; bank < TEST_FILTER_BANKS; ++bank)
     {
         const CAN_FilterTypeDef *filter = &filters[bank];
         assert(filter->FilterBank == bank && filter->SlaveStartFilterBank == 14U);
@@ -367,12 +396,12 @@ int main(void)
     assert(dm_motor[0].feedback_time_ms == 12U && dm_motor[1].feedback_time_ms == 0U && dm_motor[2].feedback_time_ms == 27U);
     assert(jetson_rx_count == 0U && manual_rx_count == 0U);
 
-    /* 同次 FIFO0 回调先处理电机反馈，再接收速度和转向授权，不能互相覆盖。 */
+    /* 同次 FIFO0 回调先处理电机反馈，再按本模式接收通信帧；非本模式帧直接丢弃，不能互相覆盖。 */
     test_tick = 51U;
     memcpy(rx_data, low, 8);
     Queue_Current_Frame();
-    rx_header.StdId = 0x180U; rx_header.DLC = 7U;
     const uint8_t velocity[8] = {1, 0xE8, 3, 0, 0, 0x18, 0xFC, 0};
+    rx_header.StdId = TEST_CAN_AUTO ? 0x180U : 0x17FU; rx_header.DLC = 7U;
     memcpy(rx_data, velocity, 8);
     Queue_Current_Frame();
     rx_header.StdId = 0x193U; rx_header.DLC = 6U;
@@ -383,38 +412,54 @@ int main(void)
     HAL_CAN_RxFifo0MsgPendingCallback(&hcan1);
     assert(rx_pending == 0U && rx_count == previous_rx + 3U);
     assert(dm_motor[0].feedback_seq == 2U && dm_motor[0].feedback_time_ms == 51U);
-    assert(jetson_rx_count == 2U && jetson_rx_id == 0x193U && jetson_rx_length == 6U);
-    assert(memcmp(jetson_rx_data, turn, 6) == 0);
+#if TEST_CAN_AUTO
+    assert(jetson_rx_count == 2U && manual_rx_count == 0U);
+    assert(jetson_rx_id == 0x193U && jetson_rx_length == 6U && memcmp(jetson_rx_data, turn, 6) == 0);
+#else
+    assert(jetson_rx_count == 0U && manual_rx_count == 1U);
+    assert(manual_rx_length == 7U && memcmp(manual_rx_data, velocity, 7) == 0);
+#endif
+    const uint32_t jetson_before = jetson_rx_count, manual_before = manual_rx_count;
 
-    /* 0x17F 只进手动模块，任意长度都交给它撤销旧速度，不进入 Jetson 协议层。 */
+    /* 0x17F 只在手动固件进入手动模块，任意长度都交给它撤销旧速度；自动固件丢弃。 */
     rx_header.StdId = 0x17FU;
     for (unsigned length = 0U; length <= 8U; ++length)
     {
         rx_header.DLC = length;
         memcpy(rx_data, velocity, 8);
         Receive_Current_Frame();
-        assert(manual_rx_count == length + 1U && manual_rx_length == length);
+#if !TEST_CAN_AUTO
+        assert(manual_rx_count == manual_before + length + 1U && manual_rx_length == length);
         assert(memcmp(manual_rx_data, velocity, length) == 0);
+#endif
     }
-    assert(jetson_rx_count == 2U);
+    assert(jetson_rx_count == jetson_before);
+    assert(manual_rx_count == manual_before + (TEST_CAN_AUTO ? 0U : 9U));
 
-    /* 七种 Jetson 下行 ID 可达协议层，不进入手动模块。 */
+    /* 七种 Jetson 下行 ID 只在自动固件到达协议层，手动固件丢弃。 */
     const uint16_t jetson_ids[] = {0x180U, 0x181U, 0x182U, 0x190U, 0x191U, 0x192U, 0x193U};
     const uint8_t jetson_lengths[] = {7U, 5U, 5U, 1U, 3U, 6U, 6U};
     for (unsigned i = 0U; i < sizeof(jetson_ids) / sizeof(jetson_ids[0]); ++i)
     {
         rx_header.StdId = jetson_ids[i]; rx_header.DLC = jetson_lengths[i];
         Receive_Current_Frame();
+#if TEST_CAN_AUTO
         assert(jetson_rx_id == jetson_ids[i] && jetson_rx_length == jetson_lengths[i]);
+#endif
     }
     rx_header.StdId = 0x180U;
     for (unsigned length = 0U; length <= 8U; ++length)
     {
         rx_header.DLC = length;
         Receive_Current_Frame();
+#if TEST_CAN_AUTO
         assert(jetson_rx_id == 0x180U && jetson_rx_length == length);
+#endif
     }
-    assert(jetson_rx_count == 18U && manual_rx_count == 9U && dm_motor[0].feedback_seq == 2U);
+    const uint32_t jetson_expected = jetson_before + (TEST_CAN_AUTO ? 16U : 0U);
+    const uint32_t manual_expected = manual_before + (TEST_CAN_AUTO ? 0U : 9U);
+    assert(jetson_rx_count == jetson_expected && manual_rx_count == manual_expected);
+    assert(dm_motor[0].feedback_seq == 2U);
 
     /* 不属于下行的握手、未知 ID、扩展帧、远程帧与超长帧不进入任一解析器。 */
     const uint16_t rejected_ids[] = {1U, 3U, 0x183U, 0x200U, 0x203U, 0x204U, 0x205U, 0x206U, 0x7FFU};
@@ -430,8 +475,8 @@ int main(void)
     Receive_Current_Frame();
     rx_header.RTR = CAN_RTR_DATA; rx_header.DLC = 9U;
     Receive_Current_Frame();
-    assert(jetson_rx_count == 18U && manual_rx_count == 9U && dm_motor[0].feedback_seq == 2U);
-    assert(dm_motor[1].feedback_seq == 1U && dm_motor[2].feedback_seq == 1U);
+    assert(jetson_rx_count == jetson_expected && manual_rx_count == manual_expected);
+    assert(dm_motor[0].feedback_seq == 2U && dm_motor[1].feedback_seq == 1U && dm_motor[2].feedback_seq == 1U);
     DM_Motor_ReceiveFeedback(NULL);
     assert(dm_motor[0].feedback_seq == 2U);
     previous_rx = rx_count;
@@ -444,9 +489,17 @@ int main(void)
     assert(pwm_starts == 0U && buzzer_starts == 0U && buzzer_stops == 1U);
     assert(led_toggles == 2U && battery_reads == 11U);
     assert(chassis_inits == 1U && chassis_loops == 200U);
-    assert(jetson_can_inits == 1U && manual_can_inits == 1U && manual_control_inits == 1U && manual_control_loops == 200U);
+#if TEST_CAN_AUTO
+    assert(jetson_can_inits == 1U && jetson_auto_inits == 1U && jetson_auto_loops == 200U);
+    assert(manual_can_inits == 0U && manual_control_inits == 0U && manual_control_loops == 0U);
+    assert(calibration_loops == 0U);
+#else
+    assert(manual_can_inits == 1U && manual_control_inits == 1U && manual_control_loops == 200U);
+    assert(jetson_can_inits == 0U && jetson_auto_inits == 0U && jetson_auto_loops == 0U);
     assert(calibration_loops == 200U);
+#endif
     assert(fabsf(battery_voltage - 24.11f) < 0.0001f);
-    puts("PASS CAN: hardware ID filters, shared FIFO routing, MIT feedback and 5ms task ordering");
+    puts(TEST_CAN_AUTO ? "PASS CAN auto: Jetson-only filters and routing, MIT feedback and 5ms task ordering"
+                       : "PASS CAN manual: 0x17F-only filters and routing, MIT feedback and 5ms task ordering");
     return 0;
 }
