@@ -45,7 +45,7 @@ _KD_SCALE = 128000000
 
 
 def check_move(degrees, seconds):
-    """拒绝看不懂或幅度过大的手动转角。"""
+    """拒绝看不懂或幅度过大的手动相对转角。"""
     if not math.isfinite(degrees) or not math.isfinite(seconds):
         raise ValueError('角度和时长必须是有限数')
     if degrees == 0 or not MIN_MOVE_DEGREES <= degrees <= MAX_MOVE_DEGREES:
@@ -53,6 +53,21 @@ def check_move(degrees, seconds):
             f'角度须在 {MIN_MOVE_DEGREES:g} 到 {MAX_MOVE_DEGREES:g} 度之间，且不能为 0')
     if not MIN_MOVE_SECONDS <= seconds <= MAX_MOVE_SECONDS:
         raise ValueError(f'时长须在 {MIN_MOVE_SECONDS:g} 到 {MAX_MOVE_SECONDS:g} 秒之间')
+
+
+def check_goto(target_deg, seconds):
+    """拒绝看不懂或超出范围的绝对目标角。目标可以是 0（回到上电零点）。"""
+    if not math.isfinite(target_deg) or not math.isfinite(seconds):
+        raise ValueError('角度和时长必须是有限数')
+    if not MIN_MOVE_DEGREES <= target_deg <= MAX_MOVE_DEGREES:
+        raise ValueError(
+            f'目标角须在 {MIN_MOVE_DEGREES:g} 到 {MAX_MOVE_DEGREES:g} 度之间')
+    if not MIN_MOVE_SECONDS <= seconds <= MAX_MOVE_SECONDS:
+        raise ValueError(f'时长须在 {MIN_MOVE_SECONDS:g} 到 {MAX_MOVE_SECONDS:g} 秒之间')
+
+
+class ServoBusy(RuntimeError):
+    """舵机正在执行动作，新的转动或开合不能抢占。"""
 
 
 def crc32(data):
@@ -194,12 +209,28 @@ class ServoLink:
     def move_degrees(self, degrees, seconds, kp, kd, cancel):
         """从当前反馈位置相对转动，到时或取消后停机。返回停机反馈。"""
         check_move(degrees, seconds)
+        initial = self._prepare_motion(kp, kd)
+        return self._run_to(initial['position'] + math.radians(degrees), seconds, kp, kd, cancel, initial)
+
+    def goto_degrees(self, target_deg, seconds, kp, kd, cancel, zero_rad):
+        """转到相对上电零点的目标角，到时或取消后停机。返回停机反馈。"""
+        check_goto(target_deg, seconds)
+        if not math.isfinite(zero_rad):
+            raise RuntimeError('尚未记录上电零点')
+        initial = self._prepare_motion(kp, kd)
+        final = self._run_to(zero_rad + math.radians(target_deg), seconds, kp, kd, cancel, initial)
+        final['target_deg'] = target_deg
+        return final
+
+    def _prepare_motion(self, kp, kd):
         # 先确认增益能编码，再停机读位置。非法增益不会先把舵机停掉。
         control_packet(self.motor_id, MODE_RUN, 1, 0, 0, 0, kp, kd)
         initial = self.stop()
         if initial['error'] or initial['timeout']:
             raise RuntimeError('舵机反馈有错误或超时，未开始转动')
-        target = initial['position'] + math.radians(degrees)
+        return initial
+
+    def _run_to(self, target, seconds, kp, kd, cancel, initial):
         command = control_packet(self.motor_id, MODE_RUN, 1, 0, 0, target, kp, kd)
         started = time.monotonic()
         try:
@@ -228,20 +259,26 @@ class ServoLink:
 
 
 class ServoSession:
-    """网页上的一次转角。底盘停车不会取消它；只有舵机停机或进程退出会。"""
+    """网页或自动夹爪的一次舵机会话。底盘停车和租约到期不会取消它；只有舵机停机或进程退出会。"""
 
-    def __init__(self, device, motor_id, kp, kd):
+    def __init__(self, device, motor_id, kp, kd, closed_deg=None, open_deg=None):
         self._lock = threading.Lock()
         # 转角、停机和关闭都走这把锁，避免两个线程同时写同一串口。
         self._motion = threading.Lock()
         self._cancel = threading.Event()
         self._link = None
+        self._worker = None
+        self._result = None
+        self._error = None
+        self._zero_rad = None
         self.busy = False
         self.position_deg = None
         self.message = '未配置舵机串口'
         self.device = device
         self.kp = kp
         self.kd = kd
+        self.closed_deg = closed_deg
+        self.open_deg = open_deg
         if not device:
             return
         try:
@@ -250,7 +287,14 @@ class ServoSession:
         except (OSError, ValueError) as error:
             self.message = str(error)
             return
-        self.message = '已连接，尚未转动'
+        try:
+            feedback = self._link.stop()
+        except (OSError, TimeoutError, RuntimeError) as error:
+            self.message = f'已打开串口，但未能记录上电零点：{error}'
+            return
+        self._zero_rad = feedback['position']
+        self.position_deg = math.degrees(feedback['position'])
+        self.message = '已连接，上电零点已记录'
 
     @property
     def available(self):
@@ -263,29 +307,73 @@ class ServoSession:
                 'position_deg': self.position_deg, 'message': self.message,
             }
 
-    def move(self, degrees, seconds):
+    def start_move(self, degrees, seconds):
         check_move(degrees, seconds)
+        self._submit(f'正在转动 {degrees:g}°',
+                     lambda cancel: self._link.move_degrees(degrees, seconds, self.kp, self.kd, cancel))
+
+    def start_goto(self, target_deg, seconds):
+        check_goto(target_deg, seconds)
+        self._submit(f'正在转到 {target_deg:g}°', lambda cancel: self._goto(target_deg, seconds, cancel))
+
+    def start_open(self, seconds):
+        self.start_goto(self.open_deg, seconds)
+
+    def start_close(self, seconds):
+        self.start_goto(self.closed_deg, seconds)
+
+    def move(self, degrees, seconds):
+        """同步相对转动，供单元测试等待完成；网页接口走 start_move。"""
+        self.start_move(degrees, seconds)
+        return self.wait()
+
+    def wait(self, timeout=None):
+        worker = self._worker
+        if worker is not None:
+            worker.join(timeout=timeout)
+            if worker.is_alive():
+                raise TimeoutError('等待舵机动作结束超时')
+        if self._error is not None:
+            raise self._error
+        return self._result
+
+    def _goto(self, target_deg, seconds, cancel):
+        if self._zero_rad is None:
+            raise RuntimeError('尚未记录上电零点')
+        return self._link.goto_degrees(target_deg, seconds, self.kp, self.kd, cancel, self._zero_rad)
+
+    def _submit(self, message, work):
         with self._lock:
             if self._link is None:
                 raise RuntimeError(self.message)
             if self.busy:
-                raise RuntimeError('舵机正在转动')
+                raise ServoBusy('舵机正在转动')
             self.busy = True
             self._cancel.clear()
-            self.message = f'正在转动 {degrees:g}°'
+            self._result = None
+            self._error = None
+            self.message = message
+            self._worker = threading.Thread(target=self._run, args=(work,), daemon=True)
+            self._worker.start()
+
+    def _run(self, work):
         try:
             with self._motion:
-                feedback = self._link.move_degrees(degrees, seconds, self.kp, self.kd, self._cancel)
+                feedback = work(self._cancel)
         except Exception as error:
             with self._lock:
                 self.busy = False
+                self._error = error
                 self.message = str(error)
-            raise
+            return
         with self._lock:
             self.busy = False
+            self._result = feedback
             self.position_deg = math.degrees(feedback['position'])
-            self.message = f"已停机，实际转动 {feedback['turned_deg']:.2f}°"
-        return feedback
+            if 'target_deg' in feedback:
+                self.message = f'已停机，位置 {self.position_deg:.2f}°'
+            else:
+                self.message = f"已停机，实际转动 {feedback['turned_deg']:.2f}°"
 
     def stop(self):
         """请求正在进行的转角停机；空闲时再发一次停机命令。"""
@@ -303,6 +391,9 @@ class ServoSession:
 
     def close(self):
         self._cancel.set()
+        worker = self._worker
+        if worker is not None:
+            worker.join(timeout=2)
         with self._motion:
             with self._lock:
                 link = self._link

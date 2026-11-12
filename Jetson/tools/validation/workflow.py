@@ -152,7 +152,7 @@ def contracts(args):
     # 保留 prepare 的生产快照，另存本次覆盖值及其实际装配来源。
     import yaml
     overrides = {'bridge.transport': 'socketcan', 'bridge.can_interface': 'vcan0',
-                 'bridge.serial_device': '', 'bridge.can_bitrate': 0}
+                 'damiao.device': '', 'bridge.can_bitrate': 0}
     values = dict(snapshot['values'])
     values.update(overrides)
     software_config = args.output / 'software-contract-config.yaml'
@@ -349,7 +349,7 @@ def case_snapshot(args, image=None, clock=False, directory=None):
     cfg = configuration()
     original = cfg.load_configuration(args.config, 'all')
     values = dict(original['values'])
-    values.update({'bridge.transport': 'socketcan', 'bridge.serial_device': '', 'bridge.can_bitrate': 0,
+    values.update({'bridge.transport': 'socketcan', 'damiao.device': '', 'bridge.can_bitrate': 0,
                    'bridge.can_interface': 'vcan0', 'vision.detect.active_task': 'seg',
                    'vision.detect.publish_masks': True, 'vision.detect.publish_timing': True,
                    'vision.stream.draw_masks': True, 'vision.stream.overlay_stats': False,

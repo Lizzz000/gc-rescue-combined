@@ -71,7 +71,7 @@ ros2 launch bringup_pkg rescue.launch.py run:=all
 
 搬运实测中，车辆横向对准安全区后连续 796 帧未得到有效场地观测；不能据此进行自动到位或判断物块落区，仍需调整并在不同视角下验证。
 
-手动网页可通过启动参数 `--servo-device` 连接 S288，并用 `--servo-kp`、`--servo-kd` 配置刚度。相对转角动作结束后舵机进入 Stop 模式，不再主动保持夹持力；该手动功能未接入自动搬运状态机。实际夹持、松爪位置和力矩须在现场确认。
+手动网页通过 `--config` 读取顶层 `damiao.device` 与 `gripper.*` 连接达妙和 S288，不再使用 `--servo-device` 或 `--servo-kp` / `--servo-kd`。相对转角动作结束后舵机进入 Stop 模式，不再主动保持夹持力；该手动功能未接入自动搬运状态机。实际夹持、松爪位置和力矩须在现场确认。
 
 `run:=vision` 只启动检测和图传。`run:=all` 启动上一节的 7 个进程。图传地址和端口来自 `rescue.yaml` 的 `stream_address`、`stream_port`，当前是 `0.0.0.0:8080`。
 

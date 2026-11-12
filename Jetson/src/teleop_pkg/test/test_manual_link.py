@@ -19,6 +19,7 @@ import signal
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 import urllib.error
@@ -116,8 +117,11 @@ class ProcessTestBase(unittest.TestCase):
 
     def setUp(self):
         self.capture = wire.PtyCapture()
+        self.temp = tempfile.TemporaryDirectory()
+        config = Path(self.temp.name) / 'manual.yaml'
+        config.write_text(f'damiao:\n  device: {self.capture.device}\n')
         self.process = subprocess.Popen(
-            [sys.executable, str(PROGRAM), '--device', self.capture.device, '--port', '0'],
+            [sys.executable, str(PROGRAM), '--config', str(config), '--port', '0'],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         line = self.process.stdout.readline()
         self.assertIn('listening http://127.0.0.1:', line, self.process.stderr.read() if not line else line)
@@ -129,6 +133,7 @@ class ProcessTestBase(unittest.TestCase):
             self.process.wait(timeout=5)
         self.process.stdout.close()
         self.process.stderr.close()
+        self.temp.cleanup()
         self.capture.close()
 
     def request(self, path, body=None, raw=None, method='POST'):

@@ -6,7 +6,8 @@ import threading
 import unittest
 
 from servo.s288 import (
-    FEEDBACK_BYTES, FEEDBACK_MARK, ServoSession, _take_feedback, check_move, control_packet, crc32)
+    FEEDBACK_BYTES, FEEDBACK_MARK, ServoBusy, ServoSession, _take_feedback,
+    check_goto, check_move, control_packet, crc32)
 
 
 class ProtocolTest(unittest.TestCase):
@@ -49,6 +50,11 @@ class FakeLink:
     def move_degrees(self, degrees, seconds, kp, kd, cancel):
         self.calls.append(('move', degrees, seconds, kp, kd, cancel.is_set()))
         return {'position': 0.5, 'turned_deg': degrees}
+
+    def goto_degrees(self, target_deg, seconds, kp, kd, cancel, zero_rad):
+        self.calls.append(('goto', target_deg, seconds, kp, kd, cancel.is_set(), zero_rad))
+        return {'position': zero_rad + math.radians(target_deg), 'turned_deg': target_deg,
+                'target_deg': target_deg}
 
     def stop(self):
         self.calls.append(('stop',))
@@ -95,3 +101,59 @@ class SessionTest(unittest.TestCase):
         release.set()
         worker.join(timeout=2)
         self.assertFalse(worker.is_alive())
+
+    def test_goto_uses_power_on_zero(self):
+        session = ServoSession('', 0, 1.0, 0.05)
+        session._link = FakeLink()
+        session._zero_rad = 0.1
+        session.start_goto(-15, 0.2)
+        feedback = session.wait(timeout=2)
+        self.assertAlmostEqual(feedback['target_deg'], -15)
+        self.assertAlmostEqual(feedback['position'], 0.1 + math.radians(-15))
+        self.assertEqual(session._link.calls[0][0], 'goto')
+        self.assertAlmostEqual(session._link.calls[0][6], 0.1)
+
+    def test_start_move_is_async_and_rejects_when_busy(self):
+        session = ServoSession('', 0, 1.0, 0.05)
+        started = threading.Event()
+        release = threading.Event()
+
+        class BlockingLink(FakeLink):
+            def move_degrees(self, degrees, seconds, kp, kd, cancel):
+                started.set()
+                release.wait(timeout=2)
+                return super().move_degrees(degrees, seconds, kp, kd, cancel)
+
+        session._link = BlockingLink()
+        session.start_move(20, 1)
+        self.assertTrue(started.wait(timeout=1))
+        self.assertTrue(session.busy)
+        with self.assertRaises(ServoBusy):
+            session.start_move(5, 1)
+        release.set()
+        session.wait(timeout=2)
+        self.assertFalse(session.busy)
+
+    def test_open_close_use_required_seconds(self):
+        session = ServoSession('', 0, 1.0, 0.05, closed_deg=-40, open_deg=40)
+        session._link = FakeLink()
+        session._zero_rad = 0.0
+        session.start_open(0.2)
+        feedback = session.wait(timeout=2)
+        self.assertEqual(feedback['target_deg'], 40)
+        session.start_close(0.2)
+        feedback = session.wait(timeout=2)
+        self.assertEqual(feedback['target_deg'], -40)
+
+
+class GotoCheckTest(unittest.TestCase):
+    def test_goto_allows_zero_and_rejects_invalid(self):
+        check_goto(0, 1)
+        check_goto(-40, 0.2)
+        for target, seconds in ((361, 1), (10, 0.1), (float('nan'), 1)):
+            with self.assertRaises(ValueError):
+                check_goto(target, seconds)
+
+
+if __name__ == '__main__':
+    unittest.main()

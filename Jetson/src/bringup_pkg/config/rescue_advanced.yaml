@@ -234,3 +234,12 @@ bridge:
   mission_status_topic: /mission_node/status
   roi_service: /mission_node/arrived
   command_service: /mission_node/command
+# 夹爪控制参数。刚度按现值填写；开合角为相对上电位置的已定默认值。
+gripper:
+  # 输出位置刚度 / 速度刚度，待实车标定。
+  kp: 1.0
+  kd: 0.05
+  # 相对上电位置的闭合角、张开角（度）。待实车核对（装配姿态需板端验证）。
+  closed_deg: -40
+  open_deg: 40
+

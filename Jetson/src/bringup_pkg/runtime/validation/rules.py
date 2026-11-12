@@ -79,8 +79,8 @@ def _validate_bridge(values):
         if (not interface or interface in ('.', '..') or len(interface.encode()) >= 16 or
                 any(char in interface for char in ' /:\t\r\n\f\v\0')):
             raise ConfigurationError('bridge.can_interface: invalid Linux interface name')
-        if values['bridge.serial_device'] != '':
-            raise ConfigurationError('bridge.serial_device: must be empty for socketcan')
+        if values['damiao.device'] != '':
+            raise ConfigurationError('damiao.device: must be empty for socketcan')
         if values['bridge.can_bitrate'] != 0:
             raise ConfigurationError('bridge.can_bitrate: must be 0 for socketcan; bitrate is managed by the system')
         return
@@ -88,11 +88,7 @@ def _validate_bridge(values):
         raise ConfigurationError('bridge.transport: expected socketcan or damiao_serial_fixed')
     # Linux 设备名在 Windows 离线检查时也按 POSIX 解析，保留 by-id 符号链接原文。
     # 不按配置目录展开，也不接受用 .. 离开 /dev；实际设备存在性由后端打开时确认。
-    device = values['bridge.serial_device']
-    parts = PurePosixPath(device).parts
-    if (len(parts) < 3 or parts[:2] != ('/', 'dev') or '..' in parts or
-            any(not 0x21 <= ord(char) <= 0x7e for char in device)):
-        raise ConfigurationError('bridge.serial_device: expected printable ASCII /dev/ device path without whitespace or ..')
+    _validate_device_path('damiao.device', values['damiao.device'], allow_empty=False)
     # 原厂可选码率；fixed仅记录预期值，必须在启动前核对模块与STM32实际设置。
     # CAN封装的USB侧固定921600，与独立UART调试的CDC速率分开维护。
     if values['bridge.can_bitrate'] not in (1000000, 800000, 666000, 500000, 400000,
@@ -100,9 +96,34 @@ def _validate_bridge(values):
                                            50000, 40000, 20000, 10000, 5000):
         raise ConfigurationError('bridge.can_bitrate: unsupported Damiao CAN bitrate; select an explicit supported rate')
 
+def _validate_device_path(name, device, allow_empty):
+    if allow_empty and device == '':
+        return
+    parts = PurePosixPath(device).parts
+    if (not isinstance(device, str) or len(parts) < 3 or parts[:2] != ('/', 'dev') or '..' in parts or
+            any(not 0x21 <= ord(char) <= 0x7e for char in device)):
+        raise ConfigurationError(f'{name}: expected printable ASCII /dev/ device path without whitespace or ..')
+
+
+def _validate_gripper(values):
+    _validate_device_path('gripper.device', values['gripper.device'], allow_empty=True)
+    ident = values['gripper.id']
+    if type(ident) is bool or not isinstance(ident, int) or not 0 <= ident <= 14:
+        raise ConfigurationError(f'gripper.id: expected integer in [0, 14], got {ident!r}')
+    for name in ('gripper.kp', 'gripper.kd'):
+        value = values[name]
+        if type(value) is bool or not isinstance(value, (int, float)) or value != value or value < 0:
+            raise ConfigurationError(f'{name}: expected a finite number ≥ 0, got {value!r}')
+    for name in ('gripper.closed_deg', 'gripper.open_deg'):
+        value = values[name]
+        if type(value) is bool or not isinstance(value, (int, float)) or value != value or value in (float('inf'), float('-inf')):
+            raise ConfigurationError(f'{name}: expected a finite number, got {value!r}')
+
+
 
 def _validate(values, run):
     # 唯一业务校验入口，由 load_configuration 调用一次；校验顺序决定首个报错。
     _validate_timeouts(values)
     _validate_bridge(values)
+    _validate_gripper(values)
     _validate_connections(values, run)

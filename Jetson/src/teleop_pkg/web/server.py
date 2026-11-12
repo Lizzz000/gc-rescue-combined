@@ -3,7 +3,9 @@
 POST /api/hold  {"vx","vy","wz"}            按住中的速度，租约内须续发
 POST /api/timed {"vx","vy","wz","seconds"}  定时动作
 POST /api/stop                              停车
-POST /api/servo {"degrees","seconds"}       手动舵机相对转角，与底盘无关
+POST /api/servo {"degrees","seconds"}       手动舵机相对转角，立即 202；忙时 409
+POST /api/servo/open {"seconds"}            转到已标定的张开角；缺 seconds 或非法时 400，忙时 409，受理后 202
+POST /api/servo/close {"seconds"}           转到已标定的闭合角；缺 seconds 或非法时 400，忙时 409，受理后 202
 POST /api/servo/stop                        停止当前舵机转角
 GET  /api/state                             阶段、速度、链路计数、限幅与舵机状态
 GET  /                                       控制页面
@@ -16,6 +18,7 @@ from pathlib import Path
 import time
 
 from manual.command import MAX_ANGULAR_RADPS, MAX_LINEAR_MPS
+from servo.s288 import ServoBusy
 
 BIND_ADDRESS = '127.0.0.1'
 _PAGE = (Path(__file__).resolve().parent / 'index.html').read_bytes()
@@ -60,18 +63,22 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         actions = {
             '/api/hold': self._hold, '/api/timed': self._timed, '/api/stop': self._stop,
-            '/api/servo': self._servo, '/api/servo/stop': self._servo_stop,
+            '/api/servo': self._servo, '/api/servo/open': self._servo_open,
+            '/api/servo/close': self._servo_close, '/api/servo/stop': self._servo_stop,
         }
         action = actions.get(self.path)
         if action is None:
             self._json(HTTPStatus.NOT_FOUND, {'error': 'not found'})
             return
         try:
-            action(self._body(), time.monotonic())
+            status = action(self._body(), time.monotonic())
+        except ServoBusy as error:
+            self._json(HTTPStatus.CONFLICT, {'error': str(error), **self._state()})
+            return
         except (ValueError, TimeoutError, OSError, RuntimeError) as error:
             self._json(HTTPStatus.BAD_REQUEST, {'error': str(error)})
             return
-        self._json(HTTPStatus.OK, self._state())
+        self._json(status or HTTPStatus.OK, self._state())
 
     def _hold(self, body, now):
         self.server.command.hold(*_numbers(body, ('vx', 'vy', 'wz')), now)
@@ -84,7 +91,18 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _servo(self, body, now):
         degrees, seconds = _numbers(body, ('degrees', 'seconds'))
-        self.server.servo.move(degrees, seconds)
+        self.server.servo.start_move(degrees, seconds)
+        return HTTPStatus.ACCEPTED
+
+    def _servo_open(self, body, now):
+        seconds, = _numbers(body, ('seconds',))
+        self.server.servo.start_open(seconds)
+        return HTTPStatus.ACCEPTED
+
+    def _servo_close(self, body, now):
+        seconds, = _numbers(body, ('seconds',))
+        self.server.servo.start_close(seconds)
+        return HTTPStatus.ACCEPTED
 
     def _servo_stop(self, body, now):
         self.server.servo.stop()

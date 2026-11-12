@@ -4,13 +4,18 @@
 舵机转角只走本程序自己的 S288 串口，不经过 CAN，也不参与自动搬运。
 不启动 ROS，必须先停止 bridge（两者以 flock + TIOCEXCL 互斥）。STM32 须运行手动固件。
 访问：在 PC 上 ssh -L 8090:127.0.0.1:8090 nvidia@<jetson>，浏览器打开 http://127.0.0.1:8090/。
+
+设备路径和夹爪参数来自 --config 中的顶层 damiao.device 与 gripper.*，不读 bridge.* / mission / vision。
 """
 
 import argparse
+from pathlib import Path
 import signal
 import sys
 import threading
 import time
+
+import yaml
 
 from manual.command import (
     DEFAULT_ARM_ZERO_S, MAX_ARM_ZERO_S, MAX_LEASE_S, STOP_ZERO_S, ManualCommand)
@@ -18,19 +23,100 @@ from manual.link import DamiaoLink, LinkError, manual_packet
 from servo.s288 import ServoSession
 from web.server import BIND_ADDRESS, ManualServer
 
-# 与 bringup_pkg/config/rescue.yaml 的 bridge.serial_device 相同，两处须一致。
-DEFAULT_DEVICE = '/dev/serial/by-id/usb-HDSC_CDC_Device_00000000050C-if00'
 DEFAULT_PORT = 8090
 DEFAULT_RATE_HZ = 100.0
 # 退出前 valid=0 的发送时长，让 STM32 先看到明确撤销再进入超时。
 EXIT_INVALID_S = 0.1
-# 板上当前单总线适配器。留空启动时不打开它，测试和只控底盘都不会碰舵机。
-BOARD_SERVO_DEVICE = '/dev/serial/by-id/usb-Artery_AT32_Virtual_Com_Port_26BDB9203057-if00'
+_GRIPPER_KEYS = ('device', 'id', 'kp', 'kd', 'closed_deg', 'open_deg')
 
 
-def parse_arguments():
+def _mapping(path, document, label):
+    if not isinstance(document, dict):
+        raise ValueError(f'{path}: {label}须为映射')
+    return document
+
+
+def _flatten(document, prefix=''):
+    result = {}
+    for key, value in document.items():
+        name = f'{prefix}.{key}' if prefix else key
+        if isinstance(value, dict):
+            result.update(_flatten(value, name))
+        else:
+            result[name] = value
+    return result
+
+
+def _read_config_values(path):
+    """读取 --config 及其 advanced_config 引用，按叶键合并；只用于提取中性键。"""
+    path = Path(path).resolve()
+    document = _mapping(path, yaml.safe_load(path.read_text()), '配置')
+    reference = document.pop('advanced_config', None)
+    basic = _flatten(document)
+    if reference is None:
+        return basic
+    if not isinstance(reference, str) or not reference.strip():
+        raise ValueError('advanced_config 须为非空路径')
+    advanced_path = Path(reference)
+    if not advanced_path.is_absolute():
+        advanced_path = path.parent / advanced_path
+    advanced = _flatten(_mapping(advanced_path, yaml.safe_load(advanced_path.read_text()), '高级配置'))
+    repeated = basic.keys() & advanced.keys()
+    if repeated:
+        raise ValueError(f'配置字段在两个文件中重复：{sorted(repeated)}')
+    basic.update(advanced)
+    return basic
+
+
+def load_manual_config(path):
+    """只取 damiao.device 与 gripper.*；其它顶层段忽略。"""
+    values = _read_config_values(path)
+    damiao_keys = {key for key in values if key == 'damiao' or key.startswith('damiao.')}
+    gripper_keys = {key for key in values if key == 'gripper' or key.startswith('gripper.')}
+    unknown_damiao = damiao_keys - {'damiao.device'}
+    if unknown_damiao:
+        raise ValueError(f'damiao 含未知键：{sorted(unknown_damiao)}')
+    unknown_gripper = gripper_keys - {f'gripper.{name}' for name in _GRIPPER_KEYS}
+    if unknown_gripper:
+        raise ValueError(f'gripper 含未知键：{sorted(unknown_gripper)}')
+    config = {
+        'damiao_device': values.get('damiao.device'),
+        'gripper_device': values.get('gripper.device') or '',
+        'gripper_id': values.get('gripper.id', 0),
+        'kp': values.get('gripper.kp'),
+        'kd': values.get('gripper.kd'),
+        'closed_deg': values.get('gripper.closed_deg'),
+        'open_deg': values.get('gripper.open_deg'),
+    }
+    if config['damiao_device'] is not None and not isinstance(config['damiao_device'], str):
+        raise ValueError('damiao.device 须为字符串')
+    if not isinstance(config['gripper_device'], str):
+        raise ValueError('gripper.device 须为字符串')
+    if type(config['gripper_id']) is bool or not isinstance(config['gripper_id'], int):
+        raise ValueError('gripper.id 须为整数')
+    if not 0 <= config['gripper_id'] <= 14:
+        raise ValueError('gripper.id 须在 0 到 14 之间')
+    for name in ('kp', 'kd', 'closed_deg', 'open_deg'):
+        value = config[name]
+        if value is None:
+            continue
+        if type(value) is bool or not isinstance(value, (int, float)):
+            raise ValueError(f'gripper.{name} 须为数值或留空')
+        config[name] = float(value)
+    if config['gripper_device']:
+        missing = [name for name, value in (
+            ('kp', config['kp']), ('kd', config['kd']),
+            ('closed_deg', config['closed_deg']), ('open_deg', config['open_deg']),
+        ) if value is None]
+        if missing:
+            raise ValueError('配置了 gripper.device 时必须提供 gripper.' + '、gripper.'.join(missing))
+    return config
+
+
+def parse_arguments(argv=None):
     parser = argparse.ArgumentParser(description='独立手动控制：网页上位机 + 达妙 USB-CAN 0x17F。')
-    parser.add_argument('--device', default=DEFAULT_DEVICE, help='达妙 USB-CAN 设备路径')
+    parser.add_argument('--config', required=True,
+                        help='rescue.yaml 或等价文件；只读 damiao.device 与 gripper.*')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT,
                         help=f'HTTP 端口，只绑定 {BIND_ADDRESS}；0 由系统分配')
     parser.add_argument('--rate-hz', type=float, default=DEFAULT_RATE_HZ, help='0x17F 发送频率')
@@ -38,12 +124,7 @@ def parse_arguments():
                         help=f'按住指令租约，(0, {MAX_LEASE_S}] 秒')
     parser.add_argument('--arm-zero-s', type=float, default=DEFAULT_ARM_ZERO_S,
                         help=f'从 valid=0 起步前的使能零速时长，(0, {MAX_ARM_ZERO_S}] 秒；需实车确认')
-    parser.add_argument('--servo-device', default='',
-                        help=f'S288 串口。当前板端适配器是 {BOARD_SERVO_DEVICE} ；留空则只控底盘')
-    parser.add_argument('--servo-id', type=int, default=0, help='S288 ID，默认 0')
-    parser.add_argument('--servo-kp', type=float, default=1.0, help='输出位置刚度，默认 1')
-    parser.add_argument('--servo-kd', type=float, default=0.05, help='输出速度刚度，默认 0.05')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not 0 <= args.port <= 65535:
         parser.error('端口须在 0..65535')
     if not 10.0 <= args.rate_hz <= 1000.0:
@@ -52,6 +133,13 @@ def parse_arguments():
         parser.error(f'租约须在 (0, {MAX_LEASE_S}] 秒')
     if not 0.0 < args.arm_zero_s <= MAX_ARM_ZERO_S:
         parser.error(f'使能零速须在 (0, {MAX_ARM_ZERO_S}] 秒')
+    try:
+        config = load_manual_config(args.config)
+    except (OSError, ValueError, yaml.YAMLError) as error:
+        parser.error(str(error))
+    if not config['damiao_device']:
+        parser.error('--config 必须提供 damiao.device')
+    args.manual_config = config
     return args
 
 
@@ -90,26 +178,31 @@ class Sender:
         self.last = frame
 
 
-def main():
-    args = parse_arguments()
+def main(argv=None):
+    args = parse_arguments(argv)
+    config = args.manual_config
     command = ManualCommand(args.lease_s, args.arm_zero_s)
     try:
-        link = DamiaoLink(args.device)
+        link = DamiaoLink(config['damiao_device'])
     except OSError as error:
         print(f'USB-CAN 不可用：{error}。请确认 bridge 已停止且设备可访问。', file=sys.stderr)
         return 1
-    servo = ServoSession(args.servo_device, args.servo_id, args.servo_kp, args.servo_kd)
-    if args.servo_device and not servo.available:
+    kp = 0.0 if config['kp'] is None else config['kp']
+    kd = 0.0 if config['kd'] is None else config['kd']
+    servo = ServoSession(
+        config['gripper_device'], config['gripper_id'], kp, kd,
+        config['closed_deg'], config['open_deg'])
+    if config['gripper_device'] and not servo.available:
         print(f'舵机未打开：{servo.message}。底盘控制仍可使用。', file=sys.stderr)
     sender = Sender(link, command, args.rate_hz)
     server = ManualServer(args.port, command, lambda: {
-        'device': args.device, 'frames': sender.frames, 'last_frame': list(sender.last)}, servo)
+        'device': config['damiao_device'], 'frames': sender.frames, 'last_frame': list(sender.last)}, servo)
     stop_event = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_: stop_event.set())
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print(f'manual control listening http://{BIND_ADDRESS}:{server.server_address[1]}/ '
-          f'device={args.device}', flush=True)
+          f'device={config["damiao_device"]}', flush=True)
     code = 0
     try:
         sender.run(stop_event)

@@ -301,7 +301,7 @@ def main():
     original = cfg.load_configuration(args.config, 'all')
     values = copy.deepcopy(original['values'])
     require(values['vision.detect.publish_timing'], '生产配置未开启耗时消息，不能伪造分段数据')
-    overrides = {'bridge.transport': 'socketcan', 'bridge.serial_device': '', 'bridge.can_bitrate': 0,
+    overrides = {'bridge.transport': 'socketcan', 'damiao.device': '', 'bridge.can_bitrate': 0,
                  'bridge.can_interface': 'vcan0',
                  'vision.detect.active_task': 'seg',
                  'vision.stream.stream_address': '127.0.0.1'}

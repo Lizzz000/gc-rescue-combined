@@ -10,6 +10,7 @@ import signal
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -18,6 +19,13 @@ import urllib.request
 
 PROGRAM = Path(__file__).resolve().parents[1] / 'manual_control.py'
 PACKET = 30
+
+
+def write_config(folder, device):
+    path = Path(folder) / 'manual.yaml'
+    path.write_text(f'damiao:\n  device: {device}\n')
+    return path
+
 
 
 def decode(wire):
@@ -39,16 +47,19 @@ class ManualControlTest(unittest.TestCase):
         self.device = os.ttyname(self.slave)
         self.wire, self.buffer = [], bytearray()
         self.reading = True
+        self.temp = tempfile.TemporaryDirectory()
+        self.config = write_config(self.temp.name, self.device)
 
     def tearDown(self):
         self.reading = False
         time.sleep(0.05)
         os.close(self.slave)
         os.close(self.master)
+        self.temp.cleanup()
 
     def start(self):
         self.process = subprocess.Popen(
-            [sys.executable, str(PROGRAM), '--device', self.device, '--port', '0'],
+            [sys.executable, str(PROGRAM), '--config', str(self.config), '--port', '0'],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         threading.Thread(target=self.read, daemon=True).start()
         line = self.process.stdout.readline()
@@ -123,7 +134,7 @@ class ManualControlTest(unittest.TestCase):
 
     def test_busy_device_is_not_written(self):
         fcntl.flock(self.slave, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        process = subprocess.run([sys.executable, str(PROGRAM), '--device', self.device, '--port', '0'],
+        process = subprocess.run([sys.executable, str(PROGRAM), '--config', str(self.config), '--port', '0'],
                                  capture_output=True, text=True, timeout=5)
         self.assertNotEqual(process.returncode, 0)
         self.assertIn('USB-CAN', process.stderr)
