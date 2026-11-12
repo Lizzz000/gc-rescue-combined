@@ -85,8 +85,8 @@ void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len)
             ++jetson_data.mission_loss_sequence;
         }
         break;
-    case 0x181U:
-    case 0x182U:
+    case JETSON_CAN_TARGET_CENTER_ID:
+    case JETSON_CAN_SAFETY_CENTER_ID:
     {
         Jetson_CAN_Center_t center = {0};
         center.received_ms = now_ms;
@@ -99,13 +99,13 @@ void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len)
             center.source_frame = (uint32_t)data[5] | ((uint32_t)data[6] << 8U) |
                                   ((uint32_t)data[7] << 16U);
         }
-        if (id == 0x181U)
+        if (id == JETSON_CAN_TARGET_CENTER_ID)
             jetson_data.target = center;
         else
             jetson_data.safety = center;
         break;
     }
-    case 0x190U:
+    case JETSON_CAN_ARRIVAL_REPLY_ID:
     {
         Jetson_CAN_Arrival_Ack_t reply = {0};
         reply.received_ms = now_ms;
@@ -118,7 +118,7 @@ void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len)
         jetson_data.arrival_ack = reply;
         break;
     }
-    case 0x191U:
+    case JETSON_CAN_ROI_REPLY_ID:
     {
         Jetson_CAN_ROI_Reply_t reply = {0};
         reply.received_ms = now_ms;
@@ -135,7 +135,7 @@ void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len)
         jetson_data.roi_reply = reply;
         break;
     }
-    case 0x192U:
+    case JETSON_CAN_COMMAND_REPLY_ID:
     {
         Jetson_CAN_Command_Reply_t reply = {0};
         reply.received_ms = now_ms;
@@ -159,7 +159,7 @@ void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len)
             jetson_data.command_reply = reply;
         break;
     }
-    case 0x193U:
+    case JETSON_CAN_TURN_REQUEST_ID:
     {
         Jetson_CAN_Turn_Request_t request = {0};
         request.received_ms = now_ms;

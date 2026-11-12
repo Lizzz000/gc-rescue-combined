@@ -14,8 +14,8 @@
 void can_filter_init(void)
 {
     static const uint16_t ids[][4] = {
-        {0x000U, JETSON_CAN_HEARTBEAT_ID, 0x181U, 0x182U},
-        {0x190U, 0x191U, 0x192U, 0x193U},
+        {0x000U, JETSON_CAN_HEARTBEAT_ID, JETSON_CAN_TARGET_CENTER_ID, JETSON_CAN_SAFETY_CENTER_ID},
+        {JETSON_CAN_ARRIVAL_REPLY_ID, JETSON_CAN_ROI_REPLY_ID, JETSON_CAN_COMMAND_REPLY_ID, JETSON_CAN_TURN_REQUEST_ID},
         {MANUAL_CAN_VELOCITY_ID, MANUAL_CAN_VELOCITY_ID, MANUAL_CAN_VELOCITY_ID, MANUAL_CAN_VELOCITY_ID},
     };
     CAN_FilterTypeDef filter = {0};
@@ -72,12 +72,12 @@ static uint8_t Is_Jetson_Frame(uint32_t id)
     switch (id)
     {
     case JETSON_CAN_HEARTBEAT_ID:
-    case 0x181U:
-    case 0x182U:
-    case 0x190U:
-    case 0x191U:
-    case 0x192U:
-    case 0x193U:
+    case JETSON_CAN_TARGET_CENTER_ID:
+    case JETSON_CAN_SAFETY_CENTER_ID:
+    case JETSON_CAN_ARRIVAL_REPLY_ID:
+    case JETSON_CAN_ROI_REPLY_ID:
+    case JETSON_CAN_COMMAND_REPLY_ID:
+    case JETSON_CAN_TURN_REQUEST_ID:
         return 1U;
     default:
         return 0U;

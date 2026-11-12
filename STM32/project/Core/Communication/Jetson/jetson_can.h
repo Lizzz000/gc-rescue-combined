@@ -8,6 +8,12 @@
  * received_ms 使用现有 1 kHz FreeRTOS 时基，不是总线事务编号。
  */
 #define JETSON_CAN_HEARTBEAT_ID           0x180U
+#define JETSON_CAN_TARGET_CENTER_ID       0x181U
+#define JETSON_CAN_SAFETY_CENTER_ID       0x182U
+#define JETSON_CAN_ARRIVAL_REPLY_ID       0x190U
+#define JETSON_CAN_ROI_REPLY_ID           0x191U
+#define JETSON_CAN_COMMAND_REPLY_ID       0x192U
+#define JETSON_CAN_TURN_REQUEST_ID        0x193U
 #define JETSON_CAN_VELOCITY_DLC           7U
 #define JETSON_CAN_ARRIVAL_ID             0x200U
 #define JETSON_CAN_TURN_COMPLETED_ID      0x203U

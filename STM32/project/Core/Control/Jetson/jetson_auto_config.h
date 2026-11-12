@@ -1,7 +1,7 @@
 #ifndef JETSON_AUTO_CONFIG_H
 #define JETSON_AUTO_CONFIG_H
 
-/* 标定后改为 1，上电自动搬运；0 保留 0x180 联调与舵机标定。 */
+/* 标定后改为 1，上电自动搬运；0 为 0x17F 手动遥控固件（含舵机标定）。 */
 #ifndef JETSON_AUTO_ENABLED
 #define JETSON_AUTO_ENABLED 0
 #endif
@@ -24,7 +24,7 @@
 #define JETSON_AUTO_TARGET_Y 0.7500f
 #define JETSON_AUTO_TARGET_TOL_X 0.0100f
 #define JETSON_AUTO_TARGET_TOL_Y 0.0100f
-/* 安全区设定点：Jetson 0x182 改为内沿中心后基准偏移，当前为占位值，需板端标定。 */
+/* 安全区设定点：0x182 为安全区透视中心，当前为占位值，需板端标定。 */
 #define JETSON_AUTO_SAFETY_X 0.5000f
 #define JETSON_AUTO_SAFETY_Y 0.7500f
 #define JETSON_AUTO_SAFETY_TOL_X 0.0100f
@@ -57,8 +57,9 @@
 
 /* 正常视觉入窗后的停车确认期限，ms；不改变故障制动期限或停稳轮速门限。 */
 #define JETSON_AUTO_VISION_STOP_TIMEOUT_MS 1000U
-/* 停稳后的核验等待：Jetson 源帧龄上限 250 ms，另留 20 ms 链路余量。 */
-#define JETSON_AUTO_VERIFY_WAIT_MS (250U + 20U)
+/* 停稳后的核验等待 = 中心接收期限 + 发送及计时余量，单位 ms。 */
+#define JETSON_AUTO_VERIFY_MARGIN_MS 20U
+#define JETSON_AUTO_VERIFY_WAIT_MS (JETSON_AUTO_LINK_TIMEOUT_MS + JETSON_AUTO_VERIFY_MARGIN_MS)
 
 /* 检查后退与拒绝恢复仍使用定距；速度和距离留待实车标定。 */
 #define JETSON_AUTO_DISTANCE_SPEED_MPS 0.50f
