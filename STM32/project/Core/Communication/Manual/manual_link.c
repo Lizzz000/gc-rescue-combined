@@ -1,5 +1,5 @@
-#include "manual_can.h"
-#include "jetson_can.h"
+#include "manual_link.h"
+#include "jetson_link.h"
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -14,7 +14,7 @@ void Manual_CAN_Init(void)
     taskEXIT_CRITICAL();
 }
 
-/** @brief 解析 0x17F 并整体替换快照；输入约束见头文件。 */
+/** @brief 解析类型 2 并整体替换快照；输入约束见头文件。 */
 void Manual_CAN_Receive(const uint8_t *data, uint8_t len)
 {
     Jetson_CAN_Velocity_Frame_t frame;

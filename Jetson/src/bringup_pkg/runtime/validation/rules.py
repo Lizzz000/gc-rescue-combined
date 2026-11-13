@@ -72,32 +72,9 @@ def _validate_timeouts(values):
 
 
 def _validate_bridge(values):
-    """只校验所选通信资源；不打开串口、不探测设备，也不配置系统 CAN 网口。"""
-    transport = values['bridge.transport']
-    if transport == 'socketcan':
-        interface = values['bridge.can_interface']
-        if (not interface or interface in ('.', '..') or len(interface.encode()) >= 16 or
-                any(char in interface for char in ' /:\t\r\n\f\v\0')):
-            raise ConfigurationError('bridge.can_interface: invalid Linux interface name')
-        if values['damiao.device'] != '':
-            raise ConfigurationError('damiao.device: must be empty for socketcan')
-        if values['bridge.can_bitrate'] != 0:
-            raise ConfigurationError('bridge.can_bitrate: must be 0 for socketcan; bitrate is managed by the system')
-        return
-    if transport == 'cdc':
-        _validate_device_path('link.device', values['link.device'], allow_empty=False)
-        return
-    if transport != 'damiao_serial_fixed':
-        raise ConfigurationError('bridge.transport: expected cdc, socketcan or damiao_serial_fixed')
+    """校验 USB 设备路径；配置检查不打开设备。"""
     # Linux 设备名在 Windows 离线检查时也按 POSIX 解析，保留 by-id 符号链接原文。
-    # 不按配置目录展开，也不接受用 .. 离开 /dev；实际设备存在性由后端打开时确认。
-    _validate_device_path('damiao.device', values['damiao.device'], allow_empty=False)
-    # 原厂可选码率；fixed仅记录预期值，必须在启动前核对模块与STM32实际设置。
-    # CAN封装的USB侧固定921600，与独立UART调试的CDC速率分开维护。
-    if values['bridge.can_bitrate'] not in (1000000, 800000, 666000, 500000, 400000,
-                                           250000, 200000, 125000, 100000, 80000,
-                                           50000, 40000, 20000, 10000, 5000):
-        raise ConfigurationError('bridge.can_bitrate: unsupported Damiao CAN bitrate; select an explicit supported rate')
+    _validate_device_path('link.device', values['link.device'], allow_empty=False)
 
 def _validate_device_path(name, device, allow_empty):
     if allow_empty and device == '':

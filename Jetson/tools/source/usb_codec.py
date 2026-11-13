@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
 # Copyright 2026 li
 # SPDX-License-Identifier: Apache-2.0
-"""离线核对 CAN 载荷。只转换文本，不打开 CAN 接口。"""
+"""离线核对 USB 报文。文本形如 T01#HEX，数字是类型号，不是电机总线编号。不打开设备。"""
 import argparse
 import json
 import math
 import struct
 
-# 坐标和速度缩放保持原协议；0x180 为 DLC 8：data[0..6] 仍为 valid + vx/vy/wz，data[7] 为 pause（0/1）。
-# 0x17F 不在本工具中编码，避免与自动心跳的 DLC 8 共用路径。
-# 任务采用显式握手，不接受旧 0x201/0x202。
-IDS = {'velocity': 0x180, 'target': 0x181, 'safety': 0x182,
-       'arrival_ack': 0x190, 'roi_reply': 0x191, 'command_reply': 0x192,
-       'turn_to_safety': 0x193, 'arrival': 0x200,
-       'turn_completed': 0x203, 'safety_arrived': 0x204, 'start_search': 0x205,
-       'delivery_completed': 0x206, 'arrival_point': 0x208}
-LENGTHS = {0x180: 8, 0x181: 8, 0x182: 8, 0x190: 1, 0x191: 3,
-           0x192: 6, 0x193: 6, 0x200: 1, 0x203: 5, 0x204: 5, 0x205: 1, 0x206: 5, 0x208: 1}
+# 类型号与 bridge_pkg/protocol/usb_protocol.hpp 一致。失联是类型 1、alive=0 的 8 字节。
+IDS = {'heartbeat': 1, 'manual': 2, 'target': 3, 'safety': 4,
+       'arrival_ack': 5, 'roi_reply': 6, 'command_reply': 7,
+       'turn_to_safety': 8, 'arrival': 16,
+       'turn_completed': 17, 'safety_arrived': 18, 'start_search': 19,
+       'delivery_completed': 20, 'arrival_point': 21}
+LENGTHS = {1: 8, 2: 7, 3: 8, 4: 8, 5: 1, 6: 3,
+           7: 6, 8: 6, 16: 1, 17: 5, 18: 5, 19: 1, 20: 5, 21: 1}
 COMMANDS = {'turn_completed': 1, 'safety_arrived': 2, 'start_search': 3,
             'delivery_completed': 4, 'arrival_point': 5}
+KINDS = {value: name for name, value in IDS.items()}
 
 
 def route_token(value: str) -> int:
@@ -47,21 +46,27 @@ def fixed_point(value: float, scale: float) -> int:
     return int(rounded)
 
 
+def frame_text(msg_type: int, data: bytes) -> str:
+    return f'T{msg_type:02d}#{data.hex().upper()}'
+
+
 def encode(kind: str, values: list[str], invalid: bool = False) -> str:
     if kind == 'mission_loss':
         if values or invalid:
-            raise ValueError('mission_loss is an empty 0x180 and cannot use values or --invalid')
-        return '180#'
+            raise ValueError('mission_loss is type 1 with alive=0 and cannot use values or --invalid')
+        return frame_text(IDS['heartbeat'], bytes(8))
     if kind not in IDS:
         raise ValueError('unknown frame kind')
     identifier = IDS[kind]
-    if kind in ('target', 'safety', 'velocity'):
-        count = 3 if kind == 'velocity' else 2
-        if kind == 'velocity' and len(values) not in (3, 4):
-            raise ValueError('velocity needs vx, vy, yaw_rate and optionally pause')
-        if kind != 'velocity' and len(values) != count and not (count == 2 and len(values) == 3):
-            raise ValueError(f'{kind} needs {count} values and optionally a source frame for coordinates')
-        source_frame = int(values[2]) if count == 2 and len(values) == 3 else 0
+    if kind in ('target', 'safety', 'heartbeat', 'manual'):
+        count = 2 if kind in ('target', 'safety') else 3
+        if kind == 'heartbeat' and len(values) not in (3, 4):
+            raise ValueError('heartbeat needs vx, vy, yaw_rate and optionally pause')
+        if kind == 'manual' and len(values) != 3:
+            raise ValueError('manual needs vx, vy, yaw_rate')
+        if kind in ('target', 'safety') and len(values) != count and not (len(values) == 3):
+            raise ValueError(f'{kind} needs {count} values and optionally a source frame')
+        source_frame = int(values[2]) if kind in ('target', 'safety') and len(values) == 3 else 0
         if source_frame < 0 or source_frame > 0xffffff:
             raise ValueError('source frame must fit in 24 bits')
         numbers = [float(value) for value in values[:count]]
@@ -70,14 +75,16 @@ def encode(kind: str, values: list[str], invalid: bool = False) -> str:
         except ValueError:
             invalid = True
             quantized = [0] * count
-        if kind == 'velocity':
-            data = bytes(7) if invalid else struct.pack('<Bhhh', 1, *quantized)
+        if kind == 'heartbeat':
             pause = 0
             if len(values) == 4:
                 pause = int(values[3])
                 if pause not in (0, 1):
-                    raise ValueError('0x180 pause must be 0 or 1')
-            data += bytes([pause])
+                    raise ValueError('heartbeat pause must be 0 or 1')
+            # alive=0 时速度必须为 0。--invalid 表示失联，不是把 pause 挪到末字节。
+            data = bytes([0, pause]) + bytes(6) if invalid else struct.pack('<BBhhh', 1, pause, *quantized)
+        elif kind == 'manual':
+            data = bytes(LENGTHS[identifier]) if invalid else struct.pack('<Bhhh', 1, *quantized)
         else:
             data = bytes(LENGTHS[identifier]) if invalid else struct.pack('<B' + 'h' * count, 1, *quantized)
             if not invalid:
@@ -114,52 +121,58 @@ def encode(kind: str, values: list[str], invalid: bool = False) -> str:
             raise ValueError('roi_reply needs left, right or rejected')
         destination = {'left': 1, 'right': 2, 'rejected': 0}[values[0]]
         data = bytes(3) if invalid else bytes([1, int(destination != 0), destination])
-    return f'{identifier:03X}#{data.hex().upper()}'
+    return frame_text(identifier, data)
 
 
 def decode(text: str) -> dict:
     try:
-        identifier_text, payload = text.strip().split('#')
-        identifier = int(identifier_text, 16)
+        type_text, payload = text.strip().split('#')
+        if not type_text.startswith('T') or not type_text[1:].isdigit():
+            raise ValueError
+        identifier = int(type_text[1:])
         data = bytes.fromhex(payload)
     except (ValueError, TypeError) as error:
-        raise ValueError('expected ID#HEX, for example 181#0188134C1D010000') from error
-    # 0x180 空载荷是任务失联，不是 pause，也不能当成 DLC 8。
-    if identifier == 0x180 and len(data) == 0:
-        return {'id': '0x180', 'dlc': 0, 'kind': 'velocity', 'lost': True}
+        raise ValueError('expected T01#HEX; the number is a USB type') from error
     if identifier not in LENGTHS or len(data) != LENGTHS[identifier]:
-        raise ValueError('unknown standard ID or incorrect DLC')
-    result = {'id': f'0x{identifier:03X}', 'dlc': len(data),
-              'kind': next(name for name, value in IDS.items() if value == identifier)}
-    if identifier == 0x208:
+        raise ValueError('unknown USB type or incorrect length')
+    result = {'type': identifier, 'length': len(data), 'kind': KINDS[identifier]}
+    if identifier == IDS['arrival_point']:
         if data[0] not in (1, 2):
-            raise ValueError('0x208 kind must be 1 or 2')
+            raise ValueError('arrival point must be 1 or 2')
         result['point'] = data[0]
+        return result
+    if identifier == IDS['heartbeat']:
+        if data[0] not in (0, 1) or data[1] not in (0, 1):
+            raise ValueError('heartbeat alive and pause must be 0 or 1')
+        vx, vy, wz = struct.unpack('<hhh', data[2:8])
+        if data[0] == 0 and (vx or vy or wz):
+            raise ValueError('lost heartbeat must have zero speeds')
+        result.update(alive=bool(data[0]), lost=data[0] == 0, pause=data[1],
+                      vx=vx / 1000, vy=vy / 1000, yaw_rate=wz / 1000)
+        return result
+    if identifier == IDS['manual']:
+        if data[0] not in (0, 1):
+            raise ValueError('manual valid byte must be 0 or 1')
+        vx, vy, wz = struct.unpack('<hhh', data[1:7])
+        result.update(valid=bool(data[0]), vx=vx / 1000, vy=vy / 1000, yaw_rate=wz / 1000)
+        if not data[0] and any(data[1:]):
+            result['warning'] = 'invalid frame has nonzero payload; ignore its values'
         return result
     if data[0] not in (0, 1):
         raise ValueError('first byte must be 0 or 1')
-    if identifier in (0x180, 0x181, 0x182):
-        names = ('vx', 'vy', 'yaw_rate') if identifier == 0x180 else ('x', 'y')
+    if identifier in (IDS['target'], IDS['safety']):
         result['valid'] = bool(data[0])
-        scale = 1000 if identifier == 0x180 else 10000
-        result.update(zip(names, [value / scale for value in struct.unpack('<' + 'h' * len(names), data[1:1 + 2 * len(names)])]))
-        if identifier == 0x180:
-            if data[7] not in (0, 1):
-                raise ValueError('0x180 pause must be 0 or 1')
-            result['pause'] = data[7]
-            if not data[0] and any(data[1:7]):
-                result['warning'] = 'invalid frame has nonzero payload; ignore its values'
-        else:
-            result['source_frame'] = int.from_bytes(data[5:8], 'little')
-            if not data[0] and any(data[1:]):
-                result['warning'] = 'invalid frame has nonzero payload; ignore its values'
-    elif identifier == 0x190:
+        result.update(zip(('x', 'y'), [value / 10000 for value in struct.unpack('<hh', data[1:5])]))
+        result['source_frame'] = int.from_bytes(data[5:8], 'little')
+        if not data[0] and any(data[1:]):
+            result['warning'] = 'invalid frame has nonzero payload; ignore its values'
+    elif identifier == IDS['arrival_ack']:
         result['accepted'] = bool(data[0])
-    elif identifier in (0x200, 0x205):
+    elif identifier in (IDS['arrival'], IDS['start_search']):
         if data != b'\x01':
             raise ValueError('command byte must be 1')
         result['request'] = True
-    elif identifier == 0x192:
+    elif identifier == IDS['command_reply']:
         if data[1] not in COMMANDS.values():
             raise ValueError('unknown mission command')
         result['accepted'] = bool(data[0])
@@ -167,12 +180,12 @@ def decode(text: str) -> dict:
         result['token'] = struct.unpack('<I', data[2:])[0]
         if data[1] in (COMMANDS['start_search'], COMMANDS['arrival_point']) and result['token'] != 0:
             raise ValueError('start_search and arrival_point reply token must be zero')
-    elif identifier == 0x193:
+    elif identifier == IDS['turn_to_safety']:
         if data[0] != 1 or data[1] not in (1, 2):
             raise ValueError('invalid turn instruction')
         result.update(request=True, destination=('none', 'left', 'right')[data[1]],
                       token=struct.unpack('<I', data[2:])[0])
-    elif identifier in (0x203, 0x204, 0x206):
+    elif identifier in (IDS['turn_completed'], IDS['safety_arrived'], IDS['delivery_completed']):
         if data[0] != 1:
             raise ValueError('physical command byte must be 1')
         result.update(request=True, token=struct.unpack('<I', data[1:])[0])
@@ -188,10 +201,10 @@ def decode(text: str) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
-    read = commands.add_parser('decode', help='decode ID#HEX text')
+    read = commands.add_parser('decode', help='decode T01#HEX text')
     read.add_argument('frame')
     write = commands.add_parser('encode', help='print a frame without sending it')
-    write.add_argument('kind', choices=IDS)
+    write.add_argument('kind', choices=[*IDS, 'mission_loss'])
     write.add_argument('values', nargs='*')
     write.add_argument('--invalid', action='store_true')
     args = parser.parse_args()

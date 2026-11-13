@@ -28,7 +28,7 @@ void testCanTxQueue()
   std::uint64_t drops = 0;
   auto front = merged.front(t0 + std::chrono::milliseconds(19), timeout, drops);
   CHECK(front && *front == CanProtocol::TARGET_ID && drops == 0);
-  // 队首按第一次入队的 t0 计算，恰好 20 ms 就淘汰。后面的 0x180 只过了 15 ms，还留在队里。
+  // 队首按第一次入队的 t0 计算，恰好 20 ms 就淘汰。后面的心跳只过了 15 ms，还留在队里。
   front = merged.front(t0 + timeout, timeout, drops);
   CHECK(front && *front == CanProtocol::VELOCITY_ID && drops == 1 && merged.size() == 1);
   front = merged.front(t0 + timeout, timeout, drops);
@@ -44,7 +44,7 @@ void testCanTxQueue()
   CHECK(full.size() == CanTxQueue::capacity);
   bool threw = false;
   try {
-    full.queue(0x194, t0);
+    full.queue(9, t0);
   } catch (const std::logic_error &) {
     threw = true;
   }

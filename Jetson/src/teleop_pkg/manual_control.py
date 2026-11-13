@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""独立手动控制程序：独占 STM32 的 USB CDC，以固定频率发送 0x17F，网页经 HTTP 下发速度。
+"""独立手动控制程序：独占 STM32 的 USB 设备，以固定频率发送类型 2，网页经 HTTP 下发速度。
 
 舵机转角只走本程序自己的 S288 串口，不经过 CAN，也不参与自动搬运。
 不启动 ROS，必须先停止 bridge（两者以 flock + TIOCEXCL 互斥）。STM32 须运行手动固件。
@@ -19,7 +19,7 @@ import yaml
 
 from manual.command import (
     DEFAULT_ARM_ZERO_S, MAX_ARM_ZERO_S, MAX_LEASE_S, STOP_ZERO_S, ManualCommand)
-from manual.link import DamiaoLink, LinkError, manual_packet
+from manual.link import CdcLink, LinkError, manual_packet
 from servo.s288 import ServoSession
 from web.server import BIND_ADDRESS, ManualServer
 
@@ -80,7 +80,7 @@ def load_manual_config(path):
     if unknown_gripper:
         raise ValueError(f'gripper 含未知键：{sorted(unknown_gripper)}')
     config = {
-        'damiao_device': values.get('link.device'),
+        'link_device': values.get('link.device'),
         'gripper_device': values.get('gripper.device') or '',
         'gripper_id': values.get('gripper.id', 0),
         'kp': values.get('gripper.kp'),
@@ -88,7 +88,7 @@ def load_manual_config(path):
         'closed_deg': values.get('gripper.closed_deg'),
         'open_deg': values.get('gripper.open_deg'),
     }
-    if config['damiao_device'] is not None and not isinstance(config['damiao_device'], str):
+    if config['link_device'] is not None and not isinstance(config['link_device'], str):
         raise ValueError('link.device 须为字符串')
     if not isinstance(config['gripper_device'], str):
         raise ValueError('gripper.device 须为字符串')
@@ -114,12 +114,12 @@ def load_manual_config(path):
 
 
 def parse_arguments(argv=None):
-    parser = argparse.ArgumentParser(description='独立手动控制：网页上位机经 USB 发送 0x17F。')
+    parser = argparse.ArgumentParser(description='独立手动控制：网页上位机经 USB 发送类型 2。')
     parser.add_argument('--config', required=True,
                         help='rescue.yaml 或等价文件；只读 link.device 与 gripper.*')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT,
                         help=f'HTTP 端口，只绑定 {BIND_ADDRESS}；0 由系统分配')
-    parser.add_argument('--rate-hz', type=float, default=DEFAULT_RATE_HZ, help='0x17F 发送频率')
+    parser.add_argument('--rate-hz', type=float, default=DEFAULT_RATE_HZ, help='类型 2 发送频率')
     parser.add_argument('--lease-s', type=float, default=MAX_LEASE_S,
                         help=f'按住指令租约，(0, {MAX_LEASE_S}] 秒')
     parser.add_argument('--arm-zero-s', type=float, default=DEFAULT_ARM_ZERO_S,
@@ -137,14 +137,14 @@ def parse_arguments(argv=None):
         config = load_manual_config(args.config)
     except (OSError, ValueError, yaml.YAMLError) as error:
         parser.error(str(error))
-    if not config['damiao_device']:
+    if not config['link_device']:
         parser.error('--config 必须提供 link.device')
     args.manual_config = config
     return args
 
 
 class Sender:
-    """固定周期把指令状态编码成 0x17F 写入链路；单线程独占写。"""
+    """固定周期把指令状态编码成类型 2 写入链路；单线程独占写。"""
 
     def __init__(self, link, command, rate_hz):
         self._link = link
@@ -183,9 +183,9 @@ def main(argv=None):
     config = args.manual_config
     command = ManualCommand(args.lease_s, args.arm_zero_s)
     try:
-        link = DamiaoLink(config['damiao_device'])
+        link = CdcLink(config['link_device'])
     except OSError as error:
-        print(f'USB-CAN 不可用：{error}。请确认 bridge 已停止且设备可访问。', file=sys.stderr)
+        print(f'USB 设备不可用：{error}。请确认 bridge 已停止且 link.device 可访问。', file=sys.stderr)
         return 1
     kp = 0.0 if config['kp'] is None else config['kp']
     kd = 0.0 if config['kd'] is None else config['kd']
@@ -196,18 +196,18 @@ def main(argv=None):
         print(f'舵机未打开：{servo.message}。底盘控制仍可使用。', file=sys.stderr)
     sender = Sender(link, command, args.rate_hz)
     server = ManualServer(args.port, command, lambda: {
-        'device': config['damiao_device'], 'frames': sender.frames, 'last_frame': list(sender.last)}, servo)
+        'device': config['link_device'], 'frames': sender.frames, 'last_frame': list(sender.last)}, servo)
     stop_event = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_: stop_event.set())
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print(f'manual control listening http://{BIND_ADDRESS}:{server.server_address[1]}/ '
-          f'device={config["damiao_device"]}', flush=True)
+          f'device={config["link_device"]}', flush=True)
     code = 0
     try:
         sender.run(stop_event)
     except LinkError as error:
-        print(f'{error}；请重新插拔适配器后再试。', file=sys.stderr)
+        print(f'{error}；请确认 link.device 可访问后再试。', file=sys.stderr)
         code = 1
     finally:
         # 先发停车序列再关 HTTP，避免 serve_forever 退出等待造成发送间隙。

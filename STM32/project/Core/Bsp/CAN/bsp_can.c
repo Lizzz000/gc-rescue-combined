@@ -5,10 +5,10 @@
  */
 #include "bsp_can.h"
 #include "dm_motor.h"
-#include "jetson_can.h"
+#include "jetson_link.h"
 #include "usb_link.h"
 
-/** @brief 只筛选电机反馈。板间帧改走 USB，不再和电机共用这组过滤器。
+/** @brief 只筛选电机反馈 0x000。板间帧走 USB，不进入这组过滤器。
  * @return 无；滤波配置失败时不启动 CAN1。
  */
 void can_filter_init(void)
@@ -40,13 +40,13 @@ void can_filter_init(void)
 }
 
 /** @brief 把一条上行帧交给 USB。忙或尚未枚举返回 HAL_BUSY，不占用电机邮箱。 */
-HAL_StatusTypeDef Jetson_CAN_Try_Send_Uplink(uint16_t id, uint32_t argument)
+HAL_StatusTypeDef Jetson_CAN_Try_Send_Uplink(uint16_t type, uint32_t argument)
 {
     uint8_t data[8];
-    const uint8_t length = Jetson_CAN_Encode_Uplink(id, argument, data);
+    const uint8_t length = Jetson_CAN_Encode_Uplink(type, argument, data);
     if (length == 0U)
         return HAL_ERROR;
-    const int sent = Jetson_Link_Send(id, data, length);
+    const int sent = Jetson_Link_Send((uint8_t)type, data, length);
     if (sent == 0)
         return HAL_OK;
     if (sent == 1)
@@ -57,7 +57,7 @@ HAL_StatusTypeDef Jetson_CAN_Try_Send_Uplink(uint16_t id, uint32_t argument)
 /** @brief 沿教程 FIFO0 回调取尽 CAN1 待收帧，按标准数据帧 ID 分流。
  * @param[in,out] hcan HAL 提供的句柄；仅处理共用的 CAN1，CAN2 不启动业务。
  * @return 无；中断内仅更新接收数据，不执行底盘动作或发送报文。
- * @note 板间帧不再从 CAN 进入。StdID 0、DLC 8 才是电机反馈。
+ * @note 板间帧不从 CAN 进入。StdId 0、DLC 8 才是电机反馈。
  */
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {

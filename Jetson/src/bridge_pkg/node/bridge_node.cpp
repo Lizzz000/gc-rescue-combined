@@ -1,7 +1,5 @@
 #include "node/bridge_node.hpp"
 #include "transport/cdc/cdc.hpp"
-#include "transport/socketcan/socketcan.hpp"
-#include "transport/damiao/damiao.hpp"
 #include "gripper/s288_servo.hpp"
 
 // ---- 桥接节点实现 ----
@@ -9,7 +7,7 @@
 // Copyright 2026 li
 // SPDX-License-Identifier: Apache-2.0
 // BridgeNode 装配 ROS 边界。BridgeRuntime 持有 CAN 会话，二者共用默认互斥回调组。
-// 发送队列在 bridge_session.cpp。帧格式在 protocol/can_protocol.hpp。
+// 发送队列在 bridge_session.cpp。帧格式在 protocol/usb_protocol.hpp。
 
 #include <interface_pkg/app/core.hpp>
 #include <chrono>
@@ -23,7 +21,6 @@
 #include <vector>
 #include <rcl_interfaces/msg/parameter_descriptor.hpp>
 #include <exception>
-#include <linux/can/error.h>
 
 struct BridgeNode::StartupSettings
 {
@@ -31,8 +28,7 @@ struct BridgeNode::StartupSettings
   std::string target_topic, safety_topic, task_topic, mission_topic;
   std::string roi_service, command_service;
   // 配置与ROS端口分别移交给Runtime，避免两层重复读取参数。
-  std::string transport, serial_device;
-  std::int64_t can_bitrate;
+  std::string serial_device;
   BridgeRuntime::Config runtime;
   BridgeRuntime::Ports ports;
 };
@@ -59,13 +55,7 @@ try : Node("bridge_node", options)
 {
   auto settings = declareAndValidateParameters();
   if (!transport) {
-    if (settings.transport == "socketcan") {transport = std::make_unique<CanSocket>();}
-    else if (settings.transport == "cdc") {transport = std::make_unique<CdcLink>();}
-    else {
-      transport = std::make_unique<DamiaoCan>(settings.can_bitrate);
-      RCLCPP_WARN(get_logger(), "Damiao uses existing adapter CAN bitrate; expected %lld bit/s is NOT configured or verified",
-        static_cast<long long>(settings.can_bitrate));
-    }
+    transport = std::make_unique<CdcLink>();
   }
   createRosInterfaces(settings);
   runtime_ = std::make_unique<BridgeRuntime>(
@@ -99,28 +89,11 @@ BridgeNode::StartupSettings BridgeNode::declareAndValidateParameters()
   state_config.target_classes.clear();
   rcl_interfaces::msg::ParameterDescriptor descriptor;
   descriptor.read_only = true;
-  settings.transport = rescue::declareRequired<std::string>(*this, "transport", descriptor);
   settings.serial_device = rescue::declareRequired<std::string>(*this, "serial_device", descriptor);
-  settings.can_bitrate = rescue::declareRequired<std::int64_t>(*this, "can_bitrate", descriptor);
-  const auto interface_name = rescue::declareRequired<std::string>(*this, "can_interface", descriptor);
-  if (settings.transport == "socketcan") {
-    if (!CanSocket::validInterfaceName(interface_name) || !settings.serial_device.empty() ||
-      settings.can_bitrate != 0)
-    {
-      throw rescue::ConfigurationError("SocketCAN requires a valid interface, empty serial_device and can_bitrate=0 (system managed)");
-    }
-    settings.runtime.can_interface = interface_name;
-  } else if (settings.transport == "cdc") {
-    if (!CdcLink::validDevice(settings.serial_device)) {
-      throw rescue::ConfigurationError("CDC requires the STM32 USB serial path in link.device");
-    }
-    settings.runtime.can_interface = settings.serial_device;
-  } else if (settings.transport == "damiao_serial_fixed") {
-    if (!damiao::validDevice(settings.serial_device) || !damiao::validBitrate(settings.can_bitrate)) {
-      throw rescue::ConfigurationError("Damiao requires an explicit /dev path and supported CAN bitrate");
-    }
-    settings.runtime.can_interface = settings.serial_device;
-  } else {throw rescue::ConfigurationError("unsupported link transport");}
+  if (!CdcLink::validDevice(settings.serial_device)) {
+    throw rescue::ConfigurationError("link.device must be a valid STM32 USB serial path");
+  }
+  settings.runtime.can_interface = settings.serial_device;
   state_config.image_width = rescue::declareRequired<std::int64_t>(
     *this, "image_width", descriptor);
   state_config.image_height = rescue::declareRequired<std::int64_t>(

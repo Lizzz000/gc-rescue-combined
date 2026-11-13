@@ -1,6 +1,8 @@
 # 大疆 C 板当前配置与业务接入
 
-2026-11-05：以用户工程为基础，接入 BMI088、IST8310、教程姿态解算、RTOS 任务和 CAN1 达妙 MIT 收发（按当前接线暂时切换），USART6 向 VOFA 输出姿态角。现已按用户授权移植三轮运动解算与旧车动作，暂不接手柄，不启用 HC-08、JY901P、USB 或看门狗。USART6 TX DMA 的初始化与中断由 CubeMX 生成，原重复 USART BSP 已移除。已接入 RGB LED、板卡电压 ADC3、蜂鸣器 TIM4 PWM 接口和 BMI088 加热 TIM10 PWM 业务；蜂鸣器保持关闭。底盘使用 CAN1、1 MHz TIM2 和现有 test 任务；CAN1 使用板载收发器实际连接的 PD0/PD1，按用户授权调整为 1 Mbit/s 并生成 RX0 中断，无 DMA 或新增任务。
+2026-11-05：以用户工程为基础，接入 BMI088、IST8310、教程姿态解算、RTOS 任务和 CAN1 达妙 MIT 收发（按当前接线暂时切换），USART6 向 VOFA 输出姿态角。现已按用户授权移植三轮运动解算与旧车动作，暂不接手柄，当时未启用 HC-08、JY901P、USB 或看门狗。USART6 TX DMA 的初始化与中断由 CubeMX 生成，原重复 USART BSP 已移除。已接入 RGB LED、板卡电压 ADC3、蜂鸣器 TIM4 PWM 接口和 BMI088 加热 TIM10 PWM 业务；蜂鸣器保持关闭。底盘使用 CAN1、1 MHz TIM2 和现有 test 任务；CAN1 使用板载收发器实际连接的 PD0/PD1，按用户授权调整为 1 Mbit/s 并生成 RX0 中断，无 DMA 或新增任务。
+
+板间链路现在是 USB OTG FS 设备：PA11 为 D-，PA12 为 D+，PA10 为 OTG ID，全速 12 Mbit/s，没有 ULPI，不是 480 Mbit/s。Jetson 打开 `link.device`。CAN1 只跑达妙 MIT，反馈 ID 0，发送 ID 1–3，不承载板间帧。
 
 ## 已核对的引脚
 
@@ -20,11 +22,12 @@
 | IST8310 DRDY | PG3 | 普通输入、上拉，无 EXTI |
 | CAN1 RX / TX（当前电机） | PD0 / PD1 | AF9，推挽，无上下拉 |
 | CAN2 RX / TX（保留配置） | PB5 / PB6 | AF9，推挽，无上下拉；业务不启动 |
+| USB OTG FS DM / DP / ID | PA11 / PA12 / PA10 | 设备模式，全速 12 Mbit/s；ID 上拉；无 ULPI，不是 480 Mbit/s；不检测 VBUS |
 | USART6 TX / RX | PG14 / PG9 | AF8，推挽，无上下拉，Very High；J29三针接口，当前仅发送，未启动接收 |
 | HSE | PH0 / PH1 | 板载 12 MHz 晶体 |
 | SWDIO / SWCLK | PA13 / PA14 | Serial Wire，释放 PB3/PB4 给 SPI |
 
-注意 I2C3 是 **PA8=SCL、PC9=SDA**。教程部分文字存在颠倒，以上按用户手册引脚表和原理图接线确认。CAN2 的板载收发器无需额外使能 GPIO。电机和 Jetson 共用 CAN1，滤波组使用 bank 0 和 1，CAN2 的 bank 14 不启用。两路滤波分界仍为 14。
+注意 I2C3 是 **PA8=SCL、PC9=SDA**。教程部分文字存在颠倒，以上按用户手册引脚表和原理图接线确认。CAN2 的板载收发器无需额外使能 GPIO。电机在 CAN1，反馈 ID 0、发送 ID 1–3。板间链路不共用 CAN1。滤波组只使用 bank 0，四个槽都是反馈 ID 0。CAN2 的 bank 14 不启用。两路滤波分界仍为 14。
 
 新增四项按用户手册 PDF 第8、16～18页，以及官方主板原理图 PDF 第3～5页、陀螺仪 FPC 原理图第1页核对。RGB LED 经 MOS 管驱动，因此 GPIO 高电平点亮；蜂鸣器和加热管也均为高有效。电压分压上臂 R72=200 kΩ、下臂 R83=22 kΩ，后续换算应使用 `Vboard = Vadc × (200 + 22) / 22`，倍率约10.0909，不是11。
 
@@ -38,7 +41,7 @@
 | PCLK1 / APB1 定时器 | 42 MHz / 84 MHz |
 | PCLK2 / APB2 定时器 | 84 MHz / 168 MHz |
 | 电源 / Flash | Scale 1 / 5 WS |
-| PLLQ | 7，对应 48 MHz，供 USB OTG FS。SYSCLK 仍是 168 MHz |
+| PLLQ | `SystemClock_Config` 保持 Cube 的 4。`UsbLink_Init` 若 USB 时钟不是 48 MHz，切到 HSI、把 PLLQ 改为 7、再切回 PLL。SYSCLK 仍是 168 MHz。OTG FS 外设时钟 48 MHz，线上是全速 12 Mbit/s |
 | HAL 时基 | TIM6，1 ms，IRQ 优先级15 |
 | RTOS 时基 | SysTick，1000 Hz；SysTick/PendSV 优先级15，SVC默认0 |
 | NVIC | Priority Group 4；FreeRTOS最低优先级15，允许系统调用边界5 |
@@ -89,7 +92,7 @@
 | `Devices/IST8310/ist8310driver.c`：`ist8310_init`、`ist8310_read_over` | 教程第145～146页及第11章配套例程；恢复原status/mag结构、STAT1判断和三轴换算 |
 | `Devices/IST8310/ist8310driver_middleware.c`：`ist8310_GPIO_init`、`ist8310_com_init`、`ist8310_RST_L/H`、`ist8310_delay_ms/us` | 第11章中间层接口；GPIO由CubeMX生成，延时按当前RTOS/TIM2适配 |
 | 同上：`ist8310_IIC_read_single_reg`、`ist8310_IIC_write_single_reg`、`ist8310_IIC_read_muli_reg` | 第11章I2C中间层；单读/写签名保留，连读同名函数改返回uint8_t（HAL成功1、失败0），将本次HAL结果交给调用者，不加错误锁存 |
-| `Bsp/CAN/bsp_can.c`：`can_filter_init` | 沿用官方 `14.CAN/bsp/boards/bsp_can.c` 的启动和 FIFO0 通知。CAN1 的 bank 0、1 使用标准数据帧列表，覆盖电机反馈和 Jetson 下行。 |
+| `Bsp/CAN/bsp_can.c`：`can_filter_init` | 沿用官方 `14.CAN/bsp/boards/bsp_can.c` 的启动和 FIFO0 通知。CAN1 的 bank 0、1 只覆盖达妙电机反馈 ID 0。板间帧不进这条滤波。 |
 | `Devices/DM_Motor/dm_motor.c`：`HAL_CAN_RxFifo0MsgPendingCallback` | 教程第197～198页的 HAL 回调，按达妙手册第32、35页解码。每次完整更新后递增该电机的反馈序号，供底盘识别新样本 |
 | 同上：`uint_to_float`、`float_to_uint`、`ctrl_motor` | 达妙协议手册第33～34页；保留换算公式和8字节MIT布局，发送返回HAL状态用于底盘处理邮箱提交失败 |
 | 同上：`enable_motor`、`disable_motor` | 达妙协议手册第37页FC/FD字节表的直接封装；手册未提供函数名，这两个名称属于必要接入，不是教程原函数 |
@@ -97,7 +100,7 @@
 | `Algorithm/AHRS/AHRS.c`：`AHRS_init`、`AHRS_update`、`get_angle` | 第18章 INS 接口与角度公式。初始重力对准参考 basic_framework 的 InitQuaternion，六轴初始航向为零，九轴使用倾斜补偿后的本板磁场定向。实测时间步长参考 INS_Task 和 IMU_QuaternionEKF_Update |
 | `Task/INS/INS_task.c`：`Calibrate_MPU_Offset` | 参考 basic_framework/modules/imu/BMI088driver.c 同名函数的静止极差和均值判据。本车每 10 ms 采一组 BMI088，共 48 组。九轴模式还在同一窗口收集 IST8310 的新磁场样本 |
 | `Task/INS/INS_task.c`：`imu_cali_slove` | 第20章标准机器人INS任务的坐标转换函数和安装矩阵；BMI先扣芯片轴零偏再旋转，顺序参考basic_framework的BMI088_Read和INS_Task；磁场适配为A*(raw-b)，参数由电脑参考PX4模型离线求解，当前单位安装矩阵已合入A；原始数据不改 |
-| `Task/INS/INS_task.c`：`INS_task`；`Task/CAN2/test_task.c`：`test_task` | 沿用第18章任务入口。INS 启动温控与静止标定，完成初始姿态后按 TIM2 实测 dt 融合并发送 VOFA。test 任务以 5 ms 循环调度底盘、LED 和测压，蜂鸣器关闭，底盘默认失能 |
+| `Task/INS/INS_task.c`：`INS_task`；`Task/Chassis/chassis_task.c`：`test_task` | 沿用第18章任务入口。INS 启动温控与静止标定，完成初始姿态后按 TIM2 实测 dt 融合并发送 VOFA。test 任务以 5 ms 循环调度底盘、LED 和测压，蜂鸣器关闭，底盘默认失能 |
 | `Communication/VOFA/vofa.c`：`vofa_send` | VOFA官方JustFloat帧格式；必要的发送封装，教程没有这个协议函数。使用现有HAL_UART_Transmit_DMA，不添加任务、队列或printf重定向 |
 | `Algorithm/PID/pid.c`：`PID_init`、`PID_calc`、`PID_clear` | 官方第20章 `components/controller/pid.c`，裁剪为温控实际使用的位置式，保留误差、P/I/D与输出限幅；类型使用等价float |
 | 同上：`PID_Step` | 旧车 `Core/Control/PID/pid.c` 连续积分、测量微分及抗饱和公式；复用现有结构，与温控使用独立实例 |
@@ -293,7 +296,7 @@ F407 的三个发送邮箱按组发送“零 MIT → FC → 零 MIT”使能包�
 
 ## 构建与验证
 
-2026-11-08 后续接入 Jetson 与三电机共用 CAN1，复用已有外设配置和 test_task，不修改生成文件。当前仅 `0x180` 驱动连续速度/车体转向；其余六种下行帧解析保存，运输握手上报与机构动作尚未接入。新的有效零速准备、三轮停稳门控、250 ms 命令期限及故障后新零速恢复规则见 [Jetson CAN1 联调](JETSON_CAN_TEST.md)。下面的往返固件状态为此前归档，本轮离线构建仍不代表已烧录。
+板间链路不走 CAN1，帧类型见 [Jetson 板间 USB 与电机 CAN1 联调](JETSON_USB_TEST.md)。下面的往返固件状态为此前归档，本轮离线构建仍不代表已烧录。
 
 2026-11-08 保存时，8 组原生测试、正常六轴 Debug 与九轴 Debug-9axis 均通过。用户确认已断开开发板并要求只保存，正常六轴固件尚未恢复烧录；此前恢复命令在 OpenOCD 初始化阶段失败，未开始写入。已保存正常六轴的 BIN、HEX、ELF 及 SHA-256，下次连接后烧录正常固件。板内最后验证的仍是本次接续往返的一次触发测试固件，上电待命、默认失能，不会自动执行往返。[固件与恢复状态](C:/Users/Lenovo/OneDrive/Desktop/C_project/outputs/round_trip_blend_20261108/final_normal_check.json) · [正常固件说明](C:/Users/Lenovo/OneDrive/Desktop/C_project/outputs/round_trip_blend_20261108/normal_firmware/说明.txt)
 
@@ -349,7 +352,7 @@ python tests/run_native.py
 
 ## CAN1 临时接线适配
 
-三个电机仍为控制 ID 1/2/3、反馈 StdID 0，协议、轮序、方向、量程及 PID 均保持旧值。`bsp_can.h` 的 `MOTOR_CAN=hcan1` 与 `MOTOR_CAN_FILTER_BANK=0U` 同时控制过滤、发送、反馈筛选及底盘邮箱操作。恢复 CAN2 时同时改为 `hcan2` 和 `14U`，不要只改发送句柄。任务目录仍叫 `Task/CAN2`，实际任务入口与文件路径不变。
+三个电机仍为控制 ID 1/2/3、反馈 StdID 0，协议、轮序、方向、量程及 PID 均保持旧值。`bsp_can.h` 的 `MOTOR_CAN=hcan1` 与 `MOTOR_CAN_FILTER_BANK=0U` 同时控制过滤、发送、反馈筛选及底盘邮箱操作。恢复 CAN2 时同时改为 `hcan2` 和 `14U`，不要只改发送句柄。任务目录为 `Task/Chassis`，任务入口保持不变。
 
 CAN1 位时序为 PCLK1 42 MHz / (3 × (1+10+3)) = 1 Mbit/s，普通模式，SJW 1 TQ；自动重传和自动 Bus-Off 恢复开启。CubeMX 生成 PD0/PD1、CAN1_RX0_IRQn 优先级 6/0、`CAN1_RX0_IRQHandler` 转交 HAL，无重复 BSP 初始化或中断。CAN2 保留原生成配置，但业务不 Start、不配置其 bank 14、不发电机指令。上电仍默认失能。
 

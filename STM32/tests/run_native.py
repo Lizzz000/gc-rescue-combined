@@ -19,15 +19,15 @@ def main():
         parser.error("未找到主机 GCC，请通过 --cc 指定")
     suites = {
         "image_tracker": ["tests/native/test_image_tracker.c", "project/Core/Control/Jetson/image_tracker.c"],
-        "jetson_can": ["tests/native/test_jetson_can.c", "project/Core/Communication/Jetson/jetson_can.c"],
-        "manual_can": ["tests/native/test_manual_can.c", "project/Core/Communication/Manual/manual_can.c",
-                       "project/Core/Communication/Jetson/jetson_can.c"],
-        "manual_control": ["tests/native/test_manual_control.c", "project/Core/Communication/Jetson/jetson_can.c",
-                           "project/Core/Communication/Manual/manual_can.c",
+        "jetson_can": ["tests/native/test_jetson_link.c", "project/Core/Communication/Jetson/jetson_link.c"],
+        "manual_can": ["tests/native/test_manual_link.c", "project/Core/Communication/Manual/manual_link.c",
+                       "project/Core/Communication/Jetson/jetson_link.c"],
+        "manual_control": ["tests/native/test_manual_control.c", "project/Core/Communication/Jetson/jetson_link.c",
+                           "project/Core/Communication/Manual/manual_link.c",
                            "project/Core/Control/Manual/manual_control.c", "project/Core/Control/Chassis/chassis.c",
                            "project/Core/Algorithm/Chassis/motor_chassis.c", "project/Core/Algorithm/PID/pid.c"],
         "can": ["tests/native/test_can.c", "project/Core/Bsp/CAN/bsp_can.c", "project/Core/Devices/DM_Motor/dm_motor.c",
-                "project/Core/Task/CAN2/test_task.c"],
+                "project/Core/Task/Chassis/chassis_task.c"],
         "sensors": ["tests/native/test_sensors.c", "project/Core/Devices/BMI088/BMI088driver.c",
                     "project/Core/Devices/BMI088/BMI088Middleware.c", "project/Core/Devices/IST8310/ist8310driver.c",
                     "project/Core/Devices/IST8310/ist8310driver_middleware.c", "project/Core/Task/INS/INS_task.c",
@@ -44,12 +44,12 @@ def main():
     }
     suites["sensors_nine_axis"] = suites["sensors"]
     suites["jetson_auto_configured"] = [
-        "tests/native/test_jetson_auto.c", "project/Core/Communication/Jetson/jetson_can.c",
+        "tests/native/test_jetson_auto.c", "project/Core/Communication/Jetson/jetson_link.c",
         "project/Core/Control/Jetson/jetson_auto.c", "project/Core/Control/Jetson/image_tracker.c",
     ]
     suites["jetson_auto_unconfigured"] = suites["jetson_auto_configured"]
     suites["jetson_chassis_flow"] = [
-        "tests/native/test_jetson_chassis_flow.c", "project/Core/Communication/Jetson/jetson_can.c",
+        "tests/native/test_jetson_chassis_flow.c", "project/Core/Communication/Jetson/jetson_link.c",
         "project/Core/Control/Jetson/jetson_auto.c", "project/Core/Control/Jetson/image_tracker.c",
     ]
     suites["jetson_chassis_bad_window"] = suites["jetson_chassis_flow"]
@@ -58,9 +58,10 @@ def main():
         "tests/native/test_link_frame.c",
         "project/Core/Communication/Jetson/link_frame.c",
     ]
+    suites["usb_rx_buffer"] = ["tests/native/test_usb_rx_buffer.c"]
     includes = ["tests/native/stubs", "project/Core/Bsp/CAN",
                 "project/Core/Devices/BMI088", "project/Core/Devices/IST8310",
-                "project/Core/Devices/DM_Motor", "project/Core/Task/INS", "project/Core/Task/CAN2",
+                "project/Core/Devices/DM_Motor", "project/Core/Task/INS", "project/Core/Task/Chassis",
                 "project/Core/Algorithm/AHRS", "project/Core/Communication/VOFA", "project/Core/Algorithm/PID",
                 "project/Core/Bsp/IMU_PWM", "project/Core/Bsp/ADC", "project/Core/Bsp/LED", "project/Core/Bsp/Buzzer",
                 "project/Core/Algorithm/Chassis", "project/Core/Control/Chassis",

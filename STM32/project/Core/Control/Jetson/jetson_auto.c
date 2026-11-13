@@ -5,7 +5,7 @@
 #include "chassis.h"
 #include "image_tracker.h"
 #include "INS_task.h"
-#include "jetson_can.h"
+#include "jetson_link.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <math.h>
@@ -46,8 +46,8 @@ typedef struct
 
 typedef struct
 {
-    uint16_t id;             /**< 当前待发送或等待回复的标准 CAN ID。 */
-    uint8_t point;           /**< 0x208 的到点类型，其余请求为 0。 */
+    uint16_t id;             /**< 当前待发送或等待回复的上行类型号。 */
+    uint8_t point;           /**< 类型 21 的到点类型，其余请求为 0。 */
     uint8_t submitted;       /**< 首次已进入发送邮箱。 */
     uint32_t first_rx;       /**< 首次发送前的接收序号屏障。 */
     uint32_t last_tx_ms;     /**< 最近一次入发送邮箱的 RTOS 毫秒。 */
@@ -548,7 +548,7 @@ static void Start_Turn(int8_t direction, float angle_deg, Auto_Stage_t next, uin
 }
 
 /** @brief 打开一个新握手等待；每次只允许重报同一个已完成事件。
- * @param[in] id 本阶段的上行标准 CAN ID。
+ * @param[in] id 本阶段的上行类型号。
  * @param[in] next 回执等待阶段。
  * @param[in] now_ms 当前 RTOS 毫秒，作为总期限起点。
  */
@@ -558,7 +558,7 @@ static void Begin_Request(uint16_t id, Auto_Stage_t next, uint32_t now_ms)
     request = (Auto_Request_t){.id = id};
 }
 
-/** @brief 停稳后上报 0x208 到点，等待 0x192 命令 5 受理。
+/** @brief 停稳后上报类型 21 到点，等待类型 7 命令 5 受理。命令 5 只表示受理到点。
  * @param[in] point JETSON_CAN_POINT_GRASP 或 JETSON_CAN_POINT_RELEASE。
  * @param[in] next 回执等待阶段。
  * @param[in] now_ms 当前 RTOS 毫秒，作为总期限起点。

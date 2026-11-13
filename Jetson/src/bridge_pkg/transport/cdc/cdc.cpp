@@ -35,6 +35,8 @@ bool device_path_ok(const std::string & path)
 
 bool CdcLink::validDevice(const std::string & path) {return device_path_ok(path);}
 
+CdcLink::~CdcLink() {close();}
+
 bool CdcLink::open(const std::string & interface_name, int & index, std::string & error)
 {
   error.clear();
@@ -42,12 +44,21 @@ bool CdcLink::open(const std::string & interface_name, int & index, std::string 
   if (fd_ >= 0) {close();}
   fd_ = ::open(interface_name.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
   if (fd_ < 0) {
+    if (errno == EBUSY) {
+      throw CanTransport::FatalError("CDC device is already in use");
+    }
     error = std::strerror(errno);
     return false;
   }
+  // 与手动程序同一把锁。占用中直接退出，不能等对方释放后再抢 link.device。
   if (::flock(fd_, LOCK_EX | LOCK_NB) < 0 || ::ioctl(fd_, TIOCEXCL) < 0) {
-    error = std::strerror(errno);
+    const int reason = errno;
     close();
+    if (reason == EBUSY || reason == EWOULDBLOCK || reason == EAGAIN) {
+      throw CanTransport::FatalError(
+        "CDC device is already in use; stop the other program before opening link.device");
+    }
+    error = std::strerror(reason);
     return false;
   }
   termios settings{};
@@ -59,7 +70,8 @@ bool CdcLink::open(const std::string & interface_name, int & index, std::string 
   }
   ::cfmakeraw(&settings);
   settings.c_cflag |= CLOCAL | CREAD;
-  settings.c_cc[VMIN] = 0;
+  // 非阻塞模式下无数据返回 EAGAIN，避免把正常空读当作断线。
+  settings.c_cc[VMIN] = 1;
   settings.c_cc[VTIME] = 0;
   if (::tcsetattr(fd_, TCSANOW, &settings) < 0) {
     error = std::strerror(errno);
@@ -118,7 +130,7 @@ CanTransport::ReadResult CdcLink::read(can_frame & frame, std::string & error)
       link_frame::Frame decoded;
       if (!parser_.feed(byte, decoded)) {return false;}
       frame = {};
-      frame.can_id = decoded.id;
+      frame.can_id = decoded.type;
       frame.len = decoded.length;
       if (decoded.length > 0) {std::memcpy(frame.data, decoded.data, decoded.length);}
       return true;
@@ -180,17 +192,25 @@ CanTransport::WriteResult CdcLink::write(const can_frame & frame, std::string & 
     error = "CDC closed";
     return WriteResult::FAILED;
   }
-  if (pending_sent_ < pending_size_) {return flush(error);}
-  if (frame.len > link_frame::kMaxPayload) {
+  if (frame.can_id > 0xff || frame.len > link_frame::kMaxPayload) {
     error = "CDC payload too long";
     return WriteResult::FAILED;
   }
-  pending_size_ = link_frame::encode(static_cast<std::uint16_t>(frame.can_id), frame.data, frame.len,
-    pending_.data());
-  pending_sent_ = 0;
-  if (pending_size_ == 0) {
+  std::array<std::uint8_t, link_frame::kMaxBytes> encoded{};
+  const auto size = link_frame::encode(
+    static_cast<std::uint8_t>(frame.can_id), frame.data, frame.len, encoded.data());
+  if (size == 0) {
     error = "CDC encode failed";
     return WriteResult::FAILED;
   }
+  if (pending_sent_ < pending_size_) {
+    const bool retry = size == pending_size_ &&
+      std::memcmp(encoded.data(), pending_.data(), size) == 0;
+    const auto result = flush(error);
+    if (result != WriteResult::SENT || retry) {return result;}
+  }
+  pending_ = encoded;
+  pending_size_ = size;
+  pending_sent_ = 0;
   return flush(error);
 }

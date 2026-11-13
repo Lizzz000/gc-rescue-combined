@@ -3,7 +3,7 @@
 <package format="3">
   <name>bridge_pkg</name>
   <version>0.0.0</version>
-  <description>CAN bridge for centers, 0x180 heartbeat, and STM32 transport-cycle handshakes.</description>
+  <description>USB CDC bridge for centers, type-1 heartbeat, and STM32 transport-cycle handshakes.</description>
   <maintainer email="li@todo.todo">li</maintainer>
   <license>Apache-2.0</license>
 

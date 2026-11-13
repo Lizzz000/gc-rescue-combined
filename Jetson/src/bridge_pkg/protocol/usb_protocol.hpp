@@ -34,11 +34,11 @@ static inline bool fixedPoint(double value, double scale, std::int16_t & output)
 }
 }  // namespace bridge_scale
 
-// ---- CAN 协议 ----
+// ---- USB 报文 ----
 // 职责：周期报文和 STM32 指令的编解码。
 // Copyright 2026 li
 // SPDX-License-Identifier: Apache-2.0
-// 周期报文与 STM32 指令的编解码及浮点→int16 定点编码；协议合同见 docs/can-protocol.md。
+// 类型号与载荷见 docs/usb-protocol.md。can_id 存放类型号。电机在 STM32 的 CAN1，这里不驱动。
 
 
 #include <array>
@@ -53,30 +53,31 @@ static inline bool fixedPoint(double value, double scale, std::int16_t & output)
 class CanProtocol
 {
 public:
-  // 坐标只走后两帧。0x181 是目标框几何中心，0x182 是安全区透视中心。
-  // 0x180 是链路心跳，不是坐标，也不再携带自动速度。
-  // 改 ID 或 10000 倍缩放必须同时改 docs/can-protocol.md，并与 STM32 接收一致。
+  // 坐标只走类型 3 和 4。类型 3 是目标框几何中心，类型 4 是安全区透视中心。
+  // 类型 1 是链路心跳，不是坐标，自动桥也不在这里下发速度。
+  // 改类型号或 10000 倍缩放必须同时改 docs/usb-protocol.md。
   // 中心先 round 再检查 int16；量化越界时中心帧置无效并清零载荷，不截断或裁剪。
-  static constexpr canid_t VELOCITY_ID = 0x180;
-  static constexpr canid_t TARGET_ID = 0x181;
-  static constexpr canid_t SAFETY_ID = 0x182;
-  // 链路超时，与 docs/can-protocol.md 中的 250 ms 为同一来源。中心接收期限与 0x193 重授间隔都用它。
+  static constexpr canid_t VELOCITY_ID = 1;
+  static constexpr canid_t MANUAL_ID = 2;
+  static constexpr canid_t TARGET_ID = 3;
+  static constexpr canid_t SAFETY_ID = 4;
+  // 链路超时，与 docs/usb-protocol.md 中的 250 ms 为同一来源。中心接收期限与类型 8 重授间隔都用它。
   static constexpr double LINK_TIMEOUT_S = 0.25;
   static constexpr auto LINK_TIMEOUT = std::chrono::milliseconds(250);
   static constexpr double STM32_CENTER_TIMEOUT_S = LINK_TIMEOUT_S;
-  // STM32 → Jetson 运输握手；旧 0x201/0x202 不再受理，不能绕过转向和搬运确认。
-  static constexpr canid_t ARRIVAL_ID = 0x200;
-  static constexpr canid_t TURN_COMPLETED_ID = 0x203;
-  static constexpr canid_t SAFETY_ARRIVED_ID = 0x204;
-  static constexpr canid_t START_SEARCH_ID = 0x205;
-  static constexpr canid_t DELIVERY_COMPLETED_ID = 0x206;
-  static constexpr canid_t ARRIVAL_POINT_ID = 0x208;
-  // 0x193 只授权已提交路由的去程转向。夹取/释放到点由 0x208 通知，回执为命令 5。
-  // STM32 收齐本趟 191 通过与 193 后转向，完成才 203。
-  static constexpr canid_t ARRIVAL_ACK_ID = 0x190;
-  static constexpr canid_t ROI_RESULT_ID = 0x191;
-  static constexpr canid_t COMMAND_RESULT_ID = 0x192;
-  static constexpr canid_t TURN_REQUEST_ID = 0x193;
+  // STM32 → Jetson。未知类型不改变业务状态，也不能绕过转向和搬运确认。
+  static constexpr canid_t ARRIVAL_ID = 16;
+  static constexpr canid_t TURN_COMPLETED_ID = 17;
+  static constexpr canid_t SAFETY_ARRIVED_ID = 18;
+  static constexpr canid_t START_SEARCH_ID = 19;
+  static constexpr canid_t DELIVERY_COMPLETED_ID = 20;
+  static constexpr canid_t ARRIVAL_POINT_ID = 21;
+  // 类型 8 只授权已提交路由的去程转向。夹取/释放到点由类型 21 通知，回执为命令 5。
+  // STM32 收齐本趟类型 6 通过与类型 8 后转向，完成才发类型 17。
+  static constexpr canid_t ARRIVAL_ACK_ID = 5;
+  static constexpr canid_t ROI_RESULT_ID = 6;
+  static constexpr canid_t COMMAND_RESULT_ID = 7;
+  static constexpr canid_t TURN_REQUEST_ID = 8;
   static constexpr std::uint8_t TURN_COMPLETED = 1, SAFETY_ARRIVED = 2, START_SEARCH = 3,
     DELIVERY_COMPLETED = 4, ARRIVAL_POINT = 5;
 
@@ -108,43 +109,17 @@ public:
     return streamId(id) || replyId(id);
   }
 
-  // 11 位 ID 精确匹配，并排除扩展帧与远程帧。错误帧走 CAN_RAW_ERR_FILTER；
-  // 普通过滤掩码不能包含 CAN_ERR_FLAG，否则内核将它注册到错误帧列表，收不到数据帧。
-  static constexpr canid_t COMMAND_FILTER_MASK =
-    CAN_SFF_MASK | CAN_EFF_FLAG | CAN_RTR_FLAG;
-
-  static can_filter commandFilter(canid_t id)
-  {
-    can_filter filter{};
-    filter.can_id = id;
-    filter.can_mask = COMMAND_FILTER_MASK;
-    return filter;
-  }
-
-  // 套接字接收运输握手指令与 0x208 到点。空过滤器会丢掉全部数据帧。
-  static std::array<can_filter, 6> commandFilters()
-  {
-    return {
-      commandFilter(ARRIVAL_ID),
-      commandFilter(TURN_COMPLETED_ID),
-      commandFilter(SAFETY_ARRIVED_ID),
-      commandFilter(START_SEARCH_ID),
-      commandFilter(DELIVERY_COMPLETED_ID),
-      commandFilter(ARRIVAL_POINT_ID),
-    };
-  }
-
   // 缩放、四舍五入和 int16 范围检查只在共享定点头维护；编码层不再复制数值规则。
   static bool fixedPoint(double value, double scale, std::int16_t & output)
   {
     return bridge_scale::fixedPoint(value, scale, output);
   }
 
-  // 中心帧 0x181/0x182 共用：调用方只传这两个 ID（运行时由 currentFrame 分派保证）。
+  // 类型 3 和 4 共用：调用方只传这两个类型（运行时由 currentFrame 分派保证）。
   static can_frame center(canid_t id, bool valid, std::int16_t x, std::int16_t y,
     std::uint32_t source_frame = 0)
   {
-    // DLC=8：valid、两个小端 int16 坐标、源时间低 24 位毫秒；无效时载荷清零。
+    // 长度 8：valid、两个小端 int16 坐标、源时间低 24 位毫秒；无效时载荷清零。
     can_frame frame{};
     frame.can_id = id;
     frame.len = 8;
@@ -159,11 +134,10 @@ public:
     return frame;
   }
 
-  // 0x180（DLC=8）：data[0..6] 同原 7 字节布局，data[7] 为 pause（整字节 0/1）。
-  // 见 docs/can-protocol.md。valid=0 时 data[0..6] 清零，data[7] 仍写 pause。
-  // 任务在线时生产路径只发 valid=0 的心跳；任务失联由调用方发 DLC 0。
+  // 类型 1，长度 8：alive、pause、vx、vy、wz。alive=0 时速度清零。
+  // 自动桥在线时 alive=1、速度为 0，pause 取当前值。失联也是这 8 字节。
   static can_frame velocity(
-    bool valid, std::int16_t vx, std::int16_t vy, std::int16_t angular, std::uint8_t pause)
+    bool alive, std::int16_t vx, std::int16_t vy, std::int16_t angular, std::uint8_t pause)
   {
     if (pause != 0 && pause != 1) {
       throw std::invalid_argument("pause must be 0 or 1");
@@ -171,13 +145,13 @@ public:
     can_frame frame{};
     frame.can_id = VELOCITY_ID;
     frame.len = 8;
-    if (valid) {
-      frame.data[0] = 1;
-      putSigned(frame.data + 1, vx);
-      putSigned(frame.data + 3, vy);
-      putSigned(frame.data + 5, angular);
+    frame.data[0] = alive ? 1 : 0;
+    frame.data[1] = pause;
+    if (alive) {
+      putSigned(frame.data + 2, vx);
+      putSigned(frame.data + 4, vy);
+      putSigned(frame.data + 6, angular);
     }
-    frame.data[7] = pause;
     return frame;
   }
 
@@ -191,7 +165,7 @@ public:
     return frame;
   }
 
-  // ROI 结果（DLC=3）：data[0]=valid，data[1]=passed，data[2]=destination（0 未定／1 左／2 右）。
+  // ROI 结果（长度 3）：data[0]=valid，data[1]=passed，data[2]=destination（0 未定／1 左／2 右）。
   // valid=0 时后两字节为 0。passed=0 时 destination 为 0。
   static can_frame roiResult(bool valid, bool passed, std::uint8_t destination)
   {
@@ -229,7 +203,7 @@ public:
     return frame;
   }
 
-  // 保留 v3 名称和字节。到点由 0x208 通知，回执为命令 5。
+  // 到点由类型 21 通知，回执为命令 5。
   static can_frame turnRequest(std::uint8_t destination, std::uint32_t token)
   {
     if (destination != 1 && destination != 2) {
@@ -244,11 +218,11 @@ public:
     return frame;
   }
 
-  // 扩展／远程／错误标志不是指令；错误长度或请求字节不改变业务状态。
+  // USB 类型为单字节。错误长度或请求字节不改变业务状态。
   static Command parseCommand(const can_frame & frame)
   {
     Command command;
-    if ((frame.can_id & (CAN_EFF_FLAG | CAN_RTR_FLAG | CAN_ERR_FLAG)) != 0) {
+    if (frame.can_id > 0xffU) {
       return command;
     }
     if (frame.can_id == ARRIVAL_ID) {
@@ -285,7 +259,7 @@ public:
   }
 
 private:
-  // v3 的 32 位回显字段统一小端；编码与解码共用同一实现，避免两侧布局分叉。
+  // 32 位回显字段统一小端；编码与解码共用同一实现，避免两侧布局分叉。
   static void putUnsigned(std::uint8_t * destination, std::uint32_t value)
   {
     for (unsigned byte = 0; byte < 4; ++byte) {

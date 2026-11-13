@@ -70,10 +70,10 @@ class ManualConfigTest(unittest.TestCase):
             basic.write_text(
                 'advanced_config: advanced.yaml\n'
                 'bridge:\n  transport: cdc\n'
-                'link:\n  device: /dev/serial/by-id/can\n'
+                'link:\n  device: /dev/serial/by-id/link\n'
                 'gripper:\n  device: /dev/serial/by-id/servo\n  id: 2\n')
             config = manual_control.load_manual_config(basic)
-        self.assertEqual(config['damiao_device'], '/dev/serial/by-id/can')
+        self.assertEqual(config['link_device'], '/dev/serial/by-id/link')
         self.assertEqual(config['gripper_device'], '/dev/serial/by-id/servo')
         self.assertEqual(config['gripper_id'], 2)
         self.assertEqual(config['kp'], 1.0)
@@ -90,9 +90,9 @@ class ManualConfigTest(unittest.TestCase):
     def test_config_required_and_old_flags_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'only.yaml'
-            path.write_text('link:\n  device: /dev/serial/by-id/can\n')
+            path.write_text('link:\n  device: /dev/serial/by-id/link\n')
             args = manual_control.parse_arguments(['--config', str(path)])
-        self.assertEqual(args.manual_config['damiao_device'], '/dev/serial/by-id/can')
+        self.assertEqual(args.manual_config['link_device'], '/dev/serial/by-id/link')
         with self.assertRaises(SystemExit):
             manual_control.parse_arguments(['--port', '0'])
         with self.assertRaises(SystemExit):
@@ -106,7 +106,7 @@ class ManualConfigTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'bad.yaml'
             path.write_text(
-                'damiao:\n  device: /dev/serial/by-id/can\n'
+                'link:\n  device: /dev/serial/by-id/link\n'
                 'gripper:\n  device: /dev/serial/by-id/servo\n  id: 0\n  kp: 1.0\n  kd: 0.05\n')
             with self.assertRaises(ValueError):
                 manual_control.load_manual_config(path)

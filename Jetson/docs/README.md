@@ -1,6 +1,6 @@
 # GC Rescue（Jetson）
 
-在 Jetson 上完成货物分割、跟踪选择、运输阶段和安全区中心，再经 CAN 交给下位机。图传与底盘控制分开。
+在 Jetson 上完成货物分割、跟踪选择、运输阶段和安全区中心，再经 USB 交给下位机。图传与底盘控制分开。板间链路是 STM32 USB OTG FS 设备，Jetson 打开 `link.device`；电机仍在 CAN1。
 
 ## 包
 
@@ -10,10 +10,10 @@
 | vision_pkg | USB 相机、按阶段切换的分割和场地推理、MJPEG 图传 |
 | track_pkg | OC-SORT 跟踪，以及避开蓝色的目标选择 |
 | mission_pkg | 运输阶段、ROI 检查、安全区中心 |
-| bridge_pkg | 中心与速度的 CAN 桥，以及和 STM32 的运输握手 |
+| bridge_pkg | 中心与心跳的 USB 桥，以及和 STM32 的运输握手 |
 | bringup_pkg | 唯一启动入口，用同一份配置拉起各角色 |
 | record_pkg | 独立工具：相机流和 PC 预览 / MP4 录制 |
-| teleop_pkg | 独立工具：通过 USB-CAN 发送定时速度和停车命令 |
+| teleop_pkg | 独立工具：经 USB 发送类型 2 手动速度和停车命令 |
 
 `record_pkg` 和 `teleop_pkg` 不在完整部署的角色表里。
 
@@ -35,7 +35,7 @@
 
 ## 一次运输
 
-相机帧进入 `detect_node`。seg 阶段发布检测，`track_node` 维持轨迹，`select_node` 选出一个目标。到达后 `mission_node` 调用 `target_node` 做 ROI。首趟只接受一个绿色；通过后目的地为左或右，并停在等待转向。命令 1 切到 field，服务成功且任务状态也变成 field 之后进入安全区导航。`safety_node` 计算对应区域对角线的交点，再除以画幅宽高，得到透视中心。`bridge_node` 把目标中心、安全区中心和握手报文送到 CAN。命令 4 把 `transport_phase` 记为 Later，阶段仍是等待送达。命令 3 切回 seg 并重新寻找，此时黑色和橙色也可以被选中。
+相机帧进入 `detect_node`。seg 阶段发布检测，`track_node` 维持轨迹，`select_node` 选出一个目标。到达后 `mission_node` 调用 `target_node` 做 ROI。首趟只接受一个绿色；通过后目的地为左或右，并停在等待转向。命令 1 切到 field，服务成功且任务状态也变成 field 之后进入安全区导航。`safety_node` 计算对应区域对角线的交点，再除以画幅宽高，得到透视中心。`bridge_node` 把目标中心、安全区中心和握手报文送到 USB。命令 4 把 `transport_phase` 记为 Later，阶段仍是等待送达。命令 3 切回 seg 并重新寻找，此时黑色和橙色也可以被选中。
 
 ## 阅读顺序
 
@@ -46,7 +46,7 @@
 5. `src/vision_pkg/app/vision_runtime.cpp`，然后 `node/detect_node.cpp`、`camera/camera.cpp`、`yolo/cuda/nvmm_preprocess.hpp`、`stream/mjpeg/mjpeg.cpp`。
 6. `src/track_pkg/node/track_node.cpp` 与 `select_node.cpp`。
 7. `src/mission_pkg/control/controller.hpp`，然后 `node/mission_node.cpp`、`target_node.cpp`、`safety_node.cpp`。
-8. `src/bridge_pkg/protocol/can_protocol.hpp`，然后 `node/bridge_io.cpp`。
+8. `src/bridge_pkg/protocol/usb_protocol.hpp`，然后 `node/bridge_io.cpp`。
 9. `src/interface_pkg/msg/` 与 `src/interface_pkg/srv/`。
 10. `src/record_pkg/` 与 `src/teleop_pkg/` 各自阅读。
 
@@ -63,7 +63,7 @@ ros2 launch bringup_pkg rescue.launch.py run:=vision
 ros2 launch bringup_pkg rescue.launch.py run:=all
 ```
 
-默认请求相机以 1920×1080 MJPG、120 FPS 采集；分割、场地识别、原图发布和 HTTP 图传的上限为 100 FPS，CAN 三种周期帧错开约 3.33 ms 轮发，每种帧以 10 ms 为目标周期。实际帧率与总线负载需在 Jetson 和相机上实测。
+默认请求相机以 1920×1080 MJPG、120 FPS 采集；分割、场地识别、原图发布和 HTTP 图传的上限为 100 FPS。类型 1、3、4 三种周期帧错开约 3.33 ms 轮发，每种帧以 10 ms 为目标周期。实际帧率需在 Jetson 和相机上实测。板间链路是全速 12 Mbit/s，不是 480 Mbit/s。
 
 自动 GStreamer 相机管线每次打开设备时应用 `rescue_advanced.yaml` 中的 `vision.detect.camera_brightness`；当前标定值为 150，设为 -1 可不修改设备亮度。该值只适用于自动 GStreamer 管线，其他后端或自定义管线需自行配置亮度；不同相机的支持范围和其他光照下的效果需实测。
 
@@ -71,7 +71,7 @@ ros2 launch bringup_pkg rescue.launch.py run:=all
 
 搬运实测中，车辆横向对准安全区后连续 796 帧未得到有效场地观测；不能据此进行自动到位或判断物块落区，仍需调整并在不同视角下验证。
 
-手动网页通过 `--config` 读取顶层 `link.device` 与 `gripper.*`。`link.device` 是 STM32 的 USB CDC，`gripper.device` 仍是 S288。相对转角动作结束后舵机进入 Stop 模式，不再主动保持夹持力；该手动功能未接入自动搬运状态机。实际夹持、松爪位置和力矩须在现场确认。
+手动网页通过 `--config` 读取顶层 `link.device` 与 `gripper.*`。`link.device` 是 STM32 的 USB OTG FS 设备，`gripper.device` 仍是 S288。`gripper.move_s` 仍是待标定空值，不要填数字。相对转角动作结束后舵机进入 Stop 模式，不再主动保持夹持力；该手动功能未接入自动搬运状态机。实际夹持、松爪位置和力矩须在现场确认。
 
 `run:=vision` 只启动检测和图传。`run:=all` 启动上一节的 7 个进程。图传地址和端口来自 `rescue.yaml` 的 `stream_address`、`stream_port`，当前是 `0.0.0.0:8080`。
 
@@ -80,7 +80,9 @@ ros2 launch bringup_pkg rescue.launch.py run:=all
 - `http://<板端>:8080/snapshot.jpg`
 - `http://<板端>:8080/stream.mjpg`（同时最多 8 路，见 `mjpeg.cpp` 的 `kMaxStreamClients`）
 
-手动控制由 `teleop_pkg/manual_control.py` 经 USB 发送 `0x17F`，不启动 ROS 桥接。自动固件忽略该帧。STM32 须运行手动固件。bridge 与手动程序用同一把设备锁，不能同时打开 `link.device`。
+手动控制由 `teleop_pkg/manual_control.py` 经 USB 发送类型 2，不启动 ROS 桥接。自动固件忽略该帧。STM32 须运行手动固件。bridge 与手动程序用同一把设备锁，不能同时打开 `link.device`。
+
+板间通信固定使用 USB CDC，不再提供其他传输后端。连接后用 `ls -l /dev/serial/by-id/` 核对 `link.device`，与 S288 夹爪串口分别配置。当前 STM32 的 USB 序列号为 `0028003D3034470E31353233`，更换板卡后需要更新路径。STM32 到电机仍使用 CAN1。
 
 ```bash
 python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/manual_control.py --config /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/bringup_pkg/config/rescue.yaml
@@ -96,7 +98,7 @@ python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/manual_control.py
 
 `grok未验证` 分支的安全区识别仍需实车校准。左右区域沿黑带中心线分割，安全区目标为各区域四边形对角线的交点；对矩形区域，这对应矩形中心经过透视投影后的位置。仿真真值排除了黑带宽度，与当前消息中包含半条黑带的区域定义不同，中心误差不能直接解释为实车偏差。
 
-主机仿真中，静止和自动曝光序列通过；反光、强阴影、相近颜色背景及部分视野等场景仍有未达标情况。贴线物块场景暂不作为当前调优重点，测试仍然保留。尚无标注的实车回放数据，不能据此确认识别成功率、目标精度或车辆运动表现；上车后应根据实际画面和运动情况校准，并检查 CAN 与电机反馈。
+主机仿真中，静止和自动曝光序列通过；反光、强阴影、相近颜色背景及部分视野等场景仍有未达标情况。贴线物块场景暂不作为当前调优重点，测试仍然保留。尚无标注的实车回放数据，不能据此确认识别成功率、目标精度或车辆运动表现；上车后应根据实际画面和运动情况校准，并检查板间 USB 与电机 CAN 反馈。
 
 ## 术语
 
@@ -113,7 +115,7 @@ python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/manual_control.py
 - OC-SORT：按类别关联检测框。切阶段会清空轨迹输出；进程内的 ID 计数不回到 0。
 - letterbox：把原图等比缩进模型输入，空边填固定值，再除以 255 写成 NCHW。
 - 命令 1–4：转向完成、安全区到达、重新寻找、送达确认。1、2、4 携带本趟 `roi_request_id` 的低 32 位。
-- vcan：网络命名空间里的虚拟 CAN。隔离验证只向它发帧。
+- 伪终端：软件验收使用临时创建的 USB 字节流替身，不访问实车设备。
 
 ## 流程图
 
@@ -123,4 +125,4 @@ python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/manual_control.py
 
 `flowcharts/mission.svg` 是 CyclePhase 0–8，以及命令 1–4 怎样换阶段。枚举在 `controller.hpp` 第 34–45 行，服务在 `mission_node.cpp` 第 99–120 行。
 
-`flowcharts/can.svg` 是 v3 握手顺序和三条周期帧。标识与载荷在 `can_protocol.hpp` 第 58–72 行、第 166–227 行；到达分支在 `bridge_io.cpp` 的 `handleArrival`（约第 219 行）。
+`flowcharts/usb.svg` 是 USB 握手顺序和三条周期帧。类型与载荷见 [usb-protocol.md](usb-protocol.md)。到达分支在 `bridge_io.cpp` 的 `handleArrival`。

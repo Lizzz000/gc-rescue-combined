@@ -60,7 +60,7 @@ def main() -> int:
                      f'<div class="diagram">{svg}</div>'
                      f'<footer><a href="diagrams/{name}.svg">单独打开 SVG</a><a href="diagrams/{name}.mmd">Mermaid 源码</a></footer></section>')
     intro = '# 流程图\n\n[离线浏览版](flowcharts.html) 不依赖网络。以下图与 SVG 由同一份 [graphs.json](diagrams/graphs.json) 生成。修改流程后执行 `python3 tools/generators/render_diagrams.py`，需要系统已安装 Graphviz。\n\n'
-    (ROOT/'docs/reference/flowcharts.md').write_text(intro+'\n'.join(sections)+'\n接口字段见 [ROS 接口](ros-interfaces.md) 和 [CAN 协议](can-protocol.md)。\n', encoding='utf-8')
+    (ROOT/'docs/reference/flowcharts.md').write_text(intro+'\n'.join(sections)+'\n接口字段见 [ROS 接口](ros-interfaces.md) 和 [USB 协议](usb-protocol.md)。\n', encoding='utf-8')
     nav = ''.join(f'<a href="#{g["id"]}">{html.escape(g["title"])}</a>' for g in graphs)
     page = '''<!doctype html>
 <html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -69,7 +69,7 @@ def main() -> int:
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:#f4f6f8;color:#21303b;font:16px/1.65 system-ui,"Noto Sans CJK SC",sans-serif}main{max-width:1200px;margin:auto;padding:40px 24px 70px}h1{font-size:32px;margin:4px 0 8px}h2{font-size:21px;margin:0 0 8px}p{margin:0;color:#526573}.eyebrow{font-size:13px;font-weight:650;letter-spacing:.14em;color:#526573}nav{display:flex;flex-wrap:wrap;gap:10px;margin:24px 0}a{color:#235871;text-decoration:none}a:hover{text-decoration:underline}nav a{background:white;border:1px solid #d7e0e6;border-radius:8px;padding:8px 14px}section{background:white;border:1px solid #dbe3e8;border-radius:12px;margin:24px 0;overflow:hidden;scroll-margin-top:20px}section header{padding:22px 26px 16px;border-bottom:1px solid #edf0f2}.diagram{padding:24px 20px;overflow:auto}.diagram svg{display:block;width:auto;max-width:100%;height:auto;margin:auto;min-width:650px}footer{display:flex;gap:24px;border-top:1px solid #edf0f2;padding:13px 26px;font-size:14px}.note{border-left:3px solid #86aab8;padding:10px 16px;background:#edf2f5;margin-top:20px}.links{margin-top:20px;font-size:14px}@media(max-width:700px){main{padding:24px 12px}.diagram{padding:12px}section header{padding:18px}h1{font-size:27px}}@media print{body{background:white}nav{display:none}main{max-width:none;padding:0}section{break-inside:avoid;page-break-after:always;border:0}.diagram svg{min-width:0;max-height:800px}}
 </style>
 <main><div class="eyebrow">GC RESCUE / SOURCE GUIDE</div><h1>从数据到任务</h1><p>8 个节点、2 条识别通路，以及分开的实际识别阶段与 STM32 运输握手。</p>
-<nav>''' + nav + '''</nav><div class="note">图说明软件流程，不代表本次已完成板端或整车验收。下位机固件和路径规划不在此源码包内。</div>''' + ''.join(cards) + '''<p class="links"><a href="../../README.md">README</a> · <a href="../README.md">文档索引</a> · <a href="can-protocol.md">CAN 协议</a> · <a href="ros-interfaces.md">ROS 接口</a> · <a href="../validation/unified-validation.md">验收规范</a></p></main></html>'''
+<nav>''' + nav + '''</nav><div class="note">图说明软件流程，不代表本次已完成板端或整车验收。下位机固件和路径规划不在此源码包内。</div>''' + ''.join(cards) + '''<p class="links"><a href="../../README.md">README</a> · <a href="../README.md">文档索引</a> · <a href="usb-protocol.md">USB 协议</a> · <a href="ros-interfaces.md">ROS 接口</a> · <a href="../validation/unified-validation.md">验收规范</a></p></main></html>'''
     (ROOT/'docs/reference/flowcharts.html').write_text(page+'\n', encoding='utf-8')
     print(f'{len(graphs)} diagrams written to {DIRECTORY}')
     return 0

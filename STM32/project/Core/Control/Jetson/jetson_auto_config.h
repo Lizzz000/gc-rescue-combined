@@ -1,7 +1,7 @@
 #ifndef JETSON_AUTO_CONFIG_H
 #define JETSON_AUTO_CONFIG_H
 
-/* 标定后改为 1，上电自动搬运；0 为 0x17F 手动遥控固件。夹爪由 Jetson 负责。 */
+/* 标定后改为 1，上电自动搬运；0 为类型 2 手动遥控固件。夹爪由 Jetson 负责。 */
 #ifndef JETSON_AUTO_ENABLED
 #define JETSON_AUTO_ENABLED 0
 #endif
@@ -13,7 +13,7 @@
 #if JETSON_AUTO_ENABLED && JETSON_AUTO_CHASSIS_TEST
 #error "Select either full transport or chassis-only test"
 #endif
-/* 自动搬运或底盘联调固件：CAN1 收 Jetson 下行并运行自动流程；否则为 0x17F 手动固件。 */
+/* 自动搬运或底盘联调固件：USB 收 Jetson 下行并运行自动流程；否则为类型 2 手动固件。 */
 #define JETSON_AUTO_CAN_ENABLED (JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST)
 #define JETSON_AUTO_CHASSIS_TEST_TIMEOUT_MS 90000U
 
@@ -22,7 +22,7 @@
 #define JETSON_AUTO_TARGET_Y 0.7500f
 #define JETSON_AUTO_TARGET_TOL_X 0.0100f
 #define JETSON_AUTO_TARGET_TOL_Y 0.0100f
-/* 安全区设定点：0x182 为安全区透视中心，当前为占位值，需板端标定。 */
+/* 安全区设定点：类型 4 为安全区透视中心，当前为占位值，需板端标定。 */
 #define JETSON_AUTO_SAFETY_X 0.5000f
 #define JETSON_AUTO_SAFETY_Y 0.7500f
 #define JETSON_AUTO_SAFETY_TOL_X 0.0100f
@@ -75,7 +75,7 @@
 #define JETSON_AUTO_REQUEST_SERVICE_MS 3000U
 /* 覆盖邮箱等待、250 ms 重报、20 ms 双向调度、100 ms 回复队列及 CAN 传输，单位 ms。 */
 #define JETSON_AUTO_REQUEST_LINK_MARGIN_MS 450U
-/* 唯一请求期限：停稳后首次尝试提交起算，含邮箱等待，见 Jetson/docs/can-protocol.md。 */
+/* 唯一请求期限：停稳后首次尝试提交起算，含邮箱等待，见 Jetson/docs/usb-protocol.md。 */
 #define JETSON_AUTO_REQUEST_TIMEOUT_MS (JETSON_AUTO_REQUEST_SERVICE_MS + JETSON_AUTO_REQUEST_LINK_MARGIN_MS)
 #define JETSON_AUTO_REQUEST_RETRY_MS 250U
 

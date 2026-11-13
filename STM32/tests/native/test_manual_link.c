@@ -1,7 +1,7 @@
 #include <assert.h>
 #include <stddef.h>
 #include <stdio.h>
-#include "manual_can.h"
+#include "manual_link.h"
 #include "task.h"
 
 uint32_t test_tick;
@@ -140,6 +140,6 @@ int main(void)
     Check_Velocity();
     Check_Lengths();
     Check_Snapshot();
-    puts("PASS Manual CAN: 0x17F decode, revocation events and snapshot isolation");
+    puts("PASS Manual link: type 2 decode, revocation events and snapshot isolation");
     return 0;
 }

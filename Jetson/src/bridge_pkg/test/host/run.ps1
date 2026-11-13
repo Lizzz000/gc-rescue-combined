@@ -17,7 +17,7 @@ $watch = [Diagnostics.Stopwatch]::StartNew()
 & g++ -std=c++17 -Wall -Wextra -finput-charset=UTF-8 `
   "-I$here" "-I$stubs" "-I$package" "-I$src" `
   "$here\test_main.cpp" `
-  "$here\test_can_protocol.cpp" `
+  "$here\test_usb_protocol.cpp" `
   "$here\test_tx_queue.cpp" `
   "$here\test_bridge_state.cpp" `
   "$here\test_arrival_point.cpp" `

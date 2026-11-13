@@ -27,7 +27,7 @@ import time
 import uuid
 
 from .evidence import (CapabilityMissing, ContractFailure, OwnedProcess, asset_snapshot,
-                       fingerprint, group_members, isolated_vcan, port_open, require, write_json,
+                       fingerprint, group_members, port_open, require, write_json,
                        HostFileUseWitness, host_file_use)
 
 from .transport import run_probe as transport_probe, compared as transport_compare
@@ -148,11 +148,9 @@ def contracts(args):
         require(active.resolve() == selected_path, 'sourced ROS overlay differs from --install: ' + role)
     verify_install(args, ROOT, BASELINE, selected, args.output)
     assets = asset_snapshot(snapshot)
-    # 软件合同只使用隔离 vcan 或显式不存在的接口；不能继承生产串口后端。
-    # 保留 prepare 的生产快照，另存本次覆盖值及其实际装配来源。
+    # 软件合同不打开实车 USB 设备。
     import yaml
-    overrides = {'bridge.transport': 'socketcan', 'bridge.can_interface': 'vcan0',
-                 'damiao.device': '', 'bridge.can_bitrate': 0}
+    overrides = {'link.device': '/dev/rescue-validation-unused'}
     values = dict(snapshot['values'])
     values.update(overrides)
     software_config = args.output / 'software-contract-config.yaml'
@@ -343,14 +341,15 @@ def launch_case(args, snapshot, directory, run='all', clock=False):
                         role_executables=role_executables)
 
 
-def case_snapshot(args, image=None, clock=False, directory=None):
+def case_snapshot(args, image=None, clock=False, directory=None, link_device=None):
     """将场景覆盖值写入独立验收配置，再经生产装配器 load_configuration 读取；配置期能拦住哪些非法组合以 bringup 当前校验为准，其余在节点启动时暴露。"""
     import yaml
     cfg = configuration()
     original = cfg.load_configuration(args.config, 'all')
     values = dict(original['values'])
-    values.update({'bridge.transport': 'socketcan', 'damiao.device': '', 'bridge.can_bitrate': 0,
-                   'bridge.can_interface': 'vcan0', 'vision.detect.active_task': 'seg',
+    # 场景只连接本次创建的伪终端，不打开实车设备。
+    values.update({'link.device': link_device or '/dev/rescue-validation-unused',
+                   'vision.detect.active_task': 'seg',
                    'vision.detect.publish_masks': True, 'vision.detect.publish_timing': True,
                    'vision.stream.draw_masks': True, 'vision.stream.overlay_stats': False,
                    'vision.stream.stream_address': '127.0.0.1'})
@@ -475,10 +474,12 @@ def mission_command(observer, can, owner, command, phase):
     roi_id = observer.records['mission'][-1]['value']['roi_request_id'] if command in (1, 2, 4) else None
     if roi_id is not None:
         require(type(roi_id) is int and roi_id > 0, 'physical completion requires current ROI identity')
-    since = can.command({1: 0x203, 2: 0x204, 3: 0x205, 4: 0x206}[command],
+    from source.usb_codec import IDS
+    since = can.command({1: IDS['turn_completed'], 2: IDS['safety_arrived'],
+                         3: IDS['start_search'], 4: IDS['delivery_completed']}[command],
                         None if roi_id is None else roi_id & 0xffffffff)
     reply = bytes([1, command]) + (0 if roi_id is None else roi_id & 0xffffffff).to_bytes(4, 'little')
-    observer.wait(lambda: can.has_reply(0x192, reply.hex(), since),
+    observer.wait(lambda: can.has_reply(IDS['command_reply'], reply.hex(), since),
                   owner=owner, reason='mission command accepted')
 
     def completed():
@@ -517,8 +518,9 @@ def chain_arrival(observer, can, owner, result):
     finally:
         observer.node.destroy_client(client)
     before = len(observer.records['roi'])
-    since = can.command(0x200)
-    observer.wait(lambda: can.has_reply(0x190, '01', since),
+    from source.usb_codec import IDS
+    since = can.command(IDS['arrival'])
+    observer.wait(lambda: can.has_reply(IDS['arrival_ack'], '01', since),
                   owner=owner, reason='arrival/stop acknowledgment')
     observer.wait(lambda: len(observer.records['roi']) > before and observer.records['mission'] and
                   observer.records['mission'][-1]['value']['cycle_phase'] in (2, 7),
@@ -531,7 +533,7 @@ def chain_arrival(observer, can, owner, result):
     result['handshake'] = {'phase_after_roi': state['cycle_phase'], 'coordinates_paused': True}
     if state['cycle_phase'] == 7:
         expected = '010000' if roi['valid'] else '000000'
-        observer.wait(lambda: can.has_reply(0x191, expected, since),
+        observer.wait(lambda: can.has_reply(IDS['roi_reply'], expected, since),
                       owner=owner, reason='explicit ROI failure instruction')
         result['mission_roi_wire'] = expected
         result['handshake']['field_executed'] = False
@@ -541,13 +543,13 @@ def chain_arrival(observer, can, owner, result):
     destination = state['destination']
     require(destination in (1, 2), 'committed ROI has no destination')
     expected = bytes([1, 1, destination]).hex()
-    observer.wait(lambda: can.has_reply(0x191, expected, since),
-                  owner=owner, reason='ROI result on actual CAN')
+    observer.wait(lambda: can.has_reply(IDS['roi_reply'], expected, since),
+                  owner=owner, reason='ROI result on the virtual loopback')
     result['mission_roi_wire'] = expected
-    from source.can_codec import encode
+    from source.usb_codec import encode
     turn = encode('turn_to_safety', ['left' if destination == 1 else 'right',
                                     str(state['roi_request_id'] & 0xffffffff)]).split('#')[1].lower()
-    observer.wait(lambda: can.has_reply(0x193, turn, since),
+    observer.wait(lambda: can.has_reply(IDS['turn_to_safety'], turn, since),
                   owner=owner, reason='turn instruction after committed Mission state')
     result['handshake']['turn'] = mission_command(observer, can, owner, 1, 4)
     observer.wait(lambda: observer.states and observer.states[-1]['task'] == 'field',
@@ -698,11 +700,11 @@ def result_evidence(case):
                 final.get('transport_phase') == int(field_executed), 'restart state evidence differs')
         for name in (('seg_can', 'field_can') if field_executed else ('seg_can',)):
             can = result.get(name)
-            require(isinstance(can, dict) and {'180', '181', '182'} <= can.keys() and
+            require(isinstance(can, dict) and {'01', '03', '04'} <= can.keys() and
                     all(isinstance(can[key], dict) and
                         {'valid_bytes', 'ros_expected_bytes', 'invalid_only'} <= can[key].keys() and
                         isinstance(can[key]['valid_bytes'], list) and isinstance(can[key]['ros_expected_bytes'], list) and
-                        type(can[key]['invalid_only']) is bool for key in ('180', '181', '182')), 'CAN evidence missing')
+                        type(can[key]['invalid_only']) is bool for key in ('01', '03', '04')), 'USB type evidence missing')
     if field_executed:
         phase = result.get('field_phase')
         require(isinstance(phase, dict) and {'task', 'epoch', 'stage_header', 'source_frames',
@@ -746,9 +748,8 @@ def capture_cases(capture):
 
 
 def capture(args):
-    from .observations import Observer, MjpegClient, CanProbe, value_record
+    from .observations import Observer, MjpegClient, UsbProbe, value_record
     import rclpy
-    isolated_vcan()
     args.output.mkdir(parents=True, exist_ok=True)
     require(args.inputs and args.inputs.is_dir(), '--inputs frozen directory is required')
     inputs = sorted(args.inputs.glob('*.jpg')) + sorted(args.inputs.glob('*.png'))
@@ -763,19 +764,18 @@ def capture(args):
         for scenario, image in scenarios:
             directory = args.output / f'{scenario}-{image.stem}'
             directory.mkdir(parents=True, exist_ok=True)
+            can = UsbProbe(directory) if scenario == 'chain' else None
             snapshot = case_snapshot(args, image if scenario != 'clock' else None,
-                                     scenario == 'clock', directory)
+                                     scenario == 'clock', directory, can.device if can else None)
             before = asset_snapshot(snapshot)
             observer = Observer(snapshot, directory)
             owner = None
             http = None
-            can = None
             record = {'scenario': scenario, 'input': fingerprint(image),
                       'parameters': snapshot['values'], 'assets': before, 'status': 'failed'}
             output['cases'].append(record)
             try:
-                if scenario == 'chain':
-                    can = CanProbe(directory)
+                if can:
                     observer.pollers.append(can.poll)
                 owner = launch_case(args, snapshot, directory, 'all' if scenario == 'chain' else
                                     ('detect' if scenario == 'clock' else 'vision'),
@@ -818,7 +818,7 @@ def capture(args):
                         record['result']['field_can'] = can.steady_periodic(observer, 'field', settled)
                         record['result']['handshake']['safety_arrival'] = mission_command(observer, can, owner, 2, 5)
                         can.require_paused(observer, owner)
-                        # 隔离 vcan 夹具模拟物理送达事件；仅验证软件握手，不声称物资实车入区。
+                        # 伪终端模拟送达事件，只验证软件握手。
                         record['result']['handshake']['delivery'] = mission_command(observer, can, owner, 4, 5)
                         record['result']['handshake']['restart'] = mission_command(observer, can, owner, 3, 0)
                     record['result']['mission_states'] = [row['value'] for row in observer.records['mission']]
@@ -881,8 +881,8 @@ def semantic_result(case):
     if direct is not None and mission is not None:
         require(direct['request_id'] > 0 and mission['request_id'] > direct['request_id'],
                 'Target and Mission ROI requests did not consume distinct ordered Target requests')
-        from source.can_codec import decode
-        wire = decode('191#' + result['mission_roi_wire'])
+        from source.usb_codec import IDS, decode
+        wire = decode(f"T{IDS['roi_reply']:02d}#" + result['mission_roi_wire'])
         require(wire['valid'] == mission['valid'], 'CAN ROI validity differs from observed diagnostic')
         if result['handshake']['field_executed']:
             require(wire['passed'] and mission['passed'], 'turn path lacks accepted ROI evidence')
@@ -990,11 +990,13 @@ def compare(args):
 def camera_or_performance(args):
     # 性能使用固定文件输入，摄像头使用真实设备；直接切阶段不验证 Mission 运输握手。
     import rclpy
-    from .observations import Observer, MjpegClient
-    isolated_vcan()
+    from .observations import Observer, MjpegClient, UsbProbe
     require(args.stage != 'performance' or (args.input and args.input.is_file()),
             'performance requires one frozen --input file')
-    snapshot = case_snapshot(args, args.input if args.stage == 'performance' else None)
+    args.output.mkdir(parents=True, exist_ok=True)
+    can = UsbProbe(args.output)
+    snapshot = case_snapshot(args, args.input if args.stage == 'performance' else None,
+                             link_device=can.device)
     before = asset_snapshot(snapshot)
     if args.stage == 'camera':
         device = Path(snapshot['values']['vision.detect.camera_device'])
@@ -1022,6 +1024,7 @@ def camera_or_performance(args):
             'RMW_IMPLEMENTATION': os.environ.get('RMW_IMPLEMENTATION')}
     rclpy.init()
     observer = Observer(snapshot, args.output)
+    observer.pollers.append(can.poll)
     owner = http = None
     try:
         owner = launch_case(args, snapshot, args.output)
@@ -1095,7 +1098,7 @@ def camera_or_performance(args):
                     'temperature evidence missing')
         report['status'] = 'observed_pending_shutdown'
     finally:
-        cleanup_case(report, observer, owner, http, None, snapshot, before, FULL_ROLES, port)
+        cleanup_case(report, observer, owner, http, can, snapshot, before, FULL_ROLES, port)
         try:
             rclpy.shutdown()
         except BaseException as error:
@@ -1429,7 +1432,7 @@ def main(argv=None):
     parser.add_argument('--abs-tol', type=float)
     parser.add_argument('--rel-tol', type=float)
     parser.add_argument('--cmake-arg', action='append', default=[])
-    parser.add_argument('--isolated', action='store_true', help='create a private network namespace and vcan0')
+    parser.add_argument('--isolated', action='store_true', help='create a private network namespace')
     args = parser.parse_args(argv)
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -1443,7 +1446,7 @@ def main(argv=None):
                 'performance-compare': performance_compare}
     try:
         write_status(args, 'running')
-        # 统一入口仍面向板端；隔离 vcan 的证据不能代替物理 CAN 验收。
+        # 统一入口仍面向板端；伪终端证据不能代替物理 USB 验收。
         require(sys.platform == 'linux', 'all project builds/tests/hardware checks run on the board')
         if args.isolated:
             forwarded = list(sys.argv[1:] if argv is None else argv)
@@ -1452,12 +1455,6 @@ def main(argv=None):
         if os.environ.get('RESCUE_TEST_HOST_NETNS'):
             require(os.readlink('/proc/self/ns/net') != os.environ['RESCUE_TEST_HOST_NETNS'],
                     'namespace isolation did not happen')
-            if subprocess.run(['ip', 'link', 'show', 'vcan0'], capture_output=True).returncode != 0:
-                try:
-                    command(['ip', 'link', 'add', 'vcan0', 'type', 'vcan'], args.output / 'vcan-create.log')
-                    command(['ip', 'link', 'set', 'vcan0', 'up'], args.output / 'vcan-up.log')
-                except ContractFailure as error:
-                    raise CapabilityMissing('isolated vcan unavailable: ' + str(error)) from error
             command(['ip', 'link', 'set', 'lo', 'up'], args.output / 'loopback-up.log')
         handlers[args.stage](args)
         write_status(args, 'executed')

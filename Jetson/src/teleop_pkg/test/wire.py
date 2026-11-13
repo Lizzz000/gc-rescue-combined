@@ -40,16 +40,16 @@ class Frame(tuple):
     velocity = property(lambda self: self[2:])
 
 
-def decode_packet(packet, can_id, dlc):
-    """解出一帧 (valid, vx, vy, wz)；分帧、ID 或 DLC 不符抛 ValueError。"""
+def decode_packet(packet, identifier, length):
+    """解出一帧 (valid, vx, vy, wz)；分帧、类型或长度不符抛 ValueError。"""
     frames = Parser().feed(packet)
-    if len(frames) != 1 or frames[0][0] != can_id or len(frames[0][1]) != dlc:
+    if len(frames) != 1 or frames[0][0] != identifier or len(frames[0][1]) != length:
         raise ValueError(f'分帧不符：{packet.hex()}')
     return struct.unpack('<Bhhh', frames[0][1])
 
 
 class PtyCapture:
-    """打开一对 pty；后台线程读主端，每个完整 30 字节封装记一个时间戳。"""
+    """打开一对 pty；后台线程读主端，每个完整 USB 分帧记一个时间戳。"""
 
     def __init__(self):
         self.master, self.slave = pty.openpty()
@@ -72,10 +72,10 @@ class PtyCapture:
             for identifier, payload in self._parser.feed(data):
                 self.packets.append((now, identifier, payload))
 
-    def frames(self, can_id, dlc):
+    def frames(self, identifier, length):
         return [Frame(t, *struct.unpack('<Bhhh', payload))
-                for t, identifier, payload in list(self.packets)
-                if identifier == can_id and len(payload) == dlc]
+                for t, got, payload in list(self.packets)
+                if got == identifier and len(payload) == length]
 
     def close(self):
         self._running = False
@@ -114,23 +114,15 @@ def stm32_available():
 
 
 def stm32_constants():
-    """手动固件的超时、限速与任务周期；任务周期取 test_task.c 的 vTaskDelayUntil 参数。"""
-    task = (STM32_CORE / 'Task/CAN2/test_task.c').read_text(encoding='utf-8')
+    """手动固件的超时、限速与任务周期；任务周期取 chassis_task.c 的 vTaskDelayUntil 参数。"""
+    task = (STM32_CORE / 'Task/Chassis/chassis_task.c').read_text(encoding='utf-8')
     period = re.search(r'vTaskDelayUntil\([^,]+,\s*pdMS_TO_TICKS\((\d+)U?\)\)', task)
     return {
         'timeout_ms': _define(STM32_CORE / 'Control/Manual/manual_control.h', 'MANUAL_VELOCITY_TIMEOUT_MS'),
         'max_linear_mps': _define(STM32_CORE / 'Control/Chassis/chassis.h', 'CHASSIS_STRAIGHT_MAX_SPEED_MPS'),
         'max_angular_radps': _define(STM32_CORE / 'Control/Chassis/chassis.h', 'CHASSIS_VECTOR_MAX_WZ_RAD_S'),
-        'manual_id': int(_define_hex(STM32_CORE / 'Communication/Manual/manual_can.h', 'MANUAL_CAN_VELOCITY_ID')),
         'task_period_ms': float(period.group(1)) if period else None,
     }
-
-
-def _define_hex(path, name):
-    match = re.search(rf'#define\s+{name}\s+(0x[0-9A-Fa-f]+)', path.read_text(encoding='utf-8'))
-    if not match:
-        raise LookupError(f'{path} 中没有 {name}')
-    return int(match.group(1), 16)
 
 
 # ---------------- STM32 回放 ----------------
@@ -143,8 +135,8 @@ def build_replay():
     out = Path(tempfile.mkdtemp(prefix='gc_manual_replay_')) / 'replay'
     includes = [STM32_STUBS, STM32_CORE / 'Communication/Jetson', STM32_CORE / 'Communication/Manual',
                 STM32_CORE / 'Control/Manual', STM32_CORE / 'Control/Chassis']
-    sources = [REPLAY_SOURCE, STM32_CORE / 'Communication/Manual/manual_can.c',
-               STM32_CORE / 'Communication/Jetson/jetson_can.c', STM32_CORE / 'Control/Manual/manual_control.c']
+    sources = [REPLAY_SOURCE, STM32_CORE / 'Communication/Manual/manual_link.c',
+               STM32_CORE / 'Communication/Jetson/jetson_link.c', STM32_CORE / 'Control/Manual/manual_control.c']
     command = [cc, '-std=c11', '-O1', *[f'-I{p}' for p in includes], *map(str, sources), '-lm', '-o', str(out)]
     subprocess.run(command, check=True, capture_output=True, text=True)
     return out

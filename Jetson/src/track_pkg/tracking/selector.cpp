@@ -42,7 +42,7 @@ void validateSelectionPolicy(const SelectionPolicy & policy)
 // ---- TargetSelector：选择算法 ----
 // 比较点是框底边中点；生产节点采用 SelectionPolicy 的默认值。
 // 亮蓝按归一化框间隙挡路：两个方向的间隙都小于阈值才淘汰，等于阈值仍安全。
-// 底边只决定选中哪一个框。CAN 0x181 使用框几何中心，换算在桥接包的定点量化节。
+// 底边只决定选中哪一个框。类型 3 使用框几何中心，换算在桥接包的定点量化节。
 // 已选 ID 还在安全候选里时，新目标必须好过 switch_margin 才更换。
 // 没有旧目标时，代价相同则取数值较小的 ID（"2" 先于 "10"）。
 /**

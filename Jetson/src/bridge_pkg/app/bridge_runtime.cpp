@@ -1,6 +1,6 @@
-// 阅读：只启动 BridgeNode。它订阅目标和安全区，经 SocketCAN 交给 STM32。
+// 阅读：只启动 BridgeNode。它订阅目标和安全区，经 USB 交给 STM32。
 // 到达后调用 mission 的 ROI 与命令服务。
-// 下一份：node/bridge_node.hpp。状态在 state/bridge_state.hpp，帧格式在 protocol/can_protocol.hpp。
+// 下一份：node/bridge_node.hpp。状态在 state/bridge_state.hpp，帧格式在 protocol/usb_protocol.hpp。
 // ---- 角色入口：与节点共用一份生产对象 ----
 #include "node/bridge_node.hpp"
 #include <interface_pkg/app/core.hpp>

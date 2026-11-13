@@ -6,7 +6,7 @@
 #include "bsp_can.h"
 #include "chassis.h"
 #include "jetson_auto.h"
-#include "jetson_can.h"
+#include "jetson_link.h"
 #include "task.h"
 
 /* 真实下行解析与自主状态机，反馈、机构及 CAN 发送由本测试控制。 */
@@ -41,10 +41,10 @@ void test_enter_critical(void)
         assert(critical_depth == 0U);
         can_arrival_before_snapshot = 0U;
         ++test_tick;
-        const uint8_t heartbeat[8] = {0U};
+        const uint8_t heartbeat[8] = {1U, 0U, 0U, 0U, 0U, 0U, 0U, 0U};
         const uint8_t target[8] = {1U, 0x88U, 0x13U, 0xA0U, 0x0FU, (uint8_t)test_tick, (uint8_t)(test_tick >> 8U), (uint8_t)(test_tick >> 16U)}; /* (5000,4000) */
-        Jetson_CAN_Receive(0x180U, heartbeat, sizeof(heartbeat));
-        Jetson_CAN_Receive(0x181U, target, sizeof(target));
+        Jetson_CAN_Receive(JETSON_CAN_HEARTBEAT_ID, heartbeat, sizeof(heartbeat));
+        Jetson_CAN_Receive(JETSON_CAN_TARGET_CENTER_ID, target, sizeof(target));
     }
     ++critical_depth;
 }
@@ -126,7 +126,7 @@ uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg)
 }
 
 /** @brief 捕获自主层提交的上行请求。 @return HAL_OK 模拟入队，HAL_BUSY 表示邮箱未就绪。
- * @param[in] id 已有运输协议上行 ID。 @param[in] argument 本趟身份；底盘联调不发 0x208。
+ * @param[in] id 已有运输协议上行 ID。 @param[in] argument 本趟身份；底盘联调不发 类型 21。
  */
 HAL_StatusTypeDef Jetson_CAN_Try_Send_Uplink(uint16_t id, uint32_t argument)
 {
@@ -164,14 +164,14 @@ static void Reset(void)
 }
 
 /** @brief 推进一拍 5 ms。
- * @param[in] heartbeat 1 注入合法 0x180 传输心跳，0 模拟 CAN 断流。
+ * @param[in] heartbeat 1 注入合法 类型 1 传输心跳，0 模拟 CAN 断流。
  */
 static void Step(uint8_t heartbeat)
 {
     test_tick += 5U;
-    const uint8_t bytes[8] = {0};
+    const uint8_t bytes[8] = {1U, 0U, 0U, 0U, 0U, 0U, 0U, 0U};
     if (heartbeat)
-        Jetson_CAN_Receive(0x180U, bytes, sizeof(bytes));
+        Jetson_CAN_Receive(JETSON_CAN_HEARTBEAT_ID, bytes, sizeof(bytes));
     Jetson_Auto_Loop();
     assert(critical_depth == 0U);
 }
@@ -206,14 +206,14 @@ static void Put_Token(uint8_t bytes[4], uint32_t token)
 /** @brief 注入到达请求回执。 @param[in] accepted 1 为受理。 */
 static void Receive_Arrival_Ack(uint8_t accepted)
 {
-    Jetson_CAN_Receive(0x190U, &accepted, 1U);
+    Jetson_CAN_Receive(JETSON_CAN_ARRIVAL_REPLY_ID, &accepted, 1U);
 }
 
 /** @brief 注入 ROI 判定。 @param[in] passed 1 为通过。 @param[in] destination 左 1、右 2。 */
 static void Receive_Roi(uint8_t passed, uint8_t destination)
 {
     const uint8_t bytes[] = {1U, passed, destination};
-    Jetson_CAN_Receive(0x191U, bytes, sizeof(bytes));
+    Jetson_CAN_Receive(JETSON_CAN_ROI_REPLY_ID, bytes, sizeof(bytes));
 }
 
 /** @brief 注入本趟转向授权。 @param[in] destination 左 1、右 2。 @param[in] token 本趟身份。 */
@@ -221,7 +221,7 @@ static void Receive_Turn(uint8_t destination, uint32_t token)
 {
     uint8_t bytes[] = {1U, destination, 0U, 0U, 0U, 0U};
     Put_Token(bytes + 2, token);
-    Jetson_CAN_Receive(0x193U, bytes, sizeof(bytes));
+    Jetson_CAN_Receive(JETSON_CAN_TURN_REQUEST_ID, bytes, sizeof(bytes));
 }
 
 /** @brief 注入运输命令回执。
@@ -231,7 +231,7 @@ static void Receive_Command_Ack(uint8_t accepted, uint8_t command, uint32_t toke
 {
     uint8_t bytes[] = {accepted, command, 0U, 0U, 0U, 0U};
     Put_Token(bytes + 2, token);
-    Jetson_CAN_Receive(0x192U, bytes, sizeof(bytes));
+    Jetson_CAN_Receive(JETSON_CAN_COMMAND_REPLY_ID, bytes, sizeof(bytes));
 }
 
 /** @brief 核对指定上行事件的 ID 及身份。帧字节布局由 CAN 模块单测核对。
@@ -266,14 +266,14 @@ static void Flow_Start(void)
     assert(enabled && enables == 1U);
     stopped = 1U;
     Step(1U);
-    Receive_Center(0x181U, 5000, 4000);
+    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 4000);
     Step(1U);
     assert(last_vx > 0.0f && last_wz == 0.0f && !stopped);
     Flow_No_Actuator();
 }
 
 /** @brief 用新鲜窗内坐标和独立停车反馈推进到上行握手。
- * @param[in] id 目标0x181或安全区0x182。 @param[in] uplink 预期上行ID。
+ * @param[in] id 目标类型 3或安全区类型 4。 @param[in] uplink 预期上行ID。
  */
 static void Flow_Arrive(uint16_t id, uint16_t uplink)
 {
@@ -299,7 +299,7 @@ static void Flow_One_Shot(uint8_t destination)
 {
     const uint32_t token = 0xA13579U;
     Flow_Start();
-    Flow_Arrive(0x181U, 0x200U);
+    Flow_Arrive(JETSON_CAN_TARGET_CENTER_ID, JETSON_CAN_ARRIVAL_ID);
     Receive_Arrival_Ack(1U);
     Receive_Roi(1U, destination);
     Receive_Turn(destination, token);
@@ -310,20 +310,20 @@ static void Flow_One_Shot(uint8_t destination)
     assert(sent_count == 1U);
     stopped = 1U;
     Steps(2U, 1U);
-    Check_Sent(1U, 0x203U, token);
+    Check_Sent(1U, JETSON_CAN_TURN_COMPLETED_ID, token);
     Receive_Command_Ack(1U, 1U, token + 1U);
     Step(1U);
     const unsigned count = velocity_requests;
-    Receive_Center(0x182U, 5000, 4000);
+    Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, 5000, 4000);
     Step(1U);
     assert(velocity_requests == count);
     Receive_Command_Ack(1U, 1U, token);
     Step(1U);
-    Receive_Center(0x182U, 5000, 4000);
+    Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, 5000, 4000);
     Step(1U);
     assert(velocity_requests > count && last_vx > 0.0f && last_wz == 0.0f);
-    Flow_Arrive(0x182U, 0x204U);
-    Check_Sent(2U, 0x204U, token);
+    Flow_Arrive(JETSON_CAN_SAFETY_CENTER_ID, JETSON_CAN_SAFETY_ARRIVED_ID);
+    Check_Sent(2U, JETSON_CAN_SAFETY_ARRIVED_ID, token);
     Receive_Command_Ack(1U, 2U, token);
     Step(1U);
     assert(!enabled && disables == 1U);
@@ -331,7 +331,7 @@ static void Flow_One_Shot(uint8_t destination)
     for (unsigned i = 0U; i < 100U; ++i)
     {
         jetson_test_start = (uint8_t)(i & 1U);
-        Receive_Center(0x181U, 5000, 4000);
+        Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 4000);
         Step(1U);
     }
     assert(enables == 1U && velocity_requests == after && sent_count == 3U);
@@ -342,7 +342,7 @@ static void Flow_One_Shot(uint8_t destination)
 static void Flow_Rejection(void)
 {
     Flow_Start();
-    Flow_Arrive(0x181U, 0x200U);
+    Flow_Arrive(JETSON_CAN_TARGET_CENTER_ID, JETSON_CAN_ARRIVAL_ID);
     Receive_Arrival_Ack(1U);
     Receive_Roi(0U, 0U);
     Steps(2U, 1U);
@@ -363,7 +363,7 @@ static void Flow_Interruptions(void)
     Steps(55U, 1U);
     assert(stops > before && last_wz == 0.0f && turn_count == 0U);
     stopped = 1U;
-    Receive_Center(0x181U, 5000, 4000);
+    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 4000);
     Step(1U);
     assert(last_vx > 0.0f && !stopped);
     Steps(55U, 0U);
@@ -388,35 +388,35 @@ static void Flow_Interruptions(void)
 static void Flow_Visual_Stop_Wait(void)
 {
     Flow_Start();
-    Receive_Center(0x181U, 5000, 7500);
+    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
     Step(1U);
     const unsigned moves = velocity_requests;
     const unsigned braking_stops = stops;
     for (unsigned i = 0U; i < 120U; ++i)
     {
-        Receive_Center(0x181U, 5000, 7500);
+        Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
         Step(1U);
     }
     assert(enabled && !stopped && !sent_count && stops == braking_stops);
     assert(velocity_requests == moves);
     stopped = 1U;
-    Receive_Center(0x181U, 5000, 7500);
+    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
     Step(1U);
     for (unsigned i = 0U; i < JETSON_AUTO_VERIFY_WAIT_MS / 5U; ++i)
     {
-        Receive_Center(0x181U, 5000, 7500);
+        Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
         Step(1U);
     }
     assert(enabled && stopped && !sent_count && velocity_requests == moves);
     /* 截止后新图像仍在窗外，必须重新对准，不能使用停车前/等待中的窗内图像。 */
-    Receive_Center(0x181U, 5101, 7500);
+    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5101, 7500);
     Step(1U);
     assert(!stopped && !sent_count && velocity_requests == moves + 1U);
-    Flow_Arrive(0x181U, 0x200U);
+    Flow_Arrive(JETSON_CAN_TARGET_CENTER_ID, JETSON_CAN_ARRIVAL_ID);
     Flow_No_Actuator();
 
     Flow_Start();
-    Receive_Center(0x181U, 5000, 7500);
+    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
     Step(1U);
     const unsigned stops_before_timeout = stops;
     Steps(120U, 1U);

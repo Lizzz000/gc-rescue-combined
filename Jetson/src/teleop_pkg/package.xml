@@ -2,7 +2,7 @@
 <package format="3">
   <name>teleop_pkg</name>
   <version>0.4.0</version>
-  <description>独立手动控制：网页上位机经达妙 USB-CAN 发送 0x17F。</description>
+  <description>独立手动控制：网页上位机经 USB 发送类型 2 手动速度。</description>
   <maintainer email="li@todo.todo">li</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>

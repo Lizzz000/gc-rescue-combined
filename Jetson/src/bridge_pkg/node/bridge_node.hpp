@@ -224,7 +224,7 @@ private:
   // 最近已发起206保留不确定结果的完整身份；最近成功另存命令4缓存，均跨205/socket重连。
   std::optional<CommandIdentity> last_delivery_request_;
   std::uint32_t pending_command_token_{0};
-  // 命令 1/3 已开始切换、0x192 尚未发出。重复命令在此期间丢弃，不另回一帧。
+  // 命令 1/3 已开始切换、类型 7 尚未发出。重复命令在此期间丢弃，不另回一帧。
   struct PendingModeReply
   {
     std::uint8_t command{0};

@@ -1,9 +1,9 @@
-/* 协议来源：独立手动 0x17F（与 Jetson 0x180 同格式）；控制与参数复用本车 chassis。
- * F407/RTOS 适配：ISR 只保存协议快照，现有 test_task 唯一调用底盘接口。
+/* 手动控制只消费类型 2。速度定点与底盘参数复用本车 chassis。自动固件不编译这条路径。
+ * F407/RTOS 适配：USB 任务只保存协议快照，现有 test_task 唯一调用底盘接口。
  * 不引入旧车的命令队列、输入框架或新任务；本轮不启用运输动作。
  */
 #include "manual_control.h"
-#include "manual_can.h"
+#include "manual_link.h"
 #include "chassis.h"
 #include "FreeRTOS.h"
 #include "task.h"

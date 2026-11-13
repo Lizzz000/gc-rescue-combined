@@ -47,23 +47,12 @@ mission:
     roi_y: 0.5
     roi_width: 0.5
     roi_height: 0.5
-# 板间 Type-C。STM32 是 USB 设备，Jetson 打开下面这个 by-id。首次枚举后用 ls 核对序列号，不要写 ttyACM 号。
+# 板间 USB 全速 CDC，12 Mbit/s。C 板没有 ULPI，不是 480 Mbit/s。
+# STM32 是设备，Jetson 打开这个 by-id。首次枚举后用 ls 核对序列号，不要写 ttyACM 号。
 link:
-  device: /dev/serial/by-id/usb-GC_Rescue_STM32_Link-if00
-# 旧的达妙 USB-CAN。transport 为 cdc 时不打开。改回 damiao_serial_fixed 才使用。
-damiao:
-  # 按USB序列号定位设备，避免ttyACM编号随插拔变化；SocketCAN须为空字符串。
-  device: /dev/serial/by-id/usb-HDSC_CDC_Device_00000000050C-if00
+  device: /dev/serial/by-id/usb-GC_Rescue_STM32_Link_0028003D3034470E31353233-if00
 # 夹爪 S288 的中性配置；自动与手动都只读这一段，互不读取对方业务段。
 gripper:
   # 板上当前单总线适配器。开合角默认值见高级配置。
   device: /dev/serial/by-id/usb-Artery_AT32_Virtual_Com_Port_26BDB9203057-if00
   id: 0
-# CAN：输入、发送队列和请求超时分别见高级配置，职责保持独立。0x180 为心跳，无速度话题。
-bridge:
-  # 当前实测V3沿用模块已有CAN设置；SocketCAN用于系统CAN网口及隔离vcan合同。
-  transport: cdc
-  # 当前模块与STM32台架均为1M；这里只记录预期值，不设置或验证实际码率。SocketCAN须为0。
-  can_bitrate: 1000000
-  # 仅 SocketCAN 使用；不能把串口路径写在这里。
-  can_interface: can0

@@ -54,10 +54,10 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Bsp/IMU_PWM/bsp_imu_pwm.c
     Core/Bsp/LED/bsp_led.c
     Core/Communication/VOFA/vofa.c
-    Core/Communication/Jetson/jetson_can.c
+    Core/Communication/Jetson/jetson_link.c
     Core/Communication/Jetson/link_frame.c
     Core/Communication/Jetson/usb_link.c
-    Core/Communication/Manual/manual_can.c
+    Core/Communication/Manual/manual_link.c
     Core/Control/Chassis/chassis.c
     Core/Control/Jetson/image_tracker.c
     Core/Control/Jetson/jetson_auto.c
@@ -68,7 +68,10 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Devices/IST8310/ist8310driver_middleware.c
     Core/Devices/DM_Motor/dm_motor.c
     Core/Task/INS/INS_task.c
-    Core/Task/CAN2/test_task.c
+    Core/Task/Chassis/chassis_task.c
+    Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c
+    Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd_ex.c
+    Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_usb.c
 )
 
 # Add include paths
@@ -91,10 +94,12 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Devices/IST8310
     Core/Devices/DM_Motor
     Core/Task/INS
-    Core/Task/CAN2
+    Core/Task/Chassis
 )
 
 # Add project symbols (macros)
+# hal_conf.h 里的同名定义可以留着。Cube 重新生成把它注释掉时，这条仍然打开 PCD。
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAL_PCD_MODULE_ENABLED)
 option(INS_USE_MAGNETOMETER "Use IST8310 for nine-axis Mahony heading" OFF)
 if(INS_USE_MAGNETOMETER)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE INS_USE_MAGNETOMETER=1)

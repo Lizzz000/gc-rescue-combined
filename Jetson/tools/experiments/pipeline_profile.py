@@ -181,7 +181,7 @@ def main():
     sys.path.insert(0, str(args.source / 'tools'))
     from validation import workflow
     from validation.evidence import (HostFileUseWitness, asset_snapshot, fingerprint,
-                                     host_file_use, isolated_vcan, port_open, require,
+                                     host_file_use, port_open, require,
                                      write_json)
 
     if args.isolated:
@@ -231,11 +231,7 @@ def main():
     require(os.environ.get('RESCUE_TEST_HOST_NETNS') and
             os.readlink('/proc/self/ns/net') != os.environ['RESCUE_TEST_HOST_NETNS'],
             '必须使用独立网络命名空间，不操作物理 CAN')
-    for command in (['ip', 'link', 'add', 'vcan0', 'type', 'vcan'],
-                    ['ip', 'link', 'set', 'vcan0', 'up'],
-                    ['ip', 'link', 'set', 'lo', 'up']):
-        subprocess.run(command, check=True, capture_output=True)
-    isolated_vcan()
+    subprocess.run(['ip', 'link', 'set', 'lo', 'up'], check=True, capture_output=True)
 
     import rclpy
     from rclpy.signals import SignalHandlerOptions
@@ -301,9 +297,9 @@ def main():
     original = cfg.load_configuration(args.config, 'all')
     values = copy.deepcopy(original['values'])
     require(values['vision.detect.publish_timing'], '生产配置未开启耗时消息，不能伪造分段数据')
-    overrides = {'bridge.transport': 'socketcan', 'damiao.device': '', 'bridge.can_bitrate': 0,
-                 'bridge.can_interface': 'vcan0',
-                 'vision.detect.active_task': 'seg',
+    from validation.observations import UsbProbe
+    usb_probe = UsbProbe(args.output)
+    overrides = {'link.device': usb_probe.device, 'vision.detect.active_task': 'seg',
                  'vision.stream.stream_address': '127.0.0.1'}
     with socket.socket() as channel:
         channel.bind(('127.0.0.1', 0))
@@ -363,6 +359,7 @@ def main():
                 observer.node.destroy_subscription(subscription)
                 observer.subscriptions.remove(subscription)
         with defer_creation_cancel():
+            observer.pollers.append(usb_probe.poll)
             owner = workflow.launch_case(args, snapshot, args.output)
         observer.wait(lambda: observer.states and observer.records['detections'],
                       owner=owner, reason='initial real seg source')
@@ -397,7 +394,7 @@ def main():
         raise
     finally:
         protect_cleanup()
-        workflow.cleanup_case(report, observer, owner, http, None, snapshot, before,
+        workflow.cleanup_case(report, observer, owner, http, usb_probe, snapshot, before,
                               workflow.FULL_ROLES, port)
         if context_started:
             try:

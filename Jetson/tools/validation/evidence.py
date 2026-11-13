@@ -63,7 +63,7 @@ def asset_snapshot(snapshot):
             for path in sorted(paths)}
 
 
-# ---- 运行身份与隔离：进程组、端口和 vcan 准入 ----
+# ---- 运行身份与隔离：进程组和端口 ----
 
 def proc_info(pid):
     try:
@@ -92,22 +92,6 @@ def port_open(port):
     with socket.socket() as connection:
         connection.settimeout(0.2)
         return connection.connect_ex(('127.0.0.1', port)) == 0
-
-
-def isolated_vcan(interface='vcan0', parent_namespace=None):
-    """绑定/发送前证明命名空间隔离与虚拟接口身份，不操作物理CAN。"""
-    require(interface == 'vcan0', 'validation only binds vcan0')
-    current = os.readlink('/proc/self/ns/net')
-    if parent_namespace is None:
-        parent_namespace = os.environ.get('RESCUE_TEST_HOST_NETNS')
-    require(parent_namespace and current != parent_namespace,
-            'isolated namespace proof missing; use the validation namespace worker')
-    result = subprocess.run(['ip', '-details', '-json', 'link', 'show', 'dev', interface],
-                            text=True, capture_output=True, check=True)
-    links = json.loads(result.stdout)
-    require(len(links) == 1 and links[0].get('linkinfo', {}).get('info_kind') == 'vcan' and
-            'UP' in links[0].get('flags', []), 'isolated vcan0 is not UP/vcan')
-    return {'current': current, 'host': parent_namespace, 'interface': links[0]}
 
 
 # ---- 自有进程生命周期：启动、身份取样、限时停止与退出证明 ----

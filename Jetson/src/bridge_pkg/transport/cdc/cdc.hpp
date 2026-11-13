@@ -1,6 +1,6 @@
 #pragma once
 
-// USB CDC 上的 CanTransport。读到一帧完整分帧才返回 FRAME，短写和 EAGAIN 是背压。
+// USB 全速 CDC（12 Mbit/s，C 板没有 ULPI）。读到一帧完整分帧才返回 FRAME，短写和 EAGAIN 是背压。
 
 #include "transport/frame/link_frame.hpp"
 #include "transport/transport.hpp"
@@ -14,6 +14,8 @@ class CdcLink final : public CanTransport
 {
 public:
   static bool validDevice(const std::string & path);
+
+  ~CdcLink() override;
 
   bool open(const std::string & interface_name, int & index, std::string & error) override;
   void close() override;

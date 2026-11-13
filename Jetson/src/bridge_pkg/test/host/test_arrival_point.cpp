@@ -49,7 +49,8 @@ void testArrivalPoint()
   CHECK(writePauseHeartbeat(writer, pause) == WriteResult::Sent);
   CHECK(pause == 1 && writer.frames.size() == 1);
   CHECK(writer.frames[0].can_id == CanProtocol::VELOCITY_ID && writer.frames[0].len == 8);
-  CHECK(writer.frames[0].data[7] == 1);
+  CHECK(writer.frames[0].data[0] == 1 && writer.frames[0].data[1] == 1);
+  CHECK(writer.frames[0].data[2] == 0 && writer.frames[0].data[7] == 0);
   const auto reply = CanProtocol::commandResult(true, CanProtocol::ARRIVAL_POINT);
   writer.frames.push_back(reply);
   CHECK(writer.frames[0].can_id == CanProtocol::VELOCITY_ID);

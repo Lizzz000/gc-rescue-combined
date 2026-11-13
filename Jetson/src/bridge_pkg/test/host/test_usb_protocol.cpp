@@ -1,5 +1,5 @@
 #include "check.hpp"
-#include "protocol/can_protocol.hpp"
+#include "protocol/usb_protocol.hpp"
 
 #include <cstring>
 #include <limits>
@@ -41,14 +41,13 @@ void testCanProtocol()
 {
   Group group("CanProtocol");
 
-  // 0x180 布局：DLC 8，data[0..6] 为 valid、vx、vy、角速度（int16 小端），data[7] 为 pause。
-  // valid=0 时 data[0..6] 清零，data[7] 仍写 pause。
-  const std::uint8_t velocity_bytes[] = {1, 0xfe, 0xff, 0x00, 0x00, 0xe8, 0x03, 1};
+  // 类型 1，长度 8：alive、pause、vx、vy、wz。alive=0 时速度清零。
+  const std::uint8_t velocity_bytes[] = {1, 1, 0xfe, 0xff, 0x00, 0x00, 0xe8, 0x03};
   CHECK(bytesEqual(CanProtocol::velocity(true, -2, 0, 1000, 1), CanProtocol::VELOCITY_ID, 8, velocity_bytes));
-  const std::uint8_t velocity_invalid[] = {0, 0, 0, 0, 0, 0, 0, 0};
-  CHECK(bytesEqual(CanProtocol::velocity(false, -2, 0, 1000, 0), CanProtocol::VELOCITY_ID, 8, velocity_invalid));
-  const std::uint8_t velocity_pause[] = {0, 0, 0, 0, 0, 0, 0, 1};
-  CHECK(bytesEqual(CanProtocol::velocity(false, -2, 0, 1000, 1), CanProtocol::VELOCITY_ID, 8, velocity_pause));
+  const std::uint8_t velocity_lost[] = {0, 0, 0, 0, 0, 0, 0, 0};
+  CHECK(bytesEqual(CanProtocol::velocity(false, -2, 0, 1000, 0), CanProtocol::VELOCITY_ID, 8, velocity_lost));
+  const std::uint8_t velocity_lost_pause[] = {0, 1, 0, 0, 0, 0, 0, 0};
+  CHECK(bytesEqual(CanProtocol::velocity(false, -2, 0, 1000, 1), CanProtocol::VELOCITY_ID, 8, velocity_lost_pause));
   CHECK(threwInvalid([] { CanProtocol::velocity(false, 0, 0, 0, 2); }));
 
   // 坐标帧携带 24 位源帧编号；无效帧仍保留 ID 和 DLC，载荷清零。
@@ -76,13 +75,13 @@ void testCanProtocol()
   CHECK(!CanProtocol::fixedPoint(nan, 1000.0, scaled) && !CanProtocol::fixedPoint(1.0, 0.0, scaled) &&
     !CanProtocol::fixedPoint(1.0, -1.0, scaled) && scaled == 0);
 
-  // 0x190 到达应答只有受理位。
+  // 类型 5 到达应答只有受理位。
   const std::uint8_t ack_yes[] = {1};
   const std::uint8_t ack_no[] = {0};
   CHECK(bytesEqual(CanProtocol::arrivalAck(true), CanProtocol::ARRIVAL_ACK_ID, 1, ack_yes));
   CHECK(bytesEqual(CanProtocol::arrivalAck(false), CanProtocol::ARRIVAL_ACK_ID, 1, ack_no));
 
-  // 0x191：通过必须带 1 或 2。失败和无效都把后两字节清零。
+  // 类型 6：通过必须带 1 或 2。失败和无效都把后两字节清零。
   const std::uint8_t roi_left[] = {1, 1, 1};
   const std::uint8_t roi_right[] = {1, 1, 2};
   const std::uint8_t roi_fail[] = {1, 0, 0};
@@ -93,7 +92,7 @@ void testCanProtocol()
   CHECK(bytesEqual(CanProtocol::roiResult(false, true, 1), CanProtocol::ROI_RESULT_ID, 3, roi_invalid));
   CHECK(threwInvalid([] { CanProtocol::roiResult(true, true, 0); }));
 
-  // 0x192 token 小端。命令 3 没有身份，调用方带进来的 token 也不写出。
+  // 类型 7 token 小端。命令 3 没有身份，调用方带进来的 token 也不写出。
   const std::uint8_t command_turn[] = {1, CanProtocol::TURN_COMPLETED, 0x04, 0x03, 0x02, 0x01};
   const std::uint8_t command_search[] = {1, CanProtocol::START_SEARCH, 0, 0, 0, 0};
   const std::uint8_t command_reject[] = {0, CanProtocol::DELIVERY_COMPLETED, 0xd4, 0xc3, 0xb2, 0xa1};
@@ -113,7 +112,7 @@ void testCanProtocol()
   CHECK(threwInvalid([] { CanProtocol::commandResult(true, 0, 1); }));
   CHECK(threwInvalid([] { CanProtocol::commandResult(true, 9, 1); }));
 
-  // 0x193 同样小端，目的区只能是 1 或 2。
+  // 类型 8 同样小端，目的区只能是 1 或 2。
   const std::uint8_t turn_bytes[] = {1, 2, 0xd4, 0xc3, 0xb2, 0xa1};
   CHECK(bytesEqual(CanProtocol::turnRequest(2, 0xa1b2c3d4u), CanProtocol::TURN_REQUEST_ID, 6, turn_bytes));
   CHECK(threwInvalid([] { CanProtocol::turnRequest(0, 1); }));
@@ -157,31 +156,20 @@ void testCanProtocol()
   arrival_point.len = 2;
   CHECK(CanProtocol::parseCommand(arrival_point).kind == CanProtocol::CommandKind::MALFORMED);
 
-  const auto old_id = CanProtocol::parseCommand(commandFrame(0x201, 1, 1, 0));
-  const auto other_id = CanProtocol::parseCommand(commandFrame(0x202, 1, 1, 0));
-  CHECK(old_id.kind == CanProtocol::CommandKind::NONE && other_id.kind == CanProtocol::CommandKind::NONE);
-  can_frame flagged = commandFrame(CanProtocol::ARRIVAL_ID, 1, 1, 0);
-  flagged.can_id |= CAN_EFF_FLAG;
-  const auto extended = CanProtocol::parseCommand(flagged);
-  flagged.can_id = CanProtocol::ARRIVAL_ID | CAN_RTR_FLAG;
-  const auto remote = CanProtocol::parseCommand(flagged);
-  flagged.can_id = CanProtocol::ARRIVAL_ID | CAN_ERR_FLAG;
-  const auto error_frame = CanProtocol::parseCommand(flagged);
-  CHECK(extended.kind == CanProtocol::CommandKind::NONE && remote.kind == CanProtocol::CommandKind::NONE &&
-    error_frame.kind == CanProtocol::CommandKind::NONE);
+  const auto unknown_a = CanProtocol::parseCommand(commandFrame(9, 1, 1, 0));
+  const auto unknown_b = CanProtocol::parseCommand(commandFrame(15, 1, 1, 0));
+  CHECK(unknown_a.kind == CanProtocol::CommandKind::NONE && unknown_b.kind == CanProtocol::CommandKind::NONE);
+  const auto invalid_type = CanProtocol::parseCommand(commandFrame(256, 1, 1, 0));
+  CHECK(invalid_type.kind == CanProtocol::CommandKind::NONE);
 
-  // 13 个 ID：三条周期、四条事件、六条指令。旧 0x201 不在任何一类里。
+  // 三条周期、四条回复、六条指令。类型 2 只给手动程序。
   CHECK(CanProtocol::streamId(CanProtocol::VELOCITY_ID) && CanProtocol::streamId(CanProtocol::TARGET_ID) &&
-    CanProtocol::streamId(CanProtocol::SAFETY_ID) && !CanProtocol::streamId(CanProtocol::ARRIVAL_ACK_ID));
+    CanProtocol::streamId(CanProtocol::SAFETY_ID) && !CanProtocol::streamId(CanProtocol::ARRIVAL_ACK_ID) &&
+    !CanProtocol::streamId(CanProtocol::MANUAL_ID));
   CHECK(CanProtocol::replyId(CanProtocol::ARRIVAL_ACK_ID) && CanProtocol::replyId(CanProtocol::ROI_RESULT_ID) &&
     CanProtocol::replyId(CanProtocol::COMMAND_RESULT_ID) && CanProtocol::replyId(CanProtocol::TURN_REQUEST_ID) &&
     !CanProtocol::replyId(CanProtocol::VELOCITY_ID));
   CHECK(CanProtocol::transmitId(CanProtocol::VELOCITY_ID) && CanProtocol::transmitId(CanProtocol::TURN_REQUEST_ID) &&
-    !CanProtocol::transmitId(CanProtocol::ARRIVAL_ID) && !CanProtocol::transmitId(0x201));
-  const auto filters = CanProtocol::commandFilters();
-  CHECK(filters.size() == 6 && filters[0].can_id == CanProtocol::ARRIVAL_ID &&
-    filters[1].can_id == CanProtocol::TURN_COMPLETED_ID && filters[2].can_id == CanProtocol::SAFETY_ARRIVED_ID &&
-    filters[3].can_id == CanProtocol::START_SEARCH_ID && filters[4].can_id == CanProtocol::DELIVERY_COMPLETED_ID &&
-    filters[5].can_id == CanProtocol::ARRIVAL_POINT_ID &&
-    filters[0].can_mask == (CAN_SFF_MASK | CAN_EFF_FLAG | CAN_RTR_FLAG));
+    !CanProtocol::transmitId(CanProtocol::ARRIVAL_ID) && !CanProtocol::transmitId(CanProtocol::MANUAL_ID) &&
+    !CanProtocol::transmitId(9));
 }

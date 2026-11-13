@@ -1,9 +1,9 @@
 #pragma once
 
-// 0x208 到点会话与保证 (i) 的写出顺序。不依赖 ROS，可供主机测试单独编译。
-// 协议事实见 docs/can-protocol.md。
+// 类型 21 到点会话与保证 (i) 的写出顺序。不依赖 ROS，可供主机测试单独编译。
+// 协议事实见 docs/usb-protocol.md。
 
-#include "protocol/can_protocol.hpp"
+#include "protocol/usb_protocol.hpp"
 
 #include <cstdint>
 #include <utility>
@@ -53,11 +53,11 @@ private:
   std::uint8_t kind_{0};
 };
 
-// 保证 (i)：同一发送上下文里先按写出时的 pause 编码并提交 0x180，成功后才允许提交回复。
+// 保证 (i)：同一发送上下文里先提交 alive=1、pause=1、速度为 0 的类型 1，成功后才允许提交回复。
 // 背压或中断时不提交回复，由调用方保留待发并在下一拍重试。
 template<typename Write>
 auto writePauseHeartbeat(Write && write, std::uint8_t & pause) -> decltype(write(std::declval<can_frame>()))
 {
   pause = 1;
-  return write(CanProtocol::velocity(false, 0, 0, 0, pause));
+  return write(CanProtocol::velocity(true, 0, 0, 0, pause));
 }

@@ -779,20 +779,8 @@
       }
     },
     "bridge_node": {
-      "transport": {
-        "path": "bridge.transport",
-        "kind": "string"
-      },
       "serial_device": {
-        "path": "damiao.device",
-        "kind": "string"
-      },
-      "can_bitrate": {
-        "path": "bridge.can_bitrate",
-        "kind": "integer"
-      },
-      "can_interface": {
-        "path": "bridge.can_interface",
+        "path": "link.device",
         "kind": "string"
       },
       "image_width": {
@@ -1061,7 +1049,6 @@
     "mission.safety.control_topic": "string",
     "mission.safety.reset_timeout_s": "number",
     "mission.safety.mission_status_topic": "string",
-    "damiao.device": "string",
     "link.device": "string",
     "gripper.device": "string",
     "gripper.id": "integer",
@@ -1070,9 +1057,6 @@
     "gripper.closed_deg": "number",
     "gripper.open_deg": "number",
     "gripper.move_s": "number",
-    "bridge.transport": "string",
-    "bridge.can_bitrate": "integer",
-    "bridge.can_interface": "string",
     "bridge.input_timeout_s": "number",
     "bridge.safety_hold_s": "number",
     "bridge.tx_queue_timeout_s": "number",

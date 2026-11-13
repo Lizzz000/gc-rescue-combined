@@ -1,4 +1,4 @@
-#include "test_task.h"
+#include "chassis_task.h"
 #include "bsp_can.h"
 #include "bsp_adc.h"
 #include "bsp_buzzer.h"
@@ -6,9 +6,9 @@
 #include "chassis.h"
 #include "jetson_auto.h"
 #if JETSON_AUTO_CAN_ENABLED
-#include "jetson_can.h"
+#include "jetson_link.h"
 #else
-#include "manual_can.h"
+#include "manual_link.h"
 #include "manual_control.h"
 #endif
 #include "FreeRTOS.h"

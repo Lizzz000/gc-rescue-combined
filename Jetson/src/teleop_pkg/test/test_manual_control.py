@@ -1,4 +1,4 @@
-"""manual_control.py 端到端：pty 代替达妙串口，HTTP 走 127.0.0.1 随机端口。"""
+"""manual_control.py 端到端：pty 代替 STM32 USB 设备，HTTP 走 127.0.0.1 随机端口。"""
 
 import fcntl
 import json
@@ -20,6 +20,7 @@ import urllib.request
 PROGRAM = Path(__file__).resolve().parents[1] / 'manual_control.py'
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from manual.frame import Parser  # noqa: E402
+from manual.link import MANUAL_DLC, MANUAL_ID  # noqa: E402
 
 
 def write_config(folder, device):
@@ -30,12 +31,12 @@ def write_config(folder, device):
 
 
 def decode(wire):
-    """按 USB 分帧切包，返回 (单调时间, valid, vx, vy, wz)。ID 或 DLC 不符抛 ValueError。"""
+    """按 USB 分帧切包，返回 (单调时间, valid, vx, vy, wz)。类型或长度不符抛 ValueError。"""
     parser = Parser()
     frames = []
     for stamp, chunk in wire:
         for identifier, payload in parser.feed(chunk):
-            if identifier != 0x17F or len(payload) != 7:
+            if identifier != MANUAL_ID or len(payload) != MANUAL_DLC:
                 raise ValueError(f'unexpected packet {payload.hex()}')
             frames.append((stamp, *struct.unpack('<Bhhh', payload)))
     return frames
@@ -45,7 +46,7 @@ class ManualControlTest(unittest.TestCase):
     def setUp(self):
         self.master, self.slave = pty.openpty()
         self.device = os.ttyname(self.slave)
-        self.wire, self.buffer = [], bytearray()
+        self.wire = []
         self.reading = True
         self.temp = tempfile.TemporaryDirectory()
         self.config = write_config(self.temp.name, self.device)
@@ -70,13 +71,11 @@ class ManualControlTest(unittest.TestCase):
         while self.reading:
             if select.select([self.master], [], [], 0.02)[0]:
                 try:
-                    self.buffer.extend(os.read(self.master, 8192))
+                    chunk = os.read(self.master, 8192)
                 except OSError:
                     return
-                whole = len(self.buffer) // PACKET * PACKET
-                if whole:
-                    self.wire.append((time.monotonic(), bytes(self.buffer[:whole])))
-                    del self.buffer[:whole]
+                if chunk:
+                    self.wire.append((time.monotonic(), chunk))
 
     def post(self, path, body=None):
         request = urllib.request.Request(self.url + path, json.dumps(body or {}).encode(),
@@ -137,7 +136,7 @@ class ManualControlTest(unittest.TestCase):
         process = subprocess.run([sys.executable, str(PROGRAM), '--config', str(self.config), '--port', '0'],
                                  capture_output=True, text=True, timeout=5)
         self.assertNotEqual(process.returncode, 0)
-        self.assertIn('USB-CAN', process.stderr)
+        self.assertIn('USB 设备不可用', process.stderr)
         self.assertFalse(select.select([self.master], [], [], 0.2)[0])
 
 

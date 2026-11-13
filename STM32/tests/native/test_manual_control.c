@@ -2,8 +2,8 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
-#include "jetson_can.h"
-#include "manual_can.h"
+#include "jetson_link.h"
+#include "manual_link.h"
 #include "manual_control.h"
 #include "chassis.h"
 #include "motor_chassis.h"
@@ -633,21 +633,22 @@ static void Test_Ranges(void)
     assert(fabsf(body[2] - 1.0f) < 0.00001f);
 }
 
-/** @brief 发送一组 0x180 心跳流量：有效全零、有效非零、valid=0 全零、畸形和空帧。 @return 无。 */
+/** @brief 发送一组类型 1：在线零速、在线非零、pause、畸形和失联。手动控制不看这些帧。 */
 static void Receive_Heartbeat_Traffic(void)
 {
-    const uint8_t zero[7] = {1U};
-    const uint8_t moving[7] = {1U, 0xF4U, 0x01U};
-    const uint8_t empty[7] = {0U};
-    const uint8_t malformed[7] = {2U};
-    Jetson_CAN_Receive(0x180U, zero, sizeof(zero));
-    Jetson_CAN_Receive(0x180U, moving, sizeof(moving));
-    Jetson_CAN_Receive(0x180U, empty, sizeof(empty));
-    Jetson_CAN_Receive(0x180U, malformed, sizeof(malformed));
-    Jetson_CAN_Receive(0x180U, NULL, 0U);
+    const uint8_t zero[8] = {1U, 0U, 0U, 0U, 0U, 0U, 0U, 0U};
+    const uint8_t moving[8] = {1U, 0U, 0xF4U, 0x01U, 0U, 0U, 0U, 0U};
+    const uint8_t paused[8] = {1U, 1U, 0U, 0U, 0U, 0U, 0U, 0U};
+    const uint8_t malformed[8] = {2U};
+    const uint8_t lost[8] = {0U};
+    Jetson_CAN_Receive(JETSON_CAN_HEARTBEAT_ID, zero, sizeof(zero));
+    Jetson_CAN_Receive(JETSON_CAN_HEARTBEAT_ID, moving, sizeof(moving));
+    Jetson_CAN_Receive(JETSON_CAN_HEARTBEAT_ID, paused, sizeof(paused));
+    Jetson_CAN_Receive(JETSON_CAN_HEARTBEAT_ID, malformed, sizeof(malformed));
+    Jetson_CAN_Receive(JETSON_CAN_HEARTBEAT_ID, lost, sizeof(lost));
 }
 
-/** @brief 手动固件中 0x180 不能使能、撤权、停车或续期 0x17F：只看手动快照。 @return 无。 */
+/** @brief 手动固件中 类型 1 不能使能、撤权、停车或续期 类型 2：只看手动快照。 @return 无。 */
 static void Test_Heartbeat_Isolated(void)
 {
     Reset(0U, 0U);
@@ -665,7 +666,7 @@ static void Test_Heartbeat_Isolated(void)
     Start_Moving(100, 0, 0);
     Receive(100, 0, 0, 1U, 7U);
     const uint32_t received_ms = test_tick;
-    /* 0x180 持续到达期间，手动运行既不被撤权也不被延长：最后一条 0x17F 起 250 ms 制动。 */
+    /* 类型 1 持续到达期间，手动运行既不被撤权也不被延长：最后一条类型 2 起 250 ms 制动。 */
     while ((uint32_t)(test_tick - received_ms) < MANUAL_VELOCITY_TIMEOUT_MS - 10U)
     {
         Advance(10U);
@@ -697,6 +698,6 @@ int main(void)
     Test_Chassis_Protection();
     Test_Ranges();
     Test_Heartbeat_Isolated();
-    puts("PASS Manual control: 0x17F codec/chassis startup, invalid batches, deadlines, guards, wraparound, 0x180 isolation");
+    puts("PASS Manual control: 类型 2 codec/chassis startup, invalid batches, deadlines, guards, wraparound, 类型 1 isolation");
     return 0;
 }

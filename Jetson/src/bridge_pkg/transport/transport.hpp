@@ -1,9 +1,9 @@
 #pragma once
 
-#include "protocol/can_protocol.hpp"
+#include "protocol/usb_protocol.hpp"
 
 // ---- CAN 传输 ----
-// 职责：SocketCAN 收发抽象，不含重连节奏。
+// 职责：USB 帧收发抽象，不含重连节奏。
 // Copyright 2026 li
 // SPDX-License-Identifier: Apache-2.0
 
@@ -16,9 +16,8 @@
 #include <optional>
 #include <stdexcept>
 
-// BridgeNode 使用的 CAN 收发抽象接口——打开／自检／非阻塞读写／关闭，以及读写结果分类。
-//       生产实现是 CanSocket（SocketCAN）与 DamiaoCan（原厂USB串口封装）；单测注入进程内的回环／mock 实现，
-//       这样在没有 AF_CAN（容器、CI、非 Linux CAN 内核）的机器上也能验证报文编码、门控、超时与重连逻辑。
+// BridgeNode 使用的收发抽象——打开／自检／非阻塞读写／关闭，以及读写结果分类。
+//       板间实现是 CdcLink；测试可注入进程内替身。
 
 /// CAN 收发抽象：只表达“一个已绑定接口上的一次收发成败”，不含重连节奏、背压重试或计数，
 /// 这些由 BridgeRuntime 管理。节点在同一默认互斥回调组内调用本接口，实现不额外拥有线程或锁。
@@ -35,7 +34,7 @@ public:
 
   virtual ~CanTransport() = default;
 
-  /// 打开并绑定接口。失败返回 false 并写 error，且不保留打开状态；index 是连接身份（SocketCAN接口索引／串口会话号），
+  /// 打开 USB 设备。失败返回 false 并写 error，且不保留打开状态；index 是串口会话号，
   /// 调用方记录它，之后用 check() 的结果判断接口是否被删除重建。
   virtual bool open(const std::string & interface_name, int & index, std::string & error) = 0;
   /// 关闭；已关闭时什么也不做。不改变网络接口状态。
@@ -43,7 +42,7 @@ public:
   virtual bool socketOpen() const = 0;
   /// 连接自检；串口初始化也在此有界推进。false表示故障；true但interfaceUp=false表示尚未就绪。
   virtual bool check(int & index, std::string & error) = 0;
-  /// SocketCAN接口UP或串口适配器就绪；均不代表对端STM32在线。
+  /// 串口设备就绪不代表对端 STM32 在线。
   virtual bool interfaceUp() const = 0;
   /// 每次只做一次收发尝试；EINTR 等交给调用方在本周期的次数预算内重试。
   /// FRAME 只保证读到完整 can_frame；具体指令的 ID、DLC 和请求字节仍由协议层解析。

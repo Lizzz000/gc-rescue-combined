@@ -1,11 +1,9 @@
 // 阅读：前半是构造和 ROS 输入，后半是发送队列、状态和重连。
 // 每 10 毫秒的收发、到达握手和服务身份在 bridge_io.cpp。
-// 帧格式在 protocol/can_protocol.hpp。本文件不声明参数。
+// 帧格式在 protocol/usb_protocol.hpp。本文件不声明参数。
 
 #include "node/bridge_node.hpp"
 #include "gripper/s288_servo.hpp"
-#include "transport/socketcan/socketcan.hpp"
-#include "transport/damiao/damiao.hpp"
 
 // Copyright 2026 li
 // SPDX-License-Identifier: Apache-2.0
@@ -191,7 +189,7 @@ void BridgeRuntime::refreshTurnRequest(Clock::time_point current, bool force)
   armReply(CanProtocol::TURN_REQUEST_ID,
     CanProtocol::turnRequest(static_cast<std::uint8_t>(turn_->destination),
     static_cast<std::uint32_t>(turn_->roi_request_id)));
-  // 重授间隔与 docs/can-protocol.md 的 250 ms 链路超时为同一来源。
+  // 重授间隔与 docs/usb-protocol.md 的 250 ms 链路超时为同一来源。
   next_turn_ = current + CanProtocol::LINK_TIMEOUT;
 }
 
@@ -200,9 +198,7 @@ can_frame BridgeRuntime::currentFrame(canid_t id) const
   // Mission 超时不能继续发送可保活的心跳或有效坐标。
   const bool mission_alive = mission_watchdog_.alive({Clock::now()});
   if (!mission_alive && id == CanProtocol::VELOCITY_ID) {
-    can_frame frame{};
-    frame.can_id = id;
-    return frame;
+    return CanProtocol::velocity(false, 0, 0, 0, pause_);
   }
   if (!mission_alive && (id == CanProtocol::TARGET_ID || id == CanProtocol::SAFETY_ID)) {
     return CanProtocol::center(id, false, 0, 0);
@@ -210,8 +206,8 @@ can_frame BridgeRuntime::currentFrame(canid_t id) const
   // 周期帧提交前重新检查新鲜度；一次回复使用最近 armReply() 保存的快照。
   if (CanProtocol::replyId(id)) {return replies_.frame(id);}
   if (id == CanProtocol::VELOCITY_ID) {
-    // 任务在线：写出前当场编码 DLC 8 心跳，valid=0，速度字节全零，pause 取当前值。
-    return CanProtocol::velocity(false, 0, 0, 0, pause_);
+    // 任务在线：类型 1，alive=1，速度为 0，pause 取当前值。
+    return CanProtocol::velocity(true, 0, 0, 0, pause_);
   }
   const BridgeSourceTime current{now().nanoseconds()};
   const BridgeMonotonicTime monotonic{Clock::now()};
@@ -231,7 +227,7 @@ void BridgeRuntime::finishRoi(BridgeRoiResult result, std::uint64_t request_id)
   }
   const auto frame = CanProtocol::roiResult(
     result.valid, result.passed, static_cast<std::uint8_t>(result.destination));
-  // 先写入回复槽，重复 0x200 不会再读到上一轮的通过帧。失败帧仍等 pause 心跳写成功才入队。
+  // 先写入回复槽，重复的类型 16 不会再读到上一轮的通过帧。失败帧仍等 pause 心跳写成功才入队。
   replies_.store(CanProtocol::ROI_RESULT_ID, frame);
   if (result.passed) {
     armReply(CanProtocol::ROI_RESULT_ID, frame);
@@ -288,10 +284,10 @@ void BridgeRuntime::flushTxQueue()
       ++tx_frames_;
     } else if (result == CanTransport::WriteResult::BACKPRESSURE) {
       // 背压包含串口排队预算及暂时不可写，并不等于七槽队列已满；保留队首及原TTL。
-      last_error_ = "CAN transport backpressure";
+      last_error_ = "USB transport backpressure";
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 5000,
-        "CAN transport on %s is backpressured; queued frames retry within their existing TTL",
+        "USB transport on %s is backpressured; queued frames retry within their existing TTL",
         can_interface_.c_str());
       break;
     } else if (result == CanTransport::WriteResult::INTERRUPTED) {
@@ -299,7 +295,7 @@ void BridgeRuntime::flushTxQueue()
     } else {
       // 其他 write 失败或写入长度不等于 CAN_MTU：视为链路不可用，关 socket 等 1 秒重连。
       RCLCPP_ERROR(
-        get_logger(), "CAN write to %s failed: %s", can_interface_.c_str(),
+        get_logger(), "USB write to %s failed: %s", can_interface_.c_str(),
         error.c_str());
       closeSocket(error);
       return;
@@ -311,7 +307,7 @@ void BridgeRuntime::publishStatus()
 {
   interface_pkg::msg::BridgeStatus status;
   status.header.stamp = now();
-  // tx只统计主机提交；rx/bus_errors沿用SocketCAN错误帧计数。达妙故障写last_error，不伪造内核错误帧。
+  // 计数反映本机提交和接收；USB 故障写 last_error。
   status.can_interface = can_interface_;
   status.socket_open = can_->socketOpen();
   status.interface_up = can_->interfaceUp();
@@ -332,7 +328,7 @@ void BridgeRuntime::openSocket()
   if (!can_->open(can_interface_, open_index_, last_error_)) {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 5000,
-      "cannot open CAN transport %s: %s", can_interface_.c_str(), last_error_.c_str());
+      "cannot open USB transport %s: %s", can_interface_.c_str(), last_error_.c_str());
     return;
   }
   last_error_.clear();
@@ -341,7 +337,7 @@ void BridgeRuntime::openSocket()
   queue_.reset();
   state_.resetInputs({now().nanoseconds()});
   RCLCPP_INFO(
-    get_logger(), "CAN transport opened on %s (connection identity %d)",
+    get_logger(), "USB transport opened on %s (connection identity %d)",
     can_interface_.c_str(), open_index_);
   publishStatus();
 }
@@ -400,7 +396,7 @@ void BridgeRuntime::clearRequests()
 void BridgeRuntime::handleIoFailure(const std::exception & error)
 {
   // io() 捕获异常后撤掉发送机会；socket、在途服务和已发生的业务状态保留。
-  // 周期帧等待新输入，普通应答等待显式查询；0x193 在双授权仍成立时按固定节拍重授。
+  // 周期帧等待新输入，普通应答等待显式查询；类型 8 在双授权仍成立时按固定节拍重授。
   // STM32 按本趟身份去重，重授不重启转向，也不延长本地动作截止。
   last_error_ = error.what();
   dropped_frames_ += queue_.size();
@@ -448,7 +444,7 @@ void BridgeRuntime::submitPendingPauseReply()
     return;
   }
   if (result == CanTransport::WriteResult::BACKPRESSURE) {
-    last_error_ = "CAN transport backpressure";
+    last_error_ = "USB transport backpressure";
     return;
   }
   if (result == CanTransport::WriteResult::INTERRUPTED) {return;}

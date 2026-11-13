@@ -1,6 +1,6 @@
-"""手动链路验收（pty 代替达妙串口，不需要硬件）：
+"""手动链路验收（pty 代替 STM32 USB 设备，不需要硬件）：
 
-- 0x17F 封装与边界、限幅与 STM32 头文件一致；
+- 类型 2 的封装、边界和限幅与当前手动固件常量一致；
 - 100 Hz 周期：中位 10±0.5 ms，p99 ≤ 15 ms；
 - 租约 ≤ 0.2 s，过期先零速再 valid=0；
 - 进程被 SIGKILL 后，把线上实际帧回放进 STM32 真实 manual_control.c，判据为在
@@ -22,6 +22,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 import urllib.error
 import urllib.request
 
@@ -64,12 +65,33 @@ def frames_of(capture):
 
 
 class ConstantsTest(unittest.TestCase):
-    """上位机常量与 STM32 手动固件一致。"""
+    """速度限幅与底盘头文件一致。手动报文类型是 2，不读取电机总线编号。"""
+
+    def test_send_stops_on_persistent_backpressure(self):
+        link = object.__new__(manual_link.CdcLink)
+        link._fd = 123
+        link._write_failed = False
+        with mock.patch.object(manual_link.os, 'write', side_effect=BlockingIOError), \
+             mock.patch.object(manual_link.select, 'select', return_value=([], [], [])):
+            with self.assertRaises(manual_link.LinkError):
+                link.send(b'test')
+        self.assertTrue(link._write_failed)
+
+    def test_send_finishes_partial_write_after_backpressure(self):
+        link = object.__new__(manual_link.CdcLink)
+        link._fd = 123
+        link._write_failed = False
+        with mock.patch.object(manual_link.os, 'write', side_effect=[2, BlockingIOError, 2]) as write, \
+             mock.patch.object(manual_link.select, 'select', return_value=([], [123], [])):
+            link.send(b'test')
+        self.assertEqual(write.call_args_list[-1].args[1], b'st')
+        self.assertFalse(link._write_failed)
 
     @unittest.skipUnless(wire.stm32_available(), 'STM32 源码不在仓库中')
     def test_limits_and_id_match_stm32(self):
         c = wire.stm32_constants()
-        self.assertEqual(manual_link.MANUAL_ID, c['manual_id'])
+        # 类型 2 只存在于手动链路常量。速度限幅仍与底盘头文件对照。
+        self.assertEqual(manual_link.MANUAL_ID, 2)
         self.assertAlmostEqual(manual_command.MAX_LINEAR_MPS, c['max_linear_mps'])
         self.assertAlmostEqual(manual_command.MAX_ANGULAR_RADPS, c['max_angular_radps'])
         self.assertLessEqual(manual_command.MAX_LEASE_S, LEASE_LIMIT_S)
@@ -98,10 +120,10 @@ class LinkExclusiveTest(unittest.TestCase):
     def test_second_opener_fails_without_write(self):
         capture = wire.PtyCapture()
         try:
-            first = manual_link.DamiaoLink(capture.device)
+            first = manual_link.CdcLink(capture.device)
             # TIOCEXCL 使后打开者在 open() 即 EBUSY；flock 冲突为 LinkError，两者都是 OSError
             with self.assertRaises(OSError):
-                manual_link.DamiaoLink(capture.device)
+                manual_link.CdcLink(capture.device)
             time.sleep(0.1)
             self.assertEqual(capture.packets, [])
             first.send(manual_link.manual_packet(0, 0, 0, 0))
@@ -119,7 +141,7 @@ class ProcessTestBase(unittest.TestCase):
         self.capture = wire.PtyCapture()
         self.temp = tempfile.TemporaryDirectory()
         config = Path(self.temp.name) / 'manual.yaml'
-        config.write_text(f'damiao:\n  device: {self.capture.device}\n')
+        config.write_text(f'link:\n  device: {self.capture.device}\n')
         self.process = subprocess.Popen(
             [sys.executable, str(PROGRAM), '--config', str(config), '--port', '0'],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

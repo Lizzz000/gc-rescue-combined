@@ -1,5 +1,5 @@
 #include "state/bridge_state.hpp"
-#include "protocol/can_protocol.hpp"
+#include "protocol/usb_protocol.hpp"
 
 // ---- 桥接状态实现 ----
 // 职责：请求等待、队列和货物复核。
@@ -83,7 +83,7 @@ void BridgeState::resetInputs(BridgeSourceTime current)
   cutoff_.ns = std::max(cutoff_.ns, current.ns);
 }
 
-// 接受则 accepted=true，并 reset_stream：调用方撤掉旧的 0x180/0x181/0x182 机会。
+// 接受则 accepted=true，并 reset_stream：调用方撤掉旧的类型 1/3/4 机会。
 // 完全重复、更旧、或源时间还在将来：两个标志都是假，队列不动。
 // 同模式但源时间或 epoch 变了也算新阶段，中心清掉。任务字符串本身不解坐标保持。
 BridgeStateUpdate BridgeState::task(const BridgeTaskState & input, BridgeSourceTime current)
@@ -164,7 +164,7 @@ bool BridgeState::target(
       const auto class_id = RecognitionValueValidation::classId(result.class_id);
       const bool later = mission_ &&
         mission_->transport_phase == BridgeTransportPhase::Later;
-      // 0x181 使用框的几何中心除以配置图像尺寸。选择节点比较的是框底边，两套参考点各自保留。
+      // 类型 3 使用框的几何中心除以配置图像尺寸。选择节点比较的是框底边，两套参考点各自保留。
       const bool class_allowed = std::find(
         config_.target_classes.begin(), config_.target_classes.end(), class_id) !=
         config_.target_classes.end() && (later || class_id == config_.first_class);
@@ -229,7 +229,7 @@ bool BridgeState::idle() const
 BridgeCenterOutput BridgeState::targetOutput(
   BridgeSourceTime current, BridgeMonotonicTime now) const
 {
-  // 0x181：寻找 + 实际 seg + 空闲 + 未保持 + 帧新鲜。缺一项 valid 就是假，坐标值仍可能留着旧数。
+  // 类型 3：寻找 + 实际 seg + 空闲 + 未保持 + 帧新鲜。缺一项 valid 就是假，坐标值仍可能留着旧数。
   // coordinatesHeld 已检查空闲与阶段/实际模式匹配，通过后 mission_ 必然存在。
   return {!coordinatesHeld() &&
     mission_->cycle_phase == BridgeCyclePhase::SearchingTarget &&

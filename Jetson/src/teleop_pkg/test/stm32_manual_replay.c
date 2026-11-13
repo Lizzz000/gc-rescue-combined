@@ -1,13 +1,13 @@
-/* 把上位机线上的 0x17F 帧按时间戳回放进 STM32 真实的 manual_can.c + manual_control.c，
+/* 把上位机类型 2 手动速度按时间戳回放进 STM32 真实的 manual_link.c + manual_control.c，
  * 输出手动控制状态的每次变化，供 test_manual_link.py 判断 SIGKILL 后何时进入制动。
  * 底盘只做最小桩：使能/失能、设速即运动、停车后经 STOP_DELAY_MS 才算静止；不代表实物。
  * 输入（stdin，每行）：<ms> <valid> <vx> <vy> <wz>，ms 为相对毫秒且非降序；可选末行 end <ms>。
- * 输出（stdout，每行）：<ms> <状态名>。参数：argv[1] = 任务周期 ms（取自 test_task.c）。
+ * 输出（stdout，每行）：<ms> <状态名>。参数：argv[1] = 任务周期 ms（取自 chassis_task.c）。
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "manual_can.h"
+#include "manual_link.h"
 #include "manual_control.h"
 #include "chassis.h"
 #include "task.h"

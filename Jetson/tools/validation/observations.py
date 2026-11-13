@@ -5,17 +5,18 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 import hashlib
+import importlib.util
 import json
+import os
 from pathlib import Path
 import queue
-import socket
 import struct
 import threading
 import time
 import urllib.request
 import urllib.error
 
-from .evidence import ContractFailure, isolated_vcan, require
+from .evidence import ContractFailure, require
 
 
 # ---- 观测值基础：源帧身份、统计、原始消息与 JPEG 完整性 ----
@@ -246,46 +247,48 @@ class MjpegClient:
                 'source_pairing_available': False}
 
 
-# ---- 隔离 CAN 观察：握手、停发窗口与同窗口 ROS 载荷核对 ----
+# ---- USB 伪终端观察：握手、停发窗口与同窗口 ROS 载荷核对 ----
 
-class CanProbe:
+class UsbProbe:
     def __init__(self, directory):
-        self.proof = isolated_vcan()  # 先证明隔离，再绑定；不能意外打开生产CAN。
-        self.socket = socket.socket(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
-        try:
-            self.socket.bind(('vcan0',))
-            self.socket.setblocking(False)
-        except BaseException:
-            self.socket.close()
-            raise
+        self.master, self.slave = os.openpty()
+        self.device = os.ttyname(self.slave)
+        os.set_blocking(self.master, False)
+        frame_path = Path(__file__).resolve().parents[2] / 'src/teleop_pkg/manual/frame.py'
+        spec = importlib.util.spec_from_file_location('validation_usb_frame', frame_path)
+        self.frame = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.frame)
+        self.parser = self.frame.Parser()
         self.records = []
-        self.raw = (Path(directory) / 'can.jsonl').open('w', encoding='utf-8')
+        self.raw = (Path(directory) / 'usb.jsonl').open('w', encoding='utf-8')
 
     def poll(self):
         for _ in range(256):
             try:
-                payload = self.socket.recv(16)
+                payload = os.read(self.master, 4096)
             except BlockingIOError:
                 break
-            require(len(payload) == 16, 'unexpected classic CAN frame size')
-            identifier, length, data = struct.unpack('=IB3x8s', payload)
-            require(not identifier & 0xE0000000, 'extended/RTR/error frame in isolated validation')
-            record = {'steady': time.monotonic(), 'id': identifier, 'dlc': length, 'data': data[:length].hex()}
-            self.records.append(record)
-            self.raw.write(json.dumps(record) + '\n')
+            if not payload:
+                break
+            for identifier, data in self.parser.feed(payload):
+                record = {'steady': time.monotonic(), 'id': identifier, 'dlc': len(data), 'data': data.hex()}
+                self.records.append(record)
+                self.raw.write(json.dumps(record) + '\n')
 
     def command(self, identifier, token=None):
-        """只允许新握手事件；接口已证明隔离，不向真实 can0 发送。"""
-        from source.can_codec import encode
-        names = {0x200: 'arrival', 0x203: 'turn_completed', 0x204: 'safety_arrived',
-                 0x205: 'start_search', 0x206: 'delivery_completed'}
-        require(identifier in names and (identifier in (0x203, 0x204, 0x206)) == (token is not None),
+        """只向本次创建的伪终端发送握手事件。"""
+        from source.usb_codec import IDS, encode
+        names = {IDS['arrival']: 'arrival', IDS['turn_completed']: 'turn_completed',
+                 IDS['safety_arrived']: 'safety_arrived', IDS['start_search']: 'start_search',
+                 IDS['delivery_completed']: 'delivery_completed'}
+        with_token = {IDS['turn_completed'], IDS['safety_arrived'], IDS['delivery_completed']}
+        require(identifier in names and (identifier in with_token) == (token is not None),
                 'unsupported mission event or missing/unexpected trip token')
         # 共用字节编解码，采集工具不能保留另一份旧协议或自行截断非法 token。
         data = bytes.fromhex(encode(names[identifier], [] if token is None else [str(token)]).split('#')[1])
         began = time.monotonic()
-        payload = struct.pack('=IB3x8s', identifier, len(data), data)
-        require(self.socket.send(payload) == len(payload), 'incomplete classic CAN command write')
+        payload = self.frame.encode(identifier, data)
+        require(os.write(self.master, payload) == len(payload), 'incomplete USB command write')
         self.raw.write(json.dumps({'direction': 'tx', 'steady': began, 'id': identifier,
                                    'dlc': len(data), 'data': data.hex()}) + '\n')
         return began
@@ -301,21 +304,25 @@ class CanProbe:
         since = time.monotonic()
         observer.spin(0.2, owner)
         self.poll()
-        require(not any(row['id'] in (0x181, 0x182) and row['steady'] >= since and row['data'].startswith('01')
+        from source.usb_codec import IDS
+        centers = {IDS['target'], IDS['safety']}
+        require(not any(row['id'] in centers and row['steady'] >= since and row['data'].startswith('01')
                         for row in self.records), 'coordinates emitted while mission waits for STM32')
 
     def steady_periodic(self, observer, task, since):
         """只比较收敛窗口，并将有效载荷与同窗口真实 ROS 输出逐项核对。"""
+        from source.usb_codec import IDS
+        heartbeat_type, target_type, safety_type = IDS['heartbeat'], IDS['target'], IDS['safety']
         self.poll()
         result = {}
-        invalid = {0x180: bytes(8).hex(), 0x181: bytes(8).hex(), 0x182: bytes(8).hex()}
-        expected = {0x180: set(), 0x181: set(), 0x182: set()}
+        invalid = {target_type: bytes(8).hex(), safety_type: bytes(8).hex()}
+        expected = {target_type: set(), safety_type: set()}
         mission = observer.records['mission'][-1]['value'] if observer.records['mission'] else None
         idle = mission is not None and mission['operation'] == 0
         values = observer.snapshot['values']
         def quantize(value):
             # 共用文本工具的舍入，避免半整数邻域先加0.5造成二次舍入。
-            from source.can_codec import fixed_point
+            from source.usb_codec import fixed_point
             try:
                 return fixed_point(value, 10000)
             except ValueError:
@@ -337,7 +344,7 @@ class CanProbe:
                 x = quantize(center['x'] / values['shared.image.width'])
                 y = quantize(center['y'] / values['shared.image.height'])
                 if x is not None and y is not None and detection['id']:
-                    expected[0x181].add((struct.pack('<Bhh', 1, x, y) + ((row['source'][0] // 1000000) & 0xffffff).to_bytes(3, 'little')).hex())
+                    expected[target_type].add((struct.pack('<Bhh', 1, x, y) + ((row['source'][0] // 1000000) & 0xffffff).to_bytes(3, 'little')).hex())
         if task == 'field' and idle and mission.get('cycle_phase') == 4 and mission['outcome'] == 2 and mission['destination'] in (1, 2):
             for row in observer.records['safety']:
                 safety = row['value']
@@ -345,27 +352,33 @@ class CanProbe:
                     continue
                 x, y = quantize(safety['x']), quantize(safety['y'])
                 if x is not None and y is not None:
-                    expected[0x182].add((struct.pack('<Bhh', 1, x, y) + ((row['source'][0] // 1000000) & 0xffffff).to_bytes(3, 'little')).hex())
-        for identifier, length in ((0x180, 8), (0x181, 8), (0x182, 8)):
+                    expected[safety_type].add((struct.pack('<Bhh', 1, x, y) + ((row['source'][0] // 1000000) & 0xffffff).to_bytes(3, 'little')).hex())
+        for identifier, length in ((heartbeat_type, 8), (target_type, 8), (safety_type, 8)):
             rows = [row for row in self.records if row['id'] == identifier and row['steady'] >= since]
-            require(rows and all(row['dlc'] == length for row in rows), f'missing/wrong CAN {identifier:03x}')
-            require(all(row['data'][:2] in ('00', '01') for row in rows), 'CAN valid byte outside 0/1')
-            if identifier == 0x180:
-                require(all(row['data'][14:] in ('00', '01') for row in rows), '0x180 pause must be 0 or 1')
-                require(all(row['data'][:14] == '00' * 7 for row in rows if row['data'].startswith('00')),
-                        'invalid 0x180 frame has nonzero speed bytes')
-            else:
-                require(all(row['data'] == invalid[identifier] for row in rows if row['data'].startswith('00')),
-                        'invalid CAN frame contains nonzero coordinates')
+            require(rows and all(row['dlc'] == length for row in rows), f'missing/wrong USB type {identifier}')
+            if identifier == heartbeat_type:
+                require(all(row['data'][:2] == '01' for row in rows), 'heartbeat must be alive')
+                require(all(row['data'][2:4] in ('00', '01') for row in rows), 'heartbeat pause must be 0 or 1')
+                require(all(row['data'][4:] == '00' * 6 for row in rows), 'heartbeat speeds must be zero')
+                result[f'{identifier:02d}'] = {
+                    'valid_bytes': sorted({row['data'] for row in rows}),
+                    'ros_expected_bytes': [],
+                    'invalid_only': False,
+                }
+                continue
+            require(all(row['data'][:2] in ('00', '01') for row in rows), 'center valid byte outside 0/1')
+            require(all(row['data'] == invalid[identifier] for row in rows if row['data'].startswith('00')),
+                    'invalid center frame contains nonzero coordinates')
             actual = {row['data'] for row in rows if row['data'].startswith('01')}
-            require(actual <= expected[identifier], f'CAN {identifier:03x} disagrees with ROS coordinates/gates')
-            require(not expected[identifier] or actual, f'no valid CAN {identifier:03x} for valid ROS output')
-            result[f'{identifier:03x}'] = {'valid_bytes': sorted(actual), 'ros_expected_bytes': sorted(expected[identifier]),
+            require(actual <= expected[identifier], f'USB type {identifier} disagrees with ROS coordinates/gates')
+            require(not expected[identifier] or actual, f'no valid USB type {identifier} for valid ROS output')
+            result[f'{identifier:02d}'] = {'valid_bytes': sorted(actual), 'ros_expected_bytes': sorted(expected[identifier]),
                                           'invalid_only': not actual}
         return result
 
     def close(self):
-        self.socket.close()
+        os.close(self.master)
+        os.close(self.slave)
         self.raw.close()
 
 

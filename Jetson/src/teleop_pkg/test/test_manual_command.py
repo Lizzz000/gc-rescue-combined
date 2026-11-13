@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from manual.command import (  # noqa: E402
     DEFAULT_ARM_ZERO_S, MAX_ARM_ZERO_S, MAX_LEASE_S, STOP_ZERO_S, ManualCommand, quantize)
-from manual.link import manual_packet  # noqa: E402
+from manual.link import MANUAL_ID, manual_packet  # noqa: E402
 
 LEASE = MAX_LEASE_S
 ARM = DEFAULT_ARM_ZERO_S
@@ -30,7 +30,7 @@ class QuantizeTest(unittest.TestCase):
         packet = manual_packet(True, -2, 0, 1000)
         from manual.frame import Parser
         frames = Parser().feed(packet)
-        self.assertEqual(frames, [(0x17F, bytes([1, 0xFE, 0xFF, 0, 0, 0xE8, 0x03]))])
+        self.assertEqual(frames, [(MANUAL_ID, bytes([1, 0xFE, 0xFF, 0, 0, 0xE8, 0x03]))])
 
 
 class LeaseTest(unittest.TestCase):

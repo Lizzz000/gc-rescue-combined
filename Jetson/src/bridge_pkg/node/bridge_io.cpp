@@ -1,11 +1,9 @@
 // 阅读：每 10 毫秒的 io() 先处理超时和到达，再把待发帧交给 flushTxQueue。
 // 发送队列、状态和重连在 bridge_session.cpp。ROS 订阅也在那份文件的前半。
-// 帧里每个字段的含义在 protocol/can_protocol.hpp。
+// 帧里每个字段的含义在 protocol/usb_protocol.hpp。
 
 #include "node/bridge_node.hpp"
 #include "transport/cdc/cdc.hpp"
-#include "transport/socketcan/socketcan.hpp"
-#include "transport/damiao/damiao.hpp"
 
 // Copyright 2026 li
 // SPDX-License-Identifier: Apache-2.0
@@ -22,7 +20,6 @@
 #include <vector>
 #include <rcl_interfaces/msg/parameter_descriptor.hpp>
 #include <exception>
-#include <linux/can/error.h>
 
 
 // ---- BridgeRuntime：CAN 事件与到达握手 ----
@@ -55,7 +52,7 @@ void BridgeRuntime::io()
 void BridgeRuntime::sendPeriodicFrame()
 {
   const canid_t id = periodic_schedule_.next();
-  // 夹爪失败停发心跳只走 250 ms 链路超时；任务失联仍由 currentFrame 发 DLC 0。
+  // 夹爪失败停发心跳只走 250 ms 链路超时；任务失联仍由 currentFrame 发 alive=0。
   if (id == CanProtocol::VELOCITY_ID && !heartbeat_enabled_ &&
     mission_watchdog_.alive({Clock::now()}))
   {
@@ -67,7 +64,7 @@ void BridgeRuntime::sendPeriodicFrame()
   if (result == CanTransport::WriteResult::SENT) {
     ++tx_frames_;
   } else if (result == CanTransport::WriteResult::BACKPRESSURE) {
-    last_error_ = "CAN transport backpressure";
+    last_error_ = "USB transport backpressure";
   } else if (result != CanTransport::WriteResult::INTERRUPTED) {
     closeSocket(error);
   }
@@ -86,7 +83,7 @@ bool BridgeRuntime::ensureSocketReady()
   if (!can_->check(index, last_error_)) {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 5000,
-      "CAN interface %s is not usable: %s", can_interface_.c_str(), last_error_.c_str());
+      "USB device %s is not usable: %s", can_interface_.c_str(), last_error_.c_str());
     closeSocket(last_error_);
     return false;
   }
@@ -94,9 +91,9 @@ bool BridgeRuntime::ensureSocketReady()
   if (index != open_index_) {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 5000,
-      "CAN endpoint %s was replaced (identity %d -> %d); reopening it",
+      "USB endpoint %s was replaced (identity %d -> %d); reopening it",
       can_interface_.c_str(), open_index_, index);
-    closeSocket("CAN interface was replaced");
+    closeSocket("USB device was replaced");
     return false;
   }
   // 串口后端在check中逐步初始化；尚未就绪时不读业务、不发排队帧。
@@ -105,7 +102,7 @@ bool BridgeRuntime::ensureSocketReady()
 
 bool BridgeRuntime::readAvailableFrames()
 {
-  // 为共线电机、适配器通知和突发流量留余量，
+  // 为突发流量留余量，
   // 同时限制非阻塞尝试次数（含 EINTR），确保持续收包时本拍仍会推进发送。
   constexpr int max_reads_per_cycle = 32;
   for (int attempt = 0; attempt < max_reads_per_cycle; ++attempt) {
@@ -118,7 +115,7 @@ bool BridgeRuntime::readAvailableFrames()
     if (result == CanTransport::ReadResult::FAILED) {
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 5000,
-        "CAN read from %s failed: %s", can_interface_.c_str(), error.c_str());
+        "USB read from %s failed: %s", can_interface_.c_str(), error.c_str());
       closeSocket(error);
       return false;
     }
@@ -126,27 +123,8 @@ bool BridgeRuntime::readAvailableFrames()
       ++dropped_frames_;
       continue;
     }
-    // 错误帧只用于本机诊断；业务帧仅解释当前运输握手 ID，其余计入 dropped。
-    if ((frame.can_id & CAN_ERR_FLAG) == 0) {
-      if (!handleCommand(frame)) {++dropped_frames_;}
-      continue;
-    }
-    if (frame.len != CAN_ERR_DLC) {
-      ++dropped_frames_;
-      continue;
-    }
     ++rx_frames_;
-    ++bus_errors_;
-    last_error_ = "CAN controller reported an error frame";
-    // bus-off：控制器已脱离总线，关 socket 等 1 秒重连（内核 restart-ms 负责控制器恢复）。
-    if (frame.can_id & CAN_ERR_BUSOFF) {
-      RCLCPP_ERROR(
-        get_logger(),
-        "CAN controller on %s reported bus-off; closing the socket until the interface recovers",
-        can_interface_.c_str());
-      closeSocket("CAN controller bus-off");
-      return false;
-    }
+    if (!handleCommand(frame)) {++dropped_frames_;}
   }
   return true;
 }
@@ -243,7 +221,7 @@ bool BridgeRuntime::handleCommand(const can_frame & frame)
   return true;
 }
 
-// STM32 停稳后发 0x200 请求 ROI。夹爪开合由 0x208 到点触发，不在 0x200 前由 STM32 完成。
+// STM32 停稳后发类型 16 请求 ROI。夹爪开合由类型 21 到点触发，不在类型 16 之前由 STM32 完成。
 // 首次到达先停坐标并确认，再请求 ROI；重复到达只重发当前轮结果。
 // 待转向时核对授权；仅本进程未尝试过 ROI 才能按已提交状态恢复，失败不能被查询改成成功。
 // 非寻找、检查、待转向或 ROI 失败阶段拒绝到达。
@@ -443,7 +421,7 @@ void BridgeRuntime::onCommandReply(
     last_error_ = error.what();
   }
   const auto token = pending_command_token_;
-  // 命令 1/3 的服务成功只表示已经去切换。0x192 要等 field/seg 真正确认，失败也必须回拒绝。
+  // 命令 1/3 的服务成功只表示已经去切换。类型 7 要等 field/seg 真正确认，失败也必须回拒绝。
   if (command == CanProtocol::TURN_COMPLETED || command == CanProtocol::START_SEARCH) {
     if (!accepted || switchFailed()) {
       armCommandReply(false, command, token);

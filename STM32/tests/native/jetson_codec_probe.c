@@ -1,5 +1,5 @@
-#include "jetson_can.h"
-#include "manual_can.h"
+#include "jetson_link.h"
+#include "manual_link.h"
 #include "task.h"
 #include <assert.h>
 #include <errno.h>
@@ -8,8 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* 仅供离线跨项目互验：输入 ID#HEX，按 bsp_can 分流调用真实解码模块，逐行输出完整 JSON 快照。
- * 0x17F 额外送入 Jetson 模块一次，证明它不改变自动快照。输入 ^ID:参数 时输出真实上行编码。 */
+/* 仅供离线跨项目互验：输入 类型#HEX，调用真实解码模块，逐行输出完整 JSON 快照。
+ * 类型 2 额外送入手动模块。输入 ^类型:参数 时输出真实上行编码。类型按十六进制书写。 */
 uint32_t test_tick;
 static unsigned critical_depth;
 

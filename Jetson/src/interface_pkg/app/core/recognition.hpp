@@ -96,7 +96,7 @@ struct RecognitionValueValidation
     return hypothesis(value.class_id, value.score);
   }
 
-  // Mission 提交与 CAN 0x191 共用目的地映射，编号与 MissionStatus 一致：
+  // Mission 提交与类型 6 共用目的地映射，编号与 MissionStatus 一致：
   // 恰好一件橙色返回 2（DEST_RIGHT），否则返回 1（DEST_LEFT）。
   static constexpr std::uint8_t cargoSide(std::uint32_t orange_count)
   {

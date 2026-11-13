@@ -5,15 +5,15 @@
 #include <string.h>
 #include "bsp_can.h"
 #include "dm_motor.h"
-#include "test_task.h"
+#include "chassis_task.h"
 #include "task.h"
 #include "tim.h"
 #include "bsp_adc.h"
 #include "bsp_led.h"
 #include "bsp_buzzer.h"
 #include "jetson_auto.h"
-#include "jetson_can.h"
-#include "manual_can.h"
+#include "jetson_link.h"
+#include "manual_link.h"
 #include "manual_control.h"
 
 /* 板间帧改走 USB。两种编译模式的 CAN 过滤器都只留电机反馈。 */
@@ -53,10 +53,10 @@ static jmp_buf task_finished;
 
 static const uint8_t uplink_data[8] = {0x01U, 0xEFU, 0xCDU, 0xABU, 0x89U};
 
-/** @brief 用已知编码核对 BSP 对 CAN ID、token 与 8 字节缓冲的传递。 */
-uint8_t Jetson_CAN_Encode_Uplink(uint16_t id, uint32_t argument, uint8_t data[8])
+/** @brief 用已知编码核对 BSP 对类型号、token 与 8 字节缓冲的传递。 */
+uint8_t Jetson_CAN_Encode_Uplink(uint16_t type, uint32_t argument, uint8_t data[8])
 {
-    if (id != 0x203U)
+    if (type != JETSON_CAN_TURN_COMPLETED_ID)
         return 0U;
     assert(argument == 0x89ABCDEFU);
     memcpy(data, uplink_data, sizeof(uplink_data));
@@ -64,19 +64,19 @@ uint8_t Jetson_CAN_Encode_Uplink(uint16_t id, uint32_t argument, uint8_t data[8]
 }
 
 /** @brief 捕获共用入口交给 Jetson 的帧，确认未混入电机报文。
- * @param[in] id 标准 ID。 @param[in] data 数据。 @param[in] length 字节数。 @return 无。
+ * @param[in] type 类型号。 @param[in] data 数据。 @param[in] length 字节数。 @return 无。
  */
-void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t length)
+void Jetson_CAN_Receive(uint16_t type, const uint8_t *data, uint8_t length)
 {
     assert(length <= 8U);
-    jetson_rx_id = id;
+    jetson_rx_id = type;
     jetson_rx_length = length;
     memset(jetson_rx_data, 0, sizeof(jetson_rx_data));
     memcpy(jetson_rx_data, data, length);
     ++jetson_rx_count;
 }
 
-/** @brief 捕获共用入口交给手动模块的 0x17F。
+/** @brief 捕获共用入口交给手动模块的类型 2。
  * @param[in] data 数据。 @param[in] length 字节数。 @return 无。
  */
 void Manual_CAN_Receive(const uint8_t *data, uint8_t length)
@@ -238,9 +238,9 @@ static uint8_t link_length, link_data[8];
 static uint32_t link_count;
 
 /** @brief 固件里的强符号在 USB 文件。本测试只记录上行有没有离开 CAN 邮箱。 */
-int Jetson_Link_Send(uint16_t id, const uint8_t *data, uint8_t length)
+int Jetson_Link_Send(uint8_t type, const uint8_t *data, uint8_t length)
 {
-    link_id = id;
+    link_id = type;
     link_length = length;
     memcpy(link_data, data, length);
     ++link_count;
@@ -251,20 +251,20 @@ int Jetson_Link_Send(uint16_t id, const uint8_t *data, uint8_t length)
     return 2;
 }
 
-/** @brief 上行走 USB。非法 ID 不发送；忙和失败由链路返回，不占用 CAN 邮箱。 */
+/** @brief 上行走 USB。未知类型不发送；忙和失败由链路返回，不占用 CAN 邮箱。 */
 static void Check_Uplink_Submission(void)
 {
     const uint32_t before = tx_count;
     const uint32_t links = link_count;
-    assert(Jetson_CAN_Try_Send_Uplink(0x201U, 0U) == HAL_ERROR && tx_count == before);
+    assert(Jetson_CAN_Try_Send_Uplink(0U, 0U) == HAL_ERROR && tx_count == before);
     assert(link_count == links);
     link_result = HAL_BUSY;
-    assert(Jetson_CAN_Try_Send_Uplink(0x203U, 0x89ABCDEFU) == HAL_BUSY && tx_count == before);
+    assert(Jetson_CAN_Try_Send_Uplink(JETSON_CAN_TURN_COMPLETED_ID, 0x89ABCDEFU) == HAL_BUSY && tx_count == before);
     link_result = HAL_ERROR;
-    assert(Jetson_CAN_Try_Send_Uplink(0x203U, 0x89ABCDEFU) == HAL_ERROR && tx_count == before);
+    assert(Jetson_CAN_Try_Send_Uplink(JETSON_CAN_TURN_COMPLETED_ID, 0x89ABCDEFU) == HAL_ERROR && tx_count == before);
     link_result = HAL_OK;
-    assert(Jetson_CAN_Try_Send_Uplink(0x203U, 0x89ABCDEFU) == HAL_OK && tx_count == before);
-    assert(link_id == 0x203U && link_length == 5U);
+    assert(Jetson_CAN_Try_Send_Uplink(JETSON_CAN_TURN_COMPLETED_ID, 0x89ABCDEFU) == HAL_OK && tx_count == before);
+    assert(link_id == JETSON_CAN_TURN_COMPLETED_ID && link_length == 5U);
     assert(memcmp(link_data, uplink_data, 5) == 0);
 }
 
@@ -371,17 +371,15 @@ int main(void)
     assert(dm_motor[0].feedback_time_ms == 12U && dm_motor[1].feedback_time_ms == 0U && dm_motor[2].feedback_time_ms == 27U);
     assert(jetson_rx_count == 0U && manual_rx_count == 0U);
 
-    /* 同次 FIFO0 回调先处理电机反馈，再按本模式接收通信帧；非本模式帧直接丢弃，不能互相覆盖。 */
+    /* CAN 回调只接受 StdID 0、DLC 8 的电机反馈。板间帧不在这条总线上。 */
     test_tick = 51U;
     memcpy(rx_data, low, 8);
     Queue_Current_Frame();
-    const uint8_t velocity[8] = {1, 0xE8, 3, 0, 0, 0x18, 0xFC, 0};
-    rx_header.StdId = JETSON_AUTO_CAN_ENABLED ? 0x180U : 0x17FU; rx_header.DLC = 7U;
-    memcpy(rx_data, velocity, 8);
+    rx_header.StdId = 1U;
+    rx_header.DLC = 8U;
     Queue_Current_Frame();
-    rx_header.StdId = 0x193U; rx_header.DLC = 6U;
-    const uint8_t turn[8] = {1, 2, 0x78, 0x56, 0x34, 0x12, 0, 0};
-    memcpy(rx_data, turn, 8);
+    rx_header.StdId = 0x100U;
+    rx_header.DLC = 8U;
     Queue_Current_Frame();
     previous_rx = rx_count;
     HAL_CAN_RxFifo0MsgPendingCallback(&hcan1);
@@ -389,56 +387,29 @@ int main(void)
     assert(dm_motor[0].feedback_seq == 2U && dm_motor[0].feedback_time_ms == 51U);
     assert(jetson_rx_count == 0U && manual_rx_count == 0U);
     const uint32_t jetson_before = jetson_rx_count, manual_before = manual_rx_count;
-    (void)turn;
-    (void)velocity;
 
-    /* 0x17F 只在手动固件进入手动模块，任意长度都交给它撤销旧速度；自动固件丢弃。 */
-    rx_header.StdId = 0x17FU;
-    for (unsigned length = 0U; length <= 8U; ++length)
+    const uint16_t other_ids[] = {1U, 2U, 16U, 21U, 0x100U, 0x7FFU};
+    for (unsigned i = 0U; i < sizeof(other_ids) / sizeof(other_ids[0]); ++i)
     {
-        rx_header.DLC = length;
-        memcpy(rx_data, velocity, 8);
-        Receive_Current_Frame();
-        assert(manual_rx_count == manual_before && jetson_rx_count == jetson_before);
-    }
-    assert(jetson_rx_count == jetson_before);
-    assert(manual_rx_count == manual_before);
-
-    /* 七种 Jetson 下行 ID 只在自动固件到达协议层，手动固件丢弃。 */
-    const uint16_t jetson_ids[] = {0x180U, 0x181U, 0x182U, 0x190U, 0x191U, 0x192U, 0x193U};
-    const uint8_t jetson_lengths[] = {7U, 5U, 5U, 1U, 3U, 6U, 6U};
-    for (unsigned i = 0U; i < sizeof(jetson_ids) / sizeof(jetson_ids[0]); ++i)
-    {
-        rx_header.StdId = jetson_ids[i]; rx_header.DLC = jetson_lengths[i];
-        Receive_Current_Frame();
-        assert(jetson_rx_count == jetson_before && manual_rx_count == manual_before);
-    }
-    rx_header.StdId = 0x180U;
-    for (unsigned length = 0U; length <= 8U; ++length)
-    {
-        rx_header.DLC = length;
+        rx_header.StdId = other_ids[i];
+        rx_header.DLC = 8U;
         Receive_Current_Frame();
         assert(jetson_rx_count == jetson_before && manual_rx_count == manual_before);
     }
     const uint32_t jetson_expected = jetson_before;
     const uint32_t manual_expected = manual_before;
-    (void)jetson_lengths;
     assert(jetson_rx_count == jetson_expected && manual_rx_count == manual_expected);
     assert(dm_motor[0].feedback_seq == 2U);
 
-    /* 不属于下行的握手、未知 ID、扩展帧、远程帧与超长帧不进入任一解析器。 */
-    const uint16_t rejected_ids[] = {1U, 3U, 0x183U, 0x200U, 0x203U, 0x204U, 0x205U, 0x206U, 0x7FFU};
+    rx_header.StdId = 0U;
     rx_header.DLC = 8U;
-    for (unsigned i = 0U; i < sizeof(rejected_ids) / sizeof(rejected_ids[0]); ++i)
-    {
-        rx_header.StdId = rejected_ids[i];
-        Receive_Current_Frame();
-    }
-    rx_header.StdId = 0x180U; rx_header.DLC = 7U; rx_header.IDE = CAN_ID_EXT;
+    rx_header.IDE = CAN_ID_EXT;
     Receive_Current_Frame();
-    rx_header.IDE = CAN_ID_STD; rx_header.RTR = CAN_RTR_REMOTE;
+    rx_header.IDE = CAN_ID_STD;
+    rx_header.RTR = CAN_RTR_REMOTE;
     Receive_Current_Frame();
-    rx_header.RTR = CAN_RTR_DATA; rx_header.DLC = 9U;
+    rx_header.RTR = CAN_RTR_DATA;
+    rx_header.DLC = 9U;
     Receive_Current_Frame();
     assert(jetson_rx_count == jetson_expected && manual_rx_count == manual_expected);
     assert(dm_motor[0].feedback_seq == 2U && dm_motor[1].feedback_seq == 1U && dm_motor[2].feedback_seq == 1U);
@@ -462,7 +433,7 @@ int main(void)
     assert(jetson_can_inits == 0U && jetson_auto_inits == 0U && jetson_auto_loops == 0U);
 #endif
     assert(fabsf(battery_voltage - 24.11f) < 0.0001f);
-    puts(JETSON_AUTO_CAN_ENABLED ? "PASS CAN auto: Jetson-only filters and routing, MIT feedback and 5ms task ordering"
-                       : "PASS CAN manual: 0x17F-only filters and routing, MIT feedback and 5ms task ordering");
+    puts(JETSON_AUTO_CAN_ENABLED ? "PASS CAN auto: motor-only filter, MIT feedback and 5ms task ordering"
+                       : "PASS CAN manual: motor-only filter, MIT feedback and 5ms task ordering");
     return 0;
 }

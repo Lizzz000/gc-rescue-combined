@@ -1,4 +1,4 @@
-"""板间 USB 分帧。与 STM32 link_frame.c、bridge transport/frame/link_frame.hpp 同一布局。"""
+"""板间 USB 分帧。与 bridge transport/frame/link_frame.hpp 同一布局。"""
 
 SOF = 0xA5
 VERSION = 0x01
@@ -18,13 +18,13 @@ def crc16(data: bytes) -> int:
     return crc & 0xFFFF
 
 
-def encode(identifier: int, payload: bytes) -> bytes:
-    """组一帧。DLC 0 合法，用来表示任务失联。"""
-    if not 0 <= identifier <= 0x7FF:
-        raise ValueError('standard CAN id required')
+def encode(msg_type: int, payload: bytes) -> bytes:
+    """组一帧。类型是 uint8 报文类型，不是电机总线编号。"""
+    if not 0 <= msg_type <= 0xFF:
+        raise ValueError('USB type must fit in uint8')
     if len(payload) > MAX_PAYLOAD:
         raise ValueError('payload longer than 8 bytes')
-    body = bytes((VERSION, identifier & 0xFF, identifier >> 8, len(payload))) + payload
+    body = bytes((VERSION, msg_type, len(payload))) + payload
     crc = crc16(body)
     return bytes((SOF,)) + body + bytes((crc & 0xFF, crc >> 8))
 
@@ -44,24 +44,24 @@ class Parser:
 
     def _pull(self):
         frames = []
-        while len(self._buffer) >= 5:
+        while len(self._buffer) >= 4:
             if self._buffer[0] != SOF:
                 del self._buffer[0]
                 continue
-            if self._buffer[1] != VERSION or self._buffer[4] > MAX_PAYLOAD:
+            if self._buffer[1] != VERSION or self._buffer[3] > MAX_PAYLOAD:
                 del self._buffer[0]
                 continue
-            total = 7 + self._buffer[4]
+            total = 6 + self._buffer[3]
             if len(self._buffer) < total:
                 return frames
-            body = bytes(self._buffer[1:5 + self._buffer[4]])
-            actual = self._buffer[5 + self._buffer[4]] | (self._buffer[6 + self._buffer[4]] << 8)
+            body = bytes(self._buffer[1:4 + self._buffer[3]])
+            actual = self._buffer[4 + self._buffer[3]] | (self._buffer[5 + self._buffer[3]] << 8)
             if crc16(body) != actual:
                 del self._buffer[0]
                 continue
-            payload_len = self._buffer[4]
-            identifier = self._buffer[2] | (self._buffer[3] << 8)
-            payload = bytes(self._buffer[5:5 + payload_len])
+            payload_len = self._buffer[3]
+            msg_type = self._buffer[2]
+            payload = bytes(self._buffer[4:4 + payload_len])
             del self._buffer[:total]
-            frames.append((identifier, payload))
+            frames.append((msg_type, payload))
         return frames

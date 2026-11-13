@@ -56,7 +56,7 @@ digraph system {
   }
 
   http [label="HTTP :8080", shape=ellipse, fillcolor="#e8f1ff"];
-  can [label="CAN\n达妙串口或 SocketCAN", shape=ellipse, fillcolor="#fde8e8"];
+  can [label="USB OTG FS\nlink.device", shape=ellipse, fillcolor="#fde8e8"];
 
   detect -> track [label="/detect_node/seg/detections"];
   detect -> target [label="/detect_node/seg/detections"];
@@ -75,6 +75,6 @@ digraph system {
   mission -> bridge [label="/mission_node/status\n/mission_node/active_task"];
   bridge -> mission [label="/mission_node/arrived\n/mission_node/command", style=dashed];
   stream -> http [label="/healthz  /view\n/snapshot.jpg  /stream.mjpg"];
-  bridge -> can [label="0x180–0x182\n0x190–0x193"];
-  can -> bridge [label="0x200 0x203\n0x204 0x205 0x206"];
+  bridge -> can [label="类型 1、3、4\n类型 5–8"];
+  can -> bridge [label="类型 16–18\n类型 19–21"];
 }

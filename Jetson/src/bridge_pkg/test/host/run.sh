@@ -8,7 +8,7 @@ src="$(cd "$package/.." && pwd)"
 out="${TMPDIR:-/tmp}/gc_rescue_host/bridge_pkg"
 mkdir -p "$out"
 ${CXX:-g++} -std=c++17 -Wall -Wextra -I"$here" -I"$here/stubs" -I"$package" -I"$src" \
-  "$here/test_main.cpp" "$here/test_can_protocol.cpp" "$here/test_tx_queue.cpp" \
+  "$here/test_main.cpp" "$here/test_usb_protocol.cpp" "$here/test_tx_queue.cpp" \
   "$here/test_bridge_state.cpp" "$here/test_arrival_point.cpp" \
   "$package/state/bridge_state.cpp" -o "$out/bridge_host_tests"
 "$out/bridge_host_tests"
