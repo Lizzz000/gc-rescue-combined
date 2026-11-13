@@ -559,11 +559,9 @@ void Chassis_Loop(void)
     if (!enabled)
         return;
 
+    /* 邮箱被电机帧占用时跳过这一拍。不要因此失能，也不要取消还在邮箱里的帧。 */
     if (HAL_CAN_GetTxMailboxesFreeLevel(&MOTOR_CAN) != 3U)
-    {
-        Chassis_Disable();
         return;
-    }
 
     /* 沿旧零 MIT→FC→零 MIT；F407 每次只容纳三个邮箱，分组等待下一周期。 */
     if (pending_enable)
@@ -585,10 +583,18 @@ void Chassis_Loop(void)
     INS_control_data_t imu;
     if (mode != IDLE && !Read_IMU(&imu))
     {
-        Chassis_Disable();
-        return;
+        /* 姿态暂时不可用时先零速制动，停稳或制动期限到了再由循环开头失能。 */
+        Chassis_Stop();
+        if (!disable_after_stop)
+        {
+            disable_after_stop = 1U;
+            run_started_ms = now_ms;
+        }
     }
     float dt = elapsed_us * 0.000001f;
+    /* 任务被堵住后再醒来时，不把整段空白算进一次加速。25 ms 的正常抖动仍按实测间隔。 */
+    if (dt > 0.05f)
+        dt = 0.05f;
     float vx = 0.0f, vy = 0.0f, wz = 0.0f;
     if (mode == TRANSLATION)
     {
@@ -607,8 +613,8 @@ void Chassis_Loop(void)
             Chassis_Stop();
         else
         {
-            /* 一帧速度保持到下一控制拍。取这 10 ms 的平均指令速度，
-             * 加减速交界和末尾不足一拍的路程也计入。实时时刻决定轨迹进度。 */
+            /* 轨迹进度用实时时刻，这一拍的指令速度仍取名义 10 ms 的平均值。
+             * 变周期测试靠这个切分，不把上一拍的空隙摊进本拍速度。 */
             const double period_s = CONTROL_PERIOD_MS * 0.001;
             ramp_speed = (float)((Distance_Position(t + period_s) - Distance_Position(t)) / period_s);
         }

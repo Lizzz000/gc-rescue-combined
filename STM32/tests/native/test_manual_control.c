@@ -563,39 +563,36 @@ static void Test_Feedback_And_IMU(void)
  */
 static void Test_Chassis_Protection(void)
 {
-    for (unsigned fault = 0U; fault < 3U; ++fault)
-    {
-        Reset(0U, 0U);
-        Prepare_Ready();
-        Start_Moving(100, 0, 0);
-        Advance(10U);
-        if (fault == 2U)
-            Receive_Zero();
-        else
-            Receive(100, 0, 0, 1U, 7U);
-        uint32_t before_nonzero = nonzero_controls;
-        if (fault == 0U)
-        {
-            /* 第一次读取供 Control 接受目标，第二次在真实 Chassis_Loop 中失效。 */
-            imu_reads_before_failure = 1;
-            Service(MOVING_FEEDBACK, 1U);
-        }
-        else
-        {
-            free_mailboxes = 2U;
-            Service(MOVING_FEEDBACK, 0U);
-        }
-        assert(!Chassis_Is_Enabled() && aborts == 1U && nonzero_controls == before_nonzero);
-        Advance(5U);
-        Service(QUIET_FEEDBACK, 1U);
-        assert(manual_control_state == MANUAL_DISARMED && !Chassis_Is_Enabled());
-        for (unsigned i = 0U; i < 4U; ++i)
-        {
-            Step(QUIET_FEEDBACK);
-            assert(manual_control_state == MANUAL_DISARMED && !Chassis_Is_Enabled());
-        }
-        assert(disables == 3U && nonzero_controls == before_nonzero);
-    }
+    Reset(0U, 0U);
+    Prepare_Ready();
+    Start_Moving(100, 0, 0);
+    Advance(10U);
+    Receive(100, 0, 0, 1U, 7U);
+    const uint32_t before_nonzero = nonzero_controls;
+    const uint32_t before_aborts = aborts;
+    /* 姿态失效先发零速，不立刻卸力和取消邮箱。 */
+    imu_reads_before_failure = 1;
+    Service(MOVING_FEEDBACK, 1U);
+    assert(Chassis_Is_Enabled() && aborts == before_aborts && nonzero_controls == before_nonzero);
+    for (unsigned i = 0U; i < 50U; ++i)
+        Step(QUIET_FEEDBACK);
+    Service(QUIET_FEEDBACK, 1U);
+    assert(!Chassis_Is_Enabled());
+    Service(QUIET_FEEDBACK, 1U);
+    assert(manual_control_state == MANUAL_DISARMED && !Chassis_Is_Enabled());
+
+    /* 邮箱没空时跳过这一拍，不失能。 */
+    Reset(0U, 0U);
+    Prepare_Ready();
+    Start_Moving(100, 0, 0);
+    Advance(10U);
+    Receive(100, 0, 0, 1U, 7U);
+    free_mailboxes = 2U;
+    const uint32_t busy_aborts = aborts;
+    Service(MOVING_FEEDBACK, 0U);
+    assert(Chassis_Is_Enabled() && aborts == busy_aborts);
+    Step(QUIET_FEEDBACK);
+    assert(Chassis_Is_Enabled() && manual_control_state == MANUAL_RUNNING);
 }
 
 /** @brief 核对原始定点边界与合速度限制，不允许对角超限被单轴检查遗漏。

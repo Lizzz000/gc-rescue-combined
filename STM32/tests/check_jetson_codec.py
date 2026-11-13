@@ -41,6 +41,7 @@ def load_codec(jetson_root):
 def load_manual_sender(jetson_root):
     """读取 Jetson 端手动链路模块，只调用其 0x17F 封包函数，不打开设备。"""
     source = jetson_root.resolve(strict=True) / "src" / "teleop_pkg" / "manual" / "link.py"
+    sys.path.insert(0, str(source.parent))
     spec = importlib.util.spec_from_file_location("jetson_manual_link", source)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"无法加载手动链路模块: {source}")
@@ -50,13 +51,22 @@ def load_manual_sender(jetson_root):
 
 
 def manual_wire(sender, valid, vx_milli, vy_milli, wz_milli):
-    """把达妙 USB-CAN 30 字节封装还原为 ID#HEX：ID 在 13..16 字节，DLC 在 18，载荷从 21 起。"""
+    """把 USB 分帧还原为 ID#HEX。0x17F 仍是 7 字节速度载荷。"""
     packet = sender.manual_packet(valid, vx_milli, vy_milli, wz_milli)
-    identifier = int.from_bytes(packet[13:17], "little")
-    length = packet[18]
-    if identifier != MANUAL_ID or length != MANUAL_DLC:
-        raise AssertionError(f"手动链路封包 ID/DLC 不符: 0x{identifier:X}/{length}")
-    return f"{identifier:03X}#{bytes(packet[21:21 + length]).hex().upper()}"
+    frame_path = sender.__file__
+    frame_source = Path(frame_path).with_name("frame.py")
+    spec = importlib.util.spec_from_file_location("jetson_link_frame", frame_source)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"无法加载分帧模块: {frame_source}")
+    frame_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(frame_module)
+    frames = frame_module.Parser().feed(packet)
+    if len(frames) != 1:
+        raise AssertionError(f"手动链路应是单帧: {packet.hex()}")
+    identifier, payload = frames[0]
+    if identifier != MANUAL_ID or len(payload) != MANUAL_DLC:
+        raise AssertionError(f"手动链路封包 ID/DLC 不符: 0x{identifier:X}/{len(payload)}")
+    return f"{identifier:03X}#{payload.hex().upper()}"
 
 
 def initial_state():
@@ -138,9 +148,15 @@ def scenarios(codec, sender):
         """0x180 只作心跳：Jetson codec 能解出即合法格式（含 valid=0）并带 pause，空载荷为失联标志。"""
         payload = wire.split("#")[1]
         try:
-            pause = codec.decode(wire)["pause"]
-            well_formed = True
+            decoded = codec.decode(wire)
         except ValueError:
+            decoded = None
+        # 空载荷能被 codec 认成失联，但不是带 pause 的合法心跳。
+        if decoded is not None and decoded.get("lost"):
+            pause, well_formed = 0, False
+        elif decoded is not None and "pause" in decoded:
+            pause, well_formed = decoded["pause"], True
+        else:
             pause, well_formed = 0, False
         append(wire, "heartbeat", {"well_formed": well_formed, "empty": not payload, "pause": pause}, label)
 
@@ -269,7 +285,7 @@ def main():
     """编译临时 C 探针，逐帧比较完整快照，结束时自动清理编译产物。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--jetson-root", type=Path,
-                        default=Path("C:/Users/Lenovo/OneDrive/Desktop/Jetson"))
+                        default=Path(__file__).resolve().parents[2] / "Jetson")
     parser.add_argument("--cc", help="主机 GCC 路径，不能使用 arm-none-eabi-gcc")
     parser.add_argument("--temp-dir", type=Path, help="临时构建目录的父目录")
     args = parser.parse_args()

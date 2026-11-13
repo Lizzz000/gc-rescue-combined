@@ -29,7 +29,8 @@ target_compile_features(bridge_protocol INTERFACE cxx_std_17)
 add_library(bridge_transport STATIC
   transport/transport.cpp
   transport/socketcan/socketcan.cpp
-  transport/damiao/damiao.cpp)
+  transport/damiao/damiao.cpp
+  transport/cdc/cdc.cpp)
 target_link_libraries(bridge_transport PUBLIC bridge_protocol)
 set_property(TARGET bridge_transport PROPERTY POSITION_INDEPENDENT_CODE ON)
 

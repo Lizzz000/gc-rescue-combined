@@ -1,6 +1,7 @@
 #include "gripper/s288_servo.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #ifndef M_PI
@@ -201,11 +202,34 @@ public:
 
   Feedback exchange(const std::vector<std::uint8_t> & packet)
   {
-    const auto written = ::write(fd_, packet.data(), packet.size());
-    if (written != static_cast<ssize_t>(packet.size())) {throw std::runtime_error("串口写入不完整");}
     const auto deadline = std::chrono::steady_clock::now() +
       std::chrono::duration_cast<std::chrono::steady_clock::duration>(
         std::chrono::duration<double>(kFeedbackWaitS));
+    // 非阻塞串口的 EAGAIN 和短写是背压，在同一次反馈时限内写完。设备错误才算失败。
+    std::size_t sent = 0;
+    while (sent < packet.size()) {
+      const auto remaining = deadline - std::chrono::steady_clock::now();
+      if (remaining <= std::chrono::steady_clock::duration::zero()) {
+        throw std::runtime_error("串口写入不完整");
+      }
+      const auto n = ::write(fd_, packet.data() + sent, packet.size() - sent);
+      if (n > 0) {
+        sent += static_cast<std::size_t>(n);
+        continue;
+      }
+      if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+        fd_set write_fds;
+        FD_ZERO(&write_fds);
+        FD_SET(fd_, &write_fds);
+        timeval tv{};
+        const auto us = std::chrono::duration_cast<std::chrono::microseconds>(remaining).count();
+        tv.tv_sec = static_cast<long>(us / 1000000);
+        tv.tv_usec = static_cast<long>(us % 1000000);
+        ::select(fd_ + 1, nullptr, &write_fds, nullptr, &tv);
+        continue;
+      }
+      throw std::runtime_error("串口写入不完整");
+    }
     std::vector<std::uint8_t> data;
     while (std::chrono::steady_clock::now() < deadline) {
       const auto remaining = deadline - std::chrono::steady_clock::now();

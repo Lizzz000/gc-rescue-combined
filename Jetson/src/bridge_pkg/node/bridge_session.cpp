@@ -137,6 +137,7 @@ void BridgeRuntime::missionCallback(interface_pkg::msg::MissionStatus::ConstShar
       route_aborted_ = false;
     }
     refreshTurnRequest(Clock::now());
+    resolvePendingModeReply(Clock::now());
   }
 }
 
@@ -230,10 +231,11 @@ void BridgeRuntime::finishRoi(BridgeRoiResult result, std::uint64_t request_id)
   }
   const auto frame = CanProtocol::roiResult(
     result.valid, result.passed, static_cast<std::uint8_t>(result.destination));
+  // 先写入回复槽，重复 0x200 不会再读到上一轮的通过帧。失败帧仍等 pause 心跳写成功才入队。
+  replies_.store(CanProtocol::ROI_RESULT_ID, frame);
   if (result.passed) {
     armReply(CanProtocol::ROI_RESULT_ID, frame);
   } else {
-    // 失败回执前先提交 pause=1 心跳，再开爪；开爪失败则停心跳，不得在闭合时发出 pause=0。
     queuePauseThenReply(CanProtocol::ROI_RESULT_ID, frame, GripperWork::RejectOpen);
     submitPendingPauseReply();
   }
@@ -372,10 +374,10 @@ void BridgeRuntime::checkRequestTimeouts(Clock::time_point current)
     pending_command_identity_.reset();
     ports_.command_client->remove_pending_request(timeout->request_id);
     last_error_ = "mission command service request timed out";
-    armReply(CanProtocol::COMMAND_RESULT_ID,
-      CanProtocol::commandResult(false, timeout->command, pending_command_token_));
+    armCommandReply(false, timeout->command, pending_command_token_);
     RCLCPP_WARN(get_logger(), "%s", last_error_.c_str());
   }
+  resolvePendingModeReply(current);
 }
 
 // CAN 断线后旧代次不能完成新等待；任务状态和到达保持仍由 BridgeState 保留。
@@ -392,6 +394,7 @@ void BridgeRuntime::clearRequests()
     pending_command_identity_.reset();
     ports_.command_client->remove_pending_request(cancelled->request_id);
   }
+  pending_mode_reply_.reset();
 }
 
 void BridgeRuntime::handleIoFailure(const std::exception & error)

@@ -69,8 +69,8 @@ class ManualConfigTest(unittest.TestCase):
             basic = folder / 'rescue.yaml'
             basic.write_text(
                 'advanced_config: advanced.yaml\n'
-                'bridge:\n  transport: damiao_serial_fixed\n'
-                'damiao:\n  device: /dev/serial/by-id/can\n'
+                'bridge:\n  transport: cdc\n'
+                'link:\n  device: /dev/serial/by-id/can\n'
                 'gripper:\n  device: /dev/serial/by-id/servo\n  id: 2\n')
             config = manual_control.load_manual_config(basic)
         self.assertEqual(config['damiao_device'], '/dev/serial/by-id/can')
@@ -90,7 +90,7 @@ class ManualConfigTest(unittest.TestCase):
     def test_config_required_and_old_flags_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'only.yaml'
-            path.write_text('damiao:\n  device: /dev/serial/by-id/can\n')
+            path.write_text('link:\n  device: /dev/serial/by-id/can\n')
             args = manual_control.parse_arguments(['--config', str(path)])
         self.assertEqual(args.manual_config['damiao_device'], '/dev/serial/by-id/can')
         with self.assertRaises(SystemExit):

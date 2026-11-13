@@ -48,6 +48,10 @@ def fixed_point(value: float, scale: float) -> int:
 
 
 def encode(kind: str, values: list[str], invalid: bool = False) -> str:
+    if kind == 'mission_loss':
+        if values or invalid:
+            raise ValueError('mission_loss is an empty 0x180 and cannot use values or --invalid')
+        return '180#'
     if kind not in IDS:
         raise ValueError('unknown frame kind')
     identifier = IDS[kind]
@@ -120,6 +124,9 @@ def decode(text: str) -> dict:
         data = bytes.fromhex(payload)
     except (ValueError, TypeError) as error:
         raise ValueError('expected ID#HEX, for example 181#0188134C1D010000') from error
+    # 0x180 空载荷是任务失联，不是 pause，也不能当成 DLC 8。
+    if identifier == 0x180 and len(data) == 0:
+        return {'id': '0x180', 'dlc': 0, 'kind': 'velocity', 'lost': True}
     if identifier not in LENGTHS or len(data) != LENGTHS[identifier]:
         raise ValueError('unknown standard ID or incorrect DLC')
     result = {'id': f'0x{identifier:03X}', 'dlc': len(data),

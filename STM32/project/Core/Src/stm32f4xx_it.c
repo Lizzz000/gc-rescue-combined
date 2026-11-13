@@ -22,6 +22,7 @@
 #include "stm32f4xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "usb_link.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -166,6 +167,11 @@ void DebugMon_Handler(void)
 /**
   * @brief This function handles CAN1 RX0 interrupts.
   */
+void OTG_FS_IRQHandler(void)
+{
+  UsbLink_Irq();
+}
+
 void CAN1_RX0_IRQHandler(void)
 {
   /* USER CODE BEGIN CAN1_RX0_IRQn 0 */

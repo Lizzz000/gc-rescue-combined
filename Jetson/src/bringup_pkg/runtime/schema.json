@@ -1062,6 +1062,7 @@
     "mission.safety.reset_timeout_s": "number",
     "mission.safety.mission_status_topic": "string",
     "damiao.device": "string",
+    "link.device": "string",
     "gripper.device": "string",
     "gripper.id": "integer",
     "gripper.kp": "number",

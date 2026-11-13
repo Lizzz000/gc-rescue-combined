@@ -1,21 +1,17 @@
-"""达妙 USB-CAN 串口链路：独占打开设备，封装并发送 0x17F 手动速度帧。"""
+"""板间 USB CDC：独占打开 STM32 串口，发送 0x17F 手动速度帧。"""
 
-import fcntl
 import os
 import struct
-import termios
-import tty
+
+try:
+    from manual.frame import encode
+except ImportError:
+    from frame import encode
 
 # 0x17F 保持 DLC 7：valid(u8) + vx/vy/wz(int16 小端，×1000)。
-# 自动 0x180 现为 DLC 8（pause 在 data[7]）；本模块不得与自动心跳共用编解码。
+# 自动 0x180 是 DLC 8，pause 在 data[7]。这里不能复用那条编码。
 MANUAL_ID = 0x17F
 MANUAL_DLC = 7
-# 达妙 30 字节发送封装：帧头、长度、命令、发送次数；8 号字节为发送间隔，13..16 为 CAN ID。
-_HEADER = bytes([0x55, 0xAA, 30, 1, 1])
-_PACKET_SIZE = 30
-_INTERVAL_OFFSET, _INTERVAL = 8, 10
-_ID_OFFSET, _DLC_OFFSET, _DATA_OFFSET = 13, 18, 21
-_BAUD = termios.B921600
 
 
 class LinkError(OSError):
@@ -23,21 +19,18 @@ class LinkError(OSError):
 
 
 def manual_packet(valid, vx_milli, vy_milli, wz_milli):
-    """返回一帧 0x17F 的达妙封装；速度为已量化的 ×1000 整数。"""
-    packet = bytearray(_PACKET_SIZE)
-    packet[:len(_HEADER)] = _HEADER
-    packet[_INTERVAL_OFFSET] = _INTERVAL
-    packet[_ID_OFFSET:_ID_OFFSET + 4] = MANUAL_ID.to_bytes(4, 'little')
-    packet[_DLC_OFFSET] = MANUAL_DLC
-    packet[_DATA_OFFSET:_DATA_OFFSET + MANUAL_DLC] = struct.pack(
-        '<Bhhh', int(valid), vx_milli, vy_milli, wz_milli)
-    return bytes(packet)
+    """返回一帧 0x17F 的 USB 分帧；速度为已量化的 ×1000 整数。"""
+    payload = struct.pack('<Bhhh', int(valid), vx_milli, vy_milli, wz_milli)
+    return encode(MANUAL_ID, payload)
 
 
 class DamiaoLink:
-    """flock + TIOCEXCL 独占设备，与 bridge 的达妙传输同一约定；后打开者失败且不写任何字节。"""
+    """名字沿用调用点。现在独占的是 STM32 CDC，不再是达妙 30 字节外壳。"""
 
     def __init__(self, device):
+        import fcntl
+        import termios
+        import tty
         self._fd = None
         fd = os.open(device, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
         try:
@@ -45,7 +38,9 @@ class DamiaoLink:
             fcntl.ioctl(fd, termios.TIOCEXCL)
             tty.setraw(fd)
             settings = termios.tcgetattr(fd)
-            settings[4] = settings[5] = _BAUD
+            settings[2] |= termios.CLOCAL | termios.CREAD
+            settings[6][termios.VMIN] = 0
+            settings[6][termios.VTIME] = 0
             termios.tcsetattr(fd, termios.TCSANOW, settings)
         except OSError as error:
             os.close(fd)
@@ -53,19 +48,22 @@ class DamiaoLink:
         self._fd = fd
 
     def send(self, packet):
-        """丢弃适配器回传字节后写一帧；写入不完整视为链路故障。"""
-        try:
-            os.read(self._fd, 4096)
-        except BlockingIOError:
-            pass
-        try:
-            written = os.write(self._fd, packet)
-        except OSError as error:
-            raise LinkError(f'串口写入失败：{error}') from error
-        if written != len(packet):
-            raise LinkError('串口报文写入不完整')
+        """写完整一帧。短写继续写完；设备错误才失败。"""
+        sent = 0
+        while sent < len(packet):
+            try:
+                wrote = os.write(self._fd, packet[sent:])
+            except BlockingIOError:
+                continue
+            except OSError as error:
+                raise LinkError(f'串口写入失败：{error}') from error
+            if wrote <= 0:
+                raise LinkError('串口报文写入不完整')
+            sent += wrote
 
     def close(self):
+        import fcntl
+        import termios
         if self._fd is None:
             return
         try:

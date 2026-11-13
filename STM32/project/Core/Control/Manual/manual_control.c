@@ -78,13 +78,18 @@ void Manual_Control_Loop(void)
     {
         if (velocity.sequence == blocked_sequence)
             return;
-        blocked_sequence = velocity.sequence;
-        if (fresh && zero && Chassis_Enable())
+        if (!(fresh && zero))
         {
-            state_started_ms = now_ms;
-            preparing_after_stop = 0U;
-            manual_control_state = MANUAL_PREPARING;
+            blocked_sequence = velocity.sequence;
+            return;
         }
+        /* 使能失败时留下这一帧零速，下一拍还能再试。FD 还没发完时不能把零速吃掉。 */
+        if (!Chassis_Enable())
+            return;
+        blocked_sequence = velocity.sequence;
+        state_started_ms = now_ms;
+        preparing_after_stop = 0U;
+        manual_control_state = MANUAL_PREPARING;
         return;
     }
     if (!Chassis_Is_Enabled())

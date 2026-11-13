@@ -24,7 +24,7 @@ void Manual_CAN_Receive(const uint8_t *data, uint8_t len)
         .vx = frame.vx,
         .vy = frame.vy,
         .wz = frame.wz,
-        .received_ms = (uint32_t)xTaskGetTickCountFromISR(),
+        .received_ms = (uint32_t)xTaskGetTickCount(),
         .sequence = manual_velocity.sequence + 1U,
         .invalid_sequence = manual_velocity.invalid_sequence,
         .zero_sequence = manual_velocity.zero_sequence,

@@ -203,6 +203,14 @@ void DetectNode::Runtime::inferenceLoop()
       RCLCPP_ERROR_THROTTLE(owner_.get_logger(), *owner_.get_clock(), 5000,
         "%s frame %lu failed: %s", task == 0 ? "seg" : "field",
         static_cast<unsigned long>(frame->sequence), error.what());
+      // 这一帧改发空结果，下游不必一直拿着上一条有效目标。
+      if (frame && owner_.frameIsCurrent(*frame, active)) {
+        if (task == 0) {
+          result_slot_.set(std::make_shared<CompletedFrame>(CompletedFrame{frame, SegRun{}}));
+        } else {
+          result_slot_.set(std::make_shared<CompletedFrame>(CompletedFrame{frame, FieldResult{}}));
+        }
+      }
     }
   }
 }

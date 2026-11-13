@@ -233,6 +233,9 @@ static void Brake_Approach(uint32_t now_ms)
  * @param[in] search 1 为目标搜索，0 为等待安全区重新出现。
  * @param[in] now_ms 当前 RTOS 毫秒。
  */
+static uint32_t safety_lost_ms;
+static uint8_t safety_lost;
+
 static void Approach_Lost_Center(uint8_t search, uint32_t now_ms)
 {
     /* 搜索目标已交给底盘斜坡，无须每 5 ms 重设同一角速度。 */
@@ -240,9 +243,21 @@ static void Approach_Lost_Center(uint8_t search, uint32_t now_ms)
         return;
     vision = (Vision_Approach_t){0};
     if (search)
+    {
+        safety_lost = 0U;
         Navigate(0.0f, 0.0f, JETSON_AUTO_SEARCH_WZ_RAD_S, now_ms);
-    else
-        Stop_Navigation();
+        return;
+    }
+    Stop_Navigation();
+    /* 安全区中心丢失后只停车等待。超过制动期限仍没有新中心就 Halt，避免一直停在这个阶段。 */
+    if (!safety_lost)
+    {
+        safety_lost = 1U;
+        safety_lost_ms = now_ms;
+        return;
+    }
+    if ((uint32_t)(now_ms - safety_lost_ms) >= JETSON_AUTO_BRAKE_TIMEOUT_MS)
+        Halt(now_ms);
 }
 
 /** @brief 用合法 CAN 中心更新卡尔曼估计，取得本次积分的实际间隔。
@@ -347,6 +362,8 @@ static uint8_t Approach(const Jetson_CAN_Center_t *center, const Image_Window_t 
     const uint8_t newer = Received_After(center->sequence, center_boundary);
     const uint8_t recent = (uint32_t)(now_ms - center->received_ms) < JETSON_AUTO_LINK_TIMEOUT_MS;
     const uint8_t fresh = center->valid && newer && recent;
+    if (fresh)
+        safety_lost = 0U;
     if (vision.phase == VISION_VERIFY)
     {
         if ((uint32_t)(now_ms - vision.phase_started_ms) < JETSON_AUTO_VERIFY_WAIT_MS)

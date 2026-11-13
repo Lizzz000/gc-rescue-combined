@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""独立手动控制程序：独占达妙 USB-CAN，以固定频率发送 0x17F，网页经 HTTP 下发速度。
+"""独立手动控制程序：独占 STM32 的 USB CDC，以固定频率发送 0x17F，网页经 HTTP 下发速度。
 
 舵机转角只走本程序自己的 S288 串口，不经过 CAN，也不参与自动搬运。
 不启动 ROS，必须先停止 bridge（两者以 flock + TIOCEXCL 互斥）。STM32 须运行手动固件。
 访问：在 PC 上 ssh -L 8090:127.0.0.1:8090 nvidia@<jetson>，浏览器打开 http://127.0.0.1:8090/。
 
-设备路径和夹爪参数来自 --config 中的顶层 damiao.device 与 gripper.*，不读 bridge.* / mission / vision。
+设备路径和夹爪参数来自 --config 中的 link.device 与 gripper.*，不读 bridge.* / mission / vision。
 """
 
 import argparse
@@ -69,18 +69,18 @@ def _read_config_values(path):
 
 
 def load_manual_config(path):
-    """只取 damiao.device 与 gripper.*；其它顶层段忽略。"""
+    """只取 link.device 与 gripper.*；其它顶层段忽略。"""
     values = _read_config_values(path)
-    damiao_keys = {key for key in values if key == 'damiao' or key.startswith('damiao.')}
+    link_keys = {key for key in values if key == 'link' or key.startswith('link.')}
     gripper_keys = {key for key in values if key == 'gripper' or key.startswith('gripper.')}
-    unknown_damiao = damiao_keys - {'damiao.device'}
-    if unknown_damiao:
-        raise ValueError(f'damiao 含未知键：{sorted(unknown_damiao)}')
+    unknown_link = link_keys - {'link.device'}
+    if unknown_link:
+        raise ValueError(f'link 含未知键：{sorted(unknown_link)}')
     unknown_gripper = gripper_keys - {f'gripper.{name}' for name in _GRIPPER_KEYS}
     if unknown_gripper:
         raise ValueError(f'gripper 含未知键：{sorted(unknown_gripper)}')
     config = {
-        'damiao_device': values.get('damiao.device'),
+        'damiao_device': values.get('link.device'),
         'gripper_device': values.get('gripper.device') or '',
         'gripper_id': values.get('gripper.id', 0),
         'kp': values.get('gripper.kp'),
@@ -89,7 +89,7 @@ def load_manual_config(path):
         'open_deg': values.get('gripper.open_deg'),
     }
     if config['damiao_device'] is not None and not isinstance(config['damiao_device'], str):
-        raise ValueError('damiao.device 须为字符串')
+        raise ValueError('link.device 须为字符串')
     if not isinstance(config['gripper_device'], str):
         raise ValueError('gripper.device 须为字符串')
     if type(config['gripper_id']) is bool or not isinstance(config['gripper_id'], int):
@@ -114,9 +114,9 @@ def load_manual_config(path):
 
 
 def parse_arguments(argv=None):
-    parser = argparse.ArgumentParser(description='独立手动控制：网页上位机 + 达妙 USB-CAN 0x17F。')
+    parser = argparse.ArgumentParser(description='独立手动控制：网页上位机经 USB 发送 0x17F。')
     parser.add_argument('--config', required=True,
-                        help='rescue.yaml 或等价文件；只读 damiao.device 与 gripper.*')
+                        help='rescue.yaml 或等价文件；只读 link.device 与 gripper.*')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT,
                         help=f'HTTP 端口，只绑定 {BIND_ADDRESS}；0 由系统分配')
     parser.add_argument('--rate-hz', type=float, default=DEFAULT_RATE_HZ, help='0x17F 发送频率')
@@ -138,7 +138,7 @@ def parse_arguments(argv=None):
     except (OSError, ValueError, yaml.YAMLError) as error:
         parser.error(str(error))
     if not config['damiao_device']:
-        parser.error('--config 必须提供 damiao.device')
+        parser.error('--config 必须提供 link.device')
     args.manual_config = config
     return args
 

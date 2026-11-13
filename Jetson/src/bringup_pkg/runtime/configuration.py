@@ -99,6 +99,9 @@ def load_configuration(config_file, run='all', package_resolver: Callable | None
     nodes = {node: {name: value for name, entry in NODE_PARAMETERS[node].items()
                     if (value := _parameter_value(values, entry)) is not None}
              for node in selected}
+    # schema 里 serial_device 仍指向达妙路径。CDC 时改用 link.device，不打开适配器。
+    if 'bridge_node' in nodes and values['bridge.transport'] == 'cdc':
+        nodes['bridge_node']['serial_device'] = values['link.device']
     snapshot = {'configuration': str(path), 'configuration_sha256': sources[0]['sha256'],
                 'configuration_sources': sources,
                 'run': run, 'deployment': 'vision_fast' if run == 'all' else 'development',

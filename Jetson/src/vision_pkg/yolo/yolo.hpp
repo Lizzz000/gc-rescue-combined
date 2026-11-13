@@ -122,7 +122,8 @@ inline bool decodeBoxCorners(
       static_cast<double>(image.width))));
   const int bottom = static_cast<int>(std::lround(std::clamp(y1, 0.0,
       static_cast<double>(image.height))));
-  box = BBox2i{left, top, std::max(1, right - left), std::max(1, bottom - top)};
+  if (right <= left || bottom <= top) {return false;}
+  box = BBox2i{left, top, right - left, bottom - top};
   return true;
 }
 

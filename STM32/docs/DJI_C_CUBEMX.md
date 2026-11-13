@@ -38,7 +38,7 @@
 | PCLK1 / APB1 定时器 | 42 MHz / 84 MHz |
 | PCLK2 / APB2 定时器 | 84 MHz / 168 MHz |
 | 电源 / Flash | Scale 1 / 5 WS |
-| PLLQ | 当前4，对应84 MHz；本阶段不用USB/SDIO/RNG，日后启用前改7得到48 MHz |
+| PLLQ | 7，对应 48 MHz，供 USB OTG FS。SYSCLK 仍是 168 MHz |
 | HAL 时基 | TIM6，1 ms，IRQ 优先级15 |
 | RTOS 时基 | SysTick，1000 Hz；SysTick/PendSV 优先级15，SVC默认0 |
 | NVIC | Priority Group 4；FreeRTOS最低优先级15，允许系统调用边界5 |

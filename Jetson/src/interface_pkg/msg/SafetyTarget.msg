@@ -11,7 +11,7 @@ bool valid
 # valid=false 时仍可能携带最近目的区编号；不能只检查 side 就生成有效运动目标。
 uint8 side
 # side 使用 MissionStatus 的左／右目的地编号，不是模型颜色类别 ID。
-# x、y 是所选区域四顶点平均值除以 image_width/image_height，不裁剪，有限画外值可以落在 [0,1] 之外。
+# x、y 是所选区域对角线交点再除以 image_width/image_height，不裁剪，有限画外值可以落在 [0,1] 之外。
 # 仅 valid=true 时有效；无效时 x、y 为 0。
 float64 x
 float64 y

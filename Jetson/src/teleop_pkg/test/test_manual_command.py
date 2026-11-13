@@ -28,11 +28,9 @@ class QuantizeTest(unittest.TestCase):
 
     def test_packet_layout(self):
         packet = manual_packet(True, -2, 0, 1000)
-        self.assertEqual(len(packet), 30)
-        self.assertEqual(packet[:5], bytes([0x55, 0xAA, 30, 1, 1]))
-        self.assertEqual(int.from_bytes(packet[13:17], 'little'), 0x17F)
-        self.assertEqual(packet[18], 7)
-        self.assertEqual(packet[21:28], bytes([1, 0xFE, 0xFF, 0, 0, 0xE8, 0x03]))
+        from manual.frame import Parser
+        frames = Parser().feed(packet)
+        self.assertEqual(frames, [(0x17F, bytes([1, 0xFE, 0xFF, 0, 0, 0xE8, 0x03]))])
 
 
 class LeaseTest(unittest.TestCase):

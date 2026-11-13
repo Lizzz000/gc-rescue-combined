@@ -68,7 +68,7 @@ void Jetson_CAN_Init(void)
  */
 void Jetson_CAN_Receive(uint16_t id, const uint8_t *data, uint8_t len)
 {
-    uint32_t now_ms = (uint32_t)xTaskGetTickCountFromISR();
+    uint32_t now_ms = (uint32_t)xTaskGetTickCount();
     switch (id)
     {
     case JETSON_CAN_HEARTBEAT_ID:

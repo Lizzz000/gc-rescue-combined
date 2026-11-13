@@ -71,7 +71,7 @@ ros2 launch bringup_pkg rescue.launch.py run:=all
 
 搬运实测中，车辆横向对准安全区后连续 796 帧未得到有效场地观测；不能据此进行自动到位或判断物块落区，仍需调整并在不同视角下验证。
 
-手动网页通过 `--config` 读取顶层 `damiao.device` 与 `gripper.*` 连接达妙和 S288，不再使用 `--servo-device` 或 `--servo-kp` / `--servo-kd`。相对转角动作结束后舵机进入 Stop 模式，不再主动保持夹持力；该手动功能未接入自动搬运状态机。实际夹持、松爪位置和力矩须在现场确认。
+手动网页通过 `--config` 读取顶层 `link.device` 与 `gripper.*`。`link.device` 是 STM32 的 USB CDC，`gripper.device` 仍是 S288。相对转角动作结束后舵机进入 Stop 模式，不再主动保持夹持力；该手动功能未接入自动搬运状态机。实际夹持、松爪位置和力矩须在现场确认。
 
 `run:=vision` 只启动检测和图传。`run:=all` 启动上一节的 7 个进程。图传地址和端口来自 `rescue.yaml` 的 `stream_address`、`stream_port`，当前是 `0.0.0.0:8080`。
 
@@ -80,18 +80,13 @@ ros2 launch bringup_pkg rescue.launch.py run:=all
 - `http://<板端>:8080/snapshot.jpg`
 - `http://<板端>:8080/stream.mjpg`（同时最多 8 路，见 `mjpeg.cpp` 的 `kMaxStreamClients`）
 
-手动定时运动由 `teleop_pkg/move_timed.py` 直接使用达妙 USB-CAN，不启动 ROS 桥接或自动搬运程序。独立手动帧使用 `0x17F`，自动固件忽略该帧，不把它视为任务心跳；必须同步更新 STM32 与脚本。STM32 须运行手动联调固件，USB-CAN 须空闲，不能与桥接同时占用。
+手动控制由 `teleop_pkg/manual_control.py` 经 USB 发送 `0x17F`，不启动 ROS 桥接。自动固件忽略该帧。STM32 须运行手动固件。bridge 与手动程序用同一把设备锁，不能同时打开 `link.device`。
 
 ```bash
-# 不带参数进入中文交互菜单
-python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/move_timed.py
-
-# 也可直接发送一次动作
-python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/move_timed.py forward 0.08 1.2
-python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/move_timed.py stop
+python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/manual_control.py --config /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/bringup_pkg/config/rescue.yaml
 ```
 
-终端中使用方向键选择平移、`Q/E` 左右转、`P` 设置速度和时间、`V` 输入组合速度、`X` 退出。每次按键触发一次定时动作，动作期间的其他方向键被丢弃；按 Ctrl+C 可请求停车。屏幕显示预计剩余时间，不代表实际电机反馈。非交互终端和不支持的终端沿用数字菜单。命令行方向可用 `forward`、`backward`、`left`、`right`、`ccw`（逆时针）或 `cw`（顺时针）；后面依次填写速度幅值和秒数。也可用 `velocity vx vy wz 秒数` 指定组合速度，使用 `--device 设备路径` 指定其他达妙适配器。平移单位 m/s，车体转向单位 rad/s。脚本先发 0.5 秒零速准备，再以 100 Hz 发送速度；时间到、执行 `stop` 或按 Ctrl+C 后发送零速并撤权。指定时间包含加速，速度上限由 STM32 配置决定。此脚本不会驱动自动搬运流程。
+默认先使能零速 0.1 s，再按网页指令以 100 Hz 发送。速度按向零截断量化，不是四舍五入。此程序不会驱动自动搬运。
 
 常用话题：`/detect_node/status`、`/detect_node/seg/detections`、`/detect_node/field/results`、`/detect_node/active_task`、`/track_node/seg/tracks`、`/select_node/target`、`/mission_node/status`、`/safety_node/target`、`/bridge_node/status`。`/detect_node/active_task` 和 `/mission_node/status` 是 `transient_local`。
 

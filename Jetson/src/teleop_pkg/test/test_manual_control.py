@@ -18,26 +18,26 @@ import urllib.error
 import urllib.request
 
 PROGRAM = Path(__file__).resolve().parents[1] / 'manual_control.py'
-PACKET = 30
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from manual.frame import Parser  # noqa: E402
 
 
 def write_config(folder, device):
     path = Path(folder) / 'manual.yaml'
-    path.write_text(f'damiao:\n  device: {device}\n')
+    path.write_text(f'link:\n  device: {device}\n')
     return path
 
 
 
 def decode(wire):
-    """切成 30 字节封装，返回 (单调时间, valid, vx, vy, wz) 列表；帧头、ID 或 DLC 不符抛 ValueError。"""
+    """按 USB 分帧切包，返回 (单调时间, valid, vx, vy, wz)。ID 或 DLC 不符抛 ValueError。"""
+    parser = Parser()
     frames = []
     for stamp, chunk in wire:
-        for i in range(0, len(chunk), PACKET):
-            packet = chunk[i:i + PACKET]
-            if (packet[:5] != bytes([0x55, 0xAA, 30, 1, 1]) or packet[18] != 7
-                    or int.from_bytes(packet[13:17], 'little') != 0x17F):
-                raise ValueError(f'unexpected packet {packet.hex()}')
-            frames.append((stamp, *struct.unpack('<Bhhh', packet[21:28])))
+        for identifier, payload in parser.feed(chunk):
+            if identifier != 0x17F or len(payload) != 7:
+                raise ValueError(f'unexpected packet {payload.hex()}')
+            frames.append((stamp, *struct.unpack('<Bhhh', payload)))
     return frames
 
 

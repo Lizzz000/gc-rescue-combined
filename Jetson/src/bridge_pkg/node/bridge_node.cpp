@@ -1,4 +1,5 @@
 #include "node/bridge_node.hpp"
+#include "transport/cdc/cdc.hpp"
 #include "transport/socketcan/socketcan.hpp"
 #include "transport/damiao/damiao.hpp"
 #include "gripper/s288_servo.hpp"
@@ -59,6 +60,7 @@ try : Node("bridge_node", options)
   auto settings = declareAndValidateParameters();
   if (!transport) {
     if (settings.transport == "socketcan") {transport = std::make_unique<CanSocket>();}
+    else if (settings.transport == "cdc") {transport = std::make_unique<CdcLink>();}
     else {
       transport = std::make_unique<DamiaoCan>(settings.can_bitrate);
       RCLCPP_WARN(get_logger(), "Damiao uses existing adapter CAN bitrate; expected %lld bit/s is NOT configured or verified",
@@ -108,12 +110,17 @@ BridgeNode::StartupSettings BridgeNode::declareAndValidateParameters()
       throw rescue::ConfigurationError("SocketCAN requires a valid interface, empty serial_device and can_bitrate=0 (system managed)");
     }
     settings.runtime.can_interface = interface_name;
+  } else if (settings.transport == "cdc") {
+    if (!CdcLink::validDevice(settings.serial_device)) {
+      throw rescue::ConfigurationError("CDC requires the STM32 USB serial path in link.device");
+    }
+    settings.runtime.can_interface = settings.serial_device;
   } else if (settings.transport == "damiao_serial_fixed") {
     if (!damiao::validDevice(settings.serial_device) || !damiao::validBitrate(settings.can_bitrate)) {
       throw rescue::ConfigurationError("Damiao requires an explicit /dev path and supported CAN bitrate");
     }
     settings.runtime.can_interface = settings.serial_device;
-  } else {throw rescue::ConfigurationError("unsupported CAN transport");}
+  } else {throw rescue::ConfigurationError("unsupported link transport");}
   state_config.image_width = rescue::declareRequired<std::int64_t>(
     *this, "image_width", descriptor);
   state_config.image_height = rescue::declareRequired<std::int64_t>(

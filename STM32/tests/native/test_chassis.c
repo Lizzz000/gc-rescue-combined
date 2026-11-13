@@ -420,10 +420,10 @@ static void test_timing_and_parameters(void)
     step(10000U, 1U); assert(controls == 3U && disables == 0U);
     body_target(body); near(body[0], 0.0045f);
     step(10000U, 1U); assert(controls == 6U && disables == 0U);
-    step(10000U, 0U); assert(aborts == 1U && disables == 0U && controls == 6U);
-    assert(!Chassis_Enable());
-    step(10000U, 0U); assert(disables == 0U && controls == 6U);
-    step(10000U, 1U); assert(disables == 3U && controls == 6U);
+    /* 上一拍的邮箱还没清空时跳过本拍，不卸力。下一拍邮箱空闲后继续发。 */
+    step(10000U, 0U); assert(aborts == 0U && disables == 0U && controls == 6U);
+    assert(Chassis_Is_Enabled());
+    step(10000U, 1U); assert(disables == 0U && controls == 9U && aborts == 0U);
 }
 
 /** @brief 再次使能后重新确认三轮已停，前一次静止反馈不得放行起步。 */
@@ -590,8 +590,10 @@ static void test_distance_lifecycle(void)
     assert(Chassis_Distance_Start(forward, 0.3f, 0.3f));
     step(10000U,1U); body_target(body); near(body[0],0.00375f);
     imu_ready = 0U;
-    step(10000U,1U); assert(aborts == 1U);
-    step(10000U,1U); assert(disables == 3U);
+    step(10000U,1U); assert(aborts == 0U && Chassis_Is_Enabled());
+    for (unsigned i = 0U; i < 60U && Chassis_Is_Enabled(); ++i)
+        step(10000U,1U);
+    assert(disables == 3U && !Chassis_Is_Enabled());
     imu_ready = 1U;
     assert(!Chassis_Distance_Start(forward, 0.3f, 0.3f));
 }
@@ -1238,10 +1240,14 @@ static void test_failure_paths(void)
     assert(Chassis_Straight_Start(0.4f,0U));
     step(10000U,1U); assert(controls == 3U);
     sample_age = 21U;
-    step(10000U,1U); assert(aborts == 1U && controls == 3U);
-    step(10000U,1U); assert(disables == 3U);
+    step(10000U,1U); assert(aborts == 0U && controls == 6U && Chassis_Is_Enabled());
+    for (unsigned i = 0U; i < 60U && Chassis_Is_Enabled(); ++i)
+        step(10000U,1U);
+    assert(disables == 3U && !Chassis_Is_Enabled());
     imu_ready = 1U; sample_age = 0U;
-    step(10000U,1U); assert(enables == 3U && controls == 3U); /* 恢复不自动重启。 */
+    step(10000U,1U);
+    assert(!Chassis_Is_Enabled());
+    assert(!Chassis_Straight_Start(0.4f, 0U)); /* 恢复不自动重启。 */
 
     reset_case(0U,0U);
     assert(enable_ready() && Chassis_Straight_Start(0.4f,0U));

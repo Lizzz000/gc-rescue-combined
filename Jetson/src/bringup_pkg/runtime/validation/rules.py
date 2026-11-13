@@ -84,8 +84,11 @@ def _validate_bridge(values):
         if values['bridge.can_bitrate'] != 0:
             raise ConfigurationError('bridge.can_bitrate: must be 0 for socketcan; bitrate is managed by the system')
         return
+    if transport == 'cdc':
+        _validate_device_path('link.device', values['link.device'], allow_empty=False)
+        return
     if transport != 'damiao_serial_fixed':
-        raise ConfigurationError('bridge.transport: expected socketcan or damiao_serial_fixed')
+        raise ConfigurationError('bridge.transport: expected cdc, socketcan or damiao_serial_fixed')
     # Linux 设备名在 Windows 离线检查时也按 POSIX 解析，保留 by-id 符号链接原文。
     # 不按配置目录展开，也不接受用 .. 离开 /dev；实际设备存在性由后端打开时确认。
     _validate_device_path('damiao.device', values['damiao.device'], allow_empty=False)

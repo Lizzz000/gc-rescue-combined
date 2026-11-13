@@ -55,6 +55,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Bsp/LED/bsp_led.c
     Core/Communication/VOFA/vofa.c
     Core/Communication/Jetson/jetson_can.c
+    Core/Communication/Jetson/link_frame.c
+    Core/Communication/Jetson/usb_link.c
     Core/Communication/Manual/manual_can.c
     Core/Control/Chassis/chassis.c
     Core/Control/Jetson/image_tracker.c

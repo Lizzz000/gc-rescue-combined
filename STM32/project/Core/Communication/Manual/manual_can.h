@@ -3,8 +3,8 @@
 
 #include <stdint.h>
 
-/* 独立手动速度帧：格式与 Jetson 0x180 相同，只由上位机经达妙 USB-CAN 发送。
- * 快照由 CAN 中断写入、test_task 临界区读取；received_ms 为 1 kHz FreeRTOS 时基。
+/* 独立手动速度帧：DLC 必须是 7，不能带 0x180 的 pause 字节。经 USB 分帧进入，不走 CAN。
+ * 快照由 USB 任务写入、test_task 临界区读取；received_ms 为 1 kHz FreeRTOS 时基。
  */
 #define MANUAL_CAN_VELOCITY_ID 0x17FU
 

@@ -137,6 +137,12 @@ MissionCommandResult MissionController::requestCommand(
       if (!matches_route || state_.cycle_phase != CyclePhase::WaitingTurn) break;
       result.acted = true;
       startAutomatic(true);
+      // 检测服务当时不可用时，切换已经进入 Fault。不能再对 STM32 报成功。
+      if (state_.cycle_phase == CyclePhase::Fault) {
+        result.accepted = false;
+        result.message = state_.reason;
+        return result;
+      }
       result.accepted = true;
       result.message = "turn completed; requesting field recognition";
       return result;
@@ -176,6 +182,11 @@ MissionCommandResult MissionController::requestCommand(
         state_.cycle_phase != CyclePhase::Fault) break;
       result.acted = true;
       startAutomatic(false);
+      if (state_.cycle_phase == CyclePhase::Fault) {
+        result.accepted = false;
+        result.message = state_.reason;
+        return result;
+      }
       result.accepted = true;
       result.message = "start-search accepted; requesting seg recognition";
       return result;

@@ -1,4 +1,4 @@
-"""手动链路测试的公共工具：pty 抓包、达妙 30 字节封装解码、周期统计、STM32 常量读取与回放。
+"""手动链路测试的公共工具：pty 抓包、USB 分帧解码、周期统计、STM32 常量读取与回放。
 
 不依赖 ROS；STM32 常量从仓库里的头文件/源文件解析，不在测试里写死。
 """
@@ -16,15 +16,15 @@ import tempfile
 import threading
 import time
 
+from manual.frame import Parser
+
 TELEOP = Path(__file__).resolve().parents[1]
 REPO = TELEOP.parents[2]
 STM32_CORE = REPO / 'STM32/project/Core'
 STM32_STUBS = REPO / 'STM32/tests/native/stubs'
 REPLAY_SOURCE = Path(__file__).resolve().parent / 'stm32_manual_replay.c'
 
-PACKET = 30
-HEADER = bytes([0x55, 0xAA, 30, 1, 1])
-ID_SLICE, DLC_INDEX, DATA_SLICE = slice(13, 17), 18, slice(21, 28)
+
 
 
 class Frame(tuple):
@@ -41,12 +41,11 @@ class Frame(tuple):
 
 
 def decode_packet(packet, can_id, dlc):
-    """解出一帧 (valid, vx, vy, wz)；帧头、ID 或 DLC 不符抛 ValueError。"""
-    if len(packet) != PACKET or packet[:len(HEADER)] != HEADER:
-        raise ValueError(f'封装头不符：{packet.hex()}')
-    if int.from_bytes(packet[ID_SLICE], 'little') != can_id or packet[DLC_INDEX] != dlc:
-        raise ValueError(f'ID/DLC 不符：{packet.hex()}')
-    return struct.unpack('<Bhhh', packet[DATA_SLICE])
+    """解出一帧 (valid, vx, vy, wz)；分帧、ID 或 DLC 不符抛 ValueError。"""
+    frames = Parser().feed(packet)
+    if len(frames) != 1 or frames[0][0] != can_id or len(frames[0][1]) != dlc:
+        raise ValueError(f'分帧不符：{packet.hex()}')
+    return struct.unpack('<Bhhh', frames[0][1])
 
 
 class PtyCapture:
@@ -55,8 +54,8 @@ class PtyCapture:
     def __init__(self):
         self.master, self.slave = pty.openpty()
         self.device = os.ttyname(self.slave)
-        self.packets = []           # (t, bytes)
-        self._buffer = bytearray()
+        self.packets = []           # (t, id, payload)
+        self._parser = Parser()
         self._running = True
         self._thread = threading.Thread(target=self._read, daemon=True)
         self._thread.start()
@@ -70,13 +69,13 @@ class PtyCapture:
             except OSError:
                 return
             now = time.monotonic()
-            self._buffer.extend(data)
-            while len(self._buffer) >= PACKET:
-                self.packets.append((now, bytes(self._buffer[:PACKET])))
-                del self._buffer[:PACKET]
+            for identifier, payload in self._parser.feed(data):
+                self.packets.append((now, identifier, payload))
 
     def frames(self, can_id, dlc):
-        return [Frame(t, *decode_packet(p, can_id, dlc)) for t, p in list(self.packets)]
+        return [Frame(t, *struct.unpack('<Bhhh', payload))
+                for t, identifier, payload in list(self.packets)
+                if identifier == can_id and len(payload) == dlc]
 
     def close(self):
         self._running = False

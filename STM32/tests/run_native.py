@@ -54,6 +54,10 @@ def main():
     ]
     suites["jetson_chassis_bad_window"] = suites["jetson_chassis_flow"]
     suites["can_auto"] = suites["can"]
+    suites["link_frame"] = [
+        "tests/native/test_link_frame.c",
+        "project/Core/Communication/Jetson/link_frame.c",
+    ]
     includes = ["tests/native/stubs", "project/Core/Bsp/CAN",
                 "project/Core/Devices/BMI088", "project/Core/Devices/IST8310",
                 "project/Core/Devices/DM_Motor", "project/Core/Task/INS", "project/Core/Task/CAN2",

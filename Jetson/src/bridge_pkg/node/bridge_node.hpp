@@ -144,6 +144,13 @@ private:
   void checkRequestTimeouts(Clock::time_point current = Clock::now());
   void clearRequests();
   void armReply(canid_t id, const can_frame & frame);
+  void armCommandReply(bool accepted, std::uint8_t command, std::uint32_t token);
+  // 命令 1/3 的成功要等 Mission 进入目标阶段；失败即使身份已变也要回拒绝。
+  void resolvePendingModeReply(Clock::time_point current);
+  bool switchConfirmed(std::uint8_t command) const;
+  bool switchFailed() const;
+  // 重找被 Mission 接受后才停坐标并撤销旧路由，拒绝时不能提前作废。
+  void commitSearchAbort();
   void finishRoi(BridgeRoiResult result = {}, std::uint64_t request_id = 0);
   void handleArrivalPoint(std::uint8_t kind);
   void queuePauseThenReply(canid_t id, const can_frame & frame, GripperWork after, std::uint8_t kind = 0);
@@ -217,6 +224,14 @@ private:
   // 最近已发起206保留不确定结果的完整身份；最近成功另存命令4缓存，均跨205/socket重连。
   std::optional<CommandIdentity> last_delivery_request_;
   std::uint32_t pending_command_token_{0};
+  // 命令 1/3 已开始切换、0x192 尚未发出。重复命令在此期间丢弃，不另回一帧。
+  struct PendingModeReply
+  {
+    std::uint8_t command{0};
+    std::uint32_t token{0};
+    Clock::time_point deadline{};
+  };
+  std::optional<PendingModeReply> pending_mode_reply_;
   Clock::time_point next_turn_;
   // 空值表示尚无本轮结果；判定失败重放使用语义，不能反解 CAN 字节。
   std::optional<bool> roi_passed_;

@@ -1,32 +1,21 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2019 RoboMaster.
  * 来源：https://github.com/RoboMaster/Development-Board-C-Examples/blob/master/14.CAN/bsp/boards/bsp_can.c
- * 沿用滤波、启动及通知流程；CAN1 在同一 FIFO0 入口分流电机反馈与本模式通信帧。
+ * 沿用滤波、启动及通知流程。CAN1 只收电机反馈，板间帧走 USB。
  */
 #include "bsp_can.h"
 #include "dm_motor.h"
-#include "jetson_auto_config.h"
 #include "jetson_can.h"
-#if !JETSON_AUTO_CAN_ENABLED
-#include "manual_can.h"
-#endif
+#include "usb_link.h"
 
-/** @brief 按编译模式用 16 位列表筛选电机反馈与本模式标准数据帧，再启动 CAN1 的 FIFO0 接收。
- * @note 自动与底盘联调固件只收 Jetson 七种下行；手动固件只收 0x17F。
- * @return 无；任一滤波组配置失败时不启动 CAN1。
+/** @brief 只筛选电机反馈。板间帧改走 USB，不再和电机共用这组过滤器。
+ * @return 无；滤波配置失败时不启动 CAN1。
  */
 void can_filter_init(void)
 {
-#if JETSON_AUTO_CAN_ENABLED
     static const uint16_t ids[][4] = {
-        {0x000U, JETSON_CAN_HEARTBEAT_ID, JETSON_CAN_TARGET_CENTER_ID, JETSON_CAN_SAFETY_CENTER_ID},
-        {JETSON_CAN_ARRIVAL_REPLY_ID, JETSON_CAN_ROI_REPLY_ID, JETSON_CAN_COMMAND_REPLY_ID, JETSON_CAN_TURN_REQUEST_ID},
+        {0x000U, 0x000U, 0x000U, 0x000U},
     };
-#else
-    static const uint16_t ids[][4] = {
-        {0x000U, MANUAL_CAN_VELOCITY_ID, MANUAL_CAN_VELOCITY_ID, MANUAL_CAN_VELOCITY_ID},
-    };
-#endif
     CAN_FilterTypeDef filter = {0};
     filter.FilterActivation = ENABLE;
     filter.FilterMode = CAN_FILTERMODE_IDLIST;
@@ -50,56 +39,25 @@ void can_filter_init(void)
     HAL_CAN_ActivateNotification(&MOTOR_CAN, CAN_IT_RX_FIFO0_MSG_PENDING);
 }
 
-/** @brief 由底盘任务提交一条 Jetson 上行帧；参数和返回值见头文件。 */
+/** @brief 把一条上行帧交给 USB。忙或尚未枚举返回 HAL_BUSY，不占用电机邮箱。 */
 HAL_StatusTypeDef Jetson_CAN_Try_Send_Uplink(uint16_t id, uint32_t argument)
 {
     uint8_t data[8];
     const uint8_t length = Jetson_CAN_Encode_Uplink(id, argument, data);
     if (length == 0U)
         return HAL_ERROR;
-    if (HAL_CAN_GetTxMailboxesFreeLevel(&MOTOR_CAN) != 3U)
+    const int sent = Jetson_Link_Send(id, data, length);
+    if (sent == 0)
+        return HAL_OK;
+    if (sent == 1)
         return HAL_BUSY;
-
-    CAN_TxHeaderTypeDef header = {
-        .StdId = id,
-        .IDE = CAN_ID_STD,
-        .RTR = CAN_RTR_DATA,
-        .DLC = length,
-        .TransmitGlobalTime = DISABLE,
-    };
-    uint32_t mailbox;
-    return HAL_CAN_AddTxMessage(&MOTOR_CAN, &header, data, &mailbox);
+    return HAL_ERROR;
 }
-
-#if JETSON_AUTO_CAN_ENABLED
-/** @brief 按 Jetson can_protocol.hpp 识别七种下行帧 ID。
- * @param[in] id 标准 CAN ID，范围 0～0x7FF。
- * @return 已知下行 ID 返回 1，其余返回 0。
- * @note 长度与载荷交由 Jetson_CAN_Receive 严格检查。
- */
-static uint8_t Is_Jetson_Frame(uint32_t id)
-{
-    switch (id)
-    {
-    case JETSON_CAN_HEARTBEAT_ID:
-    case JETSON_CAN_TARGET_CENTER_ID:
-    case JETSON_CAN_SAFETY_CENTER_ID:
-    case JETSON_CAN_ARRIVAL_REPLY_ID:
-    case JETSON_CAN_ROI_REPLY_ID:
-    case JETSON_CAN_COMMAND_REPLY_ID:
-    case JETSON_CAN_TURN_REQUEST_ID:
-        return 1U;
-    default:
-        return 0U;
-    }
-}
-#endif
 
 /** @brief 沿教程 FIFO0 回调取尽 CAN1 待收帧，按标准数据帧 ID 分流。
  * @param[in,out] hcan HAL 提供的句柄；仅处理共用的 CAN1，CAN2 不启动业务。
  * @return 无；中断内仅更新接收数据，不执行底盘动作或发送报文。
- * @note 本工程共总线适配：电机反馈仍为 StdID=0、DLC=8；其余帧按编译模式
- *       只交给 Jetson 下行解析或手动 0x17F 快照之一。
+ * @note 板间帧不再从 CAN 进入。StdID 0、DLC 8 才是电机反馈。
  */
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
@@ -115,12 +73,5 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
             continue;
         if (header.StdId == 0U && header.DLC == 8U)
             DM_Motor_ReceiveFeedback(data);
-#if JETSON_AUTO_CAN_ENABLED
-        else if (Is_Jetson_Frame(header.StdId))
-            Jetson_CAN_Receive((uint16_t)header.StdId, data, (uint8_t)header.DLC);
-#else
-        else if (header.StdId == MANUAL_CAN_VELOCITY_ID)
-            Manual_CAN_Receive(data, (uint8_t)header.DLC);
-#endif
     }
 }
