@@ -1,3 +1,4 @@
+/* 原图像滤波器仅用于测试对照，不编入固件。 */
 #include "image_tracker.h"
 #include <math.h>
 

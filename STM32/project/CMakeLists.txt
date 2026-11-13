@@ -47,6 +47,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Algorithm/AHRS/AHRS.c
     Core/Algorithm/AHRS/MahonyAHRS.c
     Core/Algorithm/PID/pid.c
+    Core/Algorithm/Kalman/adaptive_kalman.c
     Core/Algorithm/Chassis/motor_chassis.c
     Core/Bsp/ADC/bsp_adc.c
     Core/Bsp/Buzzer/bsp_buzzer.c
@@ -59,7 +60,6 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Communication/Jetson/usb_link.c
     Core/Communication/Manual/manual_link.c
     Core/Control/Chassis/chassis.c
-    Core/Control/Jetson/image_tracker.c
     Core/Control/Jetson/jetson_auto.c
     Core/Control/Manual/manual_control.c
     Core/Devices/BMI088/BMI088driver.c
@@ -78,6 +78,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Algorithm/AHRS
     Core/Algorithm/PID
+    Core/Algorithm/Kalman
     Core/Algorithm/Chassis
     Core/Bsp/ADC
     Core/Bsp/Buzzer

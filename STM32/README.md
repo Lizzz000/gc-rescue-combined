@@ -16,3 +16,5 @@
 - `JETSON_AUTO_SEARCH_WZ_RAD_S`、`JETSON_AUTO_APPROACH_MIN_SPEED_MPS`：搜索角速度与窗外最低修正速度。
 
 目标速度不得超过对应上限；换算和加减速在底盘控制层执行。类型 3、4 是中心帧，须与 Jetson 同时部署。Mission 心跳缺失时 bridge 停止运动保活，因此独立运行 bridge 也需要配套 Mission 节点。`gripper.move_s` 仍是待标定空值，不要填数字。
+
+自动靠近使用 [Algorithm/Kalman](project/Core/Algorithm/Kalman/README.md) 的自适应图像坐标滤波；参数和实际跟踪效果仍需实车验证与标定。

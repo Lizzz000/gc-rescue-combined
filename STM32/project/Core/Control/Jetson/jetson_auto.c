@@ -3,7 +3,7 @@
 #if JETSON_AUTO_CAN_ENABLED
 #include "bsp_can.h"
 #include "chassis.h"
-#include "image_tracker.h"
+#include "adaptive_kalman.h"
 #include "INS_task.h"
 #include "jetson_link.h"
 #include "FreeRTOS.h"
@@ -37,7 +37,7 @@ typedef struct
 typedef struct
 {
     Vision_Phase_t phase;
-    Image_Tracker_t tracker;      /**< 图像定点位置和速度估计。 */
+    AdaptiveKalman tracker;      /**< 图像定点位置和速度估计。 */
     Jetson_CAN_Center_t previous;  /**< 上一帧积分或停车核验样本。 */
     Window_Evidence_t verify_outside[2]; /**< 停稳核验时 x、y 各自最近一次越界。 */
     float integral_x, integral_y;  /**< 相机各轴的速度补偿，m/s。 */
@@ -260,7 +260,7 @@ static void Approach_Lost_Center(uint8_t search, uint32_t now_ms)
         Halt(now_ms);
 }
 
-/** @brief 用合法 CAN 中心更新卡尔曼估计，取得本次积分的实际间隔。
+/** @brief 用合法视觉中心更新卡尔曼估计，取得本次积分的实际间隔。
  * @param[in] center 非空的合法中心，接收时间使用 RTOS 毫秒。
  * @return 当前积分时长，单位秒。重复快照、首包或长间隔返回 0。
  * @note 相同源帧编号的周期重发不重复参与滤波和积分。
@@ -269,19 +269,19 @@ static float Update_Image(const Jetson_CAN_Center_t *center)
 {
     if (vision.previous.valid && center->source_frame == vision.previous.source_frame)
         return 0.0f;
-    /* 按源帧间隔更新滤波，避免 CAN 调度抖动变成虚假的图像速度。 */
+    /* 按源帧间隔更新滤波，避免通信调度抖动变成虚假的图像速度。 */
     uint32_t elapsed = vision.previous.valid ?
         (center->source_frame - vision.previous.source_frame) & 0xffffffU : 0U;
     if (!vision.tracker.initialized || elapsed >= JETSON_AUTO_LINK_TIMEOUT_MS)
     {
-        Image_Tracker_Init(&vision.tracker, JETSON_AUTO_APPROACH_SIGMA_X_Q,
+        AdaptiveKalman_Init(&vision.tracker, JETSON_AUTO_APPROACH_SIGMA_X_Q,
                            JETSON_AUTO_APPROACH_SIGMA_Y_Q, JETSON_AUTO_APPROACH_SIGMA_ACCEL_Q_S2);
         vision.integral_x = vision.integral_y = 0.0f;
         elapsed = 0U;
     }
     const uint32_t filter_time = vision.tracker.initialized ?
-        vision.tracker.received_ms + elapsed : center->received_ms;
-    Image_Tracker_Update(&vision.tracker, center->x, center->y, filter_time);
+        vision.tracker.timestamp_ms + elapsed : center->received_ms;
+    AdaptiveKalman_Update(&vision.tracker, center->x, center->y, filter_time);
     vision.previous = *center;
     return elapsed * 0.001f;
 }

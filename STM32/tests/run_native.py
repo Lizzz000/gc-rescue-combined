@@ -18,7 +18,10 @@ def main():
     if not cc:
         parser.error("未找到主机 GCC，请通过 --cc 指定")
     suites = {
-        "image_tracker": ["tests/native/test_image_tracker.c", "project/Core/Control/Jetson/image_tracker.c"],
+        "adaptive_tracker": ["tests/native/test_kalman_tracking.c", "project/Core/Algorithm/Kalman/adaptive_kalman.c"],
+        "adaptive_kalman": ["tests/native/test_adaptive_kalman.c",
+                            "project/Core/Algorithm/Kalman/adaptive_kalman.c",
+                            "tests/native/fixtures/image_tracker.c"],
         "jetson_can": ["tests/native/test_jetson_link.c", "project/Core/Communication/Jetson/jetson_link.c"],
         "manual_can": ["tests/native/test_manual_link.c", "project/Core/Communication/Manual/manual_link.c",
                        "project/Core/Communication/Jetson/jetson_link.c"],
@@ -45,12 +48,12 @@ def main():
     suites["sensors_nine_axis"] = suites["sensors"]
     suites["jetson_auto_configured"] = [
         "tests/native/test_jetson_auto.c", "project/Core/Communication/Jetson/jetson_link.c",
-        "project/Core/Control/Jetson/jetson_auto.c", "project/Core/Control/Jetson/image_tracker.c",
+        "project/Core/Control/Jetson/jetson_auto.c", "project/Core/Algorithm/Kalman/adaptive_kalman.c",
     ]
     suites["jetson_auto_unconfigured"] = suites["jetson_auto_configured"]
     suites["jetson_chassis_flow"] = [
         "tests/native/test_jetson_chassis_flow.c", "project/Core/Communication/Jetson/jetson_link.c",
-        "project/Core/Control/Jetson/jetson_auto.c", "project/Core/Control/Jetson/image_tracker.c",
+        "project/Core/Control/Jetson/jetson_auto.c", "project/Core/Algorithm/Kalman/adaptive_kalman.c",
     ]
     suites["jetson_chassis_bad_window"] = suites["jetson_chassis_flow"]
     suites["can_auto"] = suites["can"]
@@ -59,12 +62,13 @@ def main():
         "project/Core/Communication/Jetson/link_frame.c",
     ]
     suites["usb_rx_buffer"] = ["tests/native/test_usb_rx_buffer.c"]
-    includes = ["tests/native/stubs", "project/Core/Bsp/CAN",
+    includes = ["tests/native/stubs", "tests/native/fixtures", "project/Core/Bsp/CAN",
                 "project/Core/Devices/BMI088", "project/Core/Devices/IST8310",
                 "project/Core/Devices/DM_Motor", "project/Core/Task/INS", "project/Core/Task/Chassis",
                 "project/Core/Algorithm/AHRS", "project/Core/Communication/VOFA", "project/Core/Algorithm/PID",
                 "project/Core/Bsp/IMU_PWM", "project/Core/Bsp/ADC", "project/Core/Bsp/LED", "project/Core/Bsp/Buzzer",
                 "project/Core/Algorithm/Chassis", "project/Core/Control/Chassis",
+                "project/Core/Algorithm/Kalman",
                 "project/Core/Communication/Jetson", "project/Core/Communication/Manual",
                 "project/Core/Control/Jetson", "project/Core/Control/Manual"]
     with tempfile.TemporaryDirectory(prefix="cboard_native_", dir=args.temp_dir) as build:
