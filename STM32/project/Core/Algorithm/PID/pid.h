@@ -28,8 +28,7 @@ typedef struct
     float Pout;
     float Iout;
     float Dout;
-    float Dbuf[3];
-    float error[3];
+    float error[2]; /* 当前与上一次误差，供位置式微分使用。 */
 } pid_type_def;
 
 /**

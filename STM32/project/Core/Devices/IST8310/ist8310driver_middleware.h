@@ -8,10 +8,6 @@
 
 #define IST8310_IIC_ADDRESS 0x0E
 
-/** @brief 教程 GPIO 初始化接口，本工程由 CubeMX 完成。 @return 无。 */
-void ist8310_GPIO_init(void);
-/** @brief 教程通信初始化接口，本工程由 CubeMX 完成。 @return 无。 */
-void ist8310_com_init(void);
 /** @brief 读取单寄存器。 @param[in] reg 地址。 @return 寄存器值。 */
 uint8_t ist8310_IIC_read_single_reg(uint8_t reg);
 /** @brief 写单寄存器。 @param[in] reg 地址。 @param[in] data 写入值。 @return 无。 */

@@ -9,16 +9,6 @@
 #include "tim.h"
 #include "cmsis_os.h"
 
-/** @brief 保留教程空接口；GPIO 已由 CubeMX 初始化。 @return 无。 */
-void ist8310_GPIO_init(void)
-{
-}
-
-/** @brief 保留教程空接口；I2C3 已由 CubeMX 初始化。 @return 无。 */
-void ist8310_com_init(void)
-{
-}
-
 /** @brief 通过 I2C3 读取单字节。 @param[in] reg 地址。 @return 寄存器值。 */
 uint8_t ist8310_IIC_read_single_reg(uint8_t reg)
 {

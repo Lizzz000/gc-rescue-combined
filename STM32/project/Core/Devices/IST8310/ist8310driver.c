@@ -28,8 +28,6 @@ uint8_t ist8310_init(void)
     uint8_t res = 0;
     uint8_t writeNum = 0;
 
-    ist8310_GPIO_init();
-    ist8310_com_init();
     ist8310_RST_L();
     ist8310_delay_ms(sleepTime);
     ist8310_RST_H();

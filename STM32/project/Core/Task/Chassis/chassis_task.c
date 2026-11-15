@@ -18,7 +18,7 @@
 volatile float battery_voltage = NAN;
 
 /**
- * @brief 初始化共用 CAN1，以已有 5 ms 任务调度手动或自动控制、底盘、板载提示与电压采样。
+ * @brief 初始化电机 CAN1，以已有 5 ms 任务调度手动或自动控制、底盘、板载提示与电压采样。
  * @param[in] argument CMSIS-RTOS 保留参数，未使用。
  * @return 不返回。
  * @note 任务入口沿用教程第 18 章；调用第 2/5/7 章 LED、蜂鸣器、ADC 接口。

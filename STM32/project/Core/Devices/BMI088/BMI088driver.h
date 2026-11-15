@@ -17,14 +17,12 @@
 #define BMI088_ACCEL_3G_SEN 0.0008974358974f
 #define BMI088_GYRO_2000_SEN 0.00106526443603169529841533860381f
 
-/* 沿用教程数据结构；本阶段只更新 accel/temp/gyro，status/time 不使用。 */
+/* 保留实际采集的加速度、温度和角速度。 */
 typedef struct BMI088_REAL_DATA
 {
-    uint8_t status;
     float accel[3];
     float temp;
     float gyro[3];
-    float time;
 } bmi088_real_data_t;
 
 enum

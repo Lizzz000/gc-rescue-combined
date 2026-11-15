@@ -42,7 +42,6 @@ static uint8_t jetson_rx_length, jetson_rx_data[8];
 static uint32_t manual_rx_count;
 static uint8_t manual_rx_length, manual_rx_data[8];
 static uint32_t tx_count, rx_count, loops, setup_steps;
-static uint32_t tx_mailboxes_free = 3U;
 static uint32_t chassis_inits, chassis_loops;
 static uint32_t jetson_can_inits, manual_can_inits, manual_control_inits, manual_control_loops;
 static uint32_t jetson_auto_inits, jetson_auto_loops;
@@ -50,18 +49,6 @@ static HAL_StatusTypeDef start_result = HAL_OK;
 static HAL_StatusTypeDef tx_result = HAL_OK;
 static HAL_StatusTypeDef rx_result = HAL_OK;
 static jmp_buf task_finished;
-
-static const uint8_t uplink_data[8] = {0x01U, 0xEFU, 0xCDU, 0xABU, 0x89U};
-
-/** @brief 用已知编码核对 BSP 对类型号、token 与 8 字节缓冲的传递。 */
-uint8_t Jetson_CAN_Encode_Uplink(uint16_t type, uint32_t argument, uint8_t data[8])
-{
-    if (type != JETSON_CAN_TURN_COMPLETED_ID)
-        return 0U;
-    assert(argument == 0x89ABCDEFU);
-    memcpy(data, uplink_data, sizeof(uplink_data));
-    return 5U;
-}
 
 /** @brief 捕获共用入口交给 Jetson 的帧，确认未混入电机报文。
  * @param[in] type 类型号。 @param[in] data 数据。 @param[in] length 字节数。 @return 无。
@@ -193,13 +180,6 @@ HAL_StatusTypeDef HAL_CAN_AddTxMessage(CAN_HandleTypeDef *hcan, CAN_TxHeaderType
     *mailbox = 1U; ++tx_count; return tx_result;
 }
 
-/** @brief 提供共享 CAN1 发送邮箱的模拟空闲数量。 */
-uint32_t HAL_CAN_GetTxMailboxesFreeLevel(CAN_HandleTypeDef *hcan)
-{
-    assert(hcan == &hcan1);
-    return tx_mailboxes_free;
-}
-
 /** @brief 返回模拟 FIFO 中的待收帧数。
  * @param[in] hcan CAN1。 @param[in] fifo FIFO0。 @return 待收帧数。
  */
@@ -230,42 +210,6 @@ void vTaskDelayUntil(TickType_t *wake, TickType_t ticks)
 {
     assert(ticks == 5U); *wake += ticks; test_tick = *wake;
     if (++loops == 201U) longjmp(task_finished,1);
-}
-
-static HAL_StatusTypeDef link_result = HAL_OK;
-static uint16_t link_id;
-static uint8_t link_length, link_data[8];
-static uint32_t link_count;
-
-/** @brief 固件里的强符号在 USB 文件。本测试只记录上行有没有离开 CAN 邮箱。 */
-int Jetson_Link_Send(uint8_t type, const uint8_t *data, uint8_t length)
-{
-    link_id = type;
-    link_length = length;
-    memcpy(link_data, data, length);
-    ++link_count;
-    if (link_result == HAL_OK)
-        return 0;
-    if (link_result == HAL_BUSY)
-        return 1;
-    return 2;
-}
-
-/** @brief 上行走 USB。未知类型不发送；忙和失败由链路返回，不占用 CAN 邮箱。 */
-static void Check_Uplink_Submission(void)
-{
-    const uint32_t before = tx_count;
-    const uint32_t links = link_count;
-    assert(Jetson_CAN_Try_Send_Uplink(0U, 0U) == HAL_ERROR && tx_count == before);
-    assert(link_count == links);
-    link_result = HAL_BUSY;
-    assert(Jetson_CAN_Try_Send_Uplink(JETSON_CAN_TURN_COMPLETED_ID, 0x89ABCDEFU) == HAL_BUSY && tx_count == before);
-    link_result = HAL_ERROR;
-    assert(Jetson_CAN_Try_Send_Uplink(JETSON_CAN_TURN_COMPLETED_ID, 0x89ABCDEFU) == HAL_ERROR && tx_count == before);
-    link_result = HAL_OK;
-    assert(Jetson_CAN_Try_Send_Uplink(JETSON_CAN_TURN_COMPLETED_ID, 0x89ABCDEFU) == HAL_OK && tx_count == before);
-    assert(link_id == JETSON_CAN_TURN_COMPLETED_ID && link_length == 5U);
-    assert(memcmp(link_data, uplink_data, 5) == 0);
 }
 
 /** @brief 验证手册MIT向量、反馈解码、CAN1筛选与任务无自动命令。 @return 成功为0。 */
@@ -302,7 +246,6 @@ int main(void)
         assert(filter->FilterIdHigh == ((uint32_t)accepted_ids[bank][2] << 5U));
         assert(filter->FilterMaskIdHigh == ((uint32_t)accepted_ids[bank][3] << 5U));
     }
-    Check_Uplink_Submission();
     enable_motor(&hcan1,1);
     for (unsigned i = 0; i < 7; ++i) assert(tx_data[i] == 0xFF);
     assert(tx_data[7] == 0xFC && tx_header.StdId == 1 && tx_header.DLC == 8);

@@ -7,8 +7,6 @@
 #define CS1_GYRO_Pin 2U
 #define RSTN_IST8310_GPIO_Port ((void *)3)
 #define RSTN_IST8310_Pin 3U
-#define IMU_HEAT_GPIO_Port ((void *)4)
-#define IMU_HEAT_Pin 4U
 #define LED_RED_GPIO_Port ((void *)5)
 #define LED_RED_Pin 1U
 #define LED_GREEN_GPIO_Port ((void *)6)

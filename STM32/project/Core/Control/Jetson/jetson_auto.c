@@ -1,11 +1,11 @@
 #include "jetson_auto.h"
 
 #if JETSON_AUTO_CAN_ENABLED
-#include "bsp_can.h"
 #include "chassis.h"
 #include "adaptive_kalman.h"
 #include "INS_task.h"
 #include "jetson_link.h"
+#include "usb_link.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <math.h>
@@ -608,7 +608,7 @@ static uint8_t Reply_Accepted(const Jetson_CAN_Command_Reply_t *reply, uint8_t c
            reply->token == (command == 3U || command == JETSON_CAN_POINT_REPLY_COMMAND ? 0U : route_token);
 }
 
-/** @brief 在空邮箱时非阻塞提交握手；重试截止不因成功入队而延长。
+/** @brief 非阻塞提交 USB 握手；重试截止不因成功提交而延长。
  * @param[in] now_ms 当前 RTOS 毫秒。
  */
 static void Service_Request(uint32_t now_ms)
@@ -627,16 +627,23 @@ static void Service_Request(uint32_t now_ms)
         argument = request.point;
     else if (request.id == JETSON_CAN_ARRIVAL_ID || request.id == JETSON_CAN_START_SEARCH_ID)
         argument = 0U;
-    /* 在入邮箱前取接收边界，期间不让 RX0 中断改写快照。 */
+    uint8_t payload[8];
+    const uint8_t length = Jetson_CAN_Encode_Uplink(request.id, argument, payload);
+    if (length == 0U)
+    {
+        Halt(now_ms);
+        return;
+    }
+    /* 在提交 USB 前取接收边界，期间不让 USB 任务改写快照。 */
     Jetson_CAN_Data_t before_send;
     taskENTER_CRITICAL();
     Jetson_CAN_Get_Data(&before_send);
-    const HAL_StatusTypeDef result = Jetson_CAN_Try_Send_Uplink(request.id, argument);
+    const int result = Jetson_Link_Send((uint8_t)request.id, payload, length);
     const uint32_t sent_ms = (uint32_t)xTaskGetTickCount();
-    if (result == HAL_OK && !request.submitted && request.id != JETSON_CAN_ARRIVAL_ID)
+    if (result == 0 && !request.submitted && request.id != JETSON_CAN_ARRIVAL_ID)
         Jetson_CAN_Expect_Command_Reply(request.id, argument);
     taskEXIT_CRITICAL();
-    if (result == HAL_OK)
+    if (result == 0)
     {
         if (!request.submitted)
         {
@@ -645,7 +652,7 @@ static void Service_Request(uint32_t now_ms)
         }
         request.last_tx_ms = sent_ms;
     }
-    else if (result != HAL_BUSY)
+    else if (result != 1)
         Halt(now_ms);
 }
 

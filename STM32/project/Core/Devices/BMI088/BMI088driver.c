@@ -54,8 +54,6 @@ uint8_t BMI088_init(void)
 {
     uint8_t error = BMI088_NO_ERROR;
     BMI088_spi_error = 0;
-    BMI088_GPIO_init();
-    BMI088_com_init();
     error |= bmi088_accel_init();
     error |= bmi088_gyro_init();
     return error;

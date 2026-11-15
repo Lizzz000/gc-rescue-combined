@@ -1,8 +1,6 @@
 #ifndef MANUAL_CONTROL_H
 #define MANUAL_CONTROL_H
 
-#include <stdint.h>
-
 /* C 板手动接收期限及阶段期限，单位 ms。 */
 #define MANUAL_VELOCITY_TIMEOUT_MS 250U
 #define MANUAL_PREPARE_TIMEOUT_MS 1000U

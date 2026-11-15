@@ -2,21 +2,20 @@
 #include <math.h>
 #include <stdio.h>
 #include "INS_task.h"
-#include "bsp_can.h"
+#include "usb_link.h"
 #include "chassis.h"
 #include "jetson_auto.h"
 #include "jetson_link.h"
 #include "manual_link.h"
 #include "task.h"
 
-/* 真实下行解析与自主状态机，反馈、机构及 CAN 发送由本测试控制。 */
-CAN_HandleTypeDef hcan1, hcan2;
+/* 真实协议编解码与自主状态机，底盘反馈及 USB 发送结果由本测试控制。 */
 uint32_t test_tick;
 static unsigned critical_depth;
 static uint8_t can_arrival_before_snapshot;
 static uint8_t enabled, stopped;
 static unsigned enables, stops, disables, velocity_requests;
-static uint8_t tx_ready;
+static uint8_t tx_ready, tx_error;
 static unsigned distance_count, turn_count, sent_count;
 static Chassis_Translation_Direction_t last_translation;
 static float last_distance;
@@ -125,24 +124,29 @@ uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg)
     return 1U;
 }
 
-/** @brief 捕获自主层提交的上行请求。 @return HAL_OK 模拟入队，HAL_BUSY 表示邮箱未就绪。
- * @param[in] id 已有运输协议上行 ID。 @param[in] argument 本趟身份或 类型 21 到点类型。
+/** @brief 捕获真实编码后的 USB 上行载荷。 @return 0 已提交，1 链路忙，2 发送错误。
+ * @param[in] id 运输协议上行类型。 @param[in] payload 编码载荷。 @param[in] len 载荷字节数。
  */
-HAL_StatusTypeDef Jetson_CAN_Try_Send_Uplink(uint16_t id, uint32_t argument)
+int Jetson_Link_Send(uint8_t id, const uint8_t *payload, uint8_t len)
 {
     assert(critical_depth > 0U);
+    assert(payload != NULL);
+    assert(len == ((id == JETSON_CAN_ARRIVAL_ID || id == JETSON_CAN_START_SEARCH_ID ||
+                    id == JETSON_CAN_POINT_REACHED_ID) ? 1U : 5U));
+    if (id == JETSON_CAN_POINT_REACHED_ID)
+        assert(payload[0] == JETSON_CAN_POINT_GRASP || payload[0] == JETSON_CAN_POINT_RELEASE);
+    else
+        assert(payload[0] == 1U);
+    if (tx_error)
+        return 2;
     if (!tx_ready)
-        return HAL_BUSY;
+        return 1;
     assert(sent_count < sizeof(sent) / sizeof(sent[0]));
-    uint8_t payload[8];
-    const uint8_t len = Jetson_CAN_Encode_Uplink(id, argument, payload);
-    assert(len == 1U || len == 5U);
     /* 类型 21 记录到点类型；其余帧首字节为 1，记录 token（无 token 记 0）。 */
-    assert(id == JETSON_CAN_POINT_REACHED_ID || payload[0] == 1U);
     const uint32_t encoded = id == JETSON_CAN_POINT_REACHED_ID ? payload[0] : len == 1U ? 0U : (uint32_t)payload[1] |
         (uint32_t)payload[2] << 8U | (uint32_t)payload[3] << 16U | (uint32_t)payload[4] << 24U;
     sent[sent_count++] = (Sent_Frame){id, encoded};
-    return HAL_OK;
+    return 0;
 }
 
 /** @brief 初始化独立场景，启用替身外设能力，底盘保持失能。 */
@@ -156,6 +160,7 @@ static void Reset(void)
     distance_count = turn_count = sent_count = 0U;
     imu_age_ms = heartbeat_pause = 0U;
     tx_ready = motors_ready = 1U;
+    tx_error = 0U;
     last_turn_direction = 0;
     last_turn_angle = last_vx = last_vy = last_wz = 0.0f;
     last_distance = 0.0f;
@@ -235,8 +240,8 @@ static void Receive_Command_Ack(uint8_t accepted, uint8_t command, uint32_t toke
     Jetson_CAN_Receive(JETSON_CAN_COMMAND_REPLY_ID, bytes, sizeof(bytes));
 }
 
-/** @brief 核对指定上行事件的 ID 及身份。帧字节布局由 CAN 模块单测核对。
- * @param[in] index 发送顺序索引。 @param[in] id 预期标准 ID。 @param[in] token 预期本趟身份。
+/** @brief 核对从真实 USB 载荷解出的上行类型及身份。
+ * @param[in] index 发送顺序索引。 @param[in] id 预期类型。 @param[in] token 预期本趟身份。
  */
 static void Check_Sent(unsigned index, uint16_t id, uint32_t token)
 {
@@ -724,6 +729,24 @@ static void Prepare_Turn_Wait(uint32_t token, uint8_t wrap)
     assert(sent_count == 2U);
 }
 
+/** @brief USB 忙时保持等待；发送错误立即制动，随后失能且不自动重启。 */
+static void Test_USB_Send_Error(void)
+{
+    Prepare_Turn_Wait(0x89ABCDEFU, 0U);
+    const unsigned stops_before = stops;
+    Steps(3U, 1U);
+    assert(enabled && sent_count == 2U && stops == stops_before);
+    tx_ready = 1U;
+    tx_error = 1U;
+    Step(1U);
+    assert(enabled && sent_count == 2U && stops == stops_before + 1U);
+    Step(1U);
+    assert(!enabled && disables == 1U && sent_count == 2U);
+    tx_error = 0U;
+    Steps(3U, 1U);
+    assert(!enabled && enables == 1U && sent_count == 2U);
+}
+
 /** @brief 核对邮箱等待、截止前到达但迟处理的回执及重报期限。 */
 static void Test_Request_Deadline(void)
 {
@@ -940,6 +963,7 @@ int main(void)
     Test_Transport(2U, 0U, 0U);
     Test_Transport(1U, 123U, 1U);
     Test_Request_Deadline();
+    Test_USB_Send_Error();
     Test_Reject_And_Resume();
     Test_Lost_Target_And_Link();
     Test_Auto_Heartbeat_Age();

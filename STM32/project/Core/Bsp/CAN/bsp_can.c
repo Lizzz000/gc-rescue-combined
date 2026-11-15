@@ -5,57 +5,30 @@
  */
 #include "bsp_can.h"
 #include "dm_motor.h"
-#include "jetson_link.h"
-#include "usb_link.h"
 
 /** @brief 只筛选电机反馈 0x000。板间帧走 USB，不进入这组过滤器。
  * @return 无；滤波配置失败时不启动 CAN1。
  */
 void can_filter_init(void)
 {
-    static const uint16_t ids[][4] = {
-        {0x000U, 0x000U, 0x000U, 0x000U},
-    };
     CAN_FilterTypeDef filter = {0};
+    filter.FilterBank = MOTOR_CAN_FILTER_BANK;
     filter.FilterActivation = ENABLE;
     filter.FilterMode = CAN_FILTERMODE_IDLIST;
     filter.FilterScale = CAN_FILTERSCALE_16BIT;
     filter.SlaveStartFilterBank = 14U;
     filter.FilterFIFOAssignment = CAN_FILTER_FIFO0;
-    for (unsigned bank = 0U; bank < sizeof(ids) / sizeof(ids[0]); ++bank)
-    {
-        filter.FilterBank = MOTOR_CAN_FILTER_BANK + bank;
-        /* 列表模式下四个半字都是 ID；位 15:5 是标准 ID，RTR/IDE 位清零。 */
-        filter.FilterIdLow = (uint32_t)ids[bank][0] << 5U;
-        filter.FilterMaskIdLow = (uint32_t)ids[bank][1] << 5U;
-        filter.FilterIdHigh = (uint32_t)ids[bank][2] << 5U;
-        filter.FilterMaskIdHigh = (uint32_t)ids[bank][3] << 5U;
-        if (HAL_CAN_ConfigFilter(&MOTOR_CAN, &filter) != HAL_OK)
-            return;
-    }
+    /* 四个列表项均为 0：仅接收标准数据帧 ID 0，RTR/IDE 位也为零。 */
+    if (HAL_CAN_ConfigFilter(&MOTOR_CAN, &filter) != HAL_OK)
+        return;
 
     if (HAL_CAN_Start(&MOTOR_CAN) != HAL_OK)
         return;
     HAL_CAN_ActivateNotification(&MOTOR_CAN, CAN_IT_RX_FIFO0_MSG_PENDING);
 }
 
-/** @brief 把一条上行帧交给 USB。忙或尚未枚举返回 HAL_BUSY，不占用电机邮箱。 */
-HAL_StatusTypeDef Jetson_CAN_Try_Send_Uplink(uint16_t type, uint32_t argument)
-{
-    uint8_t data[8];
-    const uint8_t length = Jetson_CAN_Encode_Uplink(type, argument, data);
-    if (length == 0U)
-        return HAL_ERROR;
-    const int sent = Jetson_Link_Send((uint8_t)type, data, length);
-    if (sent == 0)
-        return HAL_OK;
-    if (sent == 1)
-        return HAL_BUSY;
-    return HAL_ERROR;
-}
-
 /** @brief 沿教程 FIFO0 回调取尽 CAN1 待收帧，按标准数据帧 ID 分流。
- * @param[in,out] hcan HAL 提供的句柄；仅处理共用的 CAN1，CAN2 不启动业务。
+ * @param[in,out] hcan HAL 提供的句柄；仅处理电机 CAN1，CAN2 不启动业务。
  * @return 无；中断内仅更新接收数据，不执行底盘动作或发送报文。
  * @note 板间帧不从 CAN 进入。StdId 0、DLC 8 才是电机反馈。
  */

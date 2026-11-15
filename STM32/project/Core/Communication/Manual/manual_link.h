@@ -20,7 +20,7 @@ typedef struct
 } Manual_CAN_Velocity_t;
 
 /**
- * @brief 清空手动速度快照；由任务在启动 CAN 接收前调用。
+ * @brief 清空手动速度快照；由控制任务在初始化手动控制前调用。
  * @return 无。
  */
 void Manual_CAN_Init(void);

@@ -13,7 +13,7 @@ extern volatile uint8_t jetson_test_start;
 /** @brief 清除搬运状态，等待配置、姿态及 Jetson 链路就绪。 */
 void Jetson_Auto_Init(void);
 
-/** @brief 在现有 5 ms 任务中推进一次搬运流程，在底盘之后调度 CAN 握手。 */
+/** @brief 在现有 5 ms 任务中推进一次搬运流程，在底盘之后调度 USB 板间握手。 */
 void Jetson_Auto_Loop(void);
 #endif
 

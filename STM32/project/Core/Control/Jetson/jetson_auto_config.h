@@ -73,9 +73,9 @@
 
 /* Jetson 处理一次请求的服务预算，ms。 */
 #define JETSON_AUTO_REQUEST_SERVICE_MS 3000U
-/* 覆盖邮箱等待、250 ms 重报、20 ms 双向调度、100 ms 回复队列及 CAN 传输，单位 ms。 */
+/* 覆盖 USB 提交等待、250 ms 重报、20 ms 双向调度、100 ms 回复队列及传输，单位 ms。 */
 #define JETSON_AUTO_REQUEST_LINK_MARGIN_MS 450U
-/* 唯一请求期限：停稳后首次尝试提交起算，含邮箱等待，见 Jetson/docs/usb-protocol.md。 */
+/* 唯一请求期限：停稳后首次尝试提交起算，含 USB 提交等待，见 Jetson/docs/usb-protocol.md。 */
 #define JETSON_AUTO_REQUEST_TIMEOUT_MS (JETSON_AUTO_REQUEST_SERVICE_MS + JETSON_AUTO_REQUEST_LINK_MARGIN_MS)
 #define JETSON_AUTO_REQUEST_RETRY_MS 250U
 

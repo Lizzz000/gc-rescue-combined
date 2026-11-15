@@ -87,12 +87,11 @@
 | `Devices/BMI088/BMI088driver.c`：`BMI088_init`、`bmi088_accel_init`、`bmi088_gyro_init` | 教程第13章配套例程的复位、读取ID、配置、回读流程；保留原有初始化错误码 |
 | 同上：`BMI088_read` | 教程第183～184页，保留 `void` 返回、逐轴换算、温度符号扩展和gyro ID判断；为加热有效性增加accel ID及本次HAL读取失败检查，失败温度为NaN |
 | 同上：`BMI088_write_single_reg`、`BMI088_read_single_reg`、`BMI088_read_muli_reg`及accel/gyro宏 | 第13章原寄存器访问与SPI dummy流程 |
-| `Devices/BMI088/BMI088Middleware.c`：`BMI088_GPIO_init`、`BMI088_com_init` | 保留教程空接口，由CubeMX完成GPIO/SPI初始化 |
-| 同上：`BMI088_delay_ms/us`、`BMI088_ACCEL_NS_L/H`、`BMI088_GYRO_NS_L/H`、`BMI088_read_write_byte` | 第13章中间层函数；适配本工程引脚标签、RTOS毫秒延时和TIM2微秒延时 |
+| `Devices/BMI088/BMI088Middleware.c`：`BMI088_delay_ms/us`、`BMI088_ACCEL_NS_L/H`、`BMI088_GYRO_NS_L/H`、`BMI088_read_write_byte` | 第13章中间层函数；适配本工程引脚标签、RTOS毫秒延时和TIM2微秒延时；GPIO/SPI由CubeMX初始化，删除原空初始化接口 |
 | `Devices/IST8310/ist8310driver.c`：`ist8310_init`、`ist8310_read_over` | 教程第145～146页及第11章配套例程；恢复原status/mag结构、STAT1判断和三轴换算 |
-| `Devices/IST8310/ist8310driver_middleware.c`：`ist8310_GPIO_init`、`ist8310_com_init`、`ist8310_RST_L/H`、`ist8310_delay_ms/us` | 第11章中间层接口；GPIO由CubeMX生成，延时按当前RTOS/TIM2适配 |
+| `Devices/IST8310/ist8310driver_middleware.c`：`ist8310_RST_L/H`、`ist8310_delay_ms/us` | 第11章中间层接口；GPIO/I2C由CubeMX初始化，删除原空初始化接口；延时按当前RTOS/TIM2适配 |
 | 同上：`ist8310_IIC_read_single_reg`、`ist8310_IIC_write_single_reg`、`ist8310_IIC_read_muli_reg` | 第11章I2C中间层；单读/写签名保留，连读同名函数改返回uint8_t（HAL成功1、失败0），将本次HAL结果交给调用者，不加错误锁存 |
-| `Bsp/CAN/bsp_can.c`：`can_filter_init` | 沿用官方 `14.CAN/bsp/boards/bsp_can.c` 的启动和 FIFO0 通知。CAN1 的 bank 0、1 只覆盖达妙电机反馈 ID 0。板间帧不进这条滤波。 |
+| `Bsp/CAN/bsp_can.c`：`can_filter_init` | 沿用官方 `14.CAN/bsp/boards/bsp_can.c` 的启动和 FIFO0 通知。CAN1 仅使用 bank 0，四个槽均为达妙电机反馈 ID 0。板间帧不进这条滤波。 |
 | `Devices/DM_Motor/dm_motor.c`：`HAL_CAN_RxFifo0MsgPendingCallback` | 教程第197～198页的 HAL 回调，按达妙手册第32、35页解码。每次完整更新后递增该电机的反馈序号，供底盘识别新样本 |
 | 同上：`uint_to_float`、`float_to_uint`、`ctrl_motor` | 达妙协议手册第33～34页；保留换算公式和8字节MIT布局，发送返回HAL状态用于底盘处理邮箱提交失败 |
 | 同上：`enable_motor`、`disable_motor` | 达妙协议手册第37页FC/FD字节表的直接封装；手册未提供函数名，这两个名称属于必要接入，不是教程原函数 |
@@ -102,7 +101,7 @@
 | `Task/INS/INS_task.c`：`imu_cali_slove` | 第20章标准机器人INS任务的坐标转换函数和安装矩阵；BMI先扣芯片轴零偏再旋转，顺序参考basic_framework的BMI088_Read和INS_Task；磁场适配为A*(raw-b)，参数由电脑参考PX4模型离线求解，当前单位安装矩阵已合入A；原始数据不改 |
 | `Task/INS/INS_task.c`：`INS_task`；`Task/Chassis/chassis_task.c`：`test_task` | 沿用第18章任务入口。INS 启动温控与静止标定，完成初始姿态后按 TIM2 实测 dt 融合并发送 VOFA。test 任务以 5 ms 循环调度底盘、LED 和测压，蜂鸣器关闭，底盘默认失能 |
 | `Communication/VOFA/vofa.c`：`vofa_send` | VOFA官方JustFloat帧格式；必要的发送封装，教程没有这个协议函数。使用现有HAL_UART_Transmit_DMA，不添加任务、队列或printf重定向 |
-| `Algorithm/PID/pid.c`：`PID_init`、`PID_calc`、`PID_clear` | 官方第20章 `components/controller/pid.c`，裁剪为温控实际使用的位置式，保留误差、P/I/D与输出限幅；类型使用等价float |
+| `Algorithm/PID/pid.c`：`PID_init`、`PID_calc`、`PID_clear` | 官方第20章 `components/controller/pid.c`，裁剪为温控实际使用的位置式，保留当前/上次误差、P/I/D与输出限幅；删除增量式遗留的多余历史缓存，类型使用等价float |
 | 同上：`PID_Step` | 旧车 `Core/Control/PID/pid.c` 连续积分、测量微分及抗饱和公式；复用现有结构，与温控使用独立实例 |
 | `Algorithm/Chassis/motor_chassis.c` | 旧车 `Core/Motor/motor_chassis.c/.h` 三轮正逆解与几何；保留原函数名，2026-11-08 按用户确认的实车方向校正正逆解纵向符号 |
 | `Control/Chassis/chassis.c` | 旧车 `Core/Control/chassis/straight`、`translation`、`turn` 的动作计算与参数；合并为单个周期控制模块，F407发送/计时为本工程适配 |
@@ -207,20 +206,20 @@ VOFA选择USB-TTL对应COM口，115200、8数据位、无校验、1停止位、�
 | 定时平移及连续速度的线量参数 | 接口内部合速度上限 0.50 m/s，加速度 0.45 m/s²，斜向分量乘 1/√2 保持等速 |
 | 八向定距的线量参数 | 接口内部合速度上限 0.50 m/s，对称加减速度 0.75 m/s²；纯前进对应两后轮最大绝对轮速 12.37 rad/s、角加减速度 18.56 rad/s²，从静止出发并在段末降为零速 |
 | 航向PID | Kp=2、Ki=0、Kd=0.25；积分限0.2、输出限0.8rad/s |
-| 连续速度 | `wz` 上限 1.0 rad/s，角加速度 1.6 rad/s²，`vx/vy/wz` 共用增量缩放比例 |
+| 连续速度 | `wz` 上限 2.0 rad/s，角加速度 1.6 rad/s²，`vx/vy/wz` 共用增量缩放比例 |
 | 左右相对转角 | 默认均360°，通过相邻yaw差跨零累加实现整圈 |
-| 转向规划 | 车体角速度上限 1.0 rad/s，角加减速度 4.0 rad/s²，按剩余角度制动，最后 5° 交给原 PID |
-| 转向PID | Kp=2、Ki=0、Kd=0.1，积分限 0.2，输出限 1.0 rad/s，末段修偏使用原增益 |
+| 转向规划 | 车体角速度上限 2.0 rad/s，角加减速度 4.0 rad/s²，按剩余角度制动，最后 5° 交给原 PID |
+| 转向PID | Kp=2、Ki=0、Kd=0.1，积分限 0.2，输出限 2.0 rad/s，末段修偏使用原增益 |
 | 单独转向完成 | 角差绝对值≤2°、实测车体角速度和待发转向目标绝对值均≤0.08rad/s，连续保持200ms；超时15000ms |
-| 控制时基 | 复用5ms任务，每10ms更新；dt取1MHz TIM2无符号差，支持计数回绕 |
+| 控制时基 | 复用5ms任务，每10ms更新；dt取1MHz TIM2无符号差，支持计数回绕；斜坡计算的dt上限为50ms，定距进度仍按实际时间 |
 
-按当前上限换算，纯前进两后轮最大绝对目标为 12.37 rad/s，纯横移前轮为 14.29 rad/s，纯转三轮各为 3.09 rad/s。平移和转向同时达到上限时，任意方向的单轮最大绝对目标为 `(0.50 + 0.108 × 1.0) / 0.035 ≈ 17.37 rad/s`。六轴手动固件已烧录并通过校验，新增速度上限仍待实车满速验证。
+按当前上限换算，纯前进两后轮最大绝对目标为 12.37 rad/s，纯横移前轮为 14.29 rad/s，纯转三轮各为 6.17 rad/s。平移和转向同时达到上限时，任意方向的单轮最大绝对目标为 `(0.50 + 0.108 × 2.0) / 0.035 ≈ 20.46 rad/s`。下文历史烧录与实测记录不代表当前 USB 固件已烧录，当前速度上限仍待实车满速验证。
 
 旧车直行是速度＋持续时间，没有距离闭环。旧手动界面的默认值为0.4m/s、3000ms；当前接口显式传入，例如 `Chassis_Straight_Start(0.4f,3000U)`，不保留无人使用的手动默认值宏。duration_ms=0表示持续运行。航向PID使用 `PID_Step`：连续积分 `Ki*error*dt`、微分 `-Kd*world_z_rad_s`，保留旧抗饱和；温控仍调用原 `PID_calc`。平移斜坡和转角误差也保留旧源码的double中间计算后再转float，避免改变舍入顺序。
 
 由调用 `Chassis_Loop()` 的同一任务依次执行 `Chassis_Init()`、`Chassis_Enable()`，随后在后续周期查询 `Chassis_Is_Stopped()`。普通待命启动时，等返回 1 且姿态就绪，再请求定时直行、八向平移、定距、转向或非零连续速度。动作函数返回 0 表示本次请求未被接受，调用方可在下一周期重试。直行和平移在实际接受时锁定航向。转角范围为 (0,360]°。连续速度模式内可直接更新目标。另有一项明确接续：转向剩余角绝对值 ≤5° 时，可直接请求 `Chassis_Distance_Start()`，边开始下一段平移边修正转向余角，具体行为见下文。
 
-`Chassis_Stop()` 与 `Chassis_Set_Velocity(0,0,0)` 都清除运动目标并进入零速待命，重复发零不清除已取得的停车确认。定距、转向正常完成后保持零速待命。定时直行或平移到期先发零速 MIT，确认停车后在下一周期提交失能；等待到 500 ms 仍无确认也会失能。显式失能、转向超时和故障均不能证明三轮已停。运动中沿用 20 ms 的姿态有效期。
+`Chassis_Stop()` 与 `Chassis_Set_Velocity(0,0,0)` 都清除运动目标并进入零速待命，重复发零不清除已取得的停车确认。定距、转向正常完成后保持零速待命。定时直行或平移到期先发零速 MIT，确认停车后在下一周期提交失能；等待到 500 ms 仍无确认也会失能。显式失能、转向超时和故障均不能证明三轮已停。运动中沿用 20 ms 的姿态有效期；姿态失效时底盘先转入零速制动，待确认停车或达到 500 ms 制动期限后失能。电机发送邮箱未全部空闲时跳过本拍，不仅因邮箱忙就取消已提交的帧或失能。
 
 F407 的三个发送邮箱按组发送“零 MIT → FC → 零 MIT”使能包序，各组之间相隔一个控制周期。已使能且再次发送三轮零速 MIT 后才开始停车确认。CAN1 上三台电机须各有一帧新反馈才能组成一组，同一帧只能计一次。三轮的最新帧都须在 30 ms 内到达，各轮均为使能态（state=1）且速度绝对值 ≤0.20 rad/s。连续三组满足条件才报告停车；两组之间最长 30 ms，缺帧超时、任一轮反馈超速或状态异常即撤销确认。
 
@@ -242,7 +241,7 @@ F407 的三个发送邮箱按组发送“零 MIT → FC → 零 MIT”使能包�
 
 ### 转向加减速与脉动诊断
 
-转向规划保持现有 `Service_Turn`、相邻 yaw 差累加及原 PID 增益。剩余转角绝对值大于 5° 时，先换成弧度，速度目标取 `sign(remaining) * min(1.0, sqrt(2 * 4.0 * abs(remaining_rad)))`。每次用实际 `dt` 将 `turn_speed` 的变化限制在 `4.0 * dt` 内。临近终点按剩余转角减速，进入最后 5° 后由原角度 PID 修偏，仍经过同一斜坡。`Chassis_Stop()` 清零此状态。纯转向对应三轮最大绝对目标轮速均为 3.09 rad/s、角加减速度均为 12.34 rad/s²。下文保留当时上限为 2.0 rad/s 的落地记录。
+当前转向规划保持现有 `Service_Turn`、相邻 yaw 差累加及原 PID 增益。剩余转角绝对值大于 5° 时，先换成弧度，速度目标取 `sign(remaining) * min(2.0, sqrt(2 * 4.0 * abs(remaining_rad)))`。每次用实际 `dt`（最多 50 ms）将 `turn_speed` 的变化限制在 `4.0 * dt` 内。临近终点按剩余转角减速，进入最后 5° 后由原角度 PID 修偏，仍经过同一斜坡。`Chassis_Stop()` 清零此状态。纯转向对应三轮最大绝对目标轮速均为 6.17 rad/s、角加减速度均为 12.34 rad/s²。下文保留历史不同上限下的模拟与实测记录，不代表当前 USB 固件已完成同样验收。
 
 真实业务源码的理想跟随测试覆盖左右 1/5/6/10/90/180/360°、10～25 ms 变周期、yaw 与计时回绕。180° 模拟至三轮停车确认为 2.340 s，最大过冲 0.983°；360° 为 3.905 s。5° 切换边界未反复退出，10°及以上有一次小幅反向修正。原 2° 到位容差保留，因此 1° 请求不要求实际走满 1°。这些时间仅来自电脑模拟，没有电机、地面与负载动态，与下面的实测记录分开解读。[真实源码回归](C:/Users/Lenovo/OneDrive/Desktop/C_project/tests/native/test_chassis.c)
 

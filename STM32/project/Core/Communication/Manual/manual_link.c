@@ -3,7 +3,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
-/* 速度帧解码复用 jetson_can；本模块只维护手动快照及其事件序号。 */
+/* 速度载荷解码复用 jetson_link；本模块只维护手动快照及其事件序号。 */
 static volatile Manual_CAN_Velocity_t manual_velocity;
 
 /** @brief 清空快照；调用时机见头文件。 */

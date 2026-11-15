@@ -3,14 +3,13 @@
 #include <math.h>
 #include <stdio.h>
 #include "INS_task.h"
-#include "bsp_can.h"
+#include "usb_link.h"
 #include "chassis.h"
 #include "jetson_auto.h"
 #include "jetson_link.h"
 #include "task.h"
 
-/* 真实下行解析与自主状态机，反馈、机构及 CAN 发送由本测试控制。 */
-CAN_HandleTypeDef hcan1, hcan2;
+/* 真实协议编解码与自主状态机，底盘反馈及 USB 发送结果由本测试控制。 */
 uint32_t test_tick;
 static unsigned critical_depth;
 static uint8_t can_arrival_before_snapshot;
@@ -18,8 +17,6 @@ static uint8_t enabled, stopped;
 static unsigned enables, stops, disables, velocity_requests;
 static uint8_t tx_ready;
 static unsigned distance_count, turn_count, sent_count;
-static Chassis_Translation_Direction_t last_translation;
-static float last_distance;
 static int8_t last_turn_direction;
 static float last_turn_angle, last_vx, last_vy, last_wz;
 static uint8_t motors_ready;
@@ -104,9 +101,8 @@ uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
  */
 uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction, float distance, float speed)
 {
+    (void)direction;
     assert(enabled && stopped && distance > 0.0f && speed == JETSON_AUTO_DISTANCE_SPEED_MPS);
-    last_translation = direction;
-    last_distance = distance;
     ++distance_count;
     stopped = 0U;
     return 1U;
@@ -125,23 +121,23 @@ uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg)
     return 1U;
 }
 
-/** @brief 捕获自主层提交的上行请求。 @return HAL_OK 模拟入队，HAL_BUSY 表示邮箱未就绪。
- * @param[in] id 已有运输协议上行 ID。 @param[in] argument 本趟身份；底盘联调不发 类型 21。
+/** @brief 捕获真实编码后的 USB 上行载荷。 @return 0 已提交，1 链路忙。
+ * @param[in] id 运输协议上行类型；底盘联调不发类型 21。
+ * @param[in] payload 编码载荷。 @param[in] len 载荷字节数。
  */
-HAL_StatusTypeDef Jetson_CAN_Try_Send_Uplink(uint16_t id, uint32_t argument)
+int Jetson_Link_Send(uint8_t id, const uint8_t *payload, uint8_t len)
 {
     assert(critical_depth > 0U);
-    if (!tx_ready)
-        return HAL_BUSY;
-    assert(sent_count < sizeof(sent) / sizeof(sent[0]));
-    uint8_t payload[8];
-    const uint8_t len = Jetson_CAN_Encode_Uplink(id, argument, payload);
-    assert(len == 1U || len == 5U);
+    assert(payload != NULL && id != JETSON_CAN_POINT_REACHED_ID);
+    assert(len == ((id == JETSON_CAN_ARRIVAL_ID || id == JETSON_CAN_START_SEARCH_ID) ? 1U : 5U));
     assert(payload[0] == 1U);
+    if (!tx_ready)
+        return 1;
+    assert(sent_count < sizeof(sent) / sizeof(sent[0]));
     const uint32_t encoded = len == 1U ? 0U : (uint32_t)payload[1] |
         (uint32_t)payload[2] << 8U | (uint32_t)payload[3] << 16U | (uint32_t)payload[4] << 24U;
     sent[sent_count++] = (Sent_Frame){id, encoded};
-    return HAL_OK;
+    return 0;
 }
 
 /** @brief 初始化独立场景，启用替身外设能力，底盘保持失能。 */
@@ -157,8 +153,6 @@ static void Reset(void)
     tx_ready = motors_ready = 1U;
     last_turn_direction = 0;
     last_turn_angle = last_vx = last_vy = last_wz = 0.0f;
-    last_distance = 0.0f;
-    last_translation = CHASSIS_TRANSLATION_NONE;
     Jetson_CAN_Init();
     Jetson_Auto_Init();
 }
@@ -234,8 +228,8 @@ static void Receive_Command_Ack(uint8_t accepted, uint8_t command, uint32_t toke
     Jetson_CAN_Receive(JETSON_CAN_COMMAND_REPLY_ID, bytes, sizeof(bytes));
 }
 
-/** @brief 核对指定上行事件的 ID 及身份。帧字节布局由 CAN 模块单测核对。
- * @param[in] index 发送顺序索引。 @param[in] id 预期标准 ID。 @param[in] token 预期本趟身份。
+/** @brief 核对从真实 USB 载荷解出的上行类型及身份。
+ * @param[in] index 发送顺序索引。 @param[in] id 预期类型。 @param[in] token 预期本趟身份。
  */
 static void Check_Sent(unsigned index, uint16_t id, uint32_t token)
 {

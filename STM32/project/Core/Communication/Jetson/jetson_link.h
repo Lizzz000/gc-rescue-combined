@@ -98,15 +98,15 @@ typedef struct
 } Jetson_CAN_Data_t;
 
 /**
- * @brief 清空 Jetson 接收状态；由任务在启动 CAN 接收前调用。
+ * @brief 清空 Jetson 接收状态；由控制任务在初始化自动流程前调用。
  * @return 无；所有有效标记、时间戳及序号清零。
  */
 void Jetson_CAN_Init(void);
 
 /**
- * @brief 判断速度帧格式是否合法：DLC 为 7、有效字节为 0 或 1。
+ * @brief 判断速度载荷格式是否合法：长度为 7、有效字节为 0 或 1。
  * @param[in] data 可读 len 字节；空指针视为不合法。
- * @param[in] len CAN DLC。
+ * @param[in] len USB 板间帧的载荷字节数。
  * @return 合法返回 1，否则 0；valid=0 的周期帧也算合法。
  */
 uint8_t Jetson_CAN_Is_Velocity_Frame(const uint8_t *data, uint8_t len);
@@ -114,7 +114,7 @@ uint8_t Jetson_CAN_Is_Velocity_Frame(const uint8_t *data, uint8_t len);
 /**
  * @brief 解码速度帧的有效位与三个定点分量，不做缩放和限幅。
  * @param[in] data 可读 len 字节；空指针按畸形帧处理。
- * @param[in] len CAN DLC。
+ * @param[in] len USB 板间帧的载荷字节数。
  * @param[out] frame 非空；格式不合法或 valid=0 时整帧清零。
  * @return 无。
  */
@@ -140,7 +140,7 @@ void Jetson_CAN_Receive(uint16_t type, const uint8_t *data, uint8_t len);
 void Jetson_CAN_Expect_Command_Reply(uint16_t request_type, uint32_t token);
 
 /**
- * @brief 在任务临界区复制完整接收快照，屏蔽现有优先级 6 的 CAN RX 中断。
+ * @brief 在任务临界区复制完整接收快照，防止复制期间 USB 接收任务更新数据。
  * @param[out] out 非空时写入快照；空指针不执行复制。
  * @return 无；调用方负责时效检查及控制授权，不能把回复标记当运动许可。
  */

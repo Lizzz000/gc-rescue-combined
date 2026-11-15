@@ -25,22 +25,14 @@ set(CMAKE_PROJECT_NAME project)
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 
 # Core project settings
-project(${CMAKE_PROJECT_NAME})
+project(${CMAKE_PROJECT_NAME} LANGUAGES C ASM)
 message("Build type: " ${CMAKE_BUILD_TYPE})
-
-# Enable CMake support for ASM and C languages
-enable_language(C ASM)
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
 
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
-
-# Link directories setup
-target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined library search paths
-)
 
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
@@ -99,8 +91,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 )
 
 # Add project symbols (macros)
-# hal_conf.h 里的同名定义可以留着。Cube 重新生成把它注释掉时，这条仍然打开 PCD。
-target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAL_PCD_MODULE_ENABLED)
+# 与 hal_conf.h 的空宏一致，避免重定义告警；Cube 重新生成注释掉它时仍启用 PCD。
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAL_PCD_MODULE_ENABLED=)
 option(INS_USE_MAGNETOMETER "Use IST8310 for nine-axis Mahony heading" OFF)
 if(INS_USE_MAGNETOMETER)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE INS_USE_MAGNETOMETER=1)

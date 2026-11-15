@@ -9,10 +9,6 @@
 /** 本次初始化/读取的 SPI 错误；入口清零，HAL 失败置位，供温控拒绝无效温度。 */
 extern uint8_t BMI088_spi_error;
 
-/** @brief 教程 GPIO 初始化接口；本工程由 CubeMX 完成。 @return 无。 */
-void BMI088_GPIO_init(void);
-/** @brief 教程通信初始化接口；本工程由 CubeMX 完成。 @return 无。 */
-void BMI088_com_init(void);
 /** @brief RTOS 毫秒延时。 @param[in] ms 毫秒。 @return 无。 */
 void BMI088_delay_ms(uint16_t ms);
 /** @brief TIM2 微秒延时。 @param[in] us 0～65535 µs。 @return 无。 */

@@ -12,16 +12,6 @@
 
 uint8_t BMI088_spi_error;
 
-/** @brief 保留教程空接口；GPIO 已由 CubeMX 初始化。 @return 无。 */
-void BMI088_GPIO_init(void)
-{
-}
-
-/** @brief 保留教程空接口；SPI1 已由 CubeMX 初始化。 @return 无。 */
-void BMI088_com_init(void)
-{
-}
-
 /** @brief 让出当前任务并等待指定毫秒。 @param[in] ms 毫秒。 @return 无。 */
 void BMI088_delay_ms(uint16_t ms)
 {
