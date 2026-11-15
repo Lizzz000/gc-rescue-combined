@@ -6,6 +6,7 @@
 #include "iostream"
 #include <atomic>
 #include <memory>
+#include <cstdint>
 /*
 This class represents the internal state of individual
 tracked objects observed as bbox.
@@ -24,12 +25,11 @@ tracked objects observed as bbox.
     public:
         /*variable*/
         /* Process-global ID source; a single atomic fetch-add hands every tracker its own ID. */
-        static std::atomic<int> count;
+        static std::atomic<std::uint64_t> count;
         Eigen::VectorXf bbox;// [5,1]
         std::unique_ptr<KalmanFilterNew> kf;
         int time_since_update;
-        int id;
-        std::vector<Eigen::VectorXf> history;
+        std::uint64_t id;
         int hits;
         int hit_streak;
         int age = 0;

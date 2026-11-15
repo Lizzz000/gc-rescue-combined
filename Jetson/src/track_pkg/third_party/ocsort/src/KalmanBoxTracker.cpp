@@ -2,7 +2,7 @@
 #include <utility>
 #include "KalmanBoxTracker.hpp"
 
-    std::atomic<int> KalmanBoxTracker::count{0};
+    std::atomic<std::uint64_t> KalmanBoxTracker::count{0};
     KalmanBoxTracker::KalmanBoxTracker(Eigen::VectorXf bbox_, int cls_, int delta_t_) {
         bbox = std::move(bbox_);
         delta_t = delta_t_;
@@ -27,7 +27,6 @@
         // fetch_add returns the previous value, so each tracker still receives the
         // next counter value exactly once and IDs are never handed out twice.
         id = KalmanBoxTracker::count.fetch_add(1);
-        history.clear();
         hits = 0;
         hit_streak = 0;
         age = 0;
@@ -65,7 +64,6 @@
                 else ++it;
             }
             time_since_update = 0;
-            history.clear();
             hits += 1;
             hit_streak += 1;
             Eigen::VectorXf tmp = convert_bbox_to_z(*bbox_);
@@ -82,7 +80,6 @@
         age += 1;
         if (time_since_update > 0) hit_streak = 0;
         time_since_update += 1;
-        history.push_back(convert_x_to_bbox(kf->x));
         return convert_x_to_bbox(kf->x);
     }
     Eigen::VectorXf KalmanBoxTracker::get_state() {

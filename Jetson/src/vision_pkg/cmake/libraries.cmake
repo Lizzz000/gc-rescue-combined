@@ -1,7 +1,7 @@
 # Copyright 2026 li
 # SPDX-License-Identifier: Apache-2.0
 # v3：每个功能目录一个库（粒度偏粗），技术子目录（gstreamer/neon/opencv/jpeg/mjpeg）编进所属功能库。
-# 推理库 vision_yolo / vision_yolo_headers 在 yolo/CMakeLists.txt 中定义。
+# 推理库 vision_yolo 和纯 CPU vision_postprocess 在 yolo/CMakeLists.txt 中定义。
 
 function(vision_static_library target)
   add_library(${target} STATIC ${ARGN})
@@ -40,6 +40,7 @@ target_link_libraries(vision_stream PRIVATE PkgConfig::GSTREAMER_APP PkgConfig::
 add_library(vision_nodes OBJECT
   node/detect_node.cpp
   node/detector.cpp
+  node/seg_ros.cpp
   node/detect_workers.cpp
   node/stream_node.cpp)
 vision_ros_target(vision_nodes)

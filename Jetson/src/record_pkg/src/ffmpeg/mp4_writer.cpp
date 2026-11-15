@@ -111,7 +111,6 @@ struct Mp4Writer::Impl {
   AVCodecContext* encoder = nullptr;
   AVStream* stream = nullptr;
   AVFrame* decoded = nullptr;
-  AVFrame* extra = nullptr;
   AVFrame* yuv = nullptr;
   AVPacket* input = nullptr;
   AVPacket* output = nullptr;
@@ -138,7 +137,6 @@ struct Mp4Writer::Impl {
     av_packet_free(&output);
     av_packet_free(&pending);
     av_frame_free(&decoded);
-    av_frame_free(&extra);
     av_frame_free(&yuv);
     avcodec_free_context(&decoder);
     avcodec_free_context(&encoder);
@@ -187,9 +185,9 @@ struct Mp4Writer::Impl {
     const AVCodec* mjpeg = avcodec_find_decoder(AV_CODEC_ID_MJPEG);
     if (!mjpeg) throw std::runtime_error("FFmpeg requires MJPEG decoder");
     decoder = avcodec_alloc_context3(mjpeg);
-    decoded = av_frame_alloc(); extra = av_frame_alloc(); yuv = av_frame_alloc();
+    decoded = av_frame_alloc(); yuv = av_frame_alloc();
     input = av_packet_alloc(); output = av_packet_alloc(); pending = av_packet_alloc();
-    if (!decoder || !decoded || !extra || !yuv || !input || !output || !pending)
+    if (!decoder || !decoded || !yuv || !input || !output || !pending)
       throw std::bad_alloc();
     decoder->thread_count = 1;
     decoder->max_pixels = static_cast<std::int64_t>(width) * height;
@@ -231,7 +229,7 @@ struct Mp4Writer::Impl {
 
   void decode_and_convert(const Frame& frame) {
     avcodec_flush_buffers(decoder);
-    av_frame_unref(decoded); av_frame_unref(extra); av_packet_unref(input);
+    av_frame_unref(decoded); av_packet_unref(input);
     check(av_new_packet(input, static_cast<int>(frame.jpeg.size())), "allocate JPEG packet");
     std::memcpy(input->data, frame.jpeg.data(), frame.jpeg.size());
     const int sent = avcodec_send_packet(decoder, input);

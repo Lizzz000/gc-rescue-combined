@@ -92,7 +92,7 @@ static pid_type_def imu_temp_pid;
  * @brief 以 BMI088 温度控制板载加热 PWM。
  * @param[in] temp 本次有效温度，℃；NAN 表示读取失败。
  * @return 无。
- * @note 沿官方第 18 章 imu_temp_control 的 PID_calc、负输出置零和 imu_pwm_set。
+ * @note 沿官方第 18 章 imu_temp_control 的 PID_calc 与 imu_pwm_set；PID 直接使用加热器 0..4500 输出范围。
  *       本工程从启动即使用 PID，省略原先全功率预热分支；每 10 ms 调用。
  *       无效读数、低于 -40 ℃或达到适配上限 50 ℃时关热并清积分。
  */
@@ -106,8 +106,6 @@ static void imu_temp_control(float temp)
     }
 
     PID_calc(&imu_temp_pid, temp, TEMPERATURE_CONTROL);
-    if (imu_temp_pid.out < 0.0f)
-        imu_temp_pid.out = 0.0f;
     imu_pwm_set((uint16_t)imu_temp_pid.out);
 }
 
@@ -270,6 +268,7 @@ void INS_task(void const *argument)
 
     PID_init(&imu_temp_pid, PID_POSITION, imu_temp_PID,
              TEMPERATURE_PID_MAX_OUT, TEMPERATURE_PID_MAX_IOUT);
+    imu_temp_pid.min_out = 0.0f; /* 加热器没有负输出，抗积分须使用实际下限。 */
     imu_pwm_set(0);
     HAL_TIM_PWM_Start(&htim10, TIM_CHANNEL_1);
     bmi088_real_data_t imu_mean = {0};

@@ -34,6 +34,8 @@ vision:
     # 这里使用米；算法不按内框尺寸自动扣除边框，也不使用厚度参与二维识别。
     field_w_m: 0.66
     field_h_m: 0.36
+    # 实物黑色中线宽 20 mm；用于有同帧边缘证据时的中心定位。
+    black_width_m: 0.020
 # 目标选择；OC-SORT阈值和帧龄见高级配置。
 tracking:
   select:

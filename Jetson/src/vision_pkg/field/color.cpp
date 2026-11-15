@@ -147,46 +147,96 @@ void FieldLocator::segment(
 {
   cv::Mat lab;
   cv::cvtColor(bgr, lab, cv::COLOR_BGR2Lab);
+  segmentLab(lab, cfg, purple, red);
+}
+
+void field_detail::segmentLab(
+  const cv::Mat & lab, const FieldConfig & cfg,
+  cv::Mat & purple, cv::Mat & red)
+{
   const HueSector purple_sector = HueSector::purple(cfg);
   const HueSector interior_sector = HueSector::interior(cfg);
-  purple.create(bgr.size(), CV_8U);
-  red.create(bgr.size(), CV_8U);
+  purple.create(lab.size(), CV_8U);
+  red.create(lab.size(), CV_8U);
 #if defined(__aarch64__) && defined(__ARM_NEON)
   const NeonSector neon_purple(purple_sector);
   const NeonSector neon_interior(interior_sector);
 #endif
   // 行间互不依赖，输出各写各行；约 64K 像素一条带，小 ROI 不做并行调度，不改全局线程数。
-  cv::parallel_for_(cv::Range(0, bgr.rows), [&](const cv::Range & rows) {
+  cv::parallel_for_(cv::Range(0, lab.rows), [&](const cv::Range & rows) {
     for (int y = rows.start; y < rows.end; ++y) {
       const uchar * pixel = lab.ptr<uchar>(y);
       uchar * pp = purple.ptr<uchar>(y);
       uchar * pr = red.ptr<uchar>(y);
       int x = 0;
 #if defined(__aarch64__) && defined(__ARM_NEON)
-      for (; x <= bgr.cols - 16; x += 16, pixel += 48) {
+      for (; x <= lab.cols - 16; x += 16, pixel += 48) {
         const auto channels = vld3q_u8(pixel);
         vst1q_u8(pp + x, neon_purple.classify(channels));
         vst1q_u8(pr + x, neon_interior.classify(channels));
       }
 #endif
-      for (; x < bgr.cols; ++x, pixel += 3) {
+      for (; x < lab.cols; ++x, pixel += 3) {
         pp[x] = purple_sector.classify(pixel);
         pr[x] = interior_sector.classify(pixel);
       }
     }
-  }, std::max(1.0, static_cast<double>(bgr.total()) / 65536.0));
+  }, std::max(1.0, static_cast<double>(lab.total()) / 65536.0));
 }
 
 void FieldLocator::segmentEvidence(
   const cv::Mat & bgr, const FieldConfig & cfg, cv::Mat & purple, cv::Mat & interior)
 {
-  segment(bgr, cfg, purple, interior);
+  cv::Mat lab;
+  cv::cvtColor(bgr, lab, cv::COLOR_BGR2Lab);
+  segmentEvidenceLab(lab, cfg, purple, interior);
+}
+
+void field_detail::segmentEvidenceLab(
+  const cv::Mat & lab, const FieldConfig & cfg, cv::Mat & purple, cv::Mat & interior)
+{
+  segmentLab(lab, cfg, purple, interior);
   // 内部颜色是成片平面；紫框与地面的混色边只有一两像素宽，色相会落进内部扇区，开运算把它去掉。
   if (cfg.interior_open_ksize > 1) {
     const cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT,
       cv::Size(cfg.interior_open_ksize, cfg.interior_open_ksize));
     cv::morphologyEx(interior, interior, cv::MORPH_OPEN, kernel);
   }
+}
+
+cv::Mat field_detail::shadowGeometryMask(
+  const cv::Mat & lab, const cv::Mat & strict, const HueSector & sector)
+{
+  cv::Mat support;
+  for (int y = 0; y < lab.rows; ++y) {
+    const auto * pixels = lab.ptr<cv::Vec3b>(y);
+    const auto * seeds = strict.ptr<uchar>(y);
+    for (int x = 0; x < lab.cols; ++x) {
+      const auto & p = pixels[x];
+      if (seeds[x] || p[0] >= sector.light_lo || (p[1] == 128 && p[2] == 128)) {continue;}
+      // 保留原色相与最低可靠亮度下的绝对色度要求；低亮度本身不能降低所需色度。
+      const uchar at_minimum[3] = {sector.light_lo, p[1], p[2]};
+      if (!sector.classify(at_minimum)) {continue;}
+      if (support.empty()) {support = strict.clone();}
+      support.at<uchar>(y, x) = 255;
+    }
+  }
+  if (support.empty()) {return strict;}
+  const cv::Rect bounds = cv::boundingRect(support);
+  cv::Mat labels;
+  const int count = cv::connectedComponents(support(bounds), labels, 4, CV_32S);
+  std::vector<uchar> seeded(count, 0);
+  for (int y = 0; y < bounds.height; ++y) {
+    const auto * ids = labels.ptr<int>(y);
+    const auto * seeds = strict.ptr<uchar>(y + bounds.y) + bounds.x;
+    for (int x = 0; x < bounds.width; ++x) {if (seeds[x]) {seeded[ids[x]] = 255;}}
+  }
+  for (int y = 0; y < bounds.height; ++y) {
+    auto * output = support.ptr<uchar>(y + bounds.y) + bounds.x;
+    const auto * ids = labels.ptr<int>(y);
+    for (int x = 0; x < bounds.width; ++x) {output[x] = seeded[ids[x]];}
+  }
+  return support;
 }
 
 double FieldLocator::redRatioInBev(const cv::Mat & bev, const FieldConfig & cfg)

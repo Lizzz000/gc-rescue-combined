@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 #include "OCSort.hpp"
+#include <cstdint>
+#include <set>
 
 static Eigen::MatrixXf detection(float x = 10.0f) {
   Eigen::MatrixXf input(1, 6);
@@ -23,8 +25,8 @@ TEST(OCSortCore, MovingTargetRetainsIdentity) {
   for (int i = 1; i < 20; ++i) {
     auto result = tracker.update(detection(10 + i));
     ASSERT_EQ(result.size(), 1u);
-    EXPECT_EQ(result[0](4), first[0](4));
-    EXPECT_TRUE(result[0].allFinite());
+    EXPECT_EQ(result[0].id, first[0].id);
+    EXPECT_TRUE(result[0].box.allFinite());
   }
 }
 
@@ -37,7 +39,7 @@ TEST(OCSortCore, ReappearanceRetainsIdentityWithinMaxAge) {
   tracker.update(Eigen::MatrixXf(0, 6));
   auto result = tracker.update(detection(15));
   ASSERT_EQ(result.size(), 1u);
-  EXPECT_EQ(result[0](4), first[0](4));
+  EXPECT_EQ(result[0].id, first[0].id);
 }
 
 TEST(OCSortCore, IndependentInstancesNeverResetIds) {
@@ -47,7 +49,7 @@ TEST(OCSortCore, IndependentInstancesNeverResetIds) {
   const auto b = second.update(detection());
   ASSERT_EQ(a.size(), 1u);
   ASSERT_EQ(b.size(), 1u);
-  EXPECT_NE(a[0](4), b[0](4));
+  EXPECT_NE(a[0].id, b[0].id);
 }
 
 TEST(OCSortCore, RejectsMalformedInput) {
@@ -64,8 +66,8 @@ TEST(OCSortCore, IncludesConfidenceThresholdAndRecoversWeakDetection) {
   input(0, 4) = .2f;
   const auto weak = tracker.update(input);
   ASSERT_EQ(weak.size(), 1u);
-  EXPECT_EQ(weak[0](4), first[0](4));
-  EXPECT_FLOAT_EQ(weak[0](6), .2f);
+  EXPECT_EQ(weak[0].id, first[0].id);
+  EXPECT_FLOAT_EQ(weak[0].confidence, .2f);
 }
 
 TEST(OCSortCore, DiscardsCollapsedPredictionWithoutLosingOtherTracks) {
@@ -75,8 +77,8 @@ TEST(OCSortCore, DiscardsCollapsedPredictionWithoutLosingOtherTracks) {
   input.row(1) = detection(100);
   input.row(2) = detection(200);
   ASSERT_EQ(tracker.update(input).size(), 3u);
-  const int first_id = tracker.trackers[0].id;
-  const int last_id = tracker.trackers[2].id;
+  const auto first_id = tracker.trackers[0].id;
+  const auto last_id = tracker.trackers[2].id;
   tracker.trackers[1].kf->x(2) = 0;  // Zero predicted area.
   tracker.trackers[1].kf->x(6) = 0;
   EXPECT_TRUE(tracker.update(Eigen::MatrixXf(0, 6)).empty());
@@ -113,8 +115,32 @@ TEST(OCSortCore, MultipleTargetsKeepIdsAcrossInputReordering) {
   const auto next = tracker.update(input);
   ASSERT_EQ(next.size(), 2u);
   for (const auto& track : next) {
-    const auto& previous = track(0) > 100 ? first[0] : first[1];
-    EXPECT_EQ(track(4), previous(4));
+    const auto& previous = track.box(0) > 100 ? first[0] : first[1];
+    EXPECT_EQ(track.id, previous.id);
   }
   EXPECT_EQ(tracker.update(detection(12)).size(), 1u);
+}
+
+TEST(OCSortCore, IdentityRemainsExactBeyondFloatIntegerPrecision) {
+  const auto saved = KalmanBoxTracker::count.load();
+  KalmanBoxTracker::count.store(16777214);
+  OCSort tracker(.3f, 30, 1);
+  Eigen::MatrixXf input(3, 6);
+  for (int i = 0; i < 3; ++i) input.row(i) = detection(10 + 100 * i);
+  std::set<std::uint64_t> ids;
+  for (const auto & track : tracker.update(input)) ids.insert(track.id);
+  EXPECT_EQ(ids, (std::set<std::uint64_t>{16777215, 16777216, 16777217}));
+  KalmanBoxTracker::count.store(saved);
+}
+
+TEST(OCSortCore, IdentityRemainsPositiveAcrossSigned32BitBoundary) {
+  const auto saved = KalmanBoxTracker::count.load();
+  KalmanBoxTracker::count.store(2147483645);
+  OCSort tracker(.3f, 30, 1);
+  Eigen::MatrixXf input(3, 6);
+  for (int i = 0; i < 3; ++i) input.row(i) = detection(10 + 100 * i);
+  std::set<std::uint64_t> ids;
+  for (const auto & track : tracker.update(input)) ids.insert(track.id);
+  EXPECT_EQ(ids, (std::set<std::uint64_t>{2147483646, 2147483647, 2147483648}));
+  KalmanBoxTracker::count.store(saved);
 }

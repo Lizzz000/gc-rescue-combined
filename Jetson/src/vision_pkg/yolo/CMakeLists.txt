@@ -1,12 +1,16 @@
 # Local integration sources retain their original AGPL-3.0 notices.
-# 编出 vision_yolo_headers（纯头文件接口）、vision_yolo（CUDA/TensorRT，含固定版本的 YOLOs-CPP-TensorRT 归档、校验和与应用层补丁）和 vision_engine_build。
+# 编出纯 OpenCV vision_postprocess、CUDA/TensorRT vision_yolo 和 vision_engine_build。
 # 要 CUDA 或 TensorRT 的源进 vision_yolo。
-# OpenCV、sensor_msgs、std_msgs、vision_msgs 与 Threads 已由包入口找到，这里不再查找第二遍。
+# OpenCV 与 Threads 已由包入口找到；ROS 消息转换在 node/seg_ros.cpp。
 
-# 头文件接口（DTO / Letterbox / MaskWorkspace），节点依赖它。
+# CPU 后处理单独编译，节点 DTO 不再传递 TensorRT/ROS 头依赖。
 add_library(vision_yolo_headers INTERFACE)
 target_include_directories(vision_yolo_headers INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/.. ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(vision_yolo_headers INTERFACE ${OpenCV_LIBS})
+add_library(vision_postprocess STATIC postprocess.cpp)
+target_compile_features(vision_postprocess PUBLIC cxx_std_17)
+set_target_properties(vision_postprocess PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(vision_postprocess PUBLIC vision_yolo_headers)
 
 # 本集成只接受 TensorRT 10.x，主版本不符直接失败。
 # 在启用 CUDA 前确定目标架构；87 是 Orin 默认值，其他设备须显式指定实际 GPU 架构。
@@ -103,8 +107,7 @@ set_target_properties(vision_yolo PROPERTIES
   CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON POSITION_INDEPENDENT_CODE ON)
 target_include_directories(vision_yolo SYSTEM PUBLIC
   "${_upstream}/include" ${TENSORRT_INCLUDE_DIR})
-ament_target_dependencies(vision_yolo sensor_msgs std_msgs vision_msgs)
-target_link_libraries(vision_yolo vision_yolo_headers vision_nvmm
+target_link_libraries(vision_yolo vision_postprocess vision_nvmm
   ${NVINFER_LIB} ${NVONNXPARSER_LIB} CUDA::cudart ${OpenCV_LIBS} Threads::Threads)
 
 # 离线构建入口：只编 main，其余直接链接 vision_yolo，不重复编译源文件。

@@ -216,7 +216,7 @@ mission:
     control_topic: /mission_node/active_task
     reset_timeout_s: 1.0
     mission_status_topic: /mission_node/status
-# 类型 1 为心跳，无速度话题。输入、发送队列和请求超时分别见高级配置。
+# 自动桥仅周期发送类型 3/4，夹爪结果为类型 9；输入、队列及服务期限相互独立。
 bridge:
   # 输入ROS源帧龄与本机单调到达龄上限；发送前复核，不替代排队寿命。
   input_timeout_s: 0.25

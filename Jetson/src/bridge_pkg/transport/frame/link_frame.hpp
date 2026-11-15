@@ -2,7 +2,7 @@
 
 // 板间 USB 全速 CDC 分帧，12 Mbit/s。C 板没有 ULPI，不是 480 Mbit/s。
 // 布局：A5、版本 01、类型 uint8、长度 uint8、载荷、CRC-16/IBM 小端。
-// CRC 覆盖版本到载荷。最大载荷 8。失联不是长度 0，而是类型 1 且 alive=0。
+// CRC 覆盖版本到载荷。最大载荷 8。
 
 #include <array>
 #include <cstddef>
@@ -26,13 +26,16 @@ struct Frame
 
 inline std::uint16_t crc16(const std::uint8_t * data, std::size_t size)
 {
+  // 32-byte table: two nibble steps preserve the original reflected polynomial.
+  static constexpr std::uint16_t nibble[16] = {
+    0x0000U, 0xCC01U, 0xD801U, 0x1400U, 0xF001U, 0x3C00U, 0x2800U, 0xE401U,
+    0xA001U, 0x6C00U, 0x7800U, 0xB401U, 0x5000U, 0x9C01U, 0x8801U, 0x4400U
+  };
   std::uint16_t crc = 0xFFFF;
   for (std::size_t i = 0; i < size; ++i) {
     crc = static_cast<std::uint16_t>(crc ^ data[i]);
-    for (int bit = 0; bit < 8; ++bit) {
-      crc = (crc & 1U) ? static_cast<std::uint16_t>((crc >> 1U) ^ 0xA001U)
-                       : static_cast<std::uint16_t>(crc >> 1U);
-    }
+    crc = static_cast<std::uint16_t>((crc >> 4U) ^ nibble[crc & 0x0FU]);
+    crc = static_cast<std::uint16_t>((crc >> 4U) ^ nibble[crc & 0x0FU]);
   }
   return crc;
 }
@@ -65,7 +68,7 @@ public:
     while (count_ >= 4) {
       const auto payload = buffer_[3];
       if (buffer_[0] != kSof || buffer_[1] != kVersion || payload > kMaxPayload) {
-        drop_one();
+        discard_to_sof(1);
         continue;
       }
       const std::size_t total = static_cast<std::size_t>(6 + payload);
@@ -74,39 +77,26 @@ public:
       const auto actual = static_cast<std::uint16_t>(
         buffer_[4 + payload] | (buffer_[5 + payload] << 8U));
       if (expect != actual) {
-        drop_one();
+        discard_to_sof(1);
         continue;
       }
       out.type = buffer_[2];
       out.length = payload;
       std::memset(out.data, 0, sizeof(out.data));
       if (payload > 0) {std::memcpy(out.data, buffer_.data() + 4, payload);}
-      const auto extra = count_ - total;
-      if (extra > 0) {std::memmove(buffer_.data(), buffer_.data() + total, extra);}
-      count_ = extra;
-      drop_until_sof();
+      discard_to_sof(total);
       return true;
     }
     return false;
   }
 
 private:
-  void drop_until_sof()
+  void discard_to_sof(std::size_t first)
   {
-    while (count_ > 0 && buffer_[0] != kSof) {drop_front();}
-  }
-
-  void drop_one()
-  {
-    drop_front();
-    drop_until_sof();
-  }
-
-  void drop_front()
-  {
-    if (count_ == 0) {return;}
-    std::memmove(buffer_.data(), buffer_.data() + 1, count_ - 1);
-    --count_;
+    auto skip = first;
+    while (skip < count_ && buffer_[skip] != kSof) {++skip;}
+    count_ -= skip;
+    if (count_ > 0 && skip > 0) {std::memmove(buffer_.data(), buffer_.data() + skip, count_);}
   }
 
   std::array<std::uint8_t, kMaxBytes> buffer_{};

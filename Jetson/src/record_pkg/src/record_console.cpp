@@ -1,6 +1,7 @@
 // ---- 预览控制台实现 ----
 // 职责：页面、录制循环和进程入口。
 #include "record_console.hpp"
+#include "control_requests.hpp"
 #include "ffmpeg/mp4_writer.hpp"
 #include <algorithm>
 #include <fstream>
@@ -134,7 +135,8 @@ void RecordConsole::disconnected(const std::string& error) {
 void RecordConsole::start(const std::string& request_id, std::uint64_t generation) {
   std::lock_guard<std::mutex> lock(mutex_);
   // 请求必须属于页面看到的开始代次；只允许当前请求重试，历史请求永不再执行。
-  if (request_id == last_request_ && generation + 1 == start_generation_) return;
+  if (check_start_request(request_id, generation, last_request_, start_generation_) ==
+      StartRequestDecision::Retry) return;
   if (quitting_) throw std::runtime_error("控制台正在退出");
   if (job_ && !job_->done) throw std::runtime_error("上一段录像尚未结束");
   if (!fresh_locked()) throw std::runtime_error("相机尚未连接，请等待新画面");
@@ -158,8 +160,8 @@ void RecordConsole::start(const std::string& request_id, std::uint64_t generatio
 // 停止仅关闭本段入队，不等待 I/O；已入队帧由 writer_loop 排空，状态查询负责观察完成。
 void RecordConsole::stop(const std::string& run_id) {
   std::lock_guard<std::mutex> lock(mutex_);
-  (void)run_id;  // run_id 比对已收敛删除，停止当前会话。
   if (!job_) throw std::runtime_error("停止请求不属于当前录像");
+  check_stop_request(run_id, job_->receipt["run_id"].get<std::string>());
   if (job_->done || job_->stopping) return;
   job_->stopping = true; job_->receipt["state"] = "stopping"; job_->receipt["status"] = "stopping";
   job_->receipt["reason"] = "user_stop"; changed_.notify_all();

@@ -1,6 +1,6 @@
 // 安全区单帧矩阵：每例生成一小段静止序列跑完整 FieldLocator，按中线可见性把每帧标为
 // 可判/边界/不可判，再按“抗干扰 / 准确 / 计时”三类判据检查。阈值见 scene_params.hpp。
-// 用法：test_field_matrix [--report] [--filter 子串]
+// 用法：test_field_matrix [--report] [--filter 子串] [--case-index 从0开始的序号]
 #include "check.hpp"
 #include "field_scene.hpp"
 #include "harness.hpp"
@@ -9,6 +9,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <string>
@@ -27,6 +28,7 @@ enum class Kind
   SINGLE,          // 单因素正例：可判帧有效率 ≥ kMinValidRate
   COMBO,           // 组合正例：可判帧有效率 ≥ kMinValidRateCombo
   NEGATIVE_FIELD,  // 无完整场地：不得提交外框，不得输出分区
+  NEGATIVE_GEOMETRY,  // 整侧出画：几何不完整，即使中线可见也不得提交外框
   NEGATIVE_SPLIT,  // 有外框无中线证据：不得输出分区
   STRESS,          // 超出现场条件的压力档：只报告
 };
@@ -104,7 +106,7 @@ void addViewpoint(MatrixBuilder & m, const Scene & base)
   {Scene s = base; s.cam_d = 0.3; s.cam_h = 0.18; m.add("视角", "近", s, Kind::SINGLE, kEdgeLineTolNearPx);}
   {Scene s = base; s.yaw_deg = 12; m.add("视角", "偏航12°", s);}
   {Scene s = base; s.cam_h = 0.12; m.add("视角", "低机位", s);}
-  {Scene s = base; s.cam_x = 0.25; s.yaw_deg = 22; m.add("视角", "部分出画", s);}
+  {Scene s = base; s.cam_x = 0.25; s.yaw_deg = 22; m.add("视角", "整侧出画", s, Kind::NEGATIVE_GEOMETRY);}
 }
 
 void addImaging(MatrixBuilder & m, const Scene & base)
@@ -288,7 +290,7 @@ void judgeRobustness(const Case & c, const Stats & st, Verdict & v)
 {
   char msg[160];
   if (c.kind == Kind::STRESS) {return;}
-  if (c.kind == Kind::NEGATIVE_FIELD) {
+  if (c.kind == Kind::NEGATIVE_FIELD || c.kind == Kind::NEGATIVE_GEOMETRY) {
     std::snprintf(msg, sizeof(msg), "负例外框提交 %d 帧、分区 %d 帧", st.committed, st.valid);
     (st.committed + st.valid > kMaxFalseOnNegative) ? fail(v.robust, "抗干扰", c, msg) : pass();
     return;
@@ -335,6 +337,7 @@ const char * kindName(Kind k)
     case Kind::SINGLE: return "单因素";
     case Kind::COMBO: return "组合";
     case Kind::NEGATIVE_FIELD: return "负例";
+    case Kind::NEGATIVE_GEOMETRY: return "几何负例";
     case Kind::NEGATIVE_SPLIT: return "负例中线";
     case Kind::STRESS: return "压力";
   }
@@ -370,9 +373,22 @@ int main(int argc, char ** argv)
 {
   bool report = false;
   std::string filter;
+  long case_index = -1;
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--report") == 0) {report = true;}
-    if (std::strcmp(argv[i], "--filter") == 0 && i + 1 < argc) {filter = argv[++i];}
+    else if (std::strcmp(argv[i], "--filter") == 0 && i + 1 < argc) {filter = argv[++i];}
+    else if (std::strcmp(argv[i], "--case-index") == 0 && i + 1 < argc) {
+      char * end = nullptr;
+      const char * value = argv[++i];
+      case_index = std::strtol(value, &end, 10);
+      if (end == value || *end != '\0' || case_index < 0) {
+        std::fprintf(stderr, "Invalid --case-index: %s\n", value);
+        return 2;
+      }
+    } else {
+      std::fprintf(stderr, "Unknown or incomplete argument: %s\n", argv[i]);
+      return 2;
+    }
   }
   const FieldConfig config = productionConfig();
   const auto cases = buildMatrix();
@@ -380,9 +396,12 @@ int main(int argc, char ** argv)
   Verdict verdict;
   std::vector<double> all_ms;
   std::map<std::string, std::pair<int, int>> judge_totals;   // 组 → (可判有效, 可判)
+  size_t matched = 0;
   for (size_t i = 0; i < cases.size(); ++i) {
     const Case & c = cases[i];
+    if (case_index >= 0 && i != static_cast<size_t>(case_index)) {continue;}
     if (!filter.empty() && (c.group + "/" + c.name).find(filter) == std::string::npos) {continue;}
+    ++matched;
     Stats st;
     runCase(c, unsigned(i), config, st);
     all_ms.insert(all_ms.end(), st.ms.begin(), st.ms.end());
@@ -391,6 +410,10 @@ int main(int argc, char ** argv)
     if (report) {printRow(c, st);}
     judgeRobustness(c, st, verdict);
     judgeAccuracy(c, st, verdict);
+  }
+  if (matched == 0) {
+    std::fprintf(stderr, "No matrix cases matched the selection.\n");
+    return 2;
   }
   std::printf("[汇总] 可判帧有效率（按组）：");
   for (const auto & [g, t] : judge_totals) {std::printf(" %s %d/%d", g.c_str(), t.first, t.second);}

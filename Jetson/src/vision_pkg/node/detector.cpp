@@ -3,6 +3,9 @@
 #include "node/detector.hpp"
 
 #include "yolo/engine/engine.hpp"
+#if VISION_ENABLE_TENSORRT
+#include "yolo/yolo.hpp"
+#endif
 
 #include <chrono>
 #include <exception>

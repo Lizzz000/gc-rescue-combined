@@ -25,5 +25,7 @@ void BMI088_GYRO_NS_H(void);
  * @param[in] txdata 发送值。 @return 接收值；失败返回 0 并置 BMI088_spi_error。
  */
 uint8_t BMI088_read_write_byte(uint8_t txdata);
+/** @brief 同一片选内连续交换，失败后跳过本次剩余事务；接收区由调用方初始化。 */
+void BMI088_read_write_data(uint8_t *tx, uint8_t *rx, uint16_t len);
 
 #endif

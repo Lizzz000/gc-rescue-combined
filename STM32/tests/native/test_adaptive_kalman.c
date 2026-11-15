@@ -99,9 +99,62 @@ static void test_persistent_change(void)
     assert(fabsf(tracker.velocity[0]) < 3.0f);
 }
 
+/* 固定真实时间的 32 场景，避免按样本编号改变帧率时连噪声/动作周期也改变。
+ * 每项 30 个独立种子；丢帧最大间隔 200ms，仍在上层 250ms 重置边界内。 */
+static void test_multirate(void)
+{
+    const unsigned rates[] = {15U, 30U, 50U, 100U};
+    for (unsigned rate = 0U; rate < 4U; ++rate)
+    for (unsigned drop = 0U; drop < 2U; ++drop)
+    for (unsigned scenario = 0U; scenario < 4U; ++scenario)
+    {
+        double raw_error = 0.0, filtered_error = 0.0;
+        unsigned count = 0U;
+        for (unsigned seed = 1U; seed <= 30U; ++seed)
+        {
+            random_state = seed;
+            AdaptiveKalman filter;
+            AdaptiveKalman_Init(&filter, 15.0f, 25.0f, 4000.0f);
+            float position = 5000.0f, velocity = 0.0f;
+            uint32_t previous = 0U;
+            for (unsigned frame = 0U; frame < rates[rate] * 20U; ++frame)
+            {
+                const uint32_t now = (uint32_t)((uint64_t)frame * 1000U / rates[rate]);
+                const float dt = (float)(now - previous) * 0.001f;
+                previous = now;
+                const float acceleration = scenario == 1U ?
+                    (now % 3000U < 600U ? 2200.0f : (now % 3000U < 1200U ? -2200.0f : 0.0f)) : 0.0f;
+                position += velocity * dt + 0.5f * acceleration * dt * dt;
+                velocity += acceleration * dt;
+                if (drop && frame % 11U < 2U)
+                    continue;
+                const float sigma = scenario == 2U && now % 6000U >= 3000U && now % 6000U < 5500U ? 75.0f : 15.0f;
+                float measured = position + sigma * noise();
+                if (scenario == 3U && frame % rates[rate] == 0U && now > 500U)
+                    measured += 250.0f;
+                AdaptiveKalman_Update(&filter, measured, 7500.0f, now);
+                if (now < 1000U)
+                    continue;
+                const double raw_delta = (double)measured - position;
+                const double filtered_delta = (double)filter.position[0] - position;
+                raw_error += raw_delta * raw_delta;
+                filtered_error += filtered_delta * filtered_delta;
+                ++count;
+                assert(isfinite(filter.position[0]) && isfinite(filter.velocity[0]));
+                const float cross = filter.position_velocity_covariance[0];
+                assert(filter.position_variance[0] * filter.velocity_variance[0] >= cross * cross * 0.99999f);
+            }
+        }
+        printf("multirate fps=%u drop=%u scene=%u raw=%.3f filtered=%.3f n=%u\n",
+               rates[rate], drop, scenario, sqrt(raw_error / count), sqrt(filtered_error / count), count);
+        assert(filtered_error < raw_error); /* 相同真实轨迹和观测，必须比原始观测更准。 */
+    }
+}
+
 int main(void)
 {
     test_time_and_reset();
+    test_multirate();
     test_persistent_change();
     for (unsigned scenario = 0U; scenario < 4U; ++scenario)
     {

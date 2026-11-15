@@ -42,6 +42,27 @@ def apply_calibration(samples, offset, matrix):
     return (np.asarray(samples) - offset) @ np.asarray(matrix).T
 
 
+def sphere_jacobian(parameters, points):
+    """R-||m-b|| 的解析导数；零模长点用对称差分对应的零方向导数。"""
+    centered = points - parameters[1:]
+    length = np.linalg.norm(centered, axis=1, keepdims=True)
+    unit = np.divide(centered, length, out=np.zeros_like(centered), where=length > 0)
+    return np.column_stack((np.ones(len(points)), unit))
+
+
+def ellipsoid_jacobian(parameters, points):
+    """固定 R 的 R-||A(m-b)||，列顺序为 b[XYZ], diag[XYZ], offdiag[XY,XZ,YZ]。"""
+    centered = points - parameters[:3]
+    matrix = matrix_from_parameters(parameters[3:])
+    corrected = centered @ matrix.T
+    length = np.linalg.norm(corrected, axis=1, keepdims=True)
+    unit = np.divide(corrected, length, out=np.zeros_like(corrected), where=length > 0)
+    return np.column_stack((unit @ matrix, -unit * centered,
+        -(unit[:, 0]*centered[:, 1] + unit[:, 1]*centered[:, 0]),
+        -(unit[:, 0]*centered[:, 2] + unit[:, 2]*centered[:, 0]),
+        -(unit[:, 1]*centered[:, 2] + unit[:, 2]*centered[:, 1])))
+
+
 def fit(samples):
     """先球后椭球拟合；退化、未收敛或非正定结果直接报错，不生成系数。"""
     samples = np.asarray(samples, dtype=float)
@@ -57,7 +78,8 @@ def fit(samples):
     if np.linalg.matrix_rank(design) < 9:
         raise ValueError("样本退化：无法辨识三维椭球，请补充翻转方向")
     sphere = least_squares(lambda p: p[0] - np.linalg.norm(points - p[1:], axis=1),
-                           [1., 0., 0., 0.], x_scale="jac", max_nfev=1000,
+                           [1., 0., 0., 0.], jac=lambda p: sphere_jacobian(p, points),
+                           x_scale="jac", max_nfev=1000,
                            ftol=1e-12, xtol=1e-12, gtol=1e-12)
     if not sphere.success or not np.isfinite(sphere.x).all() or sphere.x[0] <= 0:
         raise ValueError("球拟合未收敛到有效正半径")
@@ -65,7 +87,8 @@ def fit(samples):
     initial = np.r_[sphere.x[1:], [1., 1., 1., 0., 0., 0.]]
     ellipsoid = least_squares(
         lambda p: radius - np.linalg.norm(apply_calibration(points, p[:3], matrix_from_parameters(p[3:])), axis=1),
-        initial, x_scale="jac", max_nfev=1000, ftol=1e-12, xtol=1e-12, gtol=1e-12)
+        initial, jac=lambda p: ellipsoid_jacobian(p, points),
+        x_scale="jac", max_nfev=1000, ftol=1e-12, xtol=1e-12, gtol=1e-12)
     if not ellipsoid.success or not np.isfinite(ellipsoid.x).all():
         raise ValueError("椭球拟合未收敛")
     matrix = matrix_from_parameters(ellipsoid.x[3:])

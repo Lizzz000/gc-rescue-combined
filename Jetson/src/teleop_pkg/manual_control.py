@@ -212,12 +212,21 @@ def main(argv=None):
     finally:
         # 先发停车序列再关 HTTP，避免 serve_forever 退出等待造成发送间隙。
         if code == 0:
-            sender.shutdown()
-        link.close()
-        servo.close()
-        server.shutdown()
-        server.server_close()
-    print('已停车并退出。', flush=True)
+            try:
+                sender.shutdown()
+            except LinkError as error:
+                print(f'退出停车发送失败：{error}。', file=sys.stderr)
+                code = 1
+        # 拔线后关闭串口也可能失败；各资源仍须逐项关闭。
+        for label, close in (('USB', link.close), ('舵机', servo.close),
+                             ('HTTP 服务', server.shutdown), ('HTTP 套接字', server.server_close)):
+            try:
+                close()
+            except OSError as error:
+                print(f'{label}关闭失败：{error}。', file=sys.stderr)
+                code = 1
+    if code == 0:
+        print('已停车并退出。', flush=True)
     return code
 
 

@@ -1,3 +1,5 @@
+# Historical inferGpu/host-upload probe; paired with the old source snapshots.
+# Current NVMM production sources use vision_pkg/yolo/CMakeLists.txt instead.
 cmake_minimum_required(VERSION 3.18)
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
   set(CMAKE_CUDA_ARCHITECTURES 87)

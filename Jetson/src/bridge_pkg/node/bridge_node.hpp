@@ -26,6 +26,7 @@
 #include "transport/transport.hpp"
 #include "state/bridge_state.hpp"
 #include "protocol/arrival_point.hpp"
+#include "protocol/search_request.hpp"
 
 class BridgeRuntime;
 namespace s288 { class Session; }
@@ -113,8 +114,7 @@ public:
 private:
   friend struct BridgeRuntimeTestAccess;
   struct CommandIdentity;
-  enum class GripperWork { None, ArmingOpen, ArrivalMotion, RejectOpen };
-  // socket 准入与有界收发；打开失败或接口被替换时本轮不再读写。
+  // socket 准入与有界收发；打开或读写失败时本轮不再提交。
   void openSocket();
   void closeSocket(const std::string & reason);
   bool ensureSocketReady();
@@ -125,7 +125,7 @@ private:
   can_frame currentFrame(canid_t id) const;
   // STM32 指令、ROI、转向授权和回复快照。
   bool handleCommand(const can_frame & frame);
-  void holdCoordinates(bool until_search = false);
+  void holdCoordinates();
   void handleArrival();
   void requestRoi();
   void onRoiReply(
@@ -133,7 +133,7 @@ private:
     rclcpp::Client<interface_pkg::srv::CheckRoi>::SharedFuture result);
   void requestCommand(std::uint8_t command, std::uint32_t token = 0, bool delivery_query = false);
   void onCommandReply(
-    std::uint64_t generation, std::uint8_t command,
+    std::uint64_t generation, std::uint8_t command, std::uint64_t requested_cycle_generation,
     rclcpp::Client<interface_pkg::srv::MissionCommand>::SharedFuture result);
   void refreshTurnRequest(Clock::time_point current, bool force = false);
   bool turnAuthorized() const;
@@ -143,23 +143,20 @@ private:
   const CommandIdentity * deliveryQueryIdentity(std::uint32_t token) const;
   void checkRequestTimeouts(Clock::time_point current = Clock::now());
   void clearRequests();
+  void missionRestarted();
   void armReply(canid_t id, const can_frame & frame);
   void armCommandReply(bool accepted, std::uint8_t command, std::uint32_t token);
   // 命令 1/3 的成功要等 Mission 进入目标阶段；失败即使身份已变也要回拒绝。
   void resolvePendingModeReply(Clock::time_point current);
   bool switchConfirmed(std::uint8_t command) const;
   bool switchFailed() const;
+  bool modeSwitchFailed(std::uint8_t command, std::uint64_t requested_generation) const;
   // 重找被 Mission 接受后才停坐标并撤销旧路由，拒绝时不能提前作废。
-  void commitSearchAbort();
+  void commitSearchAbort(std::uint64_t requested_cycle_generation);
   void finishRoi(BridgeRoiResult result = {}, std::uint64_t request_id = 0);
-  void handleArrivalPoint(std::uint8_t kind);
-  void queuePauseThenReply(canid_t id, const can_frame & frame, GripperWork after, std::uint8_t kind = 0);
-  void submitPendingPauseReply();
-  void afterPauseReply(GripperWork after, std::uint8_t kind);
+  void handleArrivalPoint(std::uint8_t kind, std::uint32_t request_id);
+  void armGripperResult(const GripperResult & result);
   void pollGripper();
-  void stopHeartbeat();
-  bool startGripperOpen();
-  bool startArrivalGripper(std::uint8_t kind);
   rclcpp::Time now() const {return node_.now();}
   rclcpp::Logger get_logger() const {return node_.get_logger();}
   rclcpp::Clock::SharedPtr get_clock() {return node_.get_clock();}
@@ -168,7 +165,6 @@ private:
   rclcpp::Node & node_;
   std::string can_interface_;
   std::unique_ptr<CanTransport> can_;
-  int open_index_{0};
   Clock::duration tx_queue_timeout_, request_timeout_;
   BridgeState state_;
   CanTxQueue queue_;
@@ -176,22 +172,12 @@ private:
   Clock::time_point next_open_;
   BridgeMissionWatchdog mission_watchdog_;
   Config::GripperConfig gripper_config_;
-  bool heartbeat_enabled_{true};
-  std::uint8_t pause_{0};
   ArrivalPointSession arrival_point_;
-  GripperWork gripper_work_{GripperWork::None};
-  struct PendingPauseReply
-  {
-    canid_t id{0};
-    can_frame frame{};
-    GripperWork after{GripperWork::None};
-    std::uint8_t kind{0};
-  };
-  std::optional<PendingPauseReply> pending_pause_reply_;
+  SearchRequestSession search_request_;
   std::unique_ptr<s288::Session> gripper_;
-  std::uint64_t tx_frames_{0}, rx_frames_{0}, bus_errors_{0}, dropped_frames_{0};
+  std::uint64_t tx_frames_{0}, rx_frames_{0}, dropped_frames_{0};
   std::string last_error_;
-  // ROI 与命令各一等待槽，可同时在途；四个回复快照独立于服务等待。
+  // ROI 与命令各一等待槽，可同时在途；五个回复快照独立于服务等待。
   // roi_confirmation_ 是本机通过的 ROI，匹配 Mission 身份后才授权转向；turn_ 标识已入队的授权。
   // 各命令缓存受理身份，共用192发送槽；1/2未缓存成功可在本趟后续阶段再询问Mission。
   // 查询只补回执，不能新建运动或续期；205恢复始终由Mission判断当前资格。
@@ -224,11 +210,12 @@ private:
   // 最近已发起206保留不确定结果的完整身份；最近成功另存命令4缓存，均跨205/socket重连。
   std::optional<CommandIdentity> last_delivery_request_;
   std::uint32_t pending_command_token_{0};
-  // 命令 1/3 已开始切换、类型 7 尚未发出。重复命令在此期间丢弃，不另回一帧。
+  // 命令 1/3 已开始切换、类型 7 尚未发出；原代次的 Fault 不能误判新搜索失败。
   struct PendingModeReply
   {
     std::uint8_t command{0};
     std::uint32_t token{0};
+    std::uint64_t requested_generation{0};
     Clock::time_point deadline{};
   };
   std::optional<PendingModeReply> pending_mode_reply_;

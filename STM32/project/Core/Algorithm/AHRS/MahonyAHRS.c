@@ -114,7 +114,7 @@ void MahonyAHRSupdate(float q[4], float gx, float gy, float gz, float ax, float 
         // Reference direction of Earth's magnetic field
         hx = 2.0f * (mx * (0.5f - q2q2 - q3q3) + my * (q1q2 - q0q3) + mz * (q1q3 + q0q2));
         hy = 2.0f * (mx * (q1q2 + q0q3) + my * (0.5f - q1q1 - q3q3) + mz * (q2q3 - q0q1));
-        bx = sqrt(hx * hx + hy * hy);
+        bx = sqrtf(hx * hx + hy * hy);
         bz = 2.0f * (mx * (q1q3 - q0q2) + my * (q2q3 + q0q1) + mz * (0.5f - q1q1 - q2q2));
 
 		// Estimated direction of gravity and magnetic field

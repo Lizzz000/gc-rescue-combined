@@ -22,16 +22,15 @@ inline std::uint64_t monotonic_ns() {
 }
 std::string frame_header(const Frame& frame);
 
-// 解析本包的multipart协议；半包留到下一次read，异常/换源/倒序立即断开本连接。
+// 解析本包的multipart协议；半包留到下一次read，协议异常抛出，由调用方关闭连接。
 class FrameParser {
  public:
   explicit FrameParser(std::function<void(FramePtr)> receive) : receive_(std::move(receive)) {}
   void feed(const char* data, std::size_t length);
  private:
   std::function<void(FramePtr)> receive_;
-  std::string buffer_, source_;
+  std::string buffer_;
   Frame frame_;
   std::size_t expected_ = 0;
-  std::uint64_t previous_sequence_ = 0, previous_ns_ = 0;
 };
 }  // namespace record

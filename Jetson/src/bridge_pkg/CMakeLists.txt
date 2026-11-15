@@ -59,10 +59,33 @@ rclcpp_components_register_nodes(bridge_components "BridgeNode")
 install(TARGETS bridge_components LIBRARY DESTINATION lib ARCHIVE DESTINATION lib
   RUNTIME DESTINATION bin)
 
-# 主机测试：CDC 设备锁与心跳类型。pty 代替 USB 串口，仅 Linux。
+# 主机测试：CDC 设备锁与坐标周期。pty 代替 USB 串口，仅 Linux。
 if(BUILD_TESTING)
   find_package(ament_cmake_test REQUIRED)
   find_package(teleop_pkg REQUIRED)
+  # 独立故障注入目标：编译生产代码，仅系统调用/ROS边界用桩，不链接真实设备后端。
+  add_executable(test_bridge_runtime_host
+    test/host/test_runtime_main.cpp test/host/test_bridge_runtime.cpp
+    node/bridge_io.cpp node/bridge_session.cpp state/bridge_state.cpp transport/transport.cpp)
+  target_compile_features(test_bridge_runtime_host PRIVATE cxx_std_17)
+  target_include_directories(test_bridge_runtime_host BEFORE PRIVATE
+    test/host/runtime_stubs test/host/stubs test/host ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
+  ament_add_test(test_bridge_runtime_host COMMAND $<TARGET_FILE:test_bridge_runtime_host>
+    GENERATE_RESULT_FOR_RETURN_CODE_ZERO TIMEOUT 60)
+  foreach(test_name cdc_write s288_timing)
+    if(test_name STREQUAL "cdc_write")
+      set(driver_source transport/cdc/cdc.cpp)
+    else()
+      set(driver_source gripper/s288_servo.cpp)
+    endif()
+    add_executable(test_${test_name} test/host/test_${test_name}.cpp ${driver_source})
+    target_compile_features(test_${test_name} PRIVATE cxx_std_17)
+    target_include_directories(test_${test_name} BEFORE PRIVATE
+      test/host/posix_stubs test/host/stubs test/host ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_link_libraries(test_${test_name} Threads::Threads)
+    ament_add_test(test_${test_name} COMMAND $<TARGET_FILE:test_${test_name}>
+      GENERATE_RESULT_FOR_RETURN_CODE_ZERO TIMEOUT 60)
+  endforeach()
   add_executable(test_cdc_exclusive test/host/test_cdc_exclusive.cpp)
   target_include_directories(test_cdc_exclusive PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test/host)
   target_link_libraries(test_cdc_exclusive bridge_transport bridge_state util)

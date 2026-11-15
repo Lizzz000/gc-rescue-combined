@@ -1,5 +1,5 @@
 #include "yolo/tensorrt/tensorrt.hpp"
-#include "yolo/yolo.hpp"
+#include "yolo/postprocess.hpp"
 
 #include <algorithm>
 #include <cstring>

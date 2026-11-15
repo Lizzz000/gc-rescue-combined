@@ -1,0 +1,20 @@
+# Standalone PC regression: real production map/validation helper, SDK calls replaced at the boundary.
+cmake_minimum_required(VERSION 3.18)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  project(vision_nvmm_tests LANGUAGES CXX)
+  enable_testing()
+endif()
+
+add_executable(test_nvmm_pixels test_nvmm_pixels.cpp)
+target_compile_features(test_nvmm_pixels PRIVATE cxx_std_17)
+target_include_directories(test_nvmm_pixels PRIVATE stubs ../..)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(test_nvmm_pixels PRIVATE -Wall -Wextra -Werror)
+endif()
+if(COMMAND ament_add_test)
+  ament_add_test(test_nvmm_pixels COMMAND $<TARGET_FILE:test_nvmm_pixels>
+    GENERATE_RESULT_FOR_RETURN_CODE_ZERO TIMEOUT 10)
+else()
+  add_test(NAME test_nvmm_pixels COMMAND test_nvmm_pixels)
+  set_tests_properties(test_nvmm_pixels PROPERTIES TIMEOUT 10)
+endif()

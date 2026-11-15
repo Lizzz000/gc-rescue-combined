@@ -1,4 +1,5 @@
 #include "field/opencv/algorithm.hpp"
+#include "field/quad_order.hpp"
 #include <opencv2/imgproc.hpp>
 
 #include <algorithm>
@@ -232,36 +233,6 @@ double polyArea(const std::vector<cv::Point2f> & q)
 }
 
 double dist(const cv::Point2f & p, const cv::Point2f & q) {return cv::norm(p - q);}
-
-// 排成 TL,TR,BR,BL (图像坐标, y 向下)
-std::vector<cv::Point2f> orderCorners(std::vector<cv::Point2f> P)
-{
-  cv::Point2f c(0, 0);
-  for (const auto & p : P) {
-    c += p;
-  }
-  c *= 1.0f / static_cast<float>(P.size());
-  std::sort(P.begin(), P.end(), [&](const cv::Point2f & u, const cv::Point2f & v) {
-      return std::atan2(u.y - c.y, u.x - c.x) < std::atan2(v.y - c.y, v.x - c.x);
-    });
-  double s = 0;
-  for (size_t i = 0; i < P.size(); ++i) {
-    const cv::Point2f & p = P[i];
-    const cv::Point2f & r = P[(i + 1) % P.size()];
-    s += p.x * r.y - r.x * p.y;
-  }
-  if (s < 0) {std::reverse(P.begin(), P.end());}
-  // 先选较水平的一对对边，再选上边；用最小 x+y 在透视梯形中可能选错角点，使 BEV 旋转。
-  const double horizontal02 = std::abs(P[1].x - P[0].x) + std::abs(P[3].x - P[2].x);
-  const double horizontal13 = std::abs(P[2].x - P[1].x) + std::abs(P[0].x - P[3].x);
-  size_t start = horizontal02 >= horizontal13 ? 0 : 1;
-  const size_t opposite = (start + 2) % 4;
-  if (P[start].y + P[(start + 1) % 4].y > P[opposite].y + P[(opposite + 1) % 4].y) {
-    start = opposite;
-  }
-  std::rotate(P.begin(), P.begin() + start, P.end());
-  return P;
-}
 
 bool isConvexQuad(const std::vector<cv::Point2f> & q)
 {
@@ -559,21 +530,25 @@ cv::Size bevSize(const FieldConfig & cfg)
 namespace {
 // 内沿扫描：连续多少个内部像素才算过渡（滤掉单像素混色）。
 constexpr int kInteriorRunPx = 2;
-// 内沿扫描只看外沿鸟瞰的外侧一半，越过中线的命中不属于该边。
+// 侧内沿扫描只看候选的外侧一半，越过中线的命中不属于该边。
 constexpr double kInnerScanDepth = 0.5;
 
-// 外沿鸟瞰中沿一条边向内扫描：每个采样位置取第一个连续内部像素。
+// 候选范围内沿一条边向内扫描：每个独立行/列取第一个连续内部像素。
 // along=true 时按列扫描（上/下边），from_end=true 从底/右端开始。
 std::vector<cv::Point2f> innerTransitions(
   const cv::Mat & mask, bool along, bool from_end, const FieldConfig & cfg)
 {
-  const int length = along ? mask.cols : mask.rows;
-  const int depth = static_cast<int>((along ? mask.rows : mask.cols) * kInnerScanDepth);
-  const int samples = std::max(4, cfg.edge_bins);
-  std::vector<cv::Point2f> points;
-  for (int k = 0; k < samples; ++k) {
-    const double t = cfg.corner_exclude_frac + (1.0 - 2.0 * cfg.corner_exclude_frac) * (k + 0.5) / samples;
-    const int pos = std::clamp(static_cast<int>(t * (length - 1)), 0, length - 1);
+  // 候选包含围边立面和近墙遮挡；采样槽分配到实际出现内部颜色过渡的行/列。
+  // 否则低机位只露出一条地面时，大部分槽落在墙面，侧边会因点数不足退回先验。
+  const cv::Rect support = cv::boundingRect(mask);
+  const int start = along ? support.x : support.y;
+  const int length = along ? support.width : support.height;
+  // 远边上方可能连着同色背景；内部地面并不保证在外框高度的前半。
+  // 两侧仍限制到各自半区，避免把对侧内部当成本侧边界。
+  const int depth = along ? support.y + support.height :
+    static_cast<int>(mask.cols * kInnerScanDepth);
+  std::vector<cv::Point2f> candidates;
+  for (int pos = start; pos < start + length; ++pos) {
     int run = 0;
     for (int step = 0; step < depth; ++step) {
       const int inward = from_end ? (along ? mask.rows : mask.cols) - 1 - step : step;
@@ -581,17 +556,58 @@ std::vector<cv::Point2f> innerTransitions(
       run = hit ? run + 1 : 0;
       if (run == kInteriorRunPx) {
         const int first = from_end ? inward + kInteriorRunPx - 1 : inward - kInteriorRunPx + 1;
-        points.emplace_back(along ? cv::Point2f(float(pos), float(first)) : cv::Point2f(float(first), float(pos)));
+        candidates.emplace_back(along ? cv::Point2f(float(pos), float(first)) : cv::Point2f(float(first), float(pos)));
         break;
       }
     }
   }
+  const int samples = std::max(4, cfg.edge_bins);
+  std::vector<cv::Point2f> points;
+  int previous = -1;
+  for (int k = 0; k < samples && !candidates.empty(); ++k) {
+    const double t = cfg.corner_exclude_frac + (1.0 - 2.0 * cfg.corner_exclude_frac) * (k + 0.5) / samples;
+    const int index = static_cast<int>(t * candidates.size());
+    if (index == previous) {continue;}
+    previous = index;  // 窄可见区的一行只算一次，不能靠重复采样满足实测内点门槛。
+    points.push_back(candidates[index]);
+  }
   return points;
+}
+
+bool fitAnchoredSide(const std::vector<cv::Point2f> & points, const cv::Point2f & anchor,
+  const FieldConfig & cfg, Line & line)
+{
+  if (int(points.size()) < cfg.min_side_points) {return false;}
+  std::vector<cv::Point2f> best;
+  for (const auto & point : points) {
+    const auto candidate = lineThrough(anchor, point);
+    std::vector<cv::Point2f> inliers;
+    for (const auto & p : points) {
+      if (pointLineDistance(candidate, p) <= cfg.fit_outlier_px) {inliers.push_back(p);}
+    }
+    if (inliers.size() > best.size()) {best = std::move(inliers);}
+  }
+  if (int(best.size()) < cfg.min_side_inliers) {return false;}
+  cv::Matx22d covariance = cv::Matx22d::zeros();
+  for (const auto & p : best) {
+    const cv::Vec2d d(p.x - anchor.x, p.y - anchor.y);
+    covariance += d * d.t();
+  }
+  cv::Mat values, vectors;
+  cv::eigen(cv::Mat(covariance), values, vectors);
+  const double a = vectors.at<double>(1, 0), b = vectors.at<double>(1, 1);
+  line = normalizeLine(a, b, -a * anchor.x - b * anchor.y);
+  int inliers = 0;
+  for (const auto & p : points) {
+    if (pointLineDistance(line, p) <= std::max(cfg.fit_outlier_px, kMinInlierBandPx)) {++inliers;}
+  }
+  return inliers >= cfg.min_side_inliers;
 }
 }  // namespace
 
 InnerQuad fitInnerQuad(
-  const cv::Mat & interior, const std::vector<cv::Point2f> & outer, const FieldConfig & cfg)
+  const cv::Mat & interior, const std::vector<cv::Point2f> & outer, const FieldConfig & cfg,
+  const cv::Mat & lab, const cv::Mat & purple)
 {
   // 扫描用外沿鸟瞰（外沿四边形到米制外沿矩形的单应，像素密度与输出 BEV 相同）；只是图像的射影重参数化，
   // 直线仍是直线。外沿近边是近墙前立面底边（z=0），其余外沿边在墙顶（z=h），因此只借用近边。
@@ -603,34 +619,102 @@ InnerQuad fitInnerQuad(
   const float w = size.width - 1.f, h = size.height - 1.f;
   const std::vector<cv::Point2f> rect{{0, 0}, {w, 0}, {w, h}, {0, h}};
   const cv::Mat forward = cv::getPerspectiveTransform(outer, rect);
-  cv::Mat mask;
-  cv::warpPerspective(interior, mask, forward, size, cv::INTER_NEAREST, cv::BORDER_CONSTANT, cv::Scalar(0));
-  const float tx = static_cast<float>(cfg.wall_thickness_m * sx);
-  const float ty = static_cast<float>(cfg.wall_thickness_m * sy);
+  const cv::Mat inverse = forward.inv();
+  // 在处理图上保留独立像素证据，避免外框连着背景时，固定大小的鸟瞰把可见地面压成不足几行。
+  const cv::Rect bounds = cv::boundingRect(outer) & cv::Rect(0, 0, interior.cols, interior.rows);
+  cv::Mat mask = cv::Mat::zeros(bounds.size(), CV_8U);
+  std::vector<cv::Point> polygon;
+  for (const auto & p : outer) {polygon.emplace_back(cvRound(p.x) - bounds.x, cvRound(p.y) - bounds.y);}
+  cv::fillConvexPoly(mask, polygon, cv::Scalar(255));
+  cv::bitwise_and(mask, interior(bounds), mask);
+  const double purple_hue = (cfg.purple_hue_lo_deg + cfg.purple_hue_hi_deg) * CV_PI / 360;
+  const double inner_hue = (cfg.use_blue_interior ? cfg.blue_hue_lo_deg + cfg.blue_hue_hi_deg :
+    cfg.red_hue_lo_deg + cfg.red_hue_hi_deg) * CV_PI / 360;
+  const cv::Point2d contrast(std::cos(inner_hue) - std::cos(purple_hue),
+    std::sin(inner_hue) - std::sin(purple_hue));
+  const auto transitions = [&](bool along, bool from_end) {
+      auto points = innerTransitions(mask, along, from_end, cfg);
+      for (auto & p : points) {p += cv::Point2f(float(bounds.x), float(bounds.y));}
+      if (!lab.empty()) {
+        // 严格颜色判据负责确认内部身份；几何位置取附近的材质色度跃迁，
+        // 不把混色、JPEG或开运算导致的阈值内缩当作物理边界。
+        const cv::Point direction = along ? cv::Point(0, 1) : cv::Point(from_end ? -1 : 1, 0);
+        const int radius = cfg.edge_probe_radius + cfg.interior_open_ksize;
+        for (auto & p : points) {
+          const cv::Point seed(cvRound(p.x), cvRound(p.y));
+          double best = 0;
+          for (int step = -radius; step <= 1; ++step) {
+            const auto b = seed + direction * step, a = b - direction;
+            if (a.x < 0 || a.y < 0 || a.x >= lab.cols || a.y >= lab.rows ||
+              b.x < 0 || b.y < 0 || b.x >= lab.cols || b.y >= lab.rows) {continue;}
+            const auto before = lab.at<cv::Vec3b>(a), after = lab.at<cv::Vec3b>(b);
+            const double gradient = contrast.x * (int(after[1]) - before[1]) +
+              contrast.y * (int(after[2]) - before[2]);
+            if (gradient > best) {best = gradient; p = 0.5f * cv::Point2f(a + b);}
+          }
+        }
+      }
+      if (!points.empty()) {cv::perspectiveTransform(points, points, forward);}
+      return points;
+    };
+  const float tx = static_cast<float>(w * cfg.wall_thickness_m / cfg.field_w_m);
+  const float ty = static_cast<float>(h * cfg.wall_thickness_m / cfg.field_h_m);
   // 远端与两侧内沿都在地面（远墙、侧墙内立面底边）；近端内沿被近墙挡住，不扫描。
   // 先验（没测到时）：外沿内缩围边厚度。
   struct Side {std::vector<cv::Point2f> scan; cv::Point2f a, b;};
-  const Side sides[3] = {
-    {innerTransitions(mask, true, false, cfg), {tx, ty}, {w - tx, ty}},       // 远
-    {innerTransitions(mask, false, true, cfg), {w - tx, ty}, {w - tx, h}},    // 右
-    {innerTransitions(mask, false, false, cfg), {tx, ty}, {tx, h}}};          // 左
+  Side sides[3] = {
+    {transitions(true, false), {tx, ty}, {w - tx, ty}},       // 远
+    {transitions(false, true), {w - tx, ty}, {w - tx, h}},    // 右
+    {transitions(false, false), {tx, ty}, {tx, h}}};          // 左
   InnerQuad out;
   Line lines[3];
+  const cv::Rect2f frame(0.f, 0.f, float(interior.cols), float(interior.rows));
+  const bool observed_near = frame.contains(outer[2]) && frame.contains(outer[3]);
+  bool far_measured = false;
   for (int i = 0; i < 3; ++i) {
+    if (i > 0 && far_measured) {
+      // 远内沿以上是远墙或凸起物块，不能把那里的内部颜色竖边当作地面侧内沿。
+      auto & points = sides[i].scan;
+      points.erase(std::remove_if(points.begin(), points.end(), [&](const cv::Point2f & p) {
+        return (lines[0].a * p.x + lines[0].b * p.y + lines[0].c) * lines[0].b < 0;
+      }), points.end());
+    }
     Line line; int inliers = 0;
-    bool measured = fitLineRobust(sides[i].scan, cfg, line, inliers) && inliers >= cfg.min_side_inliers;
-    if (measured && i > 0) {
+    const bool anchored = i > 0 && observed_near && !lab.empty() &&
+      fitAnchoredSide(sides[i].scan, {i == 1 ? w - tx : tx, h}, cfg, line);
+    bool measured = anchored ||
+      (fitLineRobust(sides[i].scan, cfg, line, inliers) && inliers >= cfg.min_side_inliers);
+    if (measured && i > 0 && !anchored) {
       // 边缘被遮挡时，内部物块的竖边可能被误认为侧内沿；侧线不得穿入对侧区域。
       if (std::abs(line.a) < 1e-6) {
         measured = false;
       } else {
-        const double far_x = -(line.b * ty + line.c) / line.a;
+        bool intersected = false;
+        const auto far = intersectLines(lines[0], line, intersected);
+        const double far_x = far.x;
         const double near_x = -(line.b * h + line.c) / line.a;
         const double boundary = (i == 1 ? 0.75 : 0.25) * w;
-        measured = std::isfinite(far_x) && std::isfinite(near_x) &&
+        measured = intersected && std::isfinite(far_x) && std::isfinite(near_x) &&
           (i == 1 ? (far_x >= boundary && near_x >= boundary) :
           (far_x <= boundary && near_x <= boundary));
       }
+    }
+    if (measured && i > 0 && !purple.empty()) {
+      // 高光/物块边界也有色度跃迁。实测侧线的内点必须有足量紫墙支持，
+      // 不要求每个受模糊/JPEG影响的采样点都通过；沿用拟合的真实内点下限。
+      std::vector<cv::Point2f> source;
+      cv::perspectiveTransform(sides[i].scan, source, inverse);
+      int supported = 0;
+      const int radius = cfg.edge_probe_radius + cfg.interior_open_ksize;
+      for (size_t k = 0; k < source.size(); ++k) {
+        if (pointLineDistance(line, sides[i].scan[k]) > std::max(cfg.fit_outlier_px, kMinInlierBandPx)) {continue;}
+        const int y = cvRound(source[k].y);
+        for (int step = 1; step <= radius; ++step) {
+          const int x = cvRound(source[k].x + (i == 1 ? step : -step));
+          if (x >= 0 && y >= 0 && x < purple.cols && y < purple.rows && purple.at<uchar>(y, x)) {++supported; break;}
+        }
+      }
+      measured = supported >= cfg.min_side_inliers;
     }
     if (measured) {
       lines[i] = line;
@@ -638,16 +722,25 @@ InnerQuad fitInnerQuad(
     } else {
       lines[i] = lineThrough(sides[i].a, sides[i].b);
     }
+    if (i == 0) {far_measured = measured;}
   }
-  const Line near_outer = lineThrough({0, h}, {w, h});
-  // 地面单应：内部地面 (0,0)/(W,0) 是远内沿与两侧内沿的交点，(W,H+t)/(0,H+t) 是两侧内沿与外沿近边（z=0）的交点。
+  // 地面单应：内部地面 (0,0)/(W,0) 是远内沿与两侧内沿的交点。
+  // 近边前立面底边位于地面，其端点与已知墙厚直接确定侧内沿在该边上的位置；
+  // 不把仅露出很短一段的侧线外推到近边，否则亚像素角度误差会放大为明显偏移。
   // 由它求被近墙挡住的近端内沿角 (0,H)/(W,H)，四角都在地面。
   bool ok = true;
   std::vector<cv::Point2f> image(4);
   image[0] = intersectLines(lines[0], lines[2], ok);
   if (ok) {image[1] = intersectLines(lines[0], lines[1], ok);}
-  if (ok) {image[2] = intersectLines(near_outer, lines[1], ok);}
-  if (ok) {image[3] = intersectLines(near_outer, lines[2], ok);}
+  image[2] = {w - tx, h};
+  image[3] = {tx, h};
+  // 缺少实测内沿时保留原交点一致性检查，不能用固定近锚掩盖不闭合的侧线。
+  // 近角在画外时，墙顶侧线外推的端点也不能作为地面锚点；近视角可用较长的实测地面侧线。
+  if (out.measured_edges != 3 || !frame.contains(outer[2]) || !frame.contains(outer[3])) {
+    const Line near_outer = lineThrough(rect[3], rect[2]);
+    if (ok) {image[2] = intersectLines(near_outer, lines[1], ok);}
+    if (ok) {image[3] = intersectLines(near_outer, lines[2], ok);}
+  }
   bool inside = ok && isConvexQuad(image);
   for (const auto & c : image) {inside = inside && c.x >= -1 && c.y >= -1 && c.x <= w + 1 && c.y <= h + 1;}
   // 交点退化或不再是包在外沿内的凸四边形时，本帧内沿不可信，整体用内缩先验。
@@ -656,12 +749,13 @@ InnerQuad fitInnerQuad(
     out.measured_edges = 0;
   }
   const float iw = inner.width - 1.f, ih = inner.height - 1.f;
-  const float near_y = static_cast<float>(ih + cfg.wall_thickness_m * sy);
+  const float near_y = static_cast<float>(ih *
+    (1.0 + cfg.wall_thickness_m / (cfg.field_h_m - 2.0 * cfg.wall_thickness_m)));
   const cv::Mat ground = cv::getPerspectiveTransform(
     std::vector<cv::Point2f>{{0, 0}, {iw, 0}, {iw, near_y}, {0, near_y}}, image);
   std::vector<cv::Point2f> corners;
   cv::perspectiveTransform(std::vector<cv::Point2f>{{0, 0}, {iw, 0}, {iw, ih}, {0, ih}}, corners, ground);
-  cv::perspectiveTransform(corners, out.quad, forward.inv());
+  cv::perspectiveTransform(corners, out.quad, inverse);
   return out;
 }
 

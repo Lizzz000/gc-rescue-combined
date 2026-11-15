@@ -14,6 +14,10 @@ namespace s288
 
 // 单次开合时长的允许范围（秒），须与 teleop_pkg/servo/s288.py 一致；bridge 入口按此校验。
 constexpr double kMinMoveS = 0.2, kMaxMoveS = 10.0;
+// 动作预算包含运动前准备和结束 Stop；STM32 通过跨端回归核对这组生产常量。
+constexpr double kFeedbackWaitS = 0.2;
+constexpr int kStopAttempts = 3;
+constexpr double kCommandPeriodS = 0.02;
 
 enum class MotionStatus { Idle, Busy, Succeeded, Failed };
 

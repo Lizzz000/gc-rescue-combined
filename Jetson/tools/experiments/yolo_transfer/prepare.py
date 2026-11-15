@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Copy actual sources into a new diagnostic build tree and add timing only."""
+"""Historical inferGpu/host-upload timing experiment, retained for old captures.
+
+This instrumentation targets the former CPU-image upload implementation. It is
+not compatible with the current NVMM-only FastSegmentor and must not be used as
+current GPU validation. CPU postprocessing is tested by vision_pkg/test/postprocess;
+NVMM integration still requires the board-side vision_pkg build and tests.
+"""
 import argparse
 import hashlib
 import json

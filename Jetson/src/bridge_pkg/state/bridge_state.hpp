@@ -110,6 +110,8 @@ struct BridgeStateUpdate
 {
   // accepted 表示接收状态消息；reset_stream 通知节点撤周期帧，不要求同时撤一次性应答。
   bool accepted{false}, reset_stream{false};
+  // 已接收的新源时间携带回退代次：节点必须取消旧服务等待并撤销旧路由授权。
+  bool mission_restarted{false};
 };
 
 struct BridgeTargetInput
@@ -167,8 +169,10 @@ public:
   BridgeCenterOutput targetOutput(BridgeSourceTime current, BridgeMonotonicTime now) const;
   BridgeCenterOutput safetyOutput(BridgeSourceTime current, BridgeMonotonicTime now) const;
   // 本地到达立即闭锁；同代次心跳不能解锁。恢复需新授权代次、可移动终态、匹配模式及后续新帧。
-  // until_search用于205放弃运输，迟到field提交不能解除；等待新的SearchingTarget。
-  void holdCoordinates(BridgeSourceTime current, bool until_search = false);
+  void holdCoordinates(BridgeSourceTime current);
+  // 仅新搜索获 Mission 受理时调用，并使用发请求前保存的代次；旧回调由调用方取消。
+  // 重启闭锁也只能通过此入口恢复，之后仍须新代 SearchingTarget 与实际 seg。
+  void holdForSearch(BridgeSourceTime current, std::uint64_t requested_generation);
   bool coordinatesHeld() const;
   bool locallyHeld() const {return coordinates_held_;}
   std::optional<BridgeCyclePhase> cyclePhase() const;
@@ -200,6 +204,7 @@ private:
   std::optional<BridgeMissionState> mission_;
   bool coordinates_held_{false};
   bool held_until_search_{false};
+  bool recovery_required_{false};
   std::uint64_t held_generation_{0};
 };
 

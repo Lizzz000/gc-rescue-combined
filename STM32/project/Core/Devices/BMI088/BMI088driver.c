@@ -8,6 +8,7 @@
 #include "BMI088reg.h"
 #include "BMI088Middleware.h"
 #include <math.h>
+#include <string.h>
 
 float BMI088_ACCEL_SEN = BMI088_ACCEL_3G_SEN;
 float BMI088_GYRO_SEN = BMI088_GYRO_2000_SEN;
@@ -15,21 +16,18 @@ float BMI088_GYRO_SEN = BMI088_GYRO_2000_SEN;
 #define BMI088_accel_write_single_reg(reg, data) \
     { BMI088_ACCEL_NS_L(); BMI088_write_single_reg((reg), (data)); BMI088_ACCEL_NS_H(); }
 #define BMI088_accel_read_single_reg(reg, data) \
-    { BMI088_ACCEL_NS_L(); BMI088_read_write_byte((reg) | 0x80); \
-      BMI088_read_write_byte(0x55); (data) = BMI088_read_write_byte(0x55); BMI088_ACCEL_NS_H(); }
+    { BMI088_ACCEL_NS_L(); BMI088_read_regs((reg), &(data), 1, 1); BMI088_ACCEL_NS_H(); }
 #define BMI088_accel_read_muli_reg(reg, data, len) \
-    { BMI088_ACCEL_NS_L(); BMI088_read_write_byte((reg) | 0x80); \
-      BMI088_read_muli_reg((reg), (data), (len)); BMI088_ACCEL_NS_H(); }
+    { BMI088_ACCEL_NS_L(); BMI088_read_regs((reg), (data), (len), 1); BMI088_ACCEL_NS_H(); }
 #define BMI088_gyro_write_single_reg(reg, data) \
     { BMI088_GYRO_NS_L(); BMI088_write_single_reg((reg), (data)); BMI088_GYRO_NS_H(); }
 #define BMI088_gyro_read_single_reg(reg, data) \
-    { BMI088_GYRO_NS_L(); BMI088_read_single_reg((reg), &(data)); BMI088_GYRO_NS_H(); }
+    { BMI088_GYRO_NS_L(); BMI088_read_regs((reg), &(data), 1, 0); BMI088_GYRO_NS_H(); }
 #define BMI088_gyro_read_muli_reg(reg, data, len) \
-    { BMI088_GYRO_NS_L(); BMI088_read_muli_reg((reg), (data), (len)); BMI088_GYRO_NS_H(); }
+    { BMI088_GYRO_NS_L(); BMI088_read_regs((reg), (data), (len), 0); BMI088_GYRO_NS_H(); }
 
 static void BMI088_write_single_reg(uint8_t reg, uint8_t data);
-static void BMI088_read_single_reg(uint8_t reg, uint8_t *return_data);
-static void BMI088_read_muli_reg(uint8_t reg, uint8_t *buf, uint8_t len);
+static void BMI088_read_regs(uint8_t reg, uint8_t *buf, uint8_t len, uint8_t accel_dummy);
 
 static uint8_t write_BMI088_accel_reg_data_error[BMI088_WRITE_ACCEL_REG_NUM][3] = {
     {BMI088_ACC_PWR_CTRL, BMI088_ACC_ENABLE_ACC_ON, BMI088_ACC_PWR_CTRL_ERROR},
@@ -183,26 +181,16 @@ static void BMI088_write_single_reg(uint8_t reg, uint8_t data)
     BMI088_read_write_byte(data);
 }
 
-/** @brief 从已选中芯片读取单寄存器。
- * @param[in] reg 地址。 @param[out] return_data 接收字节。 @return 无。
+/** @brief 同一片选连续读取；BMI088 数据手册 6.1.1/6.1.2 要求加速度计多一个 dummy。
+ * 私有调用最大为 gyro 8 字节或 accel 6 字节；保留原线上地址和 dummy 值。
  */
-static void BMI088_read_single_reg(uint8_t reg, uint8_t *return_data)
+static void BMI088_read_regs(uint8_t reg, uint8_t *buf, uint8_t len, uint8_t accel_dummy)
 {
-    BMI088_read_write_byte(reg | 0x80);
-    *return_data = BMI088_read_write_byte(0x55);
-}
-
-/** @brief 连续读取寄存器，片选由教程宏控制。
- * @param[in] reg 起始地址。 @param[out] buf 至少 len 字节。
- * @param[in] len 读取字节数。 @return 无。
- */
-static void BMI088_read_muli_reg(uint8_t reg, uint8_t *buf, uint8_t len)
-{
-    BMI088_read_write_byte(reg | 0x80);
-    while (len != 0)
-    {
-        *buf = BMI088_read_write_byte(0x55);
-        buf++;
-        len--;
-    }
+    uint8_t tx[9], rx[9] = {0};
+    const uint8_t offset = 1U + accel_dummy;
+    memset(tx, 0x55, sizeof(tx));
+    tx[0] = reg | 0x80U;
+    if (accel_dummy && len > 1U) tx[1] = tx[0];
+    BMI088_read_write_data(tx, rx, offset + len);
+    memcpy(buf, rx + offset, len);
 }

@@ -36,6 +36,28 @@ static void test_continuous_pid(void)
     assert(fast.Iout == 0.0f);
 }
 
+/** @brief 加热器上下限参与抗积分；长期冷/热饱和后均无需等待隐藏积分消退。 */
+static void test_unidirectional_heater(void)
+{
+    pid_type_def heater;
+    const float gains[3] = {1600.0f, 1.6f, 0.0f};
+    PID_init(&heater, PID_POSITION, gains, 4500.0f, 4400.0f);
+    heater.min_out = 0.0f;
+    for (unsigned i = 0U; i < 2000U; ++i)
+        assert(PID_calc(&heater, 20.0f, 45.0f) == 4500.0f);
+    assert(heater.Iout == 0.0f && PID_calc(&heater, 45.0f, 45.0f) == 0.0f);
+    for (unsigned i = 0U; i < 2000U; ++i)
+        assert(PID_calc(&heater, 46.0f, 45.0f) == 0.0f);
+    assert(heater.Iout == 0.0f);
+    assert(PID_calc(&heater, 44.0f, 45.0f) > 1600.0f);
+    PID_clear(&heater);
+    assert(heater.min_out == 0.0f);
+    for (unsigned i = 0U; i < 2000U; ++i)
+        (void)PID_calc(&heater, 44.0f, 45.0f);
+    assert(fabsf(heater.Iout - 2900.0f) < 0.001f && heater.out == 4500.0f);
+    assert(PID_calc(&heater, 44.5f, 45.0f) < 4500.0f);
+}
+
 /** @brief 检查真实温控PID的输出/积分约束与清零后的状态。 @return 成功为0。 */
 int main(void)
 {
@@ -48,14 +70,14 @@ int main(void)
         assert(isfinite(output) && output >= -4500.0f && output <= 4500.0f);
         assert(fabsf(pid.Iout) <= 4400.0f);
     }
-    assert(pid.out == 4500.0f && pid.Iout == 4400.0f);
+    assert(pid.out == 4500.0f && pid.Iout == 0.0f);
     for (unsigned i = 0; i < 600U; ++i)
     {
         float output = PID_calc(&pid, 55.0f, 45.0f);
         assert(isfinite(output) && output >= -4500.0f && output <= 4500.0f);
         assert(fabsf(pid.Iout) <= 4400.0f);
     }
-    assert(pid.out == -4500.0f && pid.Iout == -4400.0f);
+    assert(pid.out == -4500.0f && pid.Iout == 0.0f);
     PID_clear(&pid);
     assert(pid.out == 0.0f && pid.Iout == 0.0f && pid.Pout == 0.0f && pid.Dout == 0.0f);
     assert(pid.Kp == gains[0] && pid.Ki == gains[1] && pid.max_out == 4500.0f);
@@ -65,6 +87,7 @@ int main(void)
     assert(PID_calc(&pid, 0.0f, 1.0f) == 5.5f);
     assert(PID_calc(&pid, 0.5f, 1.0f) == 0.25f);
     test_continuous_pid();
+    test_unidirectional_heater();
     puts("PASS PID: discrete regression, continuous I, measurement D, symmetric antiwindup");
     return 0;
 }

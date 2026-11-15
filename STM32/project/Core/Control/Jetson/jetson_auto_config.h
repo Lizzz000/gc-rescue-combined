@@ -6,7 +6,7 @@
 #define JETSON_AUTO_ENABLED 0
 #endif
 
-/* 单次底盘联调：由 SWD 显式启动，物资→规则转向→安全区；不上报到点，不执行定距。 */
+/* 单次底盘联调：由 SWD 显式启动，物资→规则转向→安全区对准及直行；不执行夹爪。 */
 #ifndef JETSON_AUTO_CHASSIS_TEST
 #define JETSON_AUTO_CHASSIS_TEST 0
 #endif
@@ -22,7 +22,7 @@
 #define JETSON_AUTO_TARGET_Y 0.7500f
 #define JETSON_AUTO_TARGET_TOL_X 0.0100f
 #define JETSON_AUTO_TARGET_TOL_Y 0.0100f
-/* 安全区设定点：类型 4 为安全区透视中心，当前为占位值，需板端标定。 */
+/* 安全区直行前的对准点：类型 4 为安全区透视中心，需板端标定。 */
 #define JETSON_AUTO_SAFETY_X 0.5000f
 #define JETSON_AUTO_SAFETY_Y 0.7500f
 #define JETSON_AUTO_SAFETY_TOL_X 0.0100f
@@ -48,8 +48,10 @@
 #define JETSON_AUTO_APPROACH_I_GAIN 2.0f
 #define JETSON_AUTO_APPROACH_I_LIMIT_MPS 0.05f
 
-/* 心跳与图像中心的接收期限、故障制动期限，单位 ms。 */
+/* 现有类型 3/4 周期流的断流期限，ms；合法无目标帧也续期，不新增心跳报文。 */
 #define JETSON_AUTO_LINK_TIMEOUT_MS 250U
+/* 有效图像中心的接收期限，独立于通信在线状态，单位 ms。 */
+#define JETSON_AUTO_CENTER_TIMEOUT_MS 250U
 /* 使能前姿态样本允许的最大年龄，ms。 */
 #define JETSON_AUTO_IMU_MAX_AGE_MS 20U
 #define JETSON_AUTO_BRAKE_TIMEOUT_MS 500U
@@ -58,9 +60,11 @@
 #define JETSON_AUTO_SETTLE_TIMEOUT_MS 1000U
 /* 停稳后的核验等待 = 中心接收期限 + 发送及计时余量，单位 ms。 */
 #define JETSON_AUTO_VERIFY_MARGIN_MS 20U
-#define JETSON_AUTO_VERIFY_WAIT_MS (JETSON_AUTO_LINK_TIMEOUT_MS + JETSON_AUTO_VERIFY_MARGIN_MS)
+#define JETSON_AUTO_VERIFY_WAIT_MS (JETSON_AUTO_CENTER_TIMEOUT_MS + JETSON_AUTO_VERIFY_MARGIN_MS)
 
-/* 检查后退与拒绝恢复仍使用定距；速度和距离留待实车标定。 */
+/* 对准安全区后锁航向直行；距离是从停稳对准点到安全区到达点，0 待实车标定。 */
+#define JETSON_AUTO_SAFETY_STRAIGHT_M 0.0f
+/* 安全区直行、检查后退与拒绝恢复共用定距速度。 */
 #define JETSON_AUTO_DISTANCE_SPEED_MPS 0.50f
 #define JETSON_AUTO_ROI_BACK_M 0.0f
 /* 直行目标可配置为 0.50 m/s；计时包含加速，停稳还需额外时间。 */
@@ -78,5 +82,8 @@
 /* 唯一请求期限：停稳后首次尝试提交起算，含 USB 提交等待，见 Jetson/docs/usb-protocol.md。 */
 #define JETSON_AUTO_REQUEST_TIMEOUT_MS (JETSON_AUTO_REQUEST_SERVICE_MS + JETSON_AUTO_REQUEST_LINK_MARGIN_MS)
 #define JETSON_AUTO_REQUEST_RETRY_MS 250U
+/* 10 s 运动 + prepare/Stop 各最多 3×200 ms + 末次 exchange 200 ms/sleep 20 ms
+ * + 链路余量 450 ms = 11870 ms，向上取 12000 ms。启动从首个受理回执起算。 */
+#define JETSON_AUTO_ACTION_TIMEOUT_MS 12000U
 
 #endif

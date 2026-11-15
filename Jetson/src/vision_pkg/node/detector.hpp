@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 #include <opencv2/core.hpp>
-#include "yolo/yolo.hpp"
+#include "yolo/types.hpp"
 
 // Segment 只建分割，Field 只建场地，Both 都建。没有 TensorRT 的构建只能选 Field。
 enum class DetectTask { Segment, Field, Both };

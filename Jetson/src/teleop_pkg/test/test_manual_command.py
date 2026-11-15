@@ -88,6 +88,36 @@ class LeaseTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             command.timed(0.1, 0, 0, 0.0, 0.0)
 
+    def test_timed_after_expiry_without_sender_tick_rearms_for_full_duration(self):
+        command = ManualCommand(LEASE, ARM)
+        command.timed(0.1, 0, 0, 0.15, 10.0)
+        self.assertEqual(command.frame(10.0 + ARM + 0.01), (True, 100, 0, 0))
+        # HTTP 请求先于下一拍发送到来；旧 ACTIVE 已过期，但尚未被 frame() 推进。
+        start = 10.0 + ARM + 0.151
+        command.timed(0.2, 0, 0, 0.04, start)
+        self.assertEqual(command.frame(start + ARM - 0.001), (True, 0, 0, 0))
+        self.assertEqual(command.frame(start + ARM + 0.001), (True, 200, 0, 0))
+        self.assertEqual(command.frame(start + ARM + 0.039), (True, 200, 0, 0))
+        self.assertEqual(command.frame(start + ARM + 0.041), (True, 0, 0, 0))
+
+    def test_timed_replacement_uses_remaining_prepare_time(self):
+        command = ManualCommand(LEASE, ARM)
+        command.timed(0.1, 0, 0, 1.0, 20.0)
+        command.timed(0.2, 0, 0, 1.0, 20.0 + ARM - 0.01)
+        self.assertEqual(command.frame(20.0 + ARM - 0.001), (True, 0, 0, 0))
+        self.assertEqual(command.frame(20.0 + ARM + 0.001), (True, 200, 0, 0))
+        self.assertEqual(command.frame(20.0 + ARM + 0.999), (True, 200, 0, 0))
+        self.assertEqual(command.frame(20.0 + ARM + 1.001), (True, 0, 0, 0))
+
+    def test_timed_replacement_after_prepare_without_sender_tick_starts_now(self):
+        command = ManualCommand(LEASE, ARM)
+        command.timed(0.1, 0, 0, 1.0, 30.0)
+        start = 30.0 + ARM + 0.01
+        command.timed(0.2, 0, 0, 0.04, start)
+        self.assertEqual(command.frame(start), (True, 200, 0, 0))
+        self.assertEqual(command.frame(start + 0.039), (True, 200, 0, 0))
+        self.assertEqual(command.frame(start + 0.041), (True, 0, 0, 0))
+
 
 if __name__ == '__main__':
     unittest.main()

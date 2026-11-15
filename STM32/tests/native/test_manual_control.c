@@ -633,7 +633,7 @@ static void Test_Ranges(void)
     assert(fabsf(body[2] - 1.0f) < 0.00001f);
 }
 
-/** @brief 发送一组类型 1：在线零速、在线非零、pause、畸形和失联。手动控制不看这些帧。 */
+/** @brief 已删除的类型 1 各种旧载荷都不能影响手动控制。 */
 static void Receive_Heartbeat_Traffic(void)
 {
     const uint8_t zero[8] = {1U, 0U, 0U, 0U, 0U, 0U, 0U, 0U};
@@ -641,11 +641,11 @@ static void Receive_Heartbeat_Traffic(void)
     const uint8_t paused[8] = {1U, 1U, 0U, 0U, 0U, 0U, 0U, 0U};
     const uint8_t malformed[8] = {2U};
     const uint8_t lost[8] = {0U};
-    Jetson_CAN_Receive(JETSON_CAN_HEARTBEAT_ID, zero, sizeof(zero));
-    Jetson_CAN_Receive(JETSON_CAN_HEARTBEAT_ID, moving, sizeof(moving));
-    Jetson_CAN_Receive(JETSON_CAN_HEARTBEAT_ID, paused, sizeof(paused));
-    Jetson_CAN_Receive(JETSON_CAN_HEARTBEAT_ID, malformed, sizeof(malformed));
-    Jetson_CAN_Receive(JETSON_CAN_HEARTBEAT_ID, lost, sizeof(lost));
+    Jetson_CAN_Receive(1U, zero, sizeof(zero));
+    Jetson_CAN_Receive(1U, moving, sizeof(moving));
+    Jetson_CAN_Receive(1U, paused, sizeof(paused));
+    Jetson_CAN_Receive(1U, malformed, sizeof(malformed));
+    Jetson_CAN_Receive(1U, lost, sizeof(lost));
 }
 
 /** @brief 手动固件中 类型 1 不能使能、撤权、停车或续期 类型 2：只看手动快照。 @return 无。 */

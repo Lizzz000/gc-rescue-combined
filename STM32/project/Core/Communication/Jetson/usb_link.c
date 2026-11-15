@@ -31,6 +31,7 @@ static uint8_t line_coding[7] = {0x00, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x08};
 static char serial_text[25];
 static volatile uint8_t configured;
 static volatile uint8_t tx_busy;
+static volatile UsbLink_State_t link_state;
 /* 控制传输：设备发出数据后，主机还要回一个 0 长度状态包。状态包本身不能再回一个空包。 */
 static uint8_t ep0_status_out;
 static uint8_t ep0_line_coding;
@@ -44,6 +45,30 @@ volatile uint8_t usb_dbg_log[16];
 volatile uint8_t usb_dbg_log_i;
 static UsbRxBuffer rx_buffer;
 static LinkParser parser;
+
+/**
+ * @brief 撤销连接并清除旧会话字节；在 USB 中断或屏蔽该中断的任务临界区调用。
+ * @return 无；代数每次递增，使立即恢复的连接也不能掩盖中途离线。
+ */
+static void link_offline(void)
+{
+    link_state.connected = 0U;
+    ++link_state.generation;
+    UsbRxBuffer_Reset(&rx_buffer);
+#if JETSON_AUTO_CAN_ENABLED
+    Jetson_CAN_Invalidate_Periodic();
+#endif
+}
+
+/** @brief 复制 USB 会话快照；参数与任务约束见头文件。 @return 无。 */
+void UsbLink_Get_State(UsbLink_State_t *out)
+{
+    if (out == NULL)
+        return;
+    taskENTER_CRITICAL();
+    *out = link_state;
+    taskEXIT_CRITICAL();
+}
 
 /* 设备描述符：ST 虚拟串口的 VID/PID，内核才会直接绑定 cdc_acm。序列号用芯片 UID。
  * bcdUSB 0x0200 只是规范版本。bMaxPacketSize0 为 64，按全速设备枚举，没有高速限定描述符。
@@ -75,12 +100,18 @@ static void stall_ep0(void)
 
 static void open_data_endpoints(void)
 {
+    /* 重新配置也不复用原会话的半帧或尚未处理的字节。 */
+    if (configured)
+        link_offline();
+    else
+        UsbRxBuffer_Reset(&rx_buffer);
     HAL_PCD_EP_Open(&hpcd, 0x82U, 8U, EP_TYPE_INTR);
     HAL_PCD_EP_Open(&hpcd, USB_EP_IN, 64U, EP_TYPE_BULK);
     HAL_PCD_EP_Open(&hpcd, USB_EP_OUT, 64U, EP_TYPE_BULK);
     HAL_PCD_EP_Receive(&hpcd, USB_EP_OUT, out_buffer, sizeof(out_buffer));
     tx_busy = 0U;
     configured = 1U;
+    link_state.connected = 1U;
 }
 
 static uint8_t fill_string(uint8_t index)
@@ -221,7 +252,10 @@ static void handle_setup(void)
         if (value != 0U)
             open_data_endpoints();
         else
+        {
             configured = 0U;
+            link_offline();
+        }
         ep0_send_zlp();
         return;
     }
@@ -244,10 +278,45 @@ void HAL_PCD_ResetCallback(PCD_HandleTypeDef *pcd)
     ep0_in_sent = 0U;
     ep0_in_total = 0U;
     tx_busy = 0U;
-    UsbRxBuffer_Reset(&rx_buffer);
+    link_offline();
     usb_dbg_reset++;
     HAL_PCD_EP_Open(&hpcd, 0x00U, 64U, EP_TYPE_CTRL);
     HAL_PCD_EP_Open(&hpcd, 0x80U, 64U, EP_TYPE_CTRL);
+}
+
+/**
+ * @brief USB 总线挂起即撤销连接，保留配置以便主机恢复枚举后的会话。
+ * @param[in] pcd HAL 回调句柄，未使用。
+ * @return 无；无 VBUS 检测时，挂起也用于尽早发现拔线。
+ */
+void HAL_PCD_SuspendCallback(PCD_HandleTypeDef *pcd)
+{
+    (void)pcd;
+    link_offline();
+}
+
+/**
+ * @brief 总线恢复后仅恢复已配置连接，不消除挂起留下的代数变化。
+ * @param[in] pcd HAL 回调句柄，未使用。
+ * @return 无；尚未配置的设备仍保持离线。
+ */
+void HAL_PCD_ResumeCallback(PCD_HandleTypeDef *pcd)
+{
+    (void)pcd;
+    link_state.connected = configured;
+}
+
+/**
+ * @brief 设备断开后撤销配置和连接，等待重新枚举。
+ * @param[in] pcd HAL 回调句柄，未使用。
+ * @return 无；即使随后立即重连，控制任务仍可检测到代数变化。
+ */
+void HAL_PCD_DisconnectCallback(PCD_HandleTypeDef *pcd)
+{
+    (void)pcd;
+    configured = 0U;
+    tx_busy = 0U;
+    link_offline();
 }
 
 void HAL_PCD_SetupStageCallback(PCD_HandleTypeDef *pcd)
@@ -301,8 +370,10 @@ void HAL_PCD_DataOutStageCallback(PCD_HandleTypeDef *pcd, uint8_t epnum)
     if (epnum == USB_EP_OUT)
     {
         const uint32_t count = HAL_PCD_EP_GetRxCount(pcd, USB_EP_OUT);
-        UsbRxBuffer_Push(&rx_buffer, out_buffer, count);
-        HAL_PCD_EP_Receive(pcd, USB_EP_OUT, out_buffer, sizeof(out_buffer));
+        if (link_state.connected)
+            UsbRxBuffer_Push(&rx_buffer, out_buffer, count);
+        if (configured)
+            HAL_PCD_EP_Receive(pcd, USB_EP_OUT, out_buffer, sizeof(out_buffer));
     }
 }
 
@@ -442,7 +513,7 @@ void OTG_FS_IRQHandler(void)
 
 int Jetson_Link_Send(uint8_t type, const uint8_t *data, uint8_t length)
 {
-    if (!configured || tx_busy)
+    if (!link_state.connected || tx_busy)
         return 1;
     const uint8_t bytes = LinkFrame_Encode(type, data, length, tx_packet);
     if (bytes == 0U)
@@ -461,7 +532,11 @@ void UsbLink_Task(void const *argument)
     (void)argument;
     /* 主机可能还停在上一次描述符失败里。拉低 D+ 再放开，让它重新枚举。 */
     osDelay(200);
+    taskENTER_CRITICAL();
+    configured = 0U;
+    link_offline();
     HAL_PCD_DevDisconnect(&hpcd);
+    taskEXIT_CRITICAL();
     osDelay(200);
     HAL_PCD_DevConnect(&hpcd);
     uint32_t parsed_generation = rx_buffer.generation;

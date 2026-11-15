@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-/* 手动速度是类型 2，长度必须是 7：valid 与 vx/vy/wz。没有心跳的 pause 字节。
+/* 手动速度是类型 2，长度必须是 7：valid 与 vx/vy/wz。
  * 经 USB 分帧进入，不走 CAN。自动固件忽略类型 2。
  * 快照由 USB 任务写入、test_task 临界区读取；received_ms 为 1 kHz FreeRTOS 时基。
  */

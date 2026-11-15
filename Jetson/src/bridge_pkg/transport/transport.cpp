@@ -12,6 +12,7 @@ std::optional<std::size_t> BridgeReplySlots::index(canid_t id)
   if (id == CanProtocol::ROI_RESULT_ID) {return 1;}
   if (id == CanProtocol::COMMAND_RESULT_ID) {return 2;}
   if (id == CanProtocol::TURN_REQUEST_ID) {return 3;}
+  if (id == CanProtocol::GRIPPER_RESULT_ID) {return 4;}
   return std::nullopt;
 }
 

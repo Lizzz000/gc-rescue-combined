@@ -97,10 +97,11 @@ Outcome runScene(Scene scene, const FieldConfig & config)
   return out;
 }
 
-// POSITIVE：须完整有效且中线准确；OCCLUDED：中线在可见内部被物块完全盖住，可以不输出，
+// POSITIVE：须完整有效且中线准确；OCCLUDED：存在物块遮挡，允许不输出，
 // 但输出时必须准确；NEGATIVE：任何一帧都不能提交外框；
 // OUT_OF_FRAME：有一整条边在画外，几何不完整，任何一帧都不能提交。
-enum class Expect {POSITIVE, OCCLUDED, NEGATIVE, OUT_OF_FRAME};
+// HIDDEN_DIVIDER：全部计分帧的地面中线均不可见，必须不输出有效分区。
+enum class Expect {POSITIVE, OCCLUDED, NEGATIVE, OUT_OF_FRAME, HIDDEN_DIVIDER};
 
 struct Case {std::string group, name; Scene scene; Expect expect;};
 
@@ -139,7 +140,7 @@ std::vector<Case> matrix()
   // 相机高 0.22 m 时 5 cm 立方体压在中线上，可见内部范围内中线整段被挡住。
   {Scene s = base; s.blocks = {{0.0, 0.2, 0.05, 0.05, black}}; add("物块", "黑块压线", s, Expect::OCCLUDED);}
   {Scene s = base; s.blocks = {{0.0, 0.15, 0.05, 0.05, white}}; add("物块", "白块压线", s, Expect::OCCLUDED);}
-  {Scene s = base; s.blocks = {{0.045, 0.2, 0.05, 0.05, blue}}; add("物块", "蓝块贴线", s);}
+  {Scene s = base; s.blocks = {{(field_scene::kBand + 0.05) / 2.0, 0.2, 0.05, 0.05, blue}}; add("物块", "蓝块贴线", s);}
   {Scene s = base; s.blocks = {{-0.15, 0.12, 0.05, 0.05, black}, {0.12, 0.25, 0.05, 0.05, yellow},
      {0.02, 0.08, 0.04, 0.04, green}}; add("物块", "多块", s, Expect::OCCLUDED);}
   // 距离/视角/出画
@@ -153,7 +154,7 @@ std::vector<Case> matrix()
   {Scene s = base; s.jpeg = 30; s.noise = 6; add("成像", "JPEG30+噪声", s);}
   // 组合
   {Scene s = base; s.tint = {0.75, 0.95, 1.25}; s.glare = 1; s.shadows = 1; s.floor = Floor::WOOD;
-   s.blocks = {{0.0, 0.18, 0.05, 0.05, black}}; add("组合", "暖光+反光+阴影+木纹+物块", s);}
+   s.blocks = {{0.0, 0.18, 0.05, 0.05, black}}; add("组合", "暖光+反光+阴影+木纹+物块", s, Expect::HIDDEN_DIVIDER);}
   {Scene s = base; s.exposure = 0.6; s.contrast = 0.7; s.jpeg = 40; s.motion_blur = 7; s.clutter = 3;
    s.blocks = {{0.08, 0.22, 0.05, 0.05, white}}; add("组合", "暗+低对比+模糊+杂物+物块", s);}
   // 负例
@@ -206,6 +207,10 @@ void testFieldRobustness(bool report)
     if (t.expect == Expect::NEGATIVE || t.expect == Expect::OUT_OF_FRAME) {
       // 负例与整侧出画：任何一帧提交外框都是误检或几何不完整
       CHECK(t.committed == 0);
+      continue;
+    }
+    if (t.expect == Expect::HIDDEN_DIVIDER) {
+      CHECK(t.split == 0);
       continue;
     }
     // 中线误差均值不超过 4 像素（约 1 cm）；正例另要求最后几帧的完整有效率不低于 3/4。

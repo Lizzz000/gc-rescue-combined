@@ -70,12 +70,15 @@ struct FieldLocator::FrameEvidence
   bool tracking;
   int64 started;
   double ms_resize, ms_detect;
-  cv::Mat full_purple, full_interior;
+  cv::Mat full_lab, full_purple, full_interior;
 
   // ROI 必须独立分割；只有需要全图回退、跳变检查或越界诊断时才生成全图双掩膜，单帧复用。
   const cv::Mat & fullPurple(const FieldConfig & config)
   {
-    if (full_purple.empty()) {FieldLocator::segmentEvidence(small, config, full_purple, full_interior);}
+    if (full_purple.empty()) {
+      cv::cvtColor(small, full_lab, cv::COLOR_BGR2Lab);
+      segmentEvidenceLab(full_lab, config, full_purple, full_interior);
+    }
     return full_purple;
   }
 };
@@ -87,12 +90,14 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
   const auto & predicted = evidence.predicted;
   const bool tracking = evidence.tracking;
   SearchResult search_result;
-  cv::Mat purple_raw, interior_mask;
+  cv::Mat lab, purple_raw, interior_mask;
   if (img.data == small.data && img.size() == small.size()) {
     purple_raw = evidence.fullPurple(cfg_);
     interior_mask = evidence.full_interior;
+    lab = evidence.full_lab;
   } else {
-    segmentEvidence(img, cfg_, purple_raw, interior_mask);
+    cv::cvtColor(img, lab, cv::COLOR_BGR2Lab);
+    segmentEvidenceLab(lab, cfg_, purple_raw, interior_mask);
   }
   // 全零证据经过既定闭运算和膨胀仍全零，省去形态学及轮廓扫描；上层仍照常处理丢失和历史输出。
   // 纯核心 cfg() 允许直接改值而不校验：仅对支持范围启用快路，其余仍交给原 OpenCV 调用处理。
@@ -105,7 +110,9 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
     search_result.reason = "没有通过过滤的紫色候选";
     return search_result;
   }
-  cv::Mat mask = morph(purple_raw, cfg_);
+  const cv::Mat geometry_purple = shadowGeometryMask(lab, purple_raw, HueSector::purple(cfg_));
+  const cv::Mat geometry_interior = shadowGeometryMask(lab, interior_mask, HueSector::interior(cfg_));
+  cv::Mat mask = morph(geometry_purple, cfg_);
   // 阶段: 轮廓与候选 —— 取面积最大的若干连通域（含碎片并集凸包），按面积占比/长宽比/贴边数/填充率过滤后才进入拟合。
   std::vector<std::vector<cv::Point>> contours;
     // 保留整条轮廓采样；仅保留直线端点会使鲁棒边拟合缺少内点。
@@ -170,7 +177,7 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
     std::vector<std::vector<cv::Point>> one{c};
     cv::drawContours(component, one, 0, cv::Scalar(255), cv::FILLED, cv::LINE_8,
       cv::noArray(), 0, -bb.tl());
-    cv::bitwise_and(component, purple_raw(bb), component);
+    cv::bitwise_and(component, geometry_purple(bb), component);
     std::vector<std::vector<cv::Point>> raw_contours;
     cv::findContours(component, raw_contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
     for (const auto & raw : raw_contours) {
@@ -236,13 +243,13 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
     CandidateScore score;
     scoreEdges(purple_probe, fit_result.quad, cfg_, score);
     // 内部颜色只在内沿地面四边形里计：外沿四边形还含围边立面，远/低视角时围边占去大半。
-    const InnerQuad inner = fitInnerQuad(interior_mask, fit_result.quad, cfg_);
+    const InnerQuad inner = fitInnerQuad(geometry_interior, fit_result.quad, cfg_, lab, geometry_purple);
     if (inner.measured_edges == 0) {
       if (!reasons.empty()) {reasons += "; ";}
       reasons += "没有可测的内沿";
       continue;
     }
-    score.red_inside = redInsideGrid(interior_mask, inner.quad, cfg_, score.cells_red);
+    score.red_inside = redInsideGrid(interior_mask, geometry_purple, inner.quad, cfg_, score.cells_red);
     score.red_outside = redOutsideRing(interior_mask, fit_result.quad, cfg_);
     score.crosses_interior = crossesInterior(interior_mask, purple_probe, fit_result.quad, cfg_);
     score.geometry = geometryScore(fit_result.quad, img.size(), cfg_);

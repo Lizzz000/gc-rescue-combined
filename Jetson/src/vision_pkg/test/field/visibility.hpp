@@ -30,12 +30,39 @@ inline InnerTruth innerTruth(const field_scene::Scene & s, cv::Size size)
   using namespace field_scene;
   const Camera cam(s, size);
   const double x0 = -kW / 2 + kWall, x1 = kW / 2 - kWall, y0 = kWall, y1 = kH - kWall;
-  const double ym = 0.5 * (y0 + y1), half_band = kBand / 2;
+  const double ym = 0.5 * (y0 + y1);
   InnerTruth t;
   t.corners = {cam.project({x0, y1, 0}), cam.project({x1, y1, 0}), cam.project({x1, y0, 0}), cam.project({x0, y0, 0})};
-  t.left_center = cam.project({0.5 * (x0 - half_band), ym, 0});
-  t.right_center = cam.project({0.5 * (x1 + half_band), ym, 0});
+  // 与正式消息一致，以黑带中心线 x=0 分区；不把带宽从可用半区扣掉。
+  t.left_center = cam.project({0.5 * x0, ym, 0});
+  t.right_center = cam.project({0.5 * x1, ym, 0});
   return t;
+}
+
+// 只检查裁切导致的几何缺失：每条内沿都须有非零长度进入画面。
+// 允许角点在画外；整条边在画外或仅擦过一个画框角点时，无法测得该边。
+inline bool innerEdgesMeetImage(const InnerTruth & truth, cv::Size size)
+{
+  for (size_t i = 0; i < truth.corners.size(); ++i) {
+    const cv::Point2d a = truth.corners[i];
+    const cv::Point2d d = cv::Point2d(truth.corners[(i + 1) % 4]) - a;
+    if (d.x == 0.0 && d.y == 0.0) {return false;}
+    double enter = 0.0, leave = 1.0;
+    for (int axis = 0; axis < 2; ++axis) {
+      const double start = axis == 0 ? a.x : a.y;
+      const double delta = axis == 0 ? d.x : d.y;
+      const double limit = axis == 0 ? size.width : size.height;
+      if (delta == 0.0) {
+        if (start < 0.0 || start >= limit) {return false;}
+      } else {
+        const double t0 = -start / delta, t1 = (limit - start) / delta;
+        enter = std::max(enter, std::min(t0, t1));
+        leave = std::min(leave, std::max(t0, t1));
+      }
+    }
+    if (leave <= enter) {return false;}
+  }
+  return true;
 }
 
 struct Visibility
@@ -123,7 +150,7 @@ inline Visibility dividerVisibility(const field_scene::Scene & s, cv::Size size)
   }
   for (int k = 0; k < 3; ++k) {v.thirds[k] = clean_k[k] > 0 ? seen_k[k] / clean_k[k] : 0.0;}
   v.total = double(seen_n) / clean_n;
-  v.judge = classify(v);
+  v.judge = innerEdgesMeetImage(innerTruth(s, size), size) ? classify(v) : Judge::UNJUDGEABLE;
   return v;
 }
 

@@ -37,10 +37,9 @@ bool CdcLink::validDevice(const std::string & path) {return device_path_ok(path)
 
 CdcLink::~CdcLink() {close();}
 
-bool CdcLink::open(const std::string & interface_name, int & index, std::string & error)
+bool CdcLink::open(const std::string & interface_name, std::string & error)
 {
   error.clear();
-  index = 0;
   if (fd_ >= 0) {close();}
   fd_ = ::open(interface_name.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
   if (fd_ < 0) {
@@ -78,12 +77,8 @@ bool CdcLink::open(const std::string & interface_name, int & index, std::string 
     close();
     return false;
   }
-  index_ = index_ == 0x7fffffff ? 1 : index_ + 1;
-  index = index_;
-  up_ = true;
   parser_ = link_frame::Parser{};
   stash_count_ = stash_pos_ = 0;
-  pending_size_ = pending_sent_ = 0;
   return true;
 }
 
@@ -93,31 +88,9 @@ void CdcLink::close()
   ::ioctl(fd_, TIOCNXCL);
   ::close(fd_);
   fd_ = -1;
-  up_ = false;
-  pending_size_ = pending_sent_ = 0;
 }
 
 bool CdcLink::socketOpen() const {return fd_ >= 0;}
-
-bool CdcLink::check(int & index, std::string & error)
-{
-  error.clear();
-  index = index_;
-  if (fd_ < 0) {
-    up_ = false;
-    return true;
-  }
-  struct stat identity{};
-  if (::fstat(fd_, &identity) < 0) {
-    error = std::strerror(errno);
-    up_ = false;
-    return false;
-  }
-  up_ = true;
-  return true;
-}
-
-bool CdcLink::interfaceUp() const {return up_;}
 
 CanTransport::ReadResult CdcLink::read(can_frame & frame, std::string & error)
 {
@@ -156,7 +129,7 @@ CanTransport::ReadResult CdcLink::read(can_frame & frame, std::string & error)
     for (ssize_t i = 0; i < n; ++i) {
       if (!emit(chunk[i])) {continue;}
       const auto rest = static_cast<std::size_t>(n - i - 1);
-      if (rest > 0 && rest <= stash_.size()) {
+      if (rest > 0) {
         std::memcpy(stash_.data(), chunk + i + 1, rest);
         stash_count_ = rest;
         stash_pos_ = 0;
@@ -165,24 +138,6 @@ CanTransport::ReadResult CdcLink::read(can_frame & frame, std::string & error)
     }
   }
   return ReadResult::EMPTY;
-}
-
-CanTransport::WriteResult CdcLink::flush(std::string & error)
-{
-  while (pending_sent_ < pending_size_) {
-    const auto n = ::write(fd_, pending_.data() + pending_sent_, pending_size_ - pending_sent_);
-    if (n > 0) {
-      pending_sent_ += static_cast<std::size_t>(n);
-      continue;
-    }
-    if (n < 0 && errno == EINTR) {return WriteResult::INTERRUPTED;}
-    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {return WriteResult::BACKPRESSURE;}
-    error = std::strerror(errno);
-    return WriteResult::FAILED;
-  }
-  pending_size_ = 0;
-  pending_sent_ = 0;
-  return WriteResult::SENT;
 }
 
 CanTransport::WriteResult CdcLink::write(const can_frame & frame, std::string & error)
@@ -199,18 +154,15 @@ CanTransport::WriteResult CdcLink::write(const can_frame & frame, std::string & 
   std::array<std::uint8_t, link_frame::kMaxBytes> encoded{};
   const auto size = link_frame::encode(
     static_cast<std::uint8_t>(frame.can_id), frame.data, frame.len, encoded.data());
-  if (size == 0) {
-    error = "CDC encode failed";
-    return WriteResult::FAILED;
+  // 发送资格只由 Runtime 队列持有；零字节背压不在底层保存旧帧。
+  const auto n = ::write(fd_, encoded.data(), size);
+  if (n == static_cast<ssize_t>(size)) {return WriteResult::SENT;}
+  if (n < 0 && errno == EINTR) {return WriteResult::INTERRUPTED;}
+  if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {return WriteResult::BACKPRESSURE;}
+  if (n > 0) {
+    // 已写出的半帧不能撤销；沿用传输层的不可重试错误，让入口关闭并退出。
+    throw CanTransport::FatalError("CDC partial frame write; restart the link before retrying");
   }
-  if (pending_sent_ < pending_size_) {
-    const bool retry = size == pending_size_ &&
-      std::memcmp(encoded.data(), pending_.data(), size) == 0;
-    const auto result = flush(error);
-    if (result != WriteResult::SENT || retry) {return result;}
-  }
-  pending_ = encoded;
-  pending_size_ = size;
-  pending_sent_ = 0;
-  return flush(error);
+  error = n == 0 ? "CDC write made no progress" : std::strerror(errno);
+  return WriteResult::FAILED;
 }

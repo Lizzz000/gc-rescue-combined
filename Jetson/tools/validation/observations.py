@@ -260,6 +260,7 @@ class UsbProbe:
         spec.loader.exec_module(self.frame)
         self.parser = self.frame.Parser()
         self.records = []
+        self.action_sequence = 0
         self.raw = (Path(directory) / 'usb.jsonl').open('w', encoding='utf-8')
 
     def poll(self):
@@ -277,15 +278,33 @@ class UsbProbe:
 
     def command(self, identifier, token=None):
         """只向本次创建的伪终端发送握手事件。"""
-        from source.usb_codec import IDS, encode
+        from source.usb_codec import IDS
         names = {IDS['arrival']: 'arrival', IDS['turn_completed']: 'turn_completed',
                  IDS['safety_arrived']: 'safety_arrived', IDS['start_search']: 'start_search',
                  IDS['delivery_completed']: 'delivery_completed'}
-        with_token = {IDS['turn_completed'], IDS['safety_arrived'], IDS['delivery_completed']}
+        with_token = {IDS['turn_completed'], IDS['safety_arrived'], IDS['delivery_completed'], IDS['start_search']}
         require(identifier in names and (identifier in with_token) == (token is not None),
                 'unsupported mission event or missing/unexpected trip token')
+        return self._send(names[identifier], [] if token is None else [str(token)])
+
+    def begin_action(self, kind):
+        self.action_sequence = (self.action_sequence + 1) & 0xffffffff or 1
+        return self.action_sequence, self.action_request(kind, self.action_sequence)
+
+    def begin_search(self):
+        from source.usb_codec import IDS
+        self.action_sequence = (self.action_sequence + 1) & 0xffffffff or 1
+        return self.action_sequence, self.command(IDS['start_search'], self.action_sequence)
+
+    def action_request(self, kind, request_id):
+        """同一请求重试保持 ID；对端只查询原动作，不重复驱动舵机。"""
+        return self._send('arrival_point', [str(kind), str(request_id)])
+
+    def _send(self, kind, values):
         # 共用字节编解码，采集工具不能保留另一份旧协议或自行截断非法 token。
-        data = bytes.fromhex(encode(names[identifier], [] if token is None else [str(token)]).split('#')[1])
+        from source.usb_codec import IDS, encode
+        identifier = IDS[kind]
+        data = bytes.fromhex(encode(kind, values).split('#')[1])
         began = time.monotonic()
         payload = self.frame.encode(identifier, data)
         require(os.write(self.master, payload) == len(payload), 'incomplete USB command write')
@@ -312,8 +331,10 @@ class UsbProbe:
     def steady_periodic(self, observer, task, since):
         """只比较收敛窗口，并将有效载荷与同窗口真实 ROS 输出逐项核对。"""
         from source.usb_codec import IDS
-        heartbeat_type, target_type, safety_type = IDS['heartbeat'], IDS['target'], IDS['safety']
+        target_type, safety_type = IDS['target'], IDS['safety']
         self.poll()
+        require(not any(row['id'] == 1 and row['steady'] >= since for row in self.records),
+                'removed USB type 1 was emitted')
         result = {}
         invalid = {target_type: bytes(8).hex(), safety_type: bytes(8).hex()}
         expected = {target_type: set(), safety_type: set()}
@@ -353,19 +374,9 @@ class UsbProbe:
                 x, y = quantize(safety['x']), quantize(safety['y'])
                 if x is not None and y is not None:
                     expected[safety_type].add((struct.pack('<Bhh', 1, x, y) + ((row['source'][0] // 1000000) & 0xffffff).to_bytes(3, 'little')).hex())
-        for identifier, length in ((heartbeat_type, 8), (target_type, 8), (safety_type, 8)):
+        for identifier, length in ((target_type, 8), (safety_type, 8)):
             rows = [row for row in self.records if row['id'] == identifier and row['steady'] >= since]
             require(rows and all(row['dlc'] == length for row in rows), f'missing/wrong USB type {identifier}')
-            if identifier == heartbeat_type:
-                require(all(row['data'][:2] == '01' for row in rows), 'heartbeat must be alive')
-                require(all(row['data'][2:4] in ('00', '01') for row in rows), 'heartbeat pause must be 0 or 1')
-                require(all(row['data'][4:] == '00' * 6 for row in rows), 'heartbeat speeds must be zero')
-                result[f'{identifier:02d}'] = {
-                    'valid_bytes': sorted({row['data'] for row in rows}),
-                    'ros_expected_bytes': [],
-                    'invalid_only': False,
-                }
-                continue
             require(all(row['data'][:2] in ('00', '01') for row in rows), 'center valid byte outside 0/1')
             require(all(row['data'] == invalid[identifier] for row in rows if row['data'].startswith('00')),
                     'invalid center frame contains nonzero coordinates')

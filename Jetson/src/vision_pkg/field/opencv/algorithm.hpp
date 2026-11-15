@@ -66,6 +66,14 @@ struct HueSector
   uchar light_lo, light_hi;
 };
 
+// 已有八位三通道 Lab 图时直接分类；与 segment(BGR) 共用同一标量/NEON 内核。
+void segmentLab(
+  const cv::Mat & lab, const FieldConfig & cfg, cv::Mat & purple, cv::Mat & interior);
+void segmentEvidenceLab(
+  const cv::Mat & lab, const FieldConfig & cfg, cv::Mat & purple, cv::Mat & interior);
+// 仅几何支持：暗处颜色须连接到严格种子，色相及原最低亮度下的色度要求不变。
+cv::Mat shadowGeometryMask(const cv::Mat & lab, const cv::Mat & strict, const HueSector & sector);
+
 // 严格3:2的BGR8面积采样使用整数核，其余类型/比例交回INTER_AREA；返回独占Mat，输入只读。
 cv::Mat resizeForField(const cv::Mat & source, cv::Size target);
 
@@ -96,7 +104,8 @@ struct InnerQuad
   int measured_edges = 0;          // 远端与两侧内沿中本帧实测的条数（0..3）
 };
 InnerQuad fitInnerQuad(
-  const cv::Mat & interior, const std::vector<cv::Point2f> & outer, const FieldConfig & cfg);
+  const cv::Mat & interior, const std::vector<cv::Point2f> & outer, const FieldConfig & cfg,
+  const cv::Mat & lab = cv::Mat(), const cv::Mat & purple = cv::Mat());
 // 同序角点平均距离 / a 的对角线长度，是无量纲跳变比例；输入应保持 TL/TR/BR/BL 顺序。
 double quadJumpRatio(const std::vector<cv::Point2f> & a, const std::vector<cv::Point2f> & b);
 
@@ -106,7 +115,7 @@ void scoreEdges(
   const cv::Mat & purple_probe, const std::vector<cv::Point2f> & quad,
   const FieldConfig & cfg, CandidateScore & score);
 double redInsideGrid(
-  const cv::Mat & red, const std::vector<cv::Point2f> & quad,
+  const cv::Mat & red, const cv::Mat & purple, const std::vector<cv::Point2f> & quad,
   const FieldConfig & cfg, int & cells_red);
 double redOutsideRing(
   const cv::Mat & red, const std::vector<cv::Point2f> & quad,

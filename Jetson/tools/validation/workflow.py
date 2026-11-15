@@ -36,7 +36,7 @@ from .provenance import PACKAGES, begin_build, finish_build, verify_install
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE = 'c1f83e9ed987d6dd24bc59641e22f6b2a44f6717'
 FULL_ROLES = ('vision', 'track', 'select', 'mission', 'target', 'safety', 'bridge')
-MISSION_CONTRACT = 'stm32-handshake-v3'
+MISSION_CONTRACT = 'stm32-handshake-v4'
 CAPTURE_SCENARIOS = (('detect', (0, 1, 2)), ('clock', (0,)), ('chain', (0, 1, 2)))
 
 
@@ -468,17 +468,20 @@ def cleanup_case(record, observer, owner, http, can, snapshot, before, expected,
 
 
 def mission_command(observer, can, owner, command, phase):
-    """分别等待真实 CAN 指令受理和任务终态；不伪造实际识别模式。"""
+    """分别等待真实 USB 指令受理和任务终态；不伪造实际识别模式。"""
     old_generation = (observer.records['mission'][-1]['value']['cycle_generation']
                       if observer.records['mission'] else 0)
     roi_id = observer.records['mission'][-1]['value']['roi_request_id'] if command in (1, 2, 4) else None
     if roi_id is not None:
         require(type(roi_id) is int and roi_id > 0, 'physical completion requires current ROI identity')
     from source.usb_codec import IDS
-    since = can.command({1: IDS['turn_completed'], 2: IDS['safety_arrived'],
-                         3: IDS['start_search'], 4: IDS['delivery_completed']}[command],
-                        None if roi_id is None else roi_id & 0xffffffff)
-    reply = bytes([1, command]) + (0 if roi_id is None else roi_id & 0xffffffff).to_bytes(4, 'little')
+    if command == 3:
+        token, since = can.begin_search()
+    else:
+        token = roi_id & 0xffffffff
+        since = can.command({1: IDS['turn_completed'], 2: IDS['safety_arrived'],
+                             4: IDS['delivery_completed']}[command], token)
+    reply = bytes([1, command]) + token.to_bytes(4, 'little')
     observer.wait(lambda: can.has_reply(IDS['command_reply'], reply.hex(), since),
                   owner=owner, reason='mission command accepted')
 
@@ -501,7 +504,36 @@ def mission_command(observer, can, owner, command, phase):
                   cycle_generation=observer.records['mission'][-1]['value']['cycle_generation'])
     if roi_id is not None:
         result['roi_request_id'] = roi_id
+    else:
+        result['request_id'] = token
     return result
+
+
+def gripper_action(observer, can, owner, kind):
+    """ACK 只表示受理；匹配动作和请求 ID 的类型 9 才能确认动作完成。"""
+    from source.usb_codec import IDS, action_kind, encode
+    kind = action_kind(kind)
+    request_id, since = can.begin_action(kind)
+    accepted = encode('command_reply', ['arrival_point', str(request_id)]).split('#')[1].lower()
+    rejected = encode('command_reply', ['arrival_point', str(request_id)], True).split('#')[1].lower()
+    success = encode('action_result', [str(kind), '1', str(request_id)]).split('#')[1].lower()
+    failure = encode('action_result', [str(kind), '0', str(request_id)]).split('#')[1].lower()
+    last_sent = since
+
+    def completed():
+        nonlocal last_sent
+        require(not can.has_reply(IDS['command_reply'], rejected, since), 'gripper request rejected')
+        require(not can.has_reply(IDS['action_result'], failure, since), 'gripper action failed')
+        if (can.has_reply(IDS['command_reply'], accepted, since) and
+                can.has_reply(IDS['action_result'], success, since)):
+            return True
+        # 回复可能丢失，重复同 ID 仅查询 ACK 和缓存终态。
+        if time.monotonic() - last_sent >= 0.2:
+            last_sent = can.action_request(kind, request_id)
+        return False
+
+    observer.wait(completed, owner=owner, reason='gripper action terminal result')
+    return dict(action_kind=kind, request_id=request_id, accepted=True, success=True)
 
 
 def chain_arrival(observer, can, owner, result):
@@ -519,6 +551,8 @@ def chain_arrival(observer, can, owner, result):
         observer.node.destroy_client(client)
     before = len(observer.records['roi'])
     from source.usb_codec import IDS
+    # 对应 STM32 到夹取点后的动作：先夹取完成，再后退并报告到达 ROI 点。
+    grasp = gripper_action(observer, can, owner, 'grasp')
     since = can.command(IDS['arrival'])
     observer.wait(lambda: can.has_reply(IDS['arrival_ack'], '01', since),
                   owner=owner, reason='arrival/stop acknowledgment')
@@ -530,7 +564,8 @@ def chain_arrival(observer, can, owner, result):
     result['/mission_node/roi_result'] = roi
     state = observer.records['mission'][-1]['value']
     can.require_paused(observer, owner)
-    result['handshake'] = {'phase_after_roi': state['cycle_phase'], 'coordinates_paused': True}
+    result['handshake'] = {'phase_after_roi': state['cycle_phase'], 'coordinates_paused': True,
+                           'grasp': grasp}
     if state['cycle_phase'] == 7:
         expected = '010000' if roi['valid'] else '000000'
         observer.wait(lambda: can.has_reply(IDS['roi_reply'], expected, since),
@@ -538,6 +573,7 @@ def chain_arrival(observer, can, owner, result):
         result['mission_roi_wire'] = expected
         result['handshake']['field_executed'] = False
         result['handshake']['reason'] = 'fixed input rejected by unchanged ROI/transport rules'
+        result['handshake']['reject_open'] = gripper_action(observer, can, owner, 'reject_open')
         result['handshake']['restart'] = mission_command(observer, can, owner, 3, 0)
         return None
     destination = state['destination']
@@ -662,6 +698,17 @@ def result_evidence(case):
         field_executed = handshake['field_executed']
         require(type(handshake.get('phase_after_roi')) is int and
                 handshake['phase_after_roi'] == (2 if field_executed else 7), 'ROI phase evidence differs')
+        actions = [(result.get('startup_action'), 0), (handshake.get('grasp'), 1)] + (
+            [(handshake.get('release'), 2)] if field_executed else
+            [(handshake.get('reject_open'), 3)])
+        request_ids = set()
+        for action, kind in actions:
+            require(isinstance(action, dict) and type(action.get('action_kind')) is int and
+                    action['action_kind'] == kind and type(action.get('request_id')) is int and
+                    0 < action['request_id'] <= 0xffffffff and action.get('accepted') is True and
+                    action.get('success') is True, 'action terminal evidence missing or inconsistent')
+            require(action['request_id'] not in request_ids, 'different actions reused a request ID')
+            request_ids.add(action['request_id'])
         commands = (('turn', 1, 4), ('safety_arrival', 2, 5), ('delivery', 4, 5), ('restart', 3, 0)) if field_executed else (('restart', 3, 0),)
         for name, command_id, phase in commands:
             command = handshake.get(name)
@@ -681,7 +728,7 @@ def result_evidence(case):
                         name + ' identity evidence differs')
         else:
             require(isinstance(handshake.get('reason'), str) and handshake['reason'] and
-                    not {'turn', 'safety_arrival', 'delivery'} & handshake.keys() and
+                    not {'turn', 'safety_arrival', 'delivery', 'release'} & handshake.keys() and
                     not {'field', 'field_phase', 'field_safety_pairs', 'field_can'} & result.keys(),
                     'failed ROI branch evidence differs')
         roi_fields = {'header', 'request_id', 'valid', 'passed', 'reason', 'roi_x', 'roi_y', 'roi_width',
@@ -700,11 +747,11 @@ def result_evidence(case):
                 final.get('transport_phase') == int(field_executed), 'restart state evidence differs')
         for name in (('seg_can', 'field_can') if field_executed else ('seg_can',)):
             can = result.get(name)
-            require(isinstance(can, dict) and {'01', '03', '04'} <= can.keys() and
+            require(isinstance(can, dict) and can.keys() == {'03', '04'} and
                     all(isinstance(can[key], dict) and
                         {'valid_bytes', 'ros_expected_bytes', 'invalid_only'} <= can[key].keys() and
                         isinstance(can[key]['valid_bytes'], list) and isinstance(can[key]['ros_expected_bytes'], list) and
-                        type(can[key]['invalid_only']) is bool for key in ('01', '03', '04')), 'USB type evidence missing')
+                        type(can[key]['invalid_only']) is bool for key in ('03', '04')), 'USB type evidence missing')
     if field_executed:
         phase = result.get('field_phase')
         require(isinstance(phase, dict) and {'task', 'epoch', 'stage_header', 'source_frames',
@@ -791,6 +838,7 @@ def capture(args):
                     observer.wait(enough, owner=owner, reason='five source-paired GPU/chain frames')
                     record['result'] = {'seg': observer.paired(names, 5)}
                     if can:
+                        record['result']['startup_action'] = gripper_action(observer, can, owner, 'startup')
                         settled = time.monotonic()
                         observer.spin(1.5, owner)
                         record['result']['seg_can'] = can.steady_periodic(observer, 'seg', settled)
@@ -818,6 +866,7 @@ def capture(args):
                         record['result']['field_can'] = can.steady_periodic(observer, 'field', settled)
                         record['result']['handshake']['safety_arrival'] = mission_command(observer, can, owner, 2, 5)
                         can.require_paused(observer, owner)
+                        record['result']['handshake']['release'] = gripper_action(observer, can, owner, 'release')
                         # 伪终端模拟送达事件，只验证软件握手。
                         record['result']['handshake']['delivery'] = mission_command(observer, can, owner, 4, 5)
                         record['result']['handshake']['restart'] = mission_command(observer, can, owner, 3, 0)
@@ -894,7 +943,7 @@ def semantic_result(case):
         require(all(row['roi_request_id'] in (0, mission['request_id']) for row in statuses),
                 'unexpected Mission/ROI request identity')
     # 磁盘记录保留原始源头和计数；只规范化当前比较视图。
-    tracks, requests, epochs = {}, {}, {}
+    tracks, requests, action_requests, epochs = {}, {}, {}, {}
     def numbered(mapping, identity):
         if identity not in mapping:
             mapping[identity] = len(mapping) + 1
@@ -905,13 +954,16 @@ def semantic_result(case):
             return {'frame_id': value['frame_id']}
         if key in ('request_id', 'roi_request_id'):
             return numbered(requests, value) if value else 0
+        if key == 'action_request_id':
+            return numbered(action_requests, value)
         if key == 'epoch':
             return numbered(epochs, value)
         if key == 'id' and isinstance(value, str):
             return str(numbered(tracks, value)) if value else ''
         if isinstance(value, dict):
             # 时序与绝对配对键已在单次运行中核对，不作为跨运行算法值比较。
-            return {name: project(item, name) for name, item in value.items()
+            return {name: project(item, 'action_request_id' if name == 'request_id' and
+                                 ('action_kind' in value or value.get('command') == 3) else name) for name, item in value.items()
                     if name not in ('source', 'steady', 'source_frames', 'valid_geometry_frames',
                                     'first_source', 'last_source')}
         if isinstance(value, list):

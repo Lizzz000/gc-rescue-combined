@@ -26,9 +26,6 @@ namespace
 constexpr double kRatio = 70070.0 / 243.0;
 constexpr int kBaud = 6000000;
 constexpr double kMinMoveDeg = -360.0, kMaxMoveDeg = 360.0;
-constexpr double kFeedbackWaitS = 0.2;
-constexpr int kStopAttempts = 3;
-constexpr double kCommandPeriodS = 0.02;
 constexpr std::uint8_t kControlMark[] = {0xfe, 0xee};
 constexpr std::uint8_t kFeedbackMark[] = {0xfc, 0xee};
 constexpr int kFeedbackBytes = 26;

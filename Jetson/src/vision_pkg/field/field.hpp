@@ -102,6 +102,7 @@ struct FieldConfig
   // ---- [分组] 黑带与分区: 逐帧实测 split_x，跨帧保持由桥接层按时间处理 ----
   // 黑带直线：BEV 内部行中相对两侧内部颜色的局部色度下陷，投票+稳健拟合成唯一直线；
   // 不用全局灰度阈值，反光提亮的黑带仍可测；上下端点逐帧实测，偏心只保留诊断。
+  double black_width_m = 0.020;         // 实物黑带宽度（米），用于同帧单侧边缘的米制中心定位
   double black_search_lo = 0.14;
   double black_search_hi = 0.86;
   double black_row_lo = 0.12;
@@ -207,6 +208,7 @@ struct FieldConfig
   X(double, quad_side_ratio_hi) \
   X(bool, use_aspect_check) \
   X(double, quad_max_aspect_err) \
+  X(double, black_width_m) \
   X(double, black_search_lo) \
   X(double, black_search_hi) \
   X(double, black_row_lo) \

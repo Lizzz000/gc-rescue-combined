@@ -10,7 +10,7 @@
 | vision_pkg | USB 相机、按阶段切换的分割和场地推理、MJPEG 图传 |
 | track_pkg | OC-SORT 跟踪，以及避开蓝色的目标选择 |
 | mission_pkg | 运输阶段、ROI 检查、安全区中心 |
-| bridge_pkg | 中心与心跳的 USB 桥，以及和 STM32 的运输握手 |
+| bridge_pkg | 中心数据的 USB 桥，以及和 STM32 的运输握手、夹爪动作结果 |
 | bringup_pkg | 唯一启动入口，用同一份配置拉起各角色 |
 | record_pkg | 独立工具：相机流和 PC 预览 / MP4 录制 |
 | teleop_pkg | 独立工具：经 USB 发送类型 2 手动速度和停车命令 |
@@ -50,6 +50,8 @@
 9. `src/interface_pkg/msg/` 与 `src/interface_pkg/srv/`。
 10. `src/record_pkg/` 与 `src/teleop_pkg/` 各自阅读。
 
+CPU 分割后处理在 `src/vision_pkg/yolo/postprocess.cpp`，GPU 提交在 `yolo.cpp`，ROS 消息转换在 `node/seg_ros.cpp`。纯后处理测试入口为 `src/vision_pkg/test/postprocess`，只需 OpenCV；跟踪及选择器测试入口为 `src/track_pkg/test/host`，只需 Eigen 和 GoogleTest。两者也接入各包的 `BUILD_TESTING`。跟踪 ID 全程使用整数，避免大编号经 float 矩阵传递时丢失精度；关联及运动模型保持。
+
 ## 运行
 
 板端工作区 `/home/nvidia/WorkSpace/GC_Rescue`：
@@ -63,13 +65,15 @@ ros2 launch bringup_pkg rescue.launch.py run:=vision
 ros2 launch bringup_pkg rescue.launch.py run:=all
 ```
 
-默认请求相机以 1920×1080 MJPG、120 FPS 采集；分割、场地识别、原图发布和 HTTP 图传的上限为 100 FPS。类型 1、3、4 三种周期帧错开约 3.33 ms 轮发，每种帧以 10 ms 为目标周期。实际帧率需在 Jetson 和相机上实测。板间链路是全速 12 Mbit/s，不是 480 Mbit/s。
+默认请求相机以 1920×1080 MJPG、120 FPS 采集；分割、场地识别、原图发布和 HTTP 图传的上限为 100 FPS。类型 3、4 两种中心帧每 5 ms 交替发送，每种以 10 ms 为目标周期；夹爪动作以类型 9 独立回执，不再发送类型 1。实际帧率需在 Jetson 和相机上实测。板间链路是全速 12 Mbit/s，不是 480 Mbit/s。
+
+自动控制的通信保护复用类型 3/4，不增加心跳或改变载荷。正常丢目标时继续发送 `valid=0`，STM32 继续搜索；夹爪、转向和等待阶段也持续发送。MissionStatus 超过既有 500 ms 有效期时 bridge 停发周期流。STM32 在 USB 离线、会话改变或周期流断开达到 250 ms 后触发制动，确认停稳或制动达到 500 ms 后请求失能；这些是检测和制动期限，不保证 250 ms 内物理停稳。故障锁存至显式重新初始化，恢复连接不会自动续跑。启动前必须收到当前 USB 会话中的周期帧，详细时序见 [板间帧说明](usb-protocol.md)。
 
 自动 GStreamer 相机管线每次打开设备时应用 `rescue_advanced.yaml` 中的 `vision.detect.camera_brightness`；当前标定值为 150，设为 -1 可不修改设备亮度。该值只适用于自动 GStreamer 管线，其他后端或自定义管线需自行配置亮度；不同相机的支持范围和其他光照下的效果需实测。
 
 当前现场固定光照下，亮度 150 在远景和近景的短时采样均保持有效，无安全区画面的采样没有误报；这是识别有效率，不代表位置已按真实坐标标定。使用旧版完整配置快照时，需要补充 `vision.detect.camera_brightness` 字段。
 
-搬运实测中，车辆横向对准安全区后连续 796 帧未得到有效场地观测；不能据此进行自动到位或判断物块落区，仍需调整并在不同视角下验证。
+此前搬运实测中，车辆横向对准安全区后连续 796 帧未得到有效场地观测。当前 STM32 流程已改为：视觉接近并对准后，锁定当时航向，按配置距离直行，此段不再依赖后续视觉；通信与底盘故障制动仍生效。`JETSON_AUTO_SAFETY_STRAIGHT_M` 保持为 0，需实车标定为正值后才能启用自动流程。距离来自命令速度积分，不是轮速里程计；本轮尚未复测车辆运动。
 
 手动网页通过 `--config` 读取顶层 `link.device` 与 `gripper.*`。`link.device` 是 STM32 的 USB OTG FS 设备，`gripper.device` 仍是 S288。`gripper.move_s` 仍是待标定空值，不要填数字。相对转角动作结束后舵机进入 Stop 模式，不再主动保持夹持力；该手动功能未接入自动搬运状态机。实际夹持、松爪位置和力矩须在现场确认。
 
@@ -96,9 +100,9 @@ python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/manual_control.py
 
 ### 安全区识别验证状态
 
-`grok未验证` 分支的安全区识别仍需实车校准。左右区域沿黑带中心线分割，安全区目标为各区域四边形对角线的交点；对矩形区域，这对应矩形中心经过透视投影后的位置。仿真真值排除了黑带宽度，与当前消息中包含半条黑带的区域定义不同，中心误差不能直接解释为实车偏差。
+安全区识别仍需实车校准。左右区域沿黑带中心线分割，安全区目标为各区域四边形对角线的交点；对矩形区域，这对应矩形中心经过透视投影后的位置。仿真采用已确认的 20 mm 黑带宽度，中心真值与消息中的分区定义一致。
 
-主机仿真中，静止和自动曝光序列通过；反光、强阴影、相近颜色背景及部分视野等场景仍有未达标情况。贴线物块场景暂不作为当前调优重点，测试仍然保留。尚无标注的实车回放数据，不能据此确认识别成功率、目标精度或车辆运动表现；上车后应根据实际画面和运动情况校准，并检查板间 USB 与电机 CAN 反馈。
+2026-11-15 的 Windows/OpenCV 主机验证中，完整矩阵 1162 条断言通过，原先 9 条失败已修复；连续帧、颜色、几何、黑带、角点与真值专项也通过。贴线黑块、高光和强阴影继续使用原验收门槛，黑带完全遮挡仍必须无效。详情见 [安全区测试](../src/vision_pkg/test/field/README.md)。尚无带标注的实车回放数据，NEON、ROS/TensorRT 集成及实车成功率、位置精度、车辆运动仍待板端验收。
 
 ## 术语
 
@@ -125,4 +129,4 @@ python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/manual_control.py
 
 `flowcharts/mission.svg` 是 CyclePhase 0–8，以及命令 1–4 怎样换阶段。枚举在 `controller.hpp` 第 34–45 行，服务在 `mission_node.cpp` 第 99–120 行。
 
-`flowcharts/usb.svg` 是 USB 握手顺序和三条周期帧。类型与载荷见 [usb-protocol.md](usb-protocol.md)。到达分支在 `bridge_io.cpp` 的 `handleArrival`。
+`flowcharts/usb.svg` 是 USB 握手顺序和两条中心周期帧。类型、载荷与失联制动规则见 [usb-protocol.md](usb-protocol.md)。到达分支在 `bridge_io.cpp` 的 `handleArrival`。

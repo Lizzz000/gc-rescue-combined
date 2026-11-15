@@ -1,4 +1,5 @@
 #include "check.hpp"
+#include "transport/frame/link_frame.hpp"
 #include "protocol/usb_protocol.hpp"
 
 #include <cstring>
@@ -41,14 +42,12 @@ void testCanProtocol()
 {
   Group group("CanProtocol");
 
-  // 类型 1，长度 8：alive、pause、vx、vy、wz。alive=0 时速度清零。
-  const std::uint8_t velocity_bytes[] = {1, 1, 0xfe, 0xff, 0x00, 0x00, 0xe8, 0x03};
-  CHECK(bytesEqual(CanProtocol::velocity(true, -2, 0, 1000, 1), CanProtocol::VELOCITY_ID, 8, velocity_bytes));
-  const std::uint8_t velocity_lost[] = {0, 0, 0, 0, 0, 0, 0, 0};
-  CHECK(bytesEqual(CanProtocol::velocity(false, -2, 0, 1000, 0), CanProtocol::VELOCITY_ID, 8, velocity_lost));
-  const std::uint8_t velocity_lost_pause[] = {0, 1, 0, 0, 0, 0, 0, 0};
-  CHECK(bytesEqual(CanProtocol::velocity(false, -2, 0, 1000, 1), CanProtocol::VELOCITY_ID, 8, velocity_lost_pause));
-  CHECK(threwInvalid([] { CanProtocol::velocity(false, 0, 0, 0, 2); }));
+  CHECK(!CanProtocol::transmitId(1));
+  const auto startup_query = CanProtocol::parseCommand(commandFrame(21, 5, 0, 123));
+  CHECK(startup_query.kind == CanProtocol::CommandKind::ARRIVAL_POINT &&
+    startup_query.command == 0 && startup_query.token == 123);
+  const auto result_ack = CanProtocol::commandResult(true, CanProtocol::ARRIVAL_POINT, 123);
+  CHECK(result_ack.data[2] == 123);
 
   // 坐标帧携带 24 位源帧编号；无效帧仍保留 ID 和 DLC，载荷清零。
   const std::uint8_t center_bytes[] = {1, 0x88, 0x13, 0xff, 0xff, 0x56, 0x34, 0x12};
@@ -94,7 +93,7 @@ void testCanProtocol()
 
   // 类型 7 token 小端。命令 3 没有身份，调用方带进来的 token 也不写出。
   const std::uint8_t command_turn[] = {1, CanProtocol::TURN_COMPLETED, 0x04, 0x03, 0x02, 0x01};
-  const std::uint8_t command_search[] = {1, CanProtocol::START_SEARCH, 0, 0, 0, 0};
+  const std::uint8_t command_search[] = {1, CanProtocol::START_SEARCH, 0xff, 0xff, 0xff, 0xff};
   const std::uint8_t command_reject[] = {0, CanProtocol::DELIVERY_COMPLETED, 0xd4, 0xc3, 0xb2, 0xa1};
   CHECK(bytesEqual(
     CanProtocol::commandResult(true, CanProtocol::TURN_COMPLETED, 0x01020304u),
@@ -105,7 +104,7 @@ void testCanProtocol()
   CHECK(bytesEqual(
     CanProtocol::commandResult(false, CanProtocol::DELIVERY_COMPLETED, 0xa1b2c3d4u),
     CanProtocol::COMMAND_RESULT_ID, 6, command_reject));
-  const std::uint8_t command_arrival[] = {1, CanProtocol::ARRIVAL_POINT, 0, 0, 0, 0};
+  const std::uint8_t command_arrival[] = {1, CanProtocol::ARRIVAL_POINT, 0xff, 0xff, 0xff, 0xff};
   CHECK(bytesEqual(
     CanProtocol::commandResult(true, CanProtocol::ARRIVAL_POINT, 0xffffffffu),
     CanProtocol::COMMAND_RESULT_ID, 6, command_arrival));
@@ -116,6 +115,16 @@ void testCanProtocol()
   const std::uint8_t turn_bytes[] = {1, 2, 0xd4, 0xc3, 0xb2, 0xa1};
   CHECK(bytesEqual(CanProtocol::turnRequest(2, 0xa1b2c3d4u), CanProtocol::TURN_REQUEST_ID, 6, turn_bytes));
   CHECK(threwInvalid([] { CanProtocol::turnRequest(0, 1); }));
+
+  // 类型 9 独立于受理 ACK，严格带 kind 和非零动作编号。
+  const std::uint8_t gripper_success[] = {2, 1, 0xd4, 0xc3, 0xb2, 0xa1};
+  const std::uint8_t gripper_failure[] = {0, 0, 0x04, 0x03, 0x02, 0x01};
+  CHECK(bytesEqual(CanProtocol::gripperResult(2, true, 0xa1b2c3d4u),
+    CanProtocol::GRIPPER_RESULT_ID, 6, gripper_success));
+  CHECK(bytesEqual(CanProtocol::gripperResult(0, false, 0x01020304u),
+    CanProtocol::GRIPPER_RESULT_ID, 6, gripper_failure));
+  CHECK(threwInvalid([] { CanProtocol::gripperResult(4, true, 1); }));
+  CHECK(threwInvalid([] { CanProtocol::gripperResult(1, true, 0); }));
 
   // 六条入站指令：长度或请求字节不对是 MALFORMED，不读 token。未知 ID 和标志位是 NONE。
   const auto arrival = CanProtocol::parseCommand(commandFrame(CanProtocol::ARRIVAL_ID, 1, 1, 0));
@@ -136,25 +145,24 @@ void testCanProtocol()
   const auto delivery = CanProtocol::parseCommand(commandFrame(CanProtocol::DELIVERY_COMPLETED_ID, 5, 1, 0xa1b2c3d4u));
   CHECK(delivery.kind == CanProtocol::CommandKind::MISSION && delivery.command == CanProtocol::DELIVERY_COMPLETED &&
     delivery.token == 0xa1b2c3d4u);
-  const auto search = CanProtocol::parseCommand(commandFrame(CanProtocol::START_SEARCH_ID, 1, 1, 0xffffffffu));
-  CHECK(search.kind == CanProtocol::CommandKind::MISSION && search.command == CanProtocol::START_SEARCH && search.token == 0);
-  const auto search_len = CanProtocol::parseCommand(commandFrame(CanProtocol::START_SEARCH_ID, 5, 1, 1));
+  const auto search = CanProtocol::parseCommand(commandFrame(CanProtocol::START_SEARCH_ID, 5, 1, 0xffffffffu));
+  CHECK(search.kind == CanProtocol::CommandKind::MISSION && search.command == CanProtocol::START_SEARCH && search.token == 0xffffffffu);
+  const auto search_len = CanProtocol::parseCommand(commandFrame(CanProtocol::START_SEARCH_ID, 1, 1, 1));
   CHECK(search_len.kind == CanProtocol::CommandKind::MALFORMED && search_len.command == CanProtocol::START_SEARCH && search_len.token == 0);
+  CHECK(CanProtocol::parseCommand(commandFrame(CanProtocol::START_SEARCH_ID, 5, 1, 0)).kind == CanProtocol::CommandKind::MALFORMED);
+  CHECK(CanProtocol::parseCommand(commandFrame(CanProtocol::START_SEARCH_ID, 5, 0, 12)).kind == CanProtocol::CommandKind::MALFORMED);
 
-  can_frame arrival_point{};
-  arrival_point.can_id = CanProtocol::ARRIVAL_POINT_ID;
-  arrival_point.len = 1;
-  arrival_point.data[0] = 1;
-  const auto grab = CanProtocol::parseCommand(arrival_point);
-  CHECK(grab.kind == CanProtocol::CommandKind::ARRIVAL_POINT && grab.command == 1);
-  arrival_point.data[0] = 2;
-  const auto place = CanProtocol::parseCommand(arrival_point);
-  CHECK(place.kind == CanProtocol::CommandKind::ARRIVAL_POINT && place.command == 2);
-  arrival_point.data[0] = 3;
-  CHECK(CanProtocol::parseCommand(arrival_point).kind == CanProtocol::CommandKind::MALFORMED);
-  arrival_point.data[0] = 1;
-  arrival_point.len = 2;
-  CHECK(CanProtocol::parseCommand(arrival_point).kind == CanProtocol::CommandKind::MALFORMED);
+  for (std::uint8_t kind = 0; kind <= 3; ++kind) {
+    const auto action = CanProtocol::parseCommand(commandFrame(21, 5, kind, 0xa1b2c3d4u));
+    CHECK(action.kind == CanProtocol::CommandKind::ARRIVAL_POINT &&
+      action.command == kind && action.token == 0xa1b2c3d4u);
+  }
+  for (std::uint8_t size : {0, 1, 4, 6, 8}) {
+    CHECK(CanProtocol::parseCommand(commandFrame(21, size, 1, 1)).kind ==
+      CanProtocol::CommandKind::MALFORMED);
+  }
+  CHECK(CanProtocol::parseCommand(commandFrame(21, 5, 4, 1)).kind == CanProtocol::CommandKind::MALFORMED);
+  CHECK(CanProtocol::parseCommand(commandFrame(21, 5, 1, 0)).kind == CanProtocol::CommandKind::MALFORMED);
 
   const auto unknown_a = CanProtocol::parseCommand(commandFrame(9, 1, 1, 0));
   const auto unknown_b = CanProtocol::parseCommand(commandFrame(15, 1, 1, 0));
@@ -162,14 +170,66 @@ void testCanProtocol()
   const auto invalid_type = CanProtocol::parseCommand(commandFrame(256, 1, 1, 0));
   CHECK(invalid_type.kind == CanProtocol::CommandKind::NONE);
 
-  // 三条周期、四条回复、六条指令。类型 2 只给手动程序。
-  CHECK(CanProtocol::streamId(CanProtocol::VELOCITY_ID) && CanProtocol::streamId(CanProtocol::TARGET_ID) &&
+  // 两条周期、五条回复、六条指令；1 已删除，2 只给手动程序。
+  CHECK(!CanProtocol::streamId(1) && CanProtocol::streamId(CanProtocol::TARGET_ID) &&
     CanProtocol::streamId(CanProtocol::SAFETY_ID) && !CanProtocol::streamId(CanProtocol::ARRIVAL_ACK_ID) &&
     !CanProtocol::streamId(CanProtocol::MANUAL_ID));
   CHECK(CanProtocol::replyId(CanProtocol::ARRIVAL_ACK_ID) && CanProtocol::replyId(CanProtocol::ROI_RESULT_ID) &&
     CanProtocol::replyId(CanProtocol::COMMAND_RESULT_ID) && CanProtocol::replyId(CanProtocol::TURN_REQUEST_ID) &&
-    !CanProtocol::replyId(CanProtocol::VELOCITY_ID));
-  CHECK(CanProtocol::transmitId(CanProtocol::VELOCITY_ID) && CanProtocol::transmitId(CanProtocol::TURN_REQUEST_ID) &&
+    CanProtocol::replyId(CanProtocol::GRIPPER_RESULT_ID) && !CanProtocol::replyId(1));
+  CHECK(CanProtocol::transmitId(CanProtocol::TARGET_ID) && CanProtocol::transmitId(CanProtocol::TURN_REQUEST_ID) &&
     !CanProtocol::transmitId(CanProtocol::ARRIVAL_ID) && !CanProtocol::transmitId(CanProtocol::MANUAL_ID) &&
-    !CanProtocol::transmitId(9));
+    CanProtocol::transmitId(9));
+}
+
+// 独立逐位参考检验查表CRC；损坏流检验对外帧顺序而非内部缓冲布局。
+void testFrameAlgorithm()
+{
+  Group group("Frame CRC and resynchronization");
+  auto reference = [](const std::uint8_t *data, std::size_t size) {
+    std::uint16_t crc = 0xffff;
+    for (std::size_t i = 0; i < size; ++i) {
+      crc ^= data[i];
+      for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ ((crc & 1) ? 0xa001 : 0);
+    }
+    return crc;
+  };
+  const std::uint8_t check[] = {'1','2','3','4','5','6','7','8','9'};
+  CHECK(link_frame::crc16(check, sizeof(check)) == 0x4b37);
+  bool equal = true;
+  for (unsigned value = 0; value <= 65535; ++value) {
+    const std::uint8_t bytes[] = {static_cast<std::uint8_t>(value), static_cast<std::uint8_t>(value >> 8)};
+    equal &= link_frame::crc16(bytes, sizeof(bytes)) == reference(bytes, sizeof(bytes));
+  }
+  CHECK(equal);
+  for (unsigned size = 0; size <= link_frame::kMaxPayload; ++size) {
+    equal = true;
+    for (unsigned seed = 0; seed <= 255; ++seed) {
+      std::uint8_t payload[8], packet[link_frame::kMaxBytes];
+      for (unsigned i = 0; i < 8; ++i) payload[i] = static_cast<std::uint8_t>(seed + i * 37);
+      const auto n = link_frame::encode(static_cast<std::uint8_t>(seed), payload, size, packet);
+      equal &= (packet[n-2] | (packet[n-1] << 8)) == reference(packet+1, n-3);
+      link_frame::Parser parser; link_frame::Frame frame;
+      unsigned received = 0;
+      for (unsigned i = 0; i < n; ++i) received += parser.feed(packet[i], frame);
+      equal &= received == 1 && frame.type == seed && frame.length == size &&
+        std::memcmp(frame.data, payload, size) == 0;
+    }
+    CHECK(equal);
+  }
+  const std::uint8_t payload[8] = {1, 0xa5, 0xff, 0, 3, 8, 127, 128};
+  std::uint8_t good[link_frame::kMaxBytes], bad[link_frame::kMaxBytes];
+  const auto n = link_frame::encode(7, payload, 8, good);
+  bool recovered = true;
+  for (unsigned bit = 0; bit < n * 8; ++bit) {
+    std::memcpy(bad, good, n); bad[bit / 8] ^= 1U << (bit % 8);
+    link_frame::Parser parser; link_frame::Frame frame;
+    unsigned received = 0;
+    for (unsigned i = 0; i < n; ++i) received += parser.feed(bad[i], frame);
+    recovered &= received == 0;
+    for (unsigned i = 0; i < n; ++i) received += parser.feed(good[i], frame);
+    recovered &= received == 1 && frame.type == 7 && frame.length == 8 &&
+      std::memcmp(frame.data, payload, 8) == 0;
+  }
+  CHECK(recovered);
 }

@@ -18,9 +18,15 @@ static unsigned enables, stops, disables, velocity_requests;
 static uint8_t tx_ready;
 static unsigned distance_count, turn_count, sent_count;
 static int8_t last_turn_direction;
-static float last_turn_angle, last_vx, last_vy, last_wz;
+static float last_turn_angle, last_vx, last_vy, last_wz, last_distance;
+static Chassis_Translation_Direction_t last_distance_direction;
 static uint8_t motors_ready;
-static uint32_t imu_age_ms;
+static uint32_t imu_age_ms, startup_id;
+static UsbLink_State_t usb_state;
+static uint16_t background_center;
+
+/** @brief 以已枚举且连接代次稳定的 USB 替身运行正常单趟流程。 */
+void UsbLink_Get_State(UsbLink_State_t *state) { *state = usb_state; }
 
 typedef struct
 {
@@ -38,9 +44,7 @@ void test_enter_critical(void)
         assert(critical_depth == 0U);
         can_arrival_before_snapshot = 0U;
         ++test_tick;
-        const uint8_t heartbeat[8] = {1U, 0U, 0U, 0U, 0U, 0U, 0U, 0U};
         const uint8_t target[8] = {1U, 0x88U, 0x13U, 0xA0U, 0x0FU, (uint8_t)test_tick, (uint8_t)(test_tick >> 8U), (uint8_t)(test_tick >> 16U)}; /* (5000,4000) */
-        Jetson_CAN_Receive(JETSON_CAN_HEARTBEAT_ID, heartbeat, sizeof(heartbeat));
         Jetson_CAN_Receive(JETSON_CAN_TARGET_CENTER_ID, target, sizeof(target));
     }
     ++critical_depth;
@@ -101,7 +105,8 @@ uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
  */
 uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction, float distance, float speed)
 {
-    (void)direction;
+    last_distance_direction = direction;
+    last_distance = distance;
     assert(enabled && stopped && distance > 0.0f && speed == JETSON_AUTO_DISTANCE_SPEED_MPS);
     ++distance_count;
     stopped = 0U;
@@ -122,21 +127,24 @@ uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg)
 }
 
 /** @brief 捕获真实编码后的 USB 上行载荷。 @return 0 已提交，1 链路忙。
- * @param[in] id 运输协议上行类型；底盘联调不发类型 21。
+ * @param[in] id 运输协议上行类型；底盘联调仅发类型 21 启动查询。
  * @param[in] payload 编码载荷。 @param[in] len 载荷字节数。
  */
 int Jetson_Link_Send(uint8_t id, const uint8_t *payload, uint8_t len)
 {
     assert(critical_depth > 0U);
-    assert(payload != NULL && id != JETSON_CAN_POINT_REACHED_ID);
-    assert(len == ((id == JETSON_CAN_ARRIVAL_ID || id == JETSON_CAN_START_SEARCH_ID) ? 1U : 5U));
-    assert(payload[0] == 1U);
+    assert(payload != NULL);
+    assert(len == (id == JETSON_CAN_ARRIVAL_ID ? 1U : 5U));
+    assert(payload[0] == (id == JETSON_CAN_POINT_REACHED_ID ? 0U : 1U));
     if (!tx_ready)
         return 1;
     assert(sent_count < sizeof(sent) / sizeof(sent[0]));
     const uint32_t encoded = len == 1U ? 0U : (uint32_t)payload[1] |
         (uint32_t)payload[2] << 8U | (uint32_t)payload[3] << 16U | (uint32_t)payload[4] << 24U;
-    sent[sent_count++] = (Sent_Frame){id, encoded};
+    if (id == JETSON_CAN_POINT_REACHED_ID)
+        startup_id = encoded;
+    else
+        sent[sent_count++] = (Sent_Frame){id, encoded};
     return 0;
 }
 
@@ -149,32 +157,31 @@ static void Reset(void)
     enabled = stopped = 0U;
     enables = stops = disables = velocity_requests = 0U;
     distance_count = turn_count = sent_count = 0U;
-    imu_age_ms = 0U;
+    imu_age_ms = startup_id = 0U;
     tx_ready = motors_ready = 1U;
     last_turn_direction = 0;
-    last_turn_angle = last_vx = last_vy = last_wz = 0.0f;
+    last_turn_angle = last_vx = last_vy = last_wz = last_distance = 0.0f;
+    last_distance_direction = CHASSIS_TRANSLATION_NONE;
+    usb_state = (UsbLink_State_t){.connected = 1U, .generation = 1U};
+    background_center = JETSON_CAN_SAFETY_CENTER_ID;
     Jetson_CAN_Init();
     Jetson_Auto_Init();
 }
 
-/** @brief 推进一拍 5 ms。
- * @param[in] heartbeat 1 注入合法 类型 1 传输心跳，0 模拟 CAN 断流。
- */
-static void Step(uint8_t heartbeat)
+static void Step(void)
 {
     test_tick += 5U;
-    const uint8_t bytes[8] = {1U, 0U, 0U, 0U, 0U, 0U, 0U, 0U};
-    if (heartbeat)
-        Jetson_CAN_Receive(JETSON_CAN_HEARTBEAT_ID, bytes, sizeof(bytes));
+    /* 另一中心持续无目标，保持板间周期流；当前测试中心仍按真实接收年龄过期。 */
+    const uint8_t no_center[8] = {0};
+    Jetson_CAN_Receive(background_center, no_center, sizeof(no_center));
     Jetson_Auto_Loop();
     assert(critical_depth == 0U);
 }
 
-/** @brief 按 5 ms 推进数拍。 @param[in] count 拍数。 @param[in] heartbeat 是否注入心跳。 */
-static void Steps(unsigned count, uint8_t heartbeat)
+static void Steps(unsigned count)
 {
     for (unsigned i = 0U; i < count; ++i)
-        Step(heartbeat);
+        Step();
 }
 
 /** @brief 注入有效中心。 @param[in] id 目标或安全区 ID。
@@ -182,6 +189,8 @@ static void Steps(unsigned count, uint8_t heartbeat)
  */
 static void Receive_Center(uint16_t id, int16_t x, int16_t y)
 {
+    background_center = id == JETSON_CAN_TARGET_CENTER_ID ?
+        JETSON_CAN_SAFETY_CENTER_ID : JETSON_CAN_TARGET_CENTER_ID;
     const uint8_t bytes[] = {1U, (uint8_t)x, (uint8_t)((uint16_t)x >> 8U),
                             (uint8_t)y, (uint8_t)((uint16_t)y >> 8U),
                             (uint8_t)test_tick, (uint8_t)(test_tick >> 8U), (uint8_t)(test_tick >> 16U)};
@@ -237,7 +246,7 @@ static void Check_Sent(unsigned index, uint16_t id, uint32_t token)
 }
 
 
-/** @brief 校验本轮任何阶段均未请求定距动作。 */
+/** @brief 校验安全区视觉核验之前未请求定距动作。 */
 static void Flow_No_Actuator(void)
 {
     assert(distance_count == 0U);
@@ -249,19 +258,23 @@ static void Flow_Start(void)
     Reset();
     assert(JETSON_AUTO_ENABLED == 0 && JETSON_AUTO_CHASSIS_TEST == 1);
     assert(JETSON_AUTO_ROI_BACK_M == 0.0f);
-    Steps(5U, 1U);
+    Steps(5U);
     assert(!enabled && !enables && jetson_test_start == 0U);
     jetson_test_start = 1U;
     imu_age_ms = 21U;
-    Steps(2U, 1U);
-    assert(!enabled);
+    Steps(2U);
+    assert(!enabled && startup_id != 0U);
+    Receive_Command_Ack(1U, 5U, startup_id);
+    uint8_t result[6] = {0U, 1U};
+    Put_Token(result + 2, startup_id);
+    Jetson_CAN_Receive(9U, result, sizeof(result));
     imu_age_ms = 0U;
-    Step(1U);
+    Step();
     assert(enabled && enables == 1U);
     stopped = 1U;
-    Step(1U);
+    Step();
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 4000);
-    Step(1U);
+    Step();
     assert(last_vx > 0.0f && last_wz == 0.0f && !stopped);
     Flow_No_Actuator();
 }
@@ -273,20 +286,58 @@ static void Flow_Arrive(uint16_t id, uint16_t uplink)
 {
     const unsigned before = sent_count;
     Receive_Center(id, 5000, 7500);
-    Step(1U);
+    Step();
     Receive_Center(id, 5000, 7500);
-    Step(1U);
+    Step();
     stopped = 1U;
     for (unsigned i = 0U; i < JETSON_AUTO_VERIFY_WAIT_MS / 5U + 20U && sent_count == before; ++i)
     {
         Receive_Center(id, 5000, 7500);
-        Step(1U);
+        Step();
     }
     assert(sent_count == before + 1U && sent[before].id == uplink);
     Flow_No_Actuator();
 }
 
-/** @brief 核验左右路由、真实握手、到位锁止及机构命令为零。
+/** @brief 窗内停车并双帧核验后只启动一次定距；视觉漂移或失效不能提前到达。 */
+static void Flow_Safety_Straight(void)
+{
+    const unsigned before = sent_count;
+    Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, 5000, 7500);
+    Step();
+    Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, 5000, 7500);
+    Step();
+    Steps(10U);
+    assert(!stopped && distance_count == 0U && sent_count == before);
+    stopped = 1U;
+    for (unsigned i = 0U; i < JETSON_AUTO_VERIFY_WAIT_MS / 5U + 20U && !distance_count; ++i)
+    {
+        Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, 5000, 7500);
+        Step();
+    }
+    assert(distance_count == 1U && !stopped && sent_count == before);
+    assert(last_distance_direction == CHASSIS_TRANSLATION_FORWARD);
+    assert(last_distance == JETSON_AUTO_SAFETY_STRAIGHT_M);
+    const unsigned velocities = velocity_requests, stop_requests = stops;
+    for (unsigned i = 0U; i < 160U; ++i)
+    {
+        if (i < 20U)
+            Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, 1000, 1000);
+        else if (i == 20U)
+        {
+            const uint8_t invalid[8] = {0};
+            Jetson_CAN_Receive(JETSON_CAN_SAFETY_CENTER_ID, invalid, sizeof(invalid));
+        }
+        Step();
+    }
+    assert(enabled && distance_count == 1U && sent_count == before);
+    assert(velocity_requests == velocities && stops == stop_requests);
+    stopped = 1U;
+    Steps(2U);
+    assert(sent_count == before + 1U && sent[before].id == JETSON_CAN_SAFETY_ARRIVED_ID);
+}
+
+/** @brief 核验左右路由、真实握手、定距后到位锁止及夹爪命令为零。
  * @param[in] destination 左区1或右区2。
  */
 static void Flow_One_Shot(uint8_t destination)
@@ -297,39 +348,39 @@ static void Flow_One_Shot(uint8_t destination)
     Receive_Arrival_Ack(1U);
     Receive_Roi(1U, destination);
     Receive_Turn(destination, token);
-    Step(1U);
+    Step();
     assert(turn_count == 1U && last_turn_direction == (destination == 1U ? 1 : -1));
     assert(last_turn_angle == 180.0f && !stopped);
-    Steps(10U, 1U);
+    Steps(10U);
     assert(sent_count == 1U);
     stopped = 1U;
-    Steps(2U, 1U);
+    Steps(2U);
     Check_Sent(1U, JETSON_CAN_TURN_COMPLETED_ID, token);
     Receive_Command_Ack(1U, 1U, token + 1U);
-    Step(1U);
+    Step();
     const unsigned count = velocity_requests;
     Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, 5000, 4000);
-    Step(1U);
+    Step();
     assert(velocity_requests == count);
     Receive_Command_Ack(1U, 1U, token);
-    Step(1U);
+    Step();
     Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, 5000, 4000);
-    Step(1U);
+    Step();
     assert(velocity_requests > count && last_vx > 0.0f && last_wz == 0.0f);
-    Flow_Arrive(JETSON_CAN_SAFETY_CENTER_ID, JETSON_CAN_SAFETY_ARRIVED_ID);
+    Flow_Safety_Straight();
     Check_Sent(2U, JETSON_CAN_SAFETY_ARRIVED_ID, token);
     Receive_Command_Ack(1U, 2U, token);
-    Step(1U);
+    Step();
     assert(!enabled && disables == 1U);
     const unsigned after = velocity_requests;
     for (unsigned i = 0U; i < 100U; ++i)
     {
         jetson_test_start = (uint8_t)(i & 1U);
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 4000);
-        Step(1U);
+        Step();
     }
     assert(enables == 1U && velocity_requests == after && sent_count == 3U);
-    Flow_No_Actuator();
+    assert(distance_count == 1U);
 }
 
 /** @brief ROI拒绝只停车结束，不能执行原搬运恢复的松爪和后退。 */
@@ -339,41 +390,41 @@ static void Flow_Rejection(void)
     Flow_Arrive(JETSON_CAN_TARGET_CENTER_ID, JETSON_CAN_ARRIVAL_ID);
     Receive_Arrival_Ack(1U);
     Receive_Roi(0U, 0U);
-    Steps(2U, 1U);
+    Steps(2U);
     assert(!enabled && turn_count == 0U);
     jetson_test_start = 0U;
-    Step(1U);
+    Step();
     jetson_test_start = 1U;
-    Steps(3U, 1U);
+    Steps(3U);
     assert(enables == 1U);
     Flow_No_Actuator();
 }
 
-/** @brief 丢目标停车等待新帧；链路丢失及启动撤销均结束，且不主动搜索。 */
+/** @brief 丢目标停车等待新帧；中心长期丢失及启动撤销均结束，且不主动搜索。 */
 static void Flow_Interruptions(void)
 {
     Flow_Start();
     const unsigned before = stops;
-    Steps(55U, 1U);
+    Steps(55U);
     assert(stops > before && last_wz == 0.0f && turn_count == 0U);
     stopped = 1U;
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 4000);
-    Step(1U);
+    Step();
     assert(last_vx > 0.0f && !stopped);
-    Steps(55U, 0U);
+    Steps(160U);
     stopped = 1U;
-    Step(0U);
+    Step();
     assert(!enabled);
     Flow_No_Actuator();
 
     Flow_Start();
     jetson_test_start = 0U;
-    Step(1U);
+    Step();
     stopped = 1U;
-    Step(1U);
+    Step();
     assert(!enabled);
     jetson_test_start = 1U;
-    Steps(5U, 1U);
+    Steps(5U);
     assert(enables == 1U);
     Flow_No_Actuator();
 }
@@ -383,66 +434,66 @@ static void Flow_Visual_Stop_Wait(void)
 {
     Flow_Start();
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
-    Step(1U);
+    Step();
     const unsigned moves = velocity_requests;
     const unsigned braking_stops = stops;
     for (unsigned i = 0U; i < 120U; ++i)
     {
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
-        Step(1U);
+        Step();
     }
     assert(enabled && !stopped && !sent_count && stops == braking_stops);
     assert(velocity_requests == moves);
     stopped = 1U;
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
-    Step(1U);
+    Step();
     for (unsigned i = 0U; i < JETSON_AUTO_VERIFY_WAIT_MS / 5U; ++i)
     {
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
-        Step(1U);
+        Step();
     }
     assert(enabled && stopped && !sent_count && velocity_requests == moves);
     /* 截止后新图像仍在窗外，必须重新对准，不能使用停车前/等待中的窗内图像。 */
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5101, 7500);
-    Step(1U);
+    Step();
     assert(!stopped && !sent_count && velocity_requests == moves + 1U);
     Flow_Arrive(JETSON_CAN_TARGET_CENTER_ID, JETSON_CAN_ARRIVAL_ID);
     Flow_No_Actuator();
 
     Flow_Start();
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
-    Step(1U);
+    Step();
     const unsigned stops_before_timeout = stops;
-    Steps(120U, 1U);
+    Steps(120U);
     assert(enabled && !sent_count && stops == stops_before_timeout);
-    Steps(JETSON_AUTO_SETTLE_TIMEOUT_MS / 5U - 121U, 1U);
+    Steps(JETSON_AUTO_SETTLE_TIMEOUT_MS / 5U - 121U);
     assert(enabled && !sent_count && stops == stops_before_timeout);
-    Step(1U); /* 1000ms：超时Halt仍保留最初视觉制动时刻。 */
+    Step(); /* 1000ms：超时Halt仍保留最初视觉制动时刻。 */
     assert(enabled && !sent_count && stops == stops_before_timeout + 1U);
-    Step(1U); /* 下一任务拍失能，不再追加500ms故障制动等待。 */
+    Step(); /* 下一任务拍失能，不再追加500ms故障制动等待。 */
     assert(!enabled && disables == 1U && !sent_count);
     Flow_No_Actuator();
 }
 
-/** @brief 90秒总期限覆盖导航和未等到链路的启动等待；到期不可重启。 */
+/** @brief 90秒总期限覆盖导航和未等到启动动作结果；到期不可重启。 */
 static void Flow_Deadline(void)
 {
     Flow_Start();
     test_tick += JETSON_AUTO_CHASSIS_TEST_TIMEOUT_MS;
-    Step(1U);
+    Step();
     stopped = 1U;
-    Step(1U);
+    Step();
     assert(!enabled);
-    Steps(3U, 1U);
+    Steps(3U);
     assert(enables == 1U);
     Flow_No_Actuator();
 
     Reset();
     jetson_test_start = 1U;
-    Step(0U);
+    Step();
     test_tick += JETSON_AUTO_CHASSIS_TEST_TIMEOUT_MS;
-    Step(0U);
-    Steps(3U, 1U);
+    Step();
+    Steps(3U);
     assert(enables == 0U);
 }
 
@@ -457,7 +508,7 @@ int main(void)
     (void)Flow_Deadline;
     Reset();
     jetson_test_start = 1U;
-    Steps(50U, 1U);
+    Steps(50U);
     assert(!enabled && !enables && !velocity_requests && !sent_count);
     Flow_No_Actuator();
     puts("PASS: chassis-only invalid-window gate");
@@ -468,7 +519,7 @@ int main(void)
     Flow_Interruptions();
     Flow_Visual_Stop_Wait();
     Flow_Deadline();
-    puts("PASS: chassis-only gate, routing, handshake, stopping, loss and deadline");
+    puts("PASS: chassis-only gate, routing, straight distance, handshake, stopping, loss and deadline");
 #endif
     return 0;
 }

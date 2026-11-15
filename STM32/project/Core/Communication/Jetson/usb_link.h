@@ -8,6 +8,19 @@
  * 返回值：0 已提交，1 忙或尚未枚举，2 长度非法。忙不能当成底盘故障。
  */
 
+typedef struct
+{
+    uint8_t connected; /**< 已枚举配置且总线未挂起；发送忙不改变此值。 */
+    uint32_t generation; /**< 每次复位、挂起或断开递增，恢复连接不回退，按 uint32_t 回绕。 */
+} UsbLink_State_t;
+
+/**
+ * @brief 在任务临界区读取连接状态及会话代数，捕捉两个控制周期之间的短暂断连。
+ * @param[out] out 非空时写入快照；空指针不操作。
+ * @return 无；无 VBUS 检测时，还需由业务检查既有周期帧的接收期限。
+ */
+void UsbLink_Get_State(UsbLink_State_t *out);
+
 void UsbLink_Init(void);
 void UsbLink_Task(void const *argument);
 int Jetson_Link_Send(uint8_t type, const uint8_t *data, uint8_t length);

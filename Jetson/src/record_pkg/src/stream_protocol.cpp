@@ -59,9 +59,6 @@ void FrameParser::feed(const char* data, std::size_t length) {
       throw std::runtime_error("incomplete camera JPEG");
     frame_.jpeg = buffer_.substr(0, expected_);
     buffer_.erase(0, expected_ + 2);
-    source_ = frame_.source_id;
-    previous_sequence_ = frame_.sequence;
-    previous_ns_ = frame_.capture_ns;
     expected_ = 0;
     receive_(std::make_shared<const Frame>(std::move(frame_)));
   }

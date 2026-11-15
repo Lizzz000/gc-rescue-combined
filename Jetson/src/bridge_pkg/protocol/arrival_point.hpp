@@ -1,63 +1,84 @@
 #pragma once
 
-// 类型 21 到点会话与保证 (i) 的写出顺序。不依赖 ROS，可供主机测试单独编译。
-// 协议事实见 docs/usb-protocol.md。
-
-#include "protocol/usb_protocol.hpp"
-
+// 夹爪请求身份与终态缓存。不依赖 ROS 或串口，运行层和主机回归共用。
+#include <array>
 #include <cstdint>
-#include <utility>
+#include <optional>
 
-// 在途重复只丢弃、不刷新截止；完成后的重发只再交命令 5，不再做开合。
-enum class ArrivalPointDecision { Discard, Resend, Accept };
+enum class ArrivalPointDecision { Reject, Resend, Accept };
 
-struct ArrivalPointSession
+struct GripperResult
 {
-  enum class State { Idle, InFlight, Replied, Complete };
+  std::uint8_t kind;
+  bool success;
+  std::uint32_t request_id;
+};
 
-  ArrivalPointDecision onRequest(std::uint8_t kind)
+class ArrivalPointSession
+{
+public:
+  // 构造时的启动张开已在途；kind 0 只能查询它，不能再次开爪。
+  ArrivalPointDecision onRequest(std::uint8_t kind, std::uint32_t request_id)
   {
-    if (kind != 1 && kind != 2) {return ArrivalPointDecision::Discard;}
-    if (state_ != State::Idle && kind_ == kind) {
-      if (state_ == State::InFlight) {return ArrivalPointDecision::Discard;}
+    if (kind > 3 || request_id == 0) {return ArrivalPointDecision::Reject;}
+    auto & record = records_[kind];
+    if (record.request_id == request_id) {return ArrivalPointDecision::Resend;}
+    // STM32 编号递增、溢出跳过 0。已替换的旧编号不能重新触发开合。
+    if (record.request_id != 0 && !newer(request_id, record.request_id)) {
+      return ArrivalPointDecision::Reject;
+    }
+    if (kind == 0) {
+      record = {request_id, startup_result_};
       return ArrivalPointDecision::Resend;
     }
-    // 夹取完成后同一轮的释放是新请求；在途或已回复未完成时不同 kind 仍丢弃。
-    if (state_ != State::Idle && state_ != State::Complete) {return ArrivalPointDecision::Discard;}
-    kind_ = kind;
-    state_ = State::InFlight;
+    if (active_ || (kind == 3 && !reject_open_authorized_)) {
+      return ArrivalPointDecision::Reject;
+    }
+    record = {request_id, std::nullopt};
+    active_ = kind;
+    if (kind == 3) {reject_open_authorized_ = false;}
     return ArrivalPointDecision::Accept;
   }
 
-  void markReplied()
+  std::optional<GripperResult> result(std::uint8_t kind, std::uint32_t request_id) const
   {
-    if (state_ == State::InFlight) {state_ = State::Replied;}
+    if (kind > 3) {return std::nullopt;}
+    const auto & record = records_[kind];
+    if (record.request_id != request_id || request_id == 0 || !record.success.has_value()) {
+      return std::nullopt;
+    }
+    return GripperResult{kind, *record.success, request_id};
   }
 
-  void markComplete()
+  // 必须先保存终态，再 acknowledge 底层舵机。断线或队列过期不清此缓存。
+  std::optional<GripperResult> complete(bool success)
   {
-    if (state_ == State::Replied || state_ == State::InFlight) {state_ = State::Complete;}
+    if (!active_) {return std::nullopt;}
+    const auto kind = *active_;
+    if (kind == 0) {startup_result_ = success;}
+    records_[kind].success = success;
+    active_.reset();
+    return result(kind, records_[kind].request_id);
   }
 
-  void reset()
-  {
-    state_ = State::Idle;
-    kind_ = 0;
-  }
-
-  State state() const {return state_;}
-  std::uint8_t kind() const {return kind_;}
+  void authorizeRejectOpen() {reject_open_authorized_ = true;}
+  // 明确进入新搜索时撤旧拒绝授权；保留编号水位、结果和在途动作，防止跨轮重放。
+  void beginSearch() {reject_open_authorized_ = false;}
+  bool busy() const {return active_.has_value();}
 
 private:
-  State state_{State::Idle};
-  std::uint8_t kind_{0};
+  struct Record
+  {
+    std::uint32_t request_id{0};
+    std::optional<bool> success;
+  };
+  static bool newer(std::uint32_t next, std::uint32_t previous)
+  {
+    const auto distance = next - previous;
+    return distance != 0 && distance < 0x80000000u;
+  }
+  std::array<Record, 4> records_{};
+  std::optional<std::uint8_t> active_{0};
+  std::optional<bool> startup_result_;
+  bool reject_open_authorized_{false};
 };
-
-// 保证 (i)：同一发送上下文里先提交 alive=1、pause=1、速度为 0 的类型 1，成功后才允许提交回复。
-// 背压或中断时不提交回复，由调用方保留待发并在下一拍重试。
-template<typename Write>
-auto writePauseHeartbeat(Write && write, std::uint8_t & pause) -> decltype(write(std::declval<can_frame>()))
-{
-  pause = 1;
-  return write(CanProtocol::velocity(true, 0, 0, 0, pause));
-}

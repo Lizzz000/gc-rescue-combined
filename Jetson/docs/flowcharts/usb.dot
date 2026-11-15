@@ -19,10 +19,10 @@ digraph usb {
   f192b [label="类型 7\ncommand=2"];
   f206 [label="STM32 → Jetson\n类型 20\n01 + token\n投送"];
   f192c [label="类型 7\ncommand=4"];
-  f205 [label="STM32 → Jetson\n类型 19  载荷 01\n重找"];
+  f205 [label="STM32 → Jetson\n类型 19  01+id32\n重找"];
   f192d [label="类型 7\ncommand=3，token 填 0"];
-  periodic [label="周期帧（寻找或导航时）\n类型 1 心跳（alive=0 为失联）\n类型 3 目标中心\n类型 4 安全区中心", shape=note, fillcolor="#fff8e8"];
+  periodic [label="周期帧（寻找或导航时）\n仅类型 3/4，各 100 Hz\n类型 3 目标中心\n类型 4 安全区中心", shape=note, fillcolor="#fff8e8"];
 
   f200 -> f190 -> f191 -> f193 -> f203 -> f192a -> f204 -> f192b -> f206 -> f192c -> f205 -> f192d;
-  note [label="未授权的类型 17 仍回类型 7，accepted=0\n畸形帧和未知类型无回包", shape=note, fillcolor="#fff8e8"];
+  note [label="夹爪：类型 21(kind,id) 请求/查询\n类型 7 命令 5 受理，类型 9 报终态", shape=note, fillcolor="#fff8e8"];
 }

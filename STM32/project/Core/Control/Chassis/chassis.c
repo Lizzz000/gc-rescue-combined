@@ -117,12 +117,18 @@ static void Update_Stop_Feedback(uint8_t baseline)
 /** @brief 检查使能待命时，零速指令之后的三轮反馈是否仍能确认停车。
  * @return 连续三组新反馈均在轮速门限内且未过期返回 1，否则返回 0。
  */
-uint8_t Chassis_Is_Stopped(void)
+static uint8_t Stopped_Feedback(void)
 {
     if (!enabled || mode != IDLE || !monitoring_stop)
         return 0U;
     Update_Stop_Feedback(0U);
     return stop_groups == STOP_GROUPS;
+}
+
+/** @brief 仅正常待命返回完成；故障或定时停机的反馈由 Loop 用于失能。 */
+uint8_t Chassis_Is_Stopped(void)
+{
+    return !disable_after_stop && Stopped_Feedback();
 }
 
 /** @brief 用与反馈 ISR 相同的时基核对三轮使能状态与反馈年龄；约束见头文件。 */
@@ -521,7 +527,7 @@ void Chassis_Loop(void)
     }
     /* 定时动作先用原 MIT 速度阻尼制动，再按旧约定失能；反馈缺失时限时释放。 */
     if ((disable_after_stop && ((uint32_t)(now_ms - run_started_ms) >= TIMED_BRAKE_LIMIT_MS ||
-                                (stop_groups == STOP_GROUPS && Chassis_Is_Stopped()))) ||
+                                Stopped_Feedback())) ||
         (mode == TURN && (uint32_t)(now_ms - turn_started_ms) >= CHASSIS_TURN_TIMEOUT_MS))
         Chassis_Disable();
     /* 任务按 5 ms 的 RTOS 节拍唤醒。微秒抖动不应把名义 10 ms 的控制拍推到 15 ms。 */

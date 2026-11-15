@@ -158,7 +158,7 @@ void testBridgeState()
   CHECK(!fresh.targetOutput(now, monoAt(std::chrono::milliseconds(10001))).valid);
 
   // 同代心跳不解闭锁。新代次且仍在寻找 + seg 才放行，旧中心不复活。
-  fresh.holdCoordinates(now, false);
+  fresh.holdCoordinates(now);
   CHECK(fresh.locallyHeld() && !fresh.targetOutput(now, arrival).valid);
   auto same_gen = missionAt(
     now_ns, BridgeCyclePhase::SearchingTarget, BridgeTransportPhase::First, 2);
@@ -172,7 +172,7 @@ void testBridgeState()
   // 205 的直到重新寻找：中间切到前往安全区也不解锁。
   BridgeState held = makeState();
   armSearch(held, now_ns, 4);
-  held.holdCoordinates(now, true);
+  held.holdForSearch(now, 4);
   BridgeTaskState field;
   field.stamp = {now_ns - 1000};
   field.task = "field";
@@ -244,6 +244,94 @@ void testBridgeState()
   // begin 不清除上一次 bind 的 request_id。新 bind 之前超时，撤单编号仍是 7。
   CHECK(expired && expired->generation == 2 && expired->command == 1 && expired->request_id == 7 && !request.waiting());
   CHECK(request.begin({t0}, std::chrono::milliseconds(50), 3) && request.cancel()->command == 3 && !request.cancel());
+}
+
+void testSearchReplyOrdering()
+{
+  Group group("BridgeState search response ordering");
+  // ROS topic/service callbacks have no cross-channel ordering guarantee.
+  // 0: response first; 1: SwitchingSeg first; 2: SearchingTarget first.
+  for (int order = 0; order < 3; ++order) {
+    BridgeState state = makeState();
+    state.task({{kSecond}, "field", 1}, {kSecond});
+    state.mission(missionAt(kSecond, BridgeCyclePhase::WaitingTransfer,
+      BridgeTransportPhase::Later, 10, BridgeDestination::Left,
+      BridgeOutcome::Success), {kSecond});
+    state.holdCoordinates({2 * kSecond});
+    const auto requested_generation = state.missionState()->cycle_generation;
+    std::int64_t clock = 3 * kSecond;
+    auto reply = [&] {
+        state.holdForSearch({clock++}, requested_generation);
+      };
+    if (order == 0) {
+      reply();
+      CHECK(state.locallyHeld());
+      // A heartbeat of the old generation cannot authorize the next search.
+      auto heartbeat = *state.missionState();
+      heartbeat.stamp = {clock};
+      state.mission(heartbeat, {clock++});
+      CHECK(state.locallyHeld());
+    }
+    auto switching = missionAt(clock, BridgeCyclePhase::SwitchingSeg,
+      BridgeTransportPhase::Later, 11);
+    switching.operation = BridgeOperation::Switching;
+    switching.outcome = BridgeOutcome::Pending;
+    state.mission(switching, {clock++});
+    if (order == 1) {reply();}
+    CHECK(state.locallyHeld());
+    auto completed = missionAt(clock, BridgeCyclePhase::SearchingTarget,
+      BridgeTransportPhase::Later, 11, BridgeDestination::None, BridgeOutcome::Success);
+    state.mission(completed, {clock++});
+    CHECK(state.locallyHeld()); // Actual seg confirmation is also required.
+    state.task({{clock}, "seg", 2}, {clock});
+    ++clock;
+    if (order == 2) {reply();}
+    CHECK(!state.locallyHeld());
+
+    const auto mono = monoAt(std::chrono::seconds(3));
+    CHECK(!state.targetOutput({clock}, mono).valid); // No cached center is revived.
+    BridgeTargetInput stale{{state.cutoff().ns - 1}, "cam",
+      detection("old", "0", 960, 540)};
+    CHECK(!state.target(stale, {clock}, mono, true));
+    for (int beat = 0; beat < 3; ++beat) {
+      completed.stamp = {clock};
+      state.mission(completed, {clock++});
+      BridgeTargetInput target{{clock}, "cam", detection("new", "0", 960, 540)};
+      CHECK(state.target(target, {clock}, mono, true));
+      CHECK(!state.locallyHeld() && state.targetOutput({clock}, mono).valid);
+      ++clock;
+    }
+  }
+
+  // Explicit recovery may start while seg/search is already active. Its old
+  // terminal state and same-generation heartbeats must not confirm the new search.
+  BridgeState same_mode = makeState();
+  armSearch(same_mode, 10 * kSecond, 20);
+  same_mode.holdForSearch({10 * kSecond}, 20);
+  CHECK(same_mode.locallyHeld());
+  auto status = missionAt(11 * kSecond, BridgeCyclePhase::SearchingTarget,
+    BridgeTransportPhase::First, 20);
+  same_mode.mission(status, status.stamp);
+  CHECK(same_mode.locallyHeld());
+  status.stamp = {12 * kSecond};
+  status.cycle_generation = 21;
+  status.cycle_phase = BridgeCyclePhase::SwitchingSeg;
+  status.operation = BridgeOperation::Switching;
+  same_mode.mission(status, status.stamp);
+  same_mode.task({status.stamp, "seg", 2}, status.stamp);
+  CHECK(same_mode.locallyHeld());
+  status.stamp = {13 * kSecond};
+  status.cycle_phase = BridgeCyclePhase::Fault;
+  status.operation = BridgeOperation::Idle;
+  status.outcome = BridgeOutcome::Rejected;
+  same_mode.mission(status, status.stamp);
+  CHECK(same_mode.locallyHeld());
+  status.stamp = {14 * kSecond};
+  status.cycle_phase = BridgeCyclePhase::SearchingTarget;
+  status.cycle_generation = 22;
+  status.outcome = BridgeOutcome::Success;
+  same_mode.mission(status, status.stamp);
+  CHECK(!same_mode.locallyHeld());
 }
 
 void testSafetyHold()
@@ -330,4 +418,69 @@ void testSafetyHold()
   CHECK(rejects(0.2, 0.0));
   CHECK(rejects(0.2, 20.0));
   CHECK(!rejects(0.2, 100.0));
+}
+
+void testMissionRestart()
+{
+  Group group("Mission generation rollback recovery");
+  // A restart is not a new movement authorization, with or without an arrival hold.
+  for (bool already_held : {false, true}) {
+    for (int reply_order = 0; reply_order < 3; ++reply_order) {
+      auto state = makeState();
+      armSearch(state, 10 * kSecond, 10);
+      if (already_held) {state.holdCoordinates({10 * kSecond});}
+      std::int64_t clock = 11 * kSecond;
+      auto status = missionAt(clock, BridgeCyclePhase::SearchingTarget,
+        BridgeTransportPhase::First, 0);
+      const auto restarted = state.mission(status, {clock++});
+      CHECK(restarted.mission_restarted);
+      CHECK(state.locallyHeld());
+      state.task({{clock}, "seg", 0}, {clock});
+      ++clock;
+      status.stamp = {clock};
+      status.cycle_generation = 1;
+      state.mission(status, {clock++});
+      CHECK(state.locallyHeld()); // Neither a heartbeat nor an unsolicited new generation recovers.
+      const auto mono = monoAt(std::chrono::seconds(11));
+      BridgeTargetInput target{{clock}, "cam", detection("a", "0", 960, 540)};
+      CHECK(state.target(target, {clock}, mono, true));
+      CHECK(!state.targetOutput({clock}, mono).valid);
+      ++clock;
+
+      // Only acceptance of a NEW explicit search opens the recovery gate.
+      const auto requested_generation = state.missionState()->cycle_generation;
+      auto accepted = [&] {state.holdForSearch({clock++}, requested_generation);};
+      if (reply_order == 0) {accepted();}
+      status.stamp = {clock};
+      status.cycle_generation = 2;
+      status.cycle_phase = BridgeCyclePhase::SwitchingSeg;
+      status.operation = BridgeOperation::Switching;
+      status.outcome = BridgeOutcome::Pending;
+      state.mission(status, {clock++});
+      if (reply_order == 1) {accepted();}
+      CHECK(state.locallyHeld());
+      status.stamp = {clock};
+      status.cycle_phase = BridgeCyclePhase::SearchingTarget;
+      status.operation = BridgeOperation::Idle;
+      status.outcome = BridgeOutcome::Success;
+      state.mission(status, {clock++});
+      if (reply_order == 2) {
+        CHECK(state.locallyHeld());
+        accepted();
+      }
+      CHECK(!state.locallyHeld());
+      CHECK(!state.targetOutput({clock}, mono).valid);
+      target.stamp = {clock};
+      CHECK(state.target(target, {clock}, mono, true));
+      CHECK(state.targetOutput({clock}, mono).valid);
+    }
+  }
+
+  // A source-time-rejected old status must not create a restart.
+  auto state = makeState();
+  armSearch(state, 10 * kSecond, 10);
+  auto stale = missionAt(kSecond, BridgeCyclePhase::SearchingTarget,
+    BridgeTransportPhase::First, 0);
+  CHECK(!state.mission(stale, {11 * kSecond}).accepted);
+  CHECK(!state.locallyHeld());
 }

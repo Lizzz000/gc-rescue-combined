@@ -32,6 +32,12 @@
       "unit": "米",
       "purpose": "拟合的紫框外缘实际高度；与宽度一起描述物理几何，不是内框高度或板材厚度。"
     },
+    "black_width_m": {
+      "group": "geometry",
+      "level": "常用",
+      "unit": "米",
+      "purpose": "实测黑色分界带宽度；按实际鸟瞰宽度换算，辅助同帧边缘证据定位，不替代分界线测量或消除遮挡歧义。"
+    },
     "bev_px_per_m": {
       "group": "geometry",
       "level": "常用",

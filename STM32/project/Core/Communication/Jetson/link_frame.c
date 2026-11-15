@@ -4,17 +4,17 @@
 
 static uint16_t crc16_ibm(const uint8_t *data, uint8_t length)
 {
+    /* 两次4位查表等价于8次逐位递推，仅占32字节常量。 */
+    static const uint16_t nibble[16] = {
+        0x0000U, 0xCC01U, 0xD801U, 0x1400U, 0xF001U, 0x3C00U, 0x2800U, 0xE401U,
+        0xA001U, 0x6C00U, 0x7800U, 0xB401U, 0x5000U, 0x9C01U, 0x8801U, 0x4400U
+    };
     uint16_t crc = 0xFFFFU;
     for (uint8_t i = 0U; i < length; ++i)
     {
         crc ^= data[i];
-        for (uint8_t bit = 0U; bit < 8U; ++bit)
-        {
-            if ((crc & 1U) != 0U)
-                crc = (uint16_t)((crc >> 1U) ^ 0xA001U);
-            else
-                crc = (uint16_t)(crc >> 1U);
-        }
+        crc = (uint16_t)((crc >> 4U) ^ nibble[crc & 0x0FU]);
+        crc = (uint16_t)((crc >> 4U) ^ nibble[crc & 0x0FU]);
     }
     return crc;
 }
@@ -35,22 +35,15 @@ uint8_t LinkFrame_Encode(uint8_t type, const uint8_t *data, uint8_t length, uint
     return (uint8_t)(6U + length);
 }
 
-static void drop_until_sof(LinkParser *parser)
+/* 扫描到下一帧头后只搬移一次，first之前的字节已消费或已判坏。 */
+static void discard_to_sof(LinkParser *parser, uint8_t first)
 {
-    while (parser->count > 0U && parser->buffer[0] != LINK_FRAME_SOF)
-    {
-        memmove(parser->buffer, parser->buffer + 1U, parser->count - 1U);
-        --parser->count;
-    }
-}
-
-static void drop_one(LinkParser *parser)
-{
-    if (parser->count == 0U)
-        return;
-    memmove(parser->buffer, parser->buffer + 1U, parser->count - 1U);
-    --parser->count;
-    drop_until_sof(parser);
+    uint8_t skip = first;
+    while (skip < parser->count && parser->buffer[skip] != LINK_FRAME_SOF)
+        ++skip;
+    parser->count = (uint8_t)(parser->count - skip);
+    if (parser->count > 0U && skip > 0U)
+        memmove(parser->buffer, parser->buffer + skip, parser->count);
 }
 
 uint8_t LinkParser_Feed(LinkParser *parser, uint8_t byte, LinkFrame *out)
@@ -69,7 +62,7 @@ uint8_t LinkParser_Feed(LinkParser *parser, uint8_t byte, LinkFrame *out)
         if (parser->buffer[0] != LINK_FRAME_SOF || parser->buffer[1] != LINK_FRAME_VERSION ||
             payload > LINK_FRAME_MAX_PAYLOAD)
         {
-            drop_one(parser);
+            discard_to_sof(parser, 1U);
             continue;
         }
         const uint8_t total = (uint8_t)(6U + payload);
@@ -80,7 +73,7 @@ uint8_t LinkParser_Feed(LinkParser *parser, uint8_t byte, LinkFrame *out)
                                 ((uint16_t)parser->buffer[5U + payload] << 8U);
         if (expect != actual)
         {
-            drop_one(parser);
+            discard_to_sof(parser, 1U);
             continue;
         }
         out->type = parser->buffer[2];
@@ -88,11 +81,7 @@ uint8_t LinkParser_Feed(LinkParser *parser, uint8_t byte, LinkFrame *out)
         memset(out->data, 0, sizeof(out->data));
         if (payload > 0U)
             memcpy(out->data, parser->buffer + 4U, payload);
-        const uint8_t extra = (uint8_t)(parser->count - total);
-        if (extra > 0U)
-            memmove(parser->buffer, parser->buffer + total, extra);
-        parser->count = extra;
-        drop_until_sof(parser);
+        discard_to_sof(parser, total);
         return 1U;
     }
     return 0U;

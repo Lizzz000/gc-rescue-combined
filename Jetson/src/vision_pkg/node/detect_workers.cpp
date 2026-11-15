@@ -2,6 +2,7 @@
 // 参数、ROS 话题和最终发布在 detect_node.cpp。
 
 #include "node/detect_node.hpp"
+#include "yolo/yolo.hpp"  // BackendError 来自经过项目补丁的 TensorRT 后端。
 
 #include <interface_pkg/app/core.hpp>
 #include <algorithm>
@@ -15,7 +16,6 @@
 #include <utility>
 #include <vector>
 
-#include "yolo/yolo.hpp"
 
 // 连续读取失败次数是既有重连规则；打开失败另走可被停止通知打断的重试等待。
 constexpr int kMaxReadFailures = 30;

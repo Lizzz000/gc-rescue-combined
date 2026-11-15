@@ -35,7 +35,7 @@
         os << std::fixed << std::setprecision(2);
         return os;
     }
-    std::vector<Eigen::RowVectorXf> OCSort::update(const Eigen::MatrixXf& dets) {
+    std::vector<OCSortTrack> OCSort::update(const Eigen::MatrixXf& dets) {
         if (dets.cols() != 6 || !dets.allFinite()) {
             throw std::invalid_argument("OCSort input must be finite Nx6 xyxy, score, class (empty: 0x6)");
         }
@@ -59,7 +59,9 @@
         }
         Eigen::MatrixXf trks = Eigen::MatrixXf::Zero(trackers.size(), 5);
         std::vector<int> to_del;
-        std::vector<Eigen::RowVectorXf> ret;
+        std::vector<OCSortTrack> ret;
+        // Only tracks matched to this frame's detections are published.
+        ret.reserve(dets.rows());
         for (int i = 0; i < trks.rows(); i++) {
             Eigen::RowVectorXf pos = trackers[i].predict();
             trks.row(i) << pos(0), pos(1), pos(2), pos(3), 0;
@@ -224,9 +226,7 @@
                 d = trackers.at(i).last_observation.block(0, 0, 1, 4);
             }
             if (trackers.at(i).time_since_update < 1 && ((trackers.at(i).hit_streak >= min_hits) | (frame_count <= min_hits))) {
-                Eigen::RowVectorXf tracking_res(7);
-                tracking_res << d(0), d(1), d(2), d(3), trackers.at(i).id + 1, trackers.at(i).cls, trackers.at(i).conf;
-                ret.push_back(tracking_res);
+                ret.push_back({d, trackers.at(i).id + 1, trackers.at(i).cls, trackers.at(i).conf});
             }
             if (trackers.at(i).time_since_update > max_age) {
                 trackers.erase(trackers.begin() + i);

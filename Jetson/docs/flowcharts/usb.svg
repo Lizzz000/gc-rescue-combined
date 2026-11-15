@@ -149,7 +149,7 @@
 <title>f205</title>
 <path fill="#f7f7f7" stroke="black" d="M172.75,-157C172.75,-157 48.75,-157 48.75,-157 42.75,-157 36.75,-151 36.75,-145 36.75,-145 36.75,-98 36.75,-98 36.75,-92 42.75,-86 48.75,-86 48.75,-86 172.75,-86 172.75,-86 178.75,-86 184.75,-92 184.75,-98 184.75,-98 184.75,-145 184.75,-145 184.75,-151 178.75,-157 172.75,-157"/>
 <text xml:space="preserve" text-anchor="middle" x="110.75" y="-139.7" font-family="Microsoft YaHei" font-size="14.00">STM32 → Jetson</text>
-<text xml:space="preserve" text-anchor="middle" x="110.75" y="-118.7" font-family="Microsoft YaHei" font-size="14.00">类型 19 &#160;载荷 01</text>
+<text xml:space="preserve" text-anchor="middle" x="110.75" y="-118.7" font-family="Microsoft YaHei" font-size="14.00">类型 19 &#160;01+id32</text>
 <text xml:space="preserve" text-anchor="middle" x="110.75" y="-97.7" font-family="Microsoft YaHei" font-size="14.00">重找</text>
 </g>
 <!-- f192c&#45;&gt;f205 -->
@@ -178,7 +178,7 @@
 <polyline fill="none" stroke="black" points="546.25,-1248 546.25,-1242"/>
 <polyline fill="none" stroke="black" points="552.25,-1242 546.25,-1242"/>
 <text xml:space="preserve" text-anchor="middle" x="377.75" y="-1230.7" font-family="Microsoft YaHei" font-size="14.00">周期帧（寻找或导航时）</text>
-<text xml:space="preserve" text-anchor="middle" x="377.75" y="-1209.7" font-family="Microsoft YaHei" font-size="14.00">类型 1 心跳（alive=0 为失联）</text>
+<text xml:space="preserve" text-anchor="middle" x="377.75" y="-1209.7" font-family="Microsoft YaHei" font-size="14.00">仅类型 3/4，各 100 Hz</text>
 <text xml:space="preserve" text-anchor="middle" x="377.75" y="-1188.7" font-family="Microsoft YaHei" font-size="14.00">类型 3 目标中心</text>
 <text xml:space="preserve" text-anchor="middle" x="377.75" y="-1167.7" font-family="Microsoft YaHei" font-size="14.00">类型 4 安全区中心</text>
 </g>
@@ -188,8 +188,8 @@
 <polygon fill="#fff8e8" stroke="black" points="837,-1227 570.5,-1227 570.5,-1177 843,-1177 843,-1221 837,-1227"/>
 <polyline fill="none" stroke="black" points="837,-1227 837,-1221"/>
 <polyline fill="none" stroke="black" points="843,-1221 837,-1221"/>
-<text xml:space="preserve" text-anchor="middle" x="706.75" y="-1209.7" font-family="Microsoft YaHei" font-size="14.00">未授权的类型 17 仍回类型 7，accepted=0</text>
-<text xml:space="preserve" text-anchor="middle" x="706.75" y="-1188.7" font-family="Microsoft YaHei" font-size="14.00">畸形帧和未知类型无回包</text>
+<text xml:space="preserve" text-anchor="middle" x="706.75" y="-1209.7" font-family="Microsoft YaHei" font-size="14.00">夹爪：类型 21(kind,id) 请求/查询</text>
+<text xml:space="preserve" text-anchor="middle" x="706.75" y="-1188.7" font-family="Microsoft YaHei" font-size="14.00">类型 7 命令 5 受理，类型 9 报终态</text>
 </g>
 </g>
 </svg>

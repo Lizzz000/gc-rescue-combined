@@ -21,7 +21,9 @@ $watch = [Diagnostics.Stopwatch]::StartNew()
   "$here\test_tx_queue.cpp" `
   "$here\test_bridge_state.cpp" `
   "$here\test_arrival_point.cpp" `
+  "$here\test_search_request.cpp" `
   "$package\state\bridge_state.cpp" `
+  "$package\transport\transport.cpp" `
   "-o$out\bridge_host_tests.exe" *> $log
 $compile = $LASTEXITCODE
 if ($compile -ne 0) {
@@ -32,6 +34,26 @@ if ($compile -ne 0) {
 
 & "$out\bridge_host_tests.exe" *>> $log
 $tests = $LASTEXITCODE
+if ($tests -eq 0) {
+  $suites = @(
+    @{Name='bridge_runtime'; Includes=@("$here/runtime_stubs", $stubs, $here, $package, $src);
+      Sources=@("$here/test_runtime_main.cpp", "$here/test_bridge_runtime.cpp", "$package/node/bridge_io.cpp", "$package/node/bridge_session.cpp", "$package/state/bridge_state.cpp", "$package/transport/transport.cpp")},
+    @{Name='cdc_write'; Includes=@("$here/posix_stubs", $stubs, $here, $package, $src);
+      Sources=@("$here/test_cdc_write.cpp", "$package/transport/cdc/cdc.cpp")},
+    @{Name='s288_timing'; Includes=@("$here/posix_stubs", $here, $package);
+      Sources=@("$here/test_s288_timing.cpp", "$package/gripper/s288_servo.cpp")}
+  )
+  foreach ($suite in $suites) {
+    $flags = @($suite.Includes | ForEach-Object { "-I$_" })
+    $binary = Join-Path $out ($suite.Name + '.exe')
+    & g++ -std=c++17 -Wall -Wextra -finput-charset=UTF-8 @flags @($suite.Sources) -o $binary *>> $log
+    $tests = $LASTEXITCODE
+    if ($tests -ne 0) { break }
+    & $binary *>> $log
+    $tests = $LASTEXITCODE
+    if ($tests -ne 0) { break }
+  }
+}
 $watch.Stop()
 Get-Content -LiteralPath $log
 Write-Host ("elapsed_ms {0}" -f $watch.ElapsedMilliseconds)

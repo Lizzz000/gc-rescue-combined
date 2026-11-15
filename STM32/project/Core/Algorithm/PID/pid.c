@@ -33,6 +33,7 @@ void PID_init(pid_type_def *pid, uint8_t mode, const float PID[3], float max_out
     pid->Ki = PID[1];
     pid->Kd = PID[2];
     pid->max_out = max_out;
+    pid->min_out = -max_out;
     pid->max_iout = max_iout;
     pid->error[0] = pid->error[1] = pid->Pout = pid->Iout = pid->Dout = pid->out = 0.0f;
 }
@@ -51,12 +52,18 @@ float PID_calc(pid_type_def *pid, float ref, float set)
     if (pid->mode == PID_POSITION)
     {
         pid->Pout = pid->Kp * pid->error[0];
-        pid->Iout += pid->Ki * pid->error[0];
         const float derivative = pid->error[0] - pid->error[1];
         pid->Dout = pid->Kd * derivative;
-        LimitMax(pid->Iout, pid->max_iout);
-        pid->out = pid->Pout + pid->Iout + pid->Dout;
-        LimitMax(pid->out, pid->max_out);
+        const float pd = pid->Pout + pid->Dout;
+        const float old_integral = pid->Iout;
+        float integral = old_integral + pid->Ki * pid->error[0];
+        LimitMax(integral, pid->max_iout);
+        if (pd + integral > pid->max_out && integral > old_integral)
+            integral = fmaxf(old_integral, pid->max_out - pd);
+        else if (pd + integral < pid->min_out && integral < old_integral)
+            integral = fminf(old_integral, pid->min_out - pd);
+        pid->Iout = integral;
+        pid->out = fmaxf(pid->min_out, fminf(pid->max_out, pd + integral));
     }
     return pid->out;
 }
@@ -67,23 +74,23 @@ float PID_Step(pid_type_def *pid, float error, float measurement_rate, float dt)
     if (pid == NULL)
         return 0.0f;
 
-    /* 保留旧 PID_Step 的 double 中间乘加及先对积分限幅的顺序。 */
-    const double pd = (double)pid->Kp * error - (double)pid->Kd * measurement_rate;
-    const double old_integral = pid->Iout;
-    double integral = old_integral + (double)pid->Ki * error * dt;
+    /* 单精度执行连续时间公式，保留先对积分限幅、再按输出饱和限制积分的顺序。 */
+    const float pd = pid->Kp * error - pid->Kd * measurement_rate;
+    const float old_integral = pid->Iout;
+    float integral = old_integral + pid->Ki * error * dt;
     LimitMax(integral, pid->max_iout);
     if (pd + integral > pid->max_out && integral > old_integral)
-        integral = fmax(old_integral, pid->max_out - pd);
-    else if (pd + integral < -pid->max_out && integral < old_integral)
-        integral = fmin(old_integral, -pid->max_out - pd);
+        integral = fmaxf(old_integral, pid->max_out - pd);
+    else if (pd + integral < pid->min_out && integral < old_integral)
+        integral = fminf(old_integral, pid->min_out - pd);
 
     pid->error[0] = error;
     pid->Pout = pid->Kp * error;
-    pid->Iout = (float)integral;
+    pid->Iout = integral;
     pid->Dout = -pid->Kd * measurement_rate;
-    double output = pd + pid->Iout;
-    LimitMax(output, pid->max_out);
-    pid->out = (float)output;
+    float output = pd + pid->Iout;
+    output = fmaxf(pid->min_out, fminf(pid->max_out, output));
+    pid->out = output;
     return pid->out;
 }
 

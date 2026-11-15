@@ -2,7 +2,7 @@
 
 `project/` 是 STM32F407 CubeMX/CMake 工程，`tests/` 包含主机回归，`docs/` 包含硬件配置、板间 USB 和电机 CAN1 联调说明，`LICENSES/` 保留第三方许可。
 
-在具备 ARM GNU 工具链、CMake 和 Ninja 的环境中，进入 `project/` 后运行 `cmake --preset Debug` 和 `cmake --build --preset Debug`。主机测试在本目录运行 `python tests/run_native.py`；协议互验运行 `python tests/check_jetson_codec.py --jetson-root ../Jetson`。
+在具备 ARM GNU 工具链、CMake 和 Ninja 的环境中，进入 `project/` 后运行 `cmake --preset Debug` 和 `cmake --build --preset Debug`。主机测试在本目录运行 `python tests/run_native.py`；协议互验运行 `python tests/check_jetson_codec.py --jetson-root ../Jetson`；夹爪总时间预算互验运行 `python tests/check_gripper_budget.py`（使用主机 g++）。
 
 默认使用六轴姿态且自动搬运关闭。启用自动模式前需按 [联调说明](docs/JETSON_USB_TEST.md) 完成 Jetson 夹爪联调、运动参数标定和板端验证。
 
@@ -31,6 +31,14 @@
 - `JETSON_AUTO_APPROACH_SPEED_MPS`、`JETSON_AUTO_DISTANCE_SPEED_MPS`、`JETSON_AUTO_PUSH_SPEED_MPS`：视觉靠近、定距及盲推/后退的目标速度。
 - `JETSON_AUTO_SEARCH_WZ_RAD_S`、`JETSON_AUTO_APPROACH_MIN_SPEED_MPS`：搜索角速度与窗外最低修正速度。
 
-目标速度不得超过对应上限；换算和加减速在底盘控制层执行。类型 3、4 是中心帧，须与 Jetson 同时部署。Mission 心跳缺失时 bridge 停止运动保活，因此独立运行 bridge 也需要配套 Mission 节点。`gripper.move_s` 仍是待标定空值，不要填数字。
+目标速度不得超过对应上限；换算和加减速在底盘控制层执行。类型 3、4 是中心帧，须与 Jetson 同时部署。MissionStatus 过期时 bridge 停发周期流并撤销业务准入，因此独立运行 bridge 也需要配套 Mission 节点。板间类型 1 已删除，夹爪完成通过类型 9 回执。`gripper.move_s` 仍是待标定空值，不要填数字。
+
+自动流程不增加心跳，复用合法类型 3/4 的接收时效：USB 离线、会话改变或周期流断开达到 250 ms 后触发制动，确认停稳或制动达到 500 ms 后请求失能；故障锁存到显式重新初始化，恢复连接不会自动续跑。启动前须先收到当前 USB 会话的周期帧。正常丢目标仍发送 `valid=0` 并继续搜索，夹爪、转向和等待期间也持续发送。250 ms 是断流判定期限，实际停车仍受控制节拍和机械减速影响；Mission 掉线还先经过 Jetson 的 500 ms 状态有效期。
 
 自动靠近使用 [Algorithm/Kalman](project/Core/Algorithm/Kalman/README.md) 的自适应图像坐标滤波；参数和实际跟踪效果仍需实车验证与标定。
+
+安全区导航先按现有类型 4 的窗口靠近并对准中心，停稳核验后按 `JETSON_AUTO_SAFETY_STRAIGHT_M` 锁航向直行；此后不再使用识别结果，定距完成且三轮停稳才发送类型 18。该距离以米配置，按要求留零待实车标定；单趟底盘测试也需要填写。定距沿用指令速度积分规划，实际距离需实测。通信断流、USB 会话变化及底盘故障仍沿用已有处理。
+
+2026-11-15 算法整理：温控 PID 按加热器实际的 `[0,4500]` 输出范围抗积分饱和；航向 PID 与 Mahony 去掉非必要双精度运算，定距轨迹仍保留原精度。BMI088 连续寄存器读取合并 HAL 调用，线上字节和片选时序不变。USB CRC 使用 16 项表递推，协议不变。离线磁标定改用解析 Jacobian，模型、求解容差和现有标定系数保持。
+
+`tests/run_native.py` 覆盖六/九轴、温控、SPI 读错恢复、PID、底盘、自动流程、CRC 与通信等 23 套测试；其中滤波回归补入 15/30/50/100 Hz、丢帧及离群场景。磁标定另运行 `python tests/test_mag_calibration.py`，需要 NumPy/SciPy。主机回归和 ARM 编译不代替实车运动、温控及传感器时序验证。

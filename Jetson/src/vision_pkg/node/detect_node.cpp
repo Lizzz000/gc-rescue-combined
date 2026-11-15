@@ -20,7 +20,7 @@
 #include <utility>
 #include <vector>
 
-#include "yolo/yolo.hpp"
+#include "node/seg_ros.hpp"
 
 
 // 先检查范围，再把 ROS 的 int64 收成后端用的 int。

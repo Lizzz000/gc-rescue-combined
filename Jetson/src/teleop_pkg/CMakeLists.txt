@@ -21,8 +21,10 @@ install(DIRECTORY servo/
 
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(link_frame test/test_frame.py TIMEOUT 60)
   ament_add_pytest_test(manual_command test/test_manual_command.py TIMEOUT 60)
   ament_add_pytest_test(manual_control test/test_manual_control.py TIMEOUT 120)
+  ament_add_pytest_test(manual_shutdown test/test_manual_shutdown.py TIMEOUT 60)
   # 链路验收：周期、租约、SIGKILL→STM32 制动回放（需主机 gcc 与 STM32 源码，缺失时跳过）、HTTP 错误输入
   ament_add_pytest_test(manual_link test/test_manual_link.py TIMEOUT 120)
   ament_add_pytest_test(s288 test/test_s288.py TIMEOUT 60)

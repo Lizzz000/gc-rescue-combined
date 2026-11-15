@@ -6,7 +6,9 @@ inline FieldConfig productionConfig()
 {
   FieldConfig c;
 #define SET(name, value) c.name = value;
+#define DETECT(name, value)
 #include "field_config_values.inc"
+#undef DETECT
 #undef SET
   validateFieldConfig(c);
   return c;

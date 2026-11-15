@@ -2,6 +2,7 @@
 // field_config_values.inc 读取，不在此重复。
 #pragma once
 
+#include "field_scene.hpp"
 #include <opencv2/core.hpp>
 
 namespace field_test {
@@ -40,8 +41,8 @@ constexpr double kEdgeLineTolPx = 2.0;        // 四条边到真值内沿线的�
 constexpr double kEdgeLineTolNearPx = 4.0;    // 近距离视角放宽
 constexpr double kCornerTolPx = 3.0;          // 画内角点误差上限（仅统计画内角点）
 constexpr int kEdgeSamples = 16;              // 每条边的采样点数
-constexpr double kCenterTolPx = 4.0;          // 半区中心误差上限；J6 纯函数落地前只报告不判
-constexpr bool kGateCenterError = false;      // J6 落地后改为 true
+constexpr double kCenterTolPx = 4.0;          // 半区中心误差均值上限（处理图像素）
+constexpr bool kGateCenterError = true;
 
 // ---- 判据：稳定（序列） ----
 constexpr int kSequenceFrames = 200;          // 静态序列帧数
@@ -81,6 +82,6 @@ constexpr double kShadowLight = 0.30, kShadowDark = 0.55;
 constexpr double kBlockSize = 0.05;                        // 方块边长，米
 constexpr double kBlockHeights[] = {0.01, 0.02, 0.03, 0.05}; // 1–5 cm
 constexpr double kBlockRows[] = {0.08, 0.18, 0.28};        // 近/中/远（场地 y，米）
-constexpr double kBlockOffsets[] = {0.0, 0.036, 0.12};     // 压线/贴线（半带宽+半块）/离线（场地 x，米）
+constexpr double kBlockOffsets[] = {0.0, (field_scene::kBand + kBlockSize) / 2.0, 0.12}; // 压线/贴线/离线（场地 x，米）
 
 }  // namespace field_test

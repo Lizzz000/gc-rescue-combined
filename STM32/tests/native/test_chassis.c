@@ -305,7 +305,7 @@ static void test_timed_brake(void)
             stopped_group(); stopped_group();
             assert(!Chassis_Is_Stopped() && disables == 0U);
             stopped_group();
-            assert(Chassis_Is_Stopped() && disables == 0U);
+            assert(!Chassis_Is_Stopped() && disables == 3U); /* 第三组已停稳，直接失能。 */
             assert(!Chassis_Straight_Start(0.1f, 0U)); /* 定时动作的 FD 尚未发完。 */
         }
         else
@@ -1228,6 +1228,36 @@ static void test_turn_handoff_closed_loop(void)
     }
 }
 
+/** @brief 故障制动的静止反馈仅用于失能，不得对调用方报告正常动作完成。 */
+static void test_fault_stop_is_not_completion(void)
+{
+    for (unsigned fault = 0U; fault < 2U; ++fault)
+    {
+        reset_case(0U, UINT32_MAX - 100U);
+        assert(enable_ready());
+        assert(Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD, 0.4f, 0.5f));
+        step(10000U, 1U);
+        if (fault)
+            sample_age = 21U;
+        else
+            imu_ready = 0U;
+        step(10000U, 1U);
+        assert(Chassis_Is_Enabled() && !Chassis_Is_Stopped());
+        stopped_group();
+        stopped_group();
+        /* 第三组反馈模拟在底盘 Loop 与自主层之间到达。 */
+        test_tick += 5U;
+        counter_us += 5000U;
+        for (unsigned i = 0U; i < 3U; ++i)
+            wheel_feedback(i, 0.0f, 1U);
+        assert(Chassis_Is_Enabled() && !Chassis_Is_Stopped());
+        assert(!Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD, 0.1f, 0.5f));
+        step(5000U, 1U);
+        step(10000U, 1U);
+        assert(!Chassis_Is_Enabled() && disables == 3U); /* 按停稳失能，不额外等 500 ms。 */
+    }
+}
+
 /** @brief 姿态期限、异步取消和部分发送失败均停止生成新运动指令。 */
 static void test_failure_paths(void)
 {
@@ -1282,6 +1312,7 @@ int main(void)
     test_turn_handoff_half_circle_delta();
     test_turn_handoff_short_distance();
     test_turn_handoff_closed_loop();
+    test_fault_stop_is_not_completion();
     test_failure_paths();
     puts("PASS chassis: kinematics, measured dt/wrap, 8-way/vector/turn, distance and fresh three-wheel stop");
     return 0;

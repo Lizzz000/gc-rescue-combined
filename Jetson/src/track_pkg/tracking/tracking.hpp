@@ -12,7 +12,7 @@
 #include <optional>
 #include <string>
 #include <vector>
-#include <interface_pkg/app/core.hpp>
+#include <interface_pkg/app/core/core.hpp>
 
 // 生产 SelectNode 和未显式传策略的纯值调用共用以下默认值。
 // 底边参考点、代价、切换余量和拥挤判据只在这里维护，单位为归一化画面比例。
@@ -102,7 +102,6 @@ private:
 #include <memory>
 #include <string>
 #include <vector>
-#include <interface_pkg/app/core.hpp>
 #include "OCSort.hpp"
 
 // OC-SORT 参数在窄化到 float 之后校验：double 合法但 float 非法的值必须在启动期失败。
@@ -164,7 +163,7 @@ private:
    */
   void acceptDetection(const RecognitionDetection & detection);
   static RecognitionDetection toDetection(
-    const Eigen::RowVectorXf & track, const std::string & class_id);
+    const OCSortTrack & track, const std::string & class_id);
 
   float detection_threshold_, iou_threshold_, inertia_;
   int max_age_, min_hits_, delta_t_;

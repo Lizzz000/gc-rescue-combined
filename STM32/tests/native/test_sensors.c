@@ -33,6 +33,9 @@ static uint8_t task_mode, runtime_started, wrapped;
 static uint32_t calibration_samples, output_limit;
 static uint32_t pwm_starts, heater_updates, last_controlled_read, cold_heating;
 static uint32_t spi_calls, failed_spi_calls, runtime_skips;
+static uint8_t capture_spi, spi_wire[64], spi_devices[8], spi_lengths[8];
+static unsigned wire_count, transaction_count, attempted_bytes;
+static int fail_wire_byte = -1;
 static uint32_t error_vofa_count;
 static uint8_t inject_transfer_error, failure_pending, recovery_pending, spi_timeout_pending;
 static float last_quat[4];
@@ -153,6 +156,12 @@ void test_timer_compare(TIM_HandleTypeDef *h, uint32_t channel, uint32_t value)
     {
         assert(value > 0U);
         ++cold_heating;
+    }
+    /* 冷态饱和后恰到45℃，不能继续输出先前饱和积累的加热积分。 */
+    if (scenario == STATIC_BIAS && accel_reads > 10U && bmi088_real_data.temp == 45.0f)
+    {
+        if (value) fprintf(stderr, "heater saturated history at target: pwm=%u\n", (unsigned)value);
+        assert(value == 0U);
     }
     if (!isfinite(bmi088_real_data.temp) || bmi088_real_data.temp < -40.0f || bmi088_real_data.temp >= 50.0f)
         assert(value == 0U);
@@ -339,8 +348,14 @@ void HAL_GPIO_WritePin(void *port, uint16_t pin, GPIO_PinState state)
     { memset(mag_regs,0,sizeof(mag_regs)); mag_regs[0] = 0x10; sample_registers(); }
     uint8_t device = port == CS1_ACCEL_GPIO_Port ? 1U : (port == CS1_GYRO_GPIO_Port ? 2U : 0U);
     if (!device) return;
-    if (state == GPIO_PIN_RESET) { assert(selected == 0U); selected = device; spi_position = 0U; }
-    else if (selected == device) selected = 0U;
+    if (state == GPIO_PIN_RESET) {
+        assert(selected == 0U); selected = device; spi_position = 0U;
+        if (capture_spi) { assert(transaction_count < 8U); spi_devices[transaction_count] = device; }
+    }
+    else if (selected == device) {
+        if (capture_spi) spi_lengths[transaction_count++] = (uint8_t)spi_position;
+        selected = 0U;
+    }
 }
 
 /** @brief 按SPI协议提供寄存器字节，独立检验加速度计dummy。
@@ -350,9 +365,12 @@ void HAL_GPIO_WritePin(void *port, uint16_t pin, GPIO_PinState state)
 HAL_StatusTypeDef HAL_SPI_TransmitReceive(SPI_HandleTypeDef *spi, uint8_t *tx,
                                         uint8_t *rx, uint16_t size, uint32_t timeout)
 {
-    assert(spi == &hspi1 && selected != 0U && size == 1U && timeout == 2U);
+    assert(spi == &hspi1 && selected != 0U && size > 0U && size <= 10U && timeout == 2U);
     ++spi_calls;
     uint8_t *registers = selected == 1U ? accel_regs : gyro_regs;
+    for (unsigned i = 0; i < size; ++i, ++tx, ++rx) {
+    if (fail_wire_byte >= 0 && attempted_bytes++ == (unsigned)fail_wire_byte) return HAL_TIMEOUT;
+    if (capture_spi) { assert(wire_count < sizeof(spi_wire)); spi_wire[wire_count++] = *tx; }
     *rx = 0xEE;
     if (spi_position == 0U)
     {
@@ -386,6 +404,7 @@ HAL_StatusTypeDef HAL_SPI_TransmitReceive(SPI_HandleTypeDef *spi, uint8_t *tx,
         return HAL_TIMEOUT;
     }
     ++spi_position;
+    }
     return HAL_OK;
 }
 
@@ -581,11 +600,38 @@ int main(void)
     assert(accel_regs[0x7D] == 4 && accel_regs[0x40] == 0xAB && accel_regs[0x41] == 0);
     assert(gyro_regs[0x15] == 0x80 && gyro_regs[0x10] == 0x82);
     float gyro[3], accel[3], temperature;
+    const uint8_t expected_wire[] = {0x92,0x92,0x55,0x55,0x55,0x55,0x55,0x55,
+        0x80,0x55,0x55,0x55,0x55,0x55,0x55,0x55,0x55,
+        0x80,0x55,0x55,0xA2,0xA2,0x55,0x55};
+    const uint8_t expected_devices[] = {1,2,1,1}, expected_lengths[] = {8,9,3,4};
+    unsigned calls_before = spi_calls;
+    capture_spi = 1U;
     BMI088_read(gyro,accel,&temperature);
+    capture_spi = 0U;
+    assert(wire_count == sizeof(expected_wire) && transaction_count == 4U && selected == 0U);
+    assert(memcmp(spi_wire, expected_wire, sizeof(expected_wire)) == 0);
+    assert(memcmp(spi_devices, expected_devices, sizeof(expected_devices)) == 0);
+    assert(memcmp(spi_lengths, expected_lengths, sizeof(expected_lengths)) == 0);
+    printf("BMI088 sample: %u bytes, %u CS transactions, %u HAL calls\n",
+           wire_count, transaction_count, spi_calls - calls_before);
+    fflush(stdout);
+    assert(spi_calls - calls_before == 4U);
     assert(fabsf(gyro[0] + 0.0010652644f) < 0.000001f);
     assert(fabsf(gyro[1] - 0.21305289f) < 0.000001f && fabsf(gyro[2] + 0.21305289f) < 0.000001f);
     assert(fabsf(accel[0] - 29.40628f) < 0.001f && accel[1] < -29.4f && accel[2] > 0);
     assert(temperature == 22.875f);
+    /* 地址、accel dummy 与数据中任一线上字节失败，剩余事务不再进 HAL，且下轮可恢复。 */
+    for (unsigned byte = 0U; byte < sizeof(expected_wire); ++byte) {
+        fail_wire_byte = (int)byte;
+        attempted_bytes = 0U;
+        calls_before = spi_calls;
+        BMI088_read(gyro, accel, &temperature);
+        assert(isnan(temperature) && selected == 0U);
+        assert(spi_calls - calls_before == (byte < 8U ? 1U : byte < 17U ? 2U : byte < 20U ? 3U : 4U));
+        fail_wire_byte = -1;
+        BMI088_read(gyro, accel, &temperature);
+        assert(temperature == 22.875f && selected == 0U);
+    }
     assert(ist8310_init() == 0U);
     assert(mag_regs[0x0B] == 8 && mag_regs[0x41] == 9 && mag_regs[0x42] == 0xC0 && mag_regs[0x0A] == 0x0B);
     ist8310_real_data_t mag = {0};

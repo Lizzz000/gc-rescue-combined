@@ -5,17 +5,20 @@ VERSION = 0x01
 MAX_PAYLOAD = 8
 
 
+_CRC_NIBBLE = (
+    0x0000, 0xCC01, 0xD801, 0x1400, 0xF001, 0x3C00, 0x2800, 0xE401,
+    0xA001, 0x6C00, 0x7800, 0xB401, 0x5000, 0x9C01, 0x8801, 0x4400,
+)
+
+
 def crc16(data: bytes) -> int:
-    """CRC-16/IBM，初值 0xFFFF，多项式反射后为 0xA001。"""
+    """CRC-16/IBM，初值0xFFFF；与两端C/C++相同的4位递推。"""
     crc = 0xFFFF
     for byte in data:
         crc ^= byte
-        for _ in range(8):
-            if crc & 1:
-                crc = (crc >> 1) ^ 0xA001
-            else:
-                crc >>= 1
-    return crc & 0xFFFF
+        crc = (crc >> 4) ^ _CRC_NIBBLE[crc & 0x0F]
+        crc = (crc >> 4) ^ _CRC_NIBBLE[crc & 0x0F]
+    return crc
 
 
 def encode(msg_type: int, payload: bytes) -> bytes:
@@ -30,38 +33,39 @@ def encode(msg_type: int, payload: bytes) -> bytes:
 
 
 class Parser:
-    """逐字节同步。CRC 错时丢掉一个字节，不交出半包。"""
+    """字节流同步。CRC 错时继续寻找帧头，不交出半包。"""
 
     def __init__(self):
         self._buffer = bytearray()
 
     def feed(self, data: bytes):
+        """一次扫描输入块，保留末尾半包；无需逐字节创建临时列表或搬移前缀。"""
+        self._buffer.extend(data)
         frames = []
-        for byte in data:
-            self._buffer.append(byte)
-            frames.extend(self._pull())
-        return frames
-
-    def _pull(self):
-        frames = []
-        while len(self._buffer) >= 4:
-            if self._buffer[0] != SOF:
-                del self._buffer[0]
+        cursor = 0
+        while cursor < len(self._buffer):
+            start = self._buffer.find(b'\xa5', cursor)
+            if start < 0:
+                cursor = len(self._buffer)
+                break
+            cursor = start
+            if len(self._buffer) - start < 4:
+                break
+            payload_len = self._buffer[start + 3]
+            if self._buffer[start + 1] != VERSION or payload_len > MAX_PAYLOAD:
+                cursor += 1
                 continue
-            if self._buffer[1] != VERSION or self._buffer[3] > MAX_PAYLOAD:
-                del self._buffer[0]
-                continue
-            total = 6 + self._buffer[3]
-            if len(self._buffer) < total:
-                return frames
-            body = bytes(self._buffer[1:4 + self._buffer[3]])
-            actual = self._buffer[4 + self._buffer[3]] | (self._buffer[5 + self._buffer[3]] << 8)
+            total = 6 + payload_len
+            if len(self._buffer) - start < total:
+                break
+            body = self._buffer[start + 1:start + 4 + payload_len]
+            actual = self._buffer[start + 4 + payload_len] | (self._buffer[start + 5 + payload_len] << 8)
             if crc16(body) != actual:
-                del self._buffer[0]
+                cursor += 1
                 continue
-            payload_len = self._buffer[3]
-            msg_type = self._buffer[2]
-            payload = bytes(self._buffer[4:4 + payload_len])
-            del self._buffer[:total]
-            frames.append((msg_type, payload))
+            payload = bytes(self._buffer[start + 4:start + 4 + payload_len])
+            frames.append((self._buffer[start + 2], payload))
+            cursor += total
+        if cursor:
+            del self._buffer[:cursor]
         return frames

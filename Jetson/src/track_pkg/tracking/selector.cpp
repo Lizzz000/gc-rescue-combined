@@ -9,7 +9,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // 实现不依赖 ROS 的候选筛选、避蓝、归一化择优及上帧 ID 并列规则，不改写输入检测。
 
-#include <interface_pkg/app/core.hpp>
 #include <algorithm>
 #include <cmath>
 #include <limits>

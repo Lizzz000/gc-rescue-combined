@@ -9,6 +9,20 @@
 
 两套入口保存在 `project/.run/`，可随 Git 保存。目标和可执行文件均为 `project`，CMake profile 为 `Debug - Debug`，构建产物为 `project/build/Debug/project.elf`。启动前自动构建；下载选“如果已更新”，复位选“初始化”，GDB/Telnet 端口为3333/4444，使用CLion捆绑的multiarch GDB。一次选择一套入口使用。
 
+## 默认固件与文件
+
+沿用 `C_project/project` 的默认设置：`Debug - Debug`、六轴姿态（`INS_USE_MAGNETOMETER=OFF`）、手动模式（`JETSON_AUTO_ENABLED=0`、`JETSON_AUTO_CHASSIS_TEST=0`）。在顶部运行配置中选择 `F407-DAPLink`，与原项目的默认入口一致；使用 ST-LINK 时选择 `F407-STLINK`。普通 `project` 运行入口不负责烧录。
+
+每次链接后自动生成以下文件，均来自同一份最新 ELF：
+
+| 文件 | 用途 |
+|---|---|
+| `project/build/Debug/project.elf` | CLion/OpenOCD 下载及断点调试 |
+| `project/build/Debug/project.hex` | 支持 Intel HEX 的烧录工具，文件已携带地址 |
+| `project/build/Debug/project.bin` | 原始二进制；烧录起始地址必须设为 `0x08000000` |
+
+不要将 `build/verify-auto` 等测试目录的固件作为默认下载文件。自动模式仍需完成实际标定；本次未修改运动参数。
+
 ## 本机工具
 
 - CLion工具链：`STM32`。`project/CMakePresets.json` 的 JetBrains vendor 字段已与旧项目一样指定该工具链。
@@ -34,6 +48,6 @@ F407使用 `target/stm32f4x.cfg`，下载工作区由该脚本设在普通SRAM `
 
 `.run/*.run.xml` 和两份 `openocd-*.cfg` 独立于CubeMX生成目录；生成代码不需要重新填写这两套下载配置。如果重新生成或更换电脑后CMake工具链选择变化，在CLion的 `Debug - Debug` profile确认工具链仍为 `STM32`；本机该工具链也已是默认工具链。
 
-本次已通过：实际OpenOCD使用 `noinit` 解析两份配置（F4目标、480kHz），CMake Debug配置与ARM固件构建，以及CLion中两套运行配置的加载检查。未执行探针连接、复位或烧录，硬件通信留待上板验证。
+验证方式：实际 OpenOCD 使用 `noinit` 解析两份配置，CMake Debug 配置与 ARM 固件构建，核对 HEX/BIN 地址、向量表和 ELF 内容。`noinit` 只检查配置，不连接探针；实际下载和运行需在接好板卡后验证。
 
-配置格式参考旧项目的 `.run/H723-DAPLink.run.xml`、`.run/H723-STLINK.run.xml`，仅借鉴IDE入口与探针设置，未读取或迁移旧业务代码，也未修改旧仓库。工具用法见 [JetBrains OpenOCD文档](https://www.jetbrains.com/help/clion/openocd-support.html)。
+本工程的 F407 下载配置与原 `C_project/project` 保持一致。更早 H723 项目的入口仅供 IDE 格式与探针设置参考，不能迁移其芯片和 SRAM 地址。本次未修改原项目。工具用法见 [JetBrains OpenOCD文档](https://www.jetbrains.com/help/clion/openocd-support.html)。

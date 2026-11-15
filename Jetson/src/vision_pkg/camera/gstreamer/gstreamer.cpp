@@ -9,7 +9,7 @@
 #include <gst/app/gstappsink.h>
 #include <gst/video/video.h>
 #if VISION_ENABLE_NVMM
-#include <nvbufsurface.h>
+#include "camera/gstreamer/nvmm_pixels.hpp"
 #endif
 
 namespace vision_camera {
@@ -49,42 +49,62 @@ GstBusSyncReply captureBusMessage(GstBus *, GstMessage * message, gpointer data)
 // GstVideoFrame 可能含行/平面对齐填充，不能直接按总字节数解释成紧密 Mat。
 // 每张交付图独立拥有像素，释放 sample 或下一帧到来都不会修改它。
 #if VISION_ENABLE_NVMM
+struct NvmmSampleMap {
+  GstSample * sample;
+  GstBuffer * buffer;
+  GstMapInfo map{};
+  bool mapped{false};
+
+  NvmmSampleMap(GstSample * retained, GstBuffer * source)
+  : sample(gst_sample_ref(retained)), buffer(source) {}
+  ~NvmmSampleMap()
+  {
+    if (mapped) {gst_buffer_unmap(buffer, &map);}
+    gst_sample_unref(sample);
+  }
+};
+
 // H13：NVMM 帧（MJPEG 为 I420，raw 为 VIC 转好的 BGRx）。CPU 侧（field/叠层/推流）仍需一份：
 // 从同一 NvBufSurface 映射后拷出 I420，或去掉 x 通道得到 BGR（等价于原 videoconvert）；
 // 推理侧保留 sample 引用，由 CUDA 经 EGL 直接读同一块 NVMM。
 bool copyNvmm(GstSample * sample, GstBuffer * buffer, cv::Mat & image, cv::Size & size,
-  std::string & error, std::shared_ptr<void> & nvmm)
+  std::string & error, bool require_bgr, std::shared_ptr<void> & nvmm)
 {
-  GstMapInfo map;
-  if (!gst_buffer_map(buffer, &map, GST_MAP_READ)) {error = "cannot map NVMM buffer"; return false;}
-  auto * surface = reinterpret_cast<NvBufSurface *>(map.data);
-  gst_buffer_unmap(buffer, &map);
-  if (NvBufSurfaceMap(surface, 0, -1, NVBUF_MAP_READ) != 0) {error = "NvBufSurfaceMap failed"; return false;}
-  NvBufSurfaceSyncForCpu(surface, 0, -1);
-  const auto & params = surface->surfaceList[0];
-  const int width = static_cast<int>(params.width);
-  const int height = static_cast<int>(params.height);
-  if (params.colorFormat == NVBUF_COLOR_FORMAT_BGRx) {
-    const cv::Mat bgrx(height, width, CV_8UC4, params.mappedAddr.addr[0], params.planeParams.pitch[0]);
-    cv::cvtColor(bgrx, image, cv::COLOR_BGRA2BGR);
-  } else {
-    image.create(height + height / 2, width, CV_8UC1);
-    const int rows[3] = {height, height / 2, height / 2};
-    const int bytes[3] = {width, width / 2, width / 2};
-    unsigned char * destination = image.data;
-    for (int plane = 0; plane < 3; ++plane) {
-      const auto * source = static_cast<const unsigned char *>(params.mappedAddr.addr[plane]);
-      const auto stride = params.planeParams.pitch[plane];
-      for (int row = 0; row < rows[plane]; ++row) {
-        std::memcpy(destination, source + static_cast<std::size_t>(row) * stride, bytes[plane]);
-        destination += bytes[plane];
-      }
-    }
+  // NvBufSurface itself belongs to the GstBuffer mapping. Retain that mapping together
+  // with the sample until the last CUDA/CPU consumer releases this frame.
+  auto mapped = std::make_shared<NvmmSampleMap>(sample, buffer);
+  mapped->mapped = gst_buffer_map(buffer, &mapped->map, GST_MAP_READ);
+  if (!mapped->mapped) {error = "cannot map NVMM buffer"; return false;}
+  if (!mapped->map.data || mapped->map.size < sizeof(NvBufSurface)) {
+    error = "NVMM buffer does not contain a surface descriptor";
+    return false;
   }
-  NvBufSurfaceUnMap(surface, 0, -1);
-  gst_sample_ref(sample);
-  nvmm = std::shared_ptr<void>(surface, [sample](void *) {gst_sample_unref(sample);});
-  size = {width, height};
+  auto * surface = reinterpret_cast<NvBufSurface *>(mapped->map.data);
+  const bool copied = detail::withNvmmCpuPixels(surface, require_bgr, error,
+    [&](const NvBufSurfaceParams & params) {
+      const int width = static_cast<int>(params.width);
+      const int height = static_cast<int>(params.height);
+      if (params.colorFormat == NVBUF_COLOR_FORMAT_BGRx) {
+        const cv::Mat bgrx(height, width, CV_8UC4, params.mappedAddr.addr[0], params.planeParams.pitch[0]);
+        cv::cvtColor(bgrx, image, cv::COLOR_BGRA2BGR);
+      } else {
+        image.create(height + height / 2, width, CV_8UC1);
+        const int rows[3] = {height, height / 2, height / 2};
+        const int bytes[3] = {width, width / 2, width / 2};
+        unsigned char * destination = image.data;
+        for (int plane = 0; plane < 3; ++plane) {
+          const auto * source = static_cast<const unsigned char *>(params.mappedAddr.addr[plane]);
+          const auto stride = params.planeParams.pitch[plane];
+          for (int row = 0; row < rows[plane]; ++row) {
+            std::memcpy(destination, source + static_cast<std::size_t>(row) * stride, bytes[plane]);
+            destination += bytes[plane];
+          }
+        }
+      }
+      size = {width, height};
+    });
+  if (!copied) {return false;}
+  nvmm = std::shared_ptr<void>(std::move(mapped), surface);
   return true;
 }
 #endif
@@ -104,7 +124,7 @@ bool copyPixels(GstSample * sample, cv::Mat & image, cv::Size & size, std::strin
 #if VISION_ENABLE_NVMM
   GstCapsFeatures * features = gst_caps_get_features(caps, 0);
   if (features && gst_caps_features_contains(features, "memory:NVMM")) {
-    return copyNvmm(sample, buffer, image, size, error, nvmm);
+    return copyNvmm(sample, buffer, image, size, error, require_bgr, nvmm);
   }
 #endif
   if (require_bgr && GST_VIDEO_INFO_FORMAT(&info) != GST_VIDEO_FORMAT_BGR) {

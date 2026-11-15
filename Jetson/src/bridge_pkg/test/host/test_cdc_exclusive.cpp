@@ -1,5 +1,5 @@
 // CDC 设备锁：bridge 与手动程序任一方持有 link.device 时，后打开者失败且不写字节。
-// 类型 2 只给手动程序。类型 1 在线时 alive=1、速度为 0；失联是 alive=0 的 8 字节。
+// 自动桥仅周期发送类型 3/4；类型 2 只给手动程序，类型 1 已删除。
 // pty 代替 USB 串口。虚拟回环不在这里测。
 #include "check.hpp"
 #include "protocol/usb_protocol.hpp"
@@ -65,10 +65,9 @@ enum class OpenOutcome { OPENED, FATAL, FAILED };
 
 OpenOutcome bridgeOpen(CdcLink & link, const std::string & path)
 {
-  int index = 0;
   std::string error;
   try {
-    return link.open(path, index, error) ? OpenOutcome::OPENED : OpenOutcome::FAILED;
+    return link.open(path, error) ? OpenOutcome::OPENED : OpenOutcome::FAILED;
   } catch (const CanTransport::FatalError &) {
     return OpenOutcome::FATAL;
   }
@@ -109,37 +108,25 @@ void testTeleopFirst(bool exclusive, const char * name)
 
 void testNeverManualType()
 {
-  Group group("自动桥不发类型 2");
+  Group group("自动桥只周期发送坐标");
   CHECK(!CanProtocol::transmitId(CanProtocol::MANUAL_ID));
   CHECK(!CanProtocol::streamId(CanProtocol::MANUAL_ID));
   CHECK(!CanProtocol::replyId(CanProtocol::MANUAL_ID));
   CanPeriodicSchedule schedule;
-  int manual = 0, velocity = 0, foreign = 0;
+  int manual = 0, removed = 0, target = 0, safety = 0, foreign = 0;
   for (int i = 0; i < kScheduleRounds; ++i) {
-    const canid_t id = schedule.next();
+    const canid_t id = *schedule.next(true);
     manual += id == CanProtocol::MANUAL_ID;
-    velocity += id == CanProtocol::VELOCITY_ID;
+    removed += id == 1;
+    target += id == CanProtocol::TARGET_ID;
+    safety += id == CanProtocol::SAFETY_ID;
     foreign += !CanProtocol::transmitId(id);
   }
   CHECK(manual == 0);
   CHECK(foreign == 0);
-  CHECK(velocity == kScheduleRounds / 3);
-}
-
-void testHeartbeatEncoding()
-{
-  Group group("类型 1 心跳");
-  const can_frame lost = CanProtocol::velocity(false, 123, -456, 789, 1);
-  CHECK(lost.can_id == CanProtocol::VELOCITY_ID && lost.len == 8);
-  CHECK(lost.data[0] == 0 && lost.data[1] == 1);
-  bool speeds_zero = true;
-  for (int i = 2; i < 8; ++i) {speeds_zero = speeds_zero && lost.data[i] == 0;}
-  CHECK(speeds_zero);
-  const can_frame online = CanProtocol::velocity(true, 0, 0, 0, 0);
-  CHECK(online.data[0] == 1 && online.data[1] == 0);
-  bool online_zero = true;
-  for (int i = 2; i < 8; ++i) {online_zero = online_zero && online.data[i] == 0;}
-  CHECK(online_zero);
+  CHECK(removed == 0);
+  CHECK(target == kScheduleRounds / 2 && safety == kScheduleRounds / 2);
+  CHECK(CanPeriodicSchedule::interval == std::chrono::milliseconds(5));
 }
 
 template<typename T, typename = void>
@@ -148,7 +135,7 @@ template<typename T>
 struct AcceptsVelocity<T, std::void_t<decltype(std::declval<T &>().velocity(
     0.0, 0.0, 0.0, BridgeMonotonicTime{}, true))>> : std::true_type {};
 
-void testHeartbeatOnly()
+void testNoVelocityInput()
 {
   Group group("自动桥没有速度输入");
   CHECK((!AcceptsVelocity<BridgeState>::value));
@@ -172,6 +159,9 @@ void testBackpressurePreservesFrameIdentity()
 {
   Group group("背压后发送新帧");
   Pty pty;
+  // 先留一个仅用于填满内核输出队列的描述符；单字节写不会制造半协议帧。
+  const int filler = ::open(pty.path.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
+  CHECK(filler >= 0);
   CdcLink bridge;
   CHECK(bridgeOpen(bridge, pty.path) == OpenOutcome::OPENED);
   ::fcntl(pty.master, F_SETFL, ::fcntl(pty.master, F_GETFL) | O_NONBLOCK);
@@ -179,11 +169,11 @@ void testBackpressurePreservesFrameIdentity()
   old_frame.can_id = 3;
   old_frame.len = 8;
   std::string error;
-  auto result = CanTransport::WriteResult::SENT;
-  for (int i = 0; i < 100000 && result == CanTransport::WriteResult::SENT; ++i) {
-    result = bridge.write(old_frame, error);
-  }
+  const char padding = 0;
+  for (int i = 0; i < 100000 && ::write(filler, &padding, 1) == 1; ++i) {}
+  auto result = bridge.write(old_frame, error);
   CHECK(result == CanTransport::WriteResult::BACKPRESSURE);
+  ::close(filler);
   char discarded[4096];
   while (::read(pty.master, discarded, sizeof(discarded)) > 0) {}
 
@@ -206,6 +196,13 @@ void testBackpressurePreservesFrameIdentity()
     }
   }
   CHECK(found);
+  link_frame::Parser parser;
+  unsigned old_frames = 0;
+  for (ssize_t i = 0; i < count; ++i) {
+    link_frame::Frame decoded;
+    if (parser.feed(bytes[i], decoded) && decoded.type == old_frame.can_id) {++old_frames;}
+  }
+  CHECK(old_frames == 0);
 }
 
 }  // namespace
@@ -216,8 +213,7 @@ int main()
   testTeleopFirst(true, "手动程序先占用（flock+TIOCEXCL）");
   testTeleopFirst(false, "手动程序先占用（仅 flock）");
   testNeverManualType();
-  testHeartbeatEncoding();
-  testHeartbeatOnly();
+  testNoVelocityInput();
   testEmptyReadAndDisconnect();
   testBackpressurePreservesFrameIdentity();
   return finishTests("bridge cdc exclusive");

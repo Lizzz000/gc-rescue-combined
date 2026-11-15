@@ -53,7 +53,7 @@ BridgeState::BridgeState(BridgeStateConfig config)
   if (!std::isfinite(config_.safety_hold_s) || config_.safety_hold_s <= 0 ||
     config_.safety_hold_s > config_.input_timeout_s || !std::isfinite(config_.field_max_fps) ||
     config_.field_max_fps <= 0 ||
-    config_.safety_hold_s + 1.0 / config_.field_max_fps >= CanProtocol::STM32_CENTER_TIMEOUT_S)
+    config_.safety_hold_s + 1.0 / config_.field_max_fps >= CanProtocol::CENTER_TIMEOUT_S)
   {
     throw std::invalid_argument(
       "Bridge safety hold must be in (0, input_timeout_s] and hold + 1/field_max_fps < 0.25 s");
@@ -83,7 +83,7 @@ void BridgeState::resetInputs(BridgeSourceTime current)
   cutoff_.ns = std::max(cutoff_.ns, current.ns);
 }
 
-// 接受则 accepted=true，并 reset_stream：调用方撤掉旧的类型 1/3/4 机会。
+// 接受则 accepted=true，并 reset_stream：表示类型 3/4 的输入状态已切换。
 // 完全重复、更旧、或源时间还在将来：两个标志都是假，队列不动。
 // 同模式但源时间或 epoch 变了也算新阶段，中心清掉。任务字符串本身不解坐标保持。
 BridgeStateUpdate BridgeState::task(const BridgeTaskState & input, BridgeSourceTime current)
@@ -113,6 +113,7 @@ BridgeStateUpdate BridgeState::mission(
     input.transport_phase > BridgeTransportPhase::Later ||
     input.cycle_phase > BridgeCyclePhase::Fault ||
     (mission_ && input.stamp.ns < mission_->stamp.ns)) {return {};}
+  const bool restarted = mission_ && input.cycle_generation < mission_->cycle_generation;
   // 源时刻相等仍比较业务字段，因此 PENDING 与 SUCCESS 可以在同刻按接收顺序生效。
   const bool changed = !mission_ || input.destination != mission_->destination ||
     input.roi_request_id != mission_->roi_request_id || input.operation != mission_->operation ||
@@ -127,8 +128,15 @@ BridgeStateUpdate BridgeState::mission(
     cutoff_.ns = std::max(cutoff_.ns, input.stamp.ns);
   }
   mission_ = input;
+  if (restarted) {
+    coordinates_held_ = true;
+    held_until_search_ = true;
+    recovery_required_ = true;
+    held_generation_ = input.cycle_generation;
+    resetInputs(current);
+  }
   releaseCoordinates(current);
-  return {true, changed};
+  return {true, changed, restarted};
 }
 
 bool BridgeState::sourceStamp(
@@ -251,12 +259,8 @@ BridgeCenterOutput BridgeState::safetyOutput(
     static_cast<std::uint32_t>((safety_hold_.stamp.ns / 1000000) & 0xffffff)};
 }
 
-void BridgeState::holdCoordinates(BridgeSourceTime current, bool until_search)
+void BridgeState::holdCoordinates(BridgeSourceTime current)
 {
-  if (until_search && !held_until_search_) {
-    held_until_search_ = true;
-    held_generation_ = mission_ ? mission_->cycle_generation : 0;
-  }
   // 重复到达不能刷新本次闭锁的起点，否则会吞掉已经观察到的中间阶段。
   if (coordinates_held_) {return;}
   coordinates_held_ = true;
@@ -265,6 +269,17 @@ void BridgeState::holdCoordinates(BridgeSourceTime current, bool until_search)
   safety_ = Center{};
   safety_hold_ = Center{};
   cutoff_.ns = std::max(cutoff_.ns, current.ns);
+}
+
+void BridgeState::holdForSearch(BridgeSourceTime current, std::uint64_t requested_generation)
+{
+  recovery_required_ = false;
+  coordinates_held_ = true;
+  held_until_search_ = true;
+  held_generation_ = requested_generation;
+  resetInputs(current);
+  // 状态可能比服务响应先到：已确认的新搜索立即解锁，切换中仍等待终态和 seg。
+  releaseCoordinates(current);
 }
 
 std::optional<BridgeCyclePhase> BridgeState::cyclePhase() const
@@ -286,8 +301,8 @@ bool BridgeState::coordinatesHeld() const
 
 void BridgeState::releaseCoordinates(BridgeSourceTime current)
 {
-  if (!coordinates_held_ || !movingPhase() ||
-    mission_->cycle_generation == held_generation_ ||
+  if (!coordinates_held_ || recovery_required_ || !movingPhase() ||
+    mission_->cycle_generation <= held_generation_ ||
     (held_until_search_ && mission_->cycle_phase != BridgeCyclePhase::SearchingTarget)) {return;}
   coordinates_held_ = false;
   held_until_search_ = false;

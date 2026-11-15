@@ -53,23 +53,20 @@ void BMI088_GYRO_NS_H(void)
     HAL_GPIO_WritePin(CS1_GYRO_GPIO_Port, CS1_GYRO_Pin, GPIO_PIN_SET);
 }
 
-/** @brief 使用教程的 SPI 单字节收发方式，向读取层传递本次 HAL 失败。
- * @param[in] txdata 发送字节。 @return 接收字节；失败时返回 0。
- * @note 当前 SPI 为 328.125 kbit/s，单字节约 24.4 us；超时取 2 ms，
- *       留出 HAL 毫秒计时余量。首个失败后跳过本次剩余字节，读取层马上返回
- *       无效温度，由任务关闭加热；这里不依赖温控 PWM 模块。
+/** @brief 连续 SPI 收发；失败向读取层传递，首个失败后跳过本轮剩余事务。
+ * @note SPI 保持 328.125 kbit/s，最长 9 字节约 220 us，保留 2 ms HAL 超时。
  */
+void BMI088_read_write_data(uint8_t *tx, uint8_t *rx, uint16_t len)
+{
+    if (BMI088_spi_error) return;
+    if (HAL_SPI_TransmitReceive(&hspi1, tx, rx, len, 2) != HAL_OK)
+        BMI088_spi_error = 1;
+}
+
+/** @brief 初始化写寄存器使用的单字节交换。 */
 uint8_t BMI088_read_write_byte(uint8_t txdata)
 {
     uint8_t rx_data = 0;
-    if (BMI088_spi_error)
-    {
-        return 0;
-    }
-    if (HAL_SPI_TransmitReceive(&hspi1, &txdata, &rx_data, 1, 2) != HAL_OK)
-    {
-        BMI088_spi_error = 1;
-        return 0;
-    }
-    return rx_data;
+    BMI088_read_write_data(&txdata, &rx_data, 1);
+    return BMI088_spi_error ? 0 : rx_data;
 }

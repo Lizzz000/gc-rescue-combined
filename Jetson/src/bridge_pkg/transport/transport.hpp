@@ -16,7 +16,7 @@
 #include <optional>
 #include <stdexcept>
 
-// BridgeNode 使用的收发抽象——打开／自检／非阻塞读写／关闭，以及读写结果分类。
+// BridgeNode 使用的收发抽象——打开／非阻塞读写／关闭，以及读写结果分类。
 //       板间实现是 CdcLink；测试可注入进程内替身。
 
 /// CAN 收发抽象：只表达“一个已绑定接口上的一次收发成败”，不含重连节奏、背压重试或计数，
@@ -24,8 +24,8 @@
 class CanTransport
 {
 public:
-  /// 非阻塞读的结果：FRAME 整帧；SHORT 畸形包；EMPTY 无数据；INTERRUPTED 信号中断；IGNORED 链路通知；FAILED 故障。
-  enum class ReadResult { FRAME, SHORT, EMPTY, INTERRUPTED, IGNORED, FAILED };
+  /// 非阻塞读的结果：FRAME 完整分帧；EMPTY 无数据；INTERRUPTED 信号中断；FAILED 故障。
+  enum class ReadResult { FRAME, EMPTY, INTERRUPTED, FAILED };
   // 占用冲突/串口半包不能自动重试；Runtime清理后交入口报告并退出。
   struct FatalError : std::runtime_error {using std::runtime_error::runtime_error;};
   /// 非阻塞写的结果：SENT 整帧提交；BACKPRESSURE 队列满；INTERRUPTED 被信号中断；FAILED 其他错误。
@@ -34,37 +34,34 @@ public:
 
   virtual ~CanTransport() = default;
 
-  /// 打开 USB 设备。失败返回 false 并写 error，且不保留打开状态；index 是串口会话号，
-  /// 调用方记录它，之后用 check() 的结果判断接口是否被删除重建。
-  virtual bool open(const std::string & interface_name, int & index, std::string & error) = 0;
+  /// 打开并配置 USB 设备。失败返回 false 并写 error，且不保留打开状态。
+  virtual bool open(const std::string & interface_name, std::string & error) = 0;
   /// 关闭；已关闭时什么也不做。不改变网络接口状态。
   virtual void close() = 0;
   virtual bool socketOpen() const = 0;
-  /// 连接自检；串口初始化也在此有界推进。false表示故障；true但interfaceUp=false表示尚未就绪。
-  virtual bool check(int & index, std::string & error) = 0;
-  /// 串口设备就绪不代表对端 STM32 在线。
-  virtual bool interfaceUp() const = 0;
   /// 每次只做一次收发尝试；EINTR 等交给调用方在本周期的次数预算内重试。
   /// FRAME 只保证读到完整 can_frame；具体指令的 ID、DLC 和请求字节仍由协议层解析。
   virtual ReadResult read(can_frame & frame, std::string & error) = 0;
   virtual WriteResult write(const can_frame & frame, std::string & error) = 0;
 };
 
-// 三个周期帧错开发送，每个 ID 的目标周期均为 10 ms。
+// 两个坐标周期帧错开发送，每个 ID 的目标周期均为 10 ms。
 class CanPeriodicSchedule
 {
 public:
-  // 三个周期 ID 各 10 ms 一轮；向上取整保持既有 3333334 ns（10ms/3 整除会变成 3333333）。
+  // 两个坐标 ID 各 10 ms 一轮，I/O 每 5 ms 推进一次。
   static constexpr auto kPeriodicIdPeriod = std::chrono::nanoseconds(10'000'000);
-  static constexpr unsigned kPeriodicIdCount = 3;
+  static constexpr unsigned kPeriodicIdCount = 2;
   static constexpr auto interval = std::chrono::nanoseconds(
     (kPeriodicIdPeriod.count() + kPeriodicIdCount - 1) / kPeriodicIdCount);
-  static_assert(interval.count() == 3333334, "periodic interval must stay 3333334 ns");
+  static_assert(interval.count() == 5000000, "periodic interval must stay 5 ms");
 
-  canid_t next()
+  // 业务状态失联时停止周期流；无目标、夹爪与转向阶段仍由调用方保持 enabled。
+  std::optional<canid_t> next(bool enabled)
   {
+    if (!enabled) {return std::nullopt;}
     constexpr canid_t ids[] = {
-      CanProtocol::VELOCITY_ID, CanProtocol::TARGET_ID, CanProtocol::SAFETY_ID};
+      CanProtocol::TARGET_ID, CanProtocol::SAFETY_ID};
     static_assert(sizeof(ids) / sizeof(ids[0]) == kPeriodicIdCount);
     const canid_t id = ids[index_];
     index_ = (index_ + 1U) % kPeriodicIdCount;
@@ -75,13 +72,13 @@ private:
   unsigned index_{0U};
 };
 
-// 七个协议输出 ID 各占至多一槽，按第一次入队顺序发送；载荷由运行层在提交前读取。
+// 五类回复各占至多一槽，按第一次入队顺序发送；周期坐标由独立调度器直接提交。
 // 调用方串行访问，本类不加锁；合并同 ID 仅保留发送机会，不承诺逐条交付。
 class CanTxQueue
 {
 public:
   using Clock = std::chrono::steady_clock;
-  static constexpr std::size_t capacity = 7;
+  static constexpr std::size_t capacity = 5;
 
   // 同 ID 不延长最初 TTL，持续背压时也能淘汰；调用方只传固定发送 ID。
   void queue(canid_t id, Clock::time_point now)
@@ -116,13 +113,13 @@ public:
   // 撤掉一个 ID 的发送机会，不影响其他 ID 的顺序或有效期。
   std::size_t drop(canid_t id) noexcept
   {
-    return eraseIf([id](canid_t value) {return value == id;});
-  }
-
-  // 阶段变化只撤周期帧；转向指令另由 Runtime 核对提交身份并撤销。
-  std::size_t dropStream() noexcept
-  {
-    return eraseIf([](canid_t id) {return CanProtocol::streamId(id);});
+    std::size_t kept = 0;
+    for (std::size_t i = 0; i < size_; ++i) {
+      if (entries_[i].id != id) {entries_[kept++] = entries_[i];}
+    }
+    const auto removed = size_ - kept;
+    size_ = kept;
+    return removed;
   }
 
   // 断线清队后，旧应答失去发送机会；转向协议重试由 Runtime 独立重新准入。
@@ -130,27 +127,15 @@ public:
   std::size_t size() const noexcept {return size_;}
 
 private:
-  template<class Predicate>
-  std::size_t eraseIf(Predicate matches) noexcept
-  {
-    std::size_t kept = 0;
-    for (std::size_t i = 0; i < size_; ++i) {
-      if (!matches(entries_[i].id)) {entries_[kept++] = entries_[i];}
-    }
-    const auto removed = size_ - kept;
-    size_ = kept;
-    return removed;
-  }
-
-  // 槽只记录 ID 与首次单调入队时间；周期载荷临发重建，回复载荷保存在独立快照槽。
+  // 槽只记录 ID 与首次单调入队时间；回复载荷保存在独立快照槽。
   struct Entry {canid_t id{}; Clock::time_point queued_at{};};
   std::array<Entry, capacity> entries_{};
   std::size_t size_{0};
 };
 
-// 保存四类 CAN 载荷快照；发送资格、过期与清队由 CanTxQueue 管理。
+// 保存五类回复载荷快照；发送资格、过期与清队由 CanTxQueue 管理。
 
-// 固定保存到达、ROI、命令应答及转向载荷；同 ID 覆盖不延长队列 TTL。
+// 固定保存到达、ROI、命令应答、转向及夹爪结果；同 ID 覆盖不延长队列 TTL。
 class BridgeReplySlots
 {
 public:
@@ -161,5 +146,5 @@ public:
 
 private:
   static std::optional<std::size_t> index(canid_t id);
-  std::array<can_frame, 4> frames_{};
+  std::array<can_frame, 5> frames_{};
 };

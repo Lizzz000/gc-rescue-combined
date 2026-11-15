@@ -56,8 +56,8 @@ struct Truth
   std::array<cv::Point2f, 4> inner;     // 内部地面 TL/TR/BR/BL（z=0，围边内侧）
 };
 
-// 托盘尺寸与 rescue.yaml 一致：外沿 0.66×0.36 m；围边厚 0.015、高 0.04；中线宽 0.022。
-constexpr double kW = 0.66, kH = 0.36, kWall = 0.015, kWallH = 0.04, kBand = 0.022;
+// 托盘尺寸与 rescue.yaml 一致：外沿 0.66×0.36 m；围边厚 0.015、高 0.04；实物中线宽 0.020。
+constexpr double kW = 0.66, kH = 0.36, kWall = 0.015, kWallH = 0.04, kBand = 0.020;
 
 class Camera
 {

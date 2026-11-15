@@ -48,7 +48,7 @@ add_custom_target(field_test_config DEPENDS ${FIELD_GEN_DIR}/field_config_values
 set(FIELD_TEST_TIMEOUT 1200)
 
 function(field_test name)
-  add_executable(${name} ${name}.cpp)
+  add_executable(${name} ${name}.cpp ${ARGN})
   add_dependencies(${name} field_test_config)
   target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../host
     ${FIELD_PKG_DIR} ${FIELD_GEN_DIR} ${OpenCV_INCLUDE_DIRS})
@@ -66,3 +66,9 @@ endfunction()
 field_test(test_field_matrix)
 field_test(test_field_sequence)
 field_test(test_field_replay)
+field_test(test_field_colour ../host/test_colour.cpp)
+field_test(test_corner_order)
+field_test(test_field_centers)
+field_test(test_field_truth)
+field_test(test_field_split)
+field_test(test_field_geometry)

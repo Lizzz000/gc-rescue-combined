@@ -1,0 +1,18 @@
+cmake_minimum_required(VERSION 3.18)
+project(track_host_tests LANGUAGES CXX)
+
+enable_testing()
+find_package(Eigen3 3.3 REQUIRED NO_MODULE)
+find_package(GTest REQUIRED)
+get_filename_component(TRACK_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+add_subdirectory("${TRACK_ROOT}/third_party/ocsort" ocsort)
+add_executable(test_ocsort "${TRACK_ROOT}/third_party/ocsort/test/test_ocsort.cpp")
+target_link_libraries(test_ocsort PRIVATE ocsort_core GTest::gtest_main)
+add_test(NAME ocsort_core COMMAND test_ocsort)
+
+add_library(track_values STATIC "${TRACK_ROOT}/tracking/tracking.cpp" "${TRACK_ROOT}/tracking/selector.cpp")
+target_include_directories(track_values PUBLIC "${TRACK_ROOT}" "${TRACK_ROOT}/..")
+target_link_libraries(track_values PUBLIC ocsort_core)
+add_executable(test_tracking test_tracking.cpp)
+target_link_libraries(test_tracking PRIVATE track_values GTest::gtest_main)
+add_test(NAME tracking_adapter COMMAND test_tracking)

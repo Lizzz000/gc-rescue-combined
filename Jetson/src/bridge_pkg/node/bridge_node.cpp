@@ -215,7 +215,7 @@ void BridgeNode::createRosInterfaces(StartupSettings & settings)
 
 void BridgeNode::createCanTimers()
 {
-  // 每约 3.33 ms 先处理事件，再轮发一个周期帧；三类帧各约 100 Hz。
+  // 每 5 ms 先处理事件，再轮发目标/安全区坐标；两类帧各约 100 Hz。
   io_timer_ = create_wall_timer(CanPeriodicSchedule::interval, [this] {runtime_->io();});
   status_timer_ = create_wall_timer(std::chrono::seconds(1), [this] {runtime_->publishStatus();});
 }

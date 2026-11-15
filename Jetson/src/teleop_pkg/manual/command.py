@@ -57,17 +57,13 @@ class ManualCommand:
 
     def hold(self, vx, vy, wz, now):
         """按住中的速度；租约 lease_s 内未续期即停车。"""
-        self._start(quantize(vx, vy, wz), now + self._lease_s, now)
+        self._start(quantize(vx, vy, wz), self._lease_s, now)
 
     def timed(self, vx, vy, wz, seconds, now):
         """定时动作：持续 seconds 秒，不需要续期。"""
         if not 0.0 < seconds <= MAX_TIMED_S:
             raise ValueError(f'seconds 须在 (0, {MAX_TIMED_S:g}] 秒内')
-        velocity = quantize(vx, vy, wz)
-        with self._lock:
-            # 定时从运动开始计时，使能零速不占用时长。
-            prepare = 0.0 if self._phase is Phase.ACTIVE else self._arm_zero_s
-        self._start(velocity, now + prepare + seconds, now)
+        self._start(quantize(vx, vy, wz), seconds, now, timed=True)
 
     def stop(self, now):
         with self._lock:
@@ -90,13 +86,15 @@ class ManualCommand:
                     'remaining_s': max(0.0, self._deadline - now)
                     if self._phase in (Phase.PREPARE, Phase.ACTIVE) else 0.0}
 
-    def _start(self, velocity, deadline, now):
+    def _start(self, velocity, duration, now, *, timed=False):
         with self._lock:
             self._advance(now)
             if self._phase in (Phase.IDLE, Phase.STOPPING):
                 self._phase, self._phase_until = Phase.PREPARE, now + self._arm_zero_s
             self._velocity = velocity
-            self._deadline = deadline
+            # 定时动作只补当前剩余的使能时间；hold 租约仍从收到请求时起算。
+            start = self._phase_until if timed and self._phase is Phase.PREPARE else now
+            self._deadline = start + duration
 
     def _enter_stop(self, now):
         if self._phase in (Phase.PREPARE, Phase.ACTIVE):

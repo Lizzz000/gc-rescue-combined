@@ -273,6 +273,10 @@
         "path": "vision.field.quad_max_aspect_err",
         "kind": "number"
       },
+      "field.black_width_m": {
+        "path": "vision.field.black_width_m",
+        "kind": "number"
+      },
       "field.black_search_lo": {
         "path": "vision.field.black_search_range",
         "kind": "number",
@@ -940,6 +944,7 @@
     "vision.field.quad_side_ratio_range": "numbers",
     "vision.field.use_aspect_check": "boolean",
     "vision.field.quad_max_aspect_err": "number",
+    "vision.field.black_width_m": "number",
     "vision.field.black_search_range": "numbers",
     "vision.field.black_row_range": "numbers",
     "vision.field.black_min_depth": "number",

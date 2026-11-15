@@ -10,7 +10,6 @@
 // 阶段和断流重置时机由 TrackNode 控制；这里的轨迹老化按 update() 次数推进，不按实际经过的秒数。
 // 适配行为优先在本文件维护；OC-SORT 的现有实现、已记录的本地修补与许可证位于 third_party，不随适配层整理改动。
 
-#include <interface_pkg/app/core.hpp>
 #include <cmath>
 #include <stdexcept>
 
@@ -98,18 +97,17 @@ std::string SegTracker::validatedClass(const RecognitionDetection & detection)
 }
 
 RecognitionDetection SegTracker::toDetection(
-  const Eigen::RowVectorXf & track, const std::string & class_id)
+  const OCSortTrack & track, const std::string & class_id)
 {
-  // OC-SORT 输出以像素角点表示框；第 5 列是轨迹 ID，第 7 列是置信度。
+  // OC-SORT 输出以像素角点表示框；轨迹身份独立使用整数，不经过 float 几何矩阵。
   // 输出 id 属于跟踪器，不能沿用输入检测编号；模型类别由当前类别实例的键恢复，标签名称不参与身份。
-  // 上游以 float 携带 ID，超过 2^24 后相邻整数可能重号；这里转回整数不能恢复已丢失的精度。
   RecognitionDetection detection;
-  detection.id = std::to_string(static_cast<long long>(track(4)));
-  detection.box.center_x = (track(0) + track(2)) / 2.0;
-  detection.box.center_y = (track(1) + track(3)) / 2.0;
-  detection.box.width = track(2) - track(0);
-  detection.box.height = track(3) - track(1);
-  detection.hypothesis = RecognitionHypothesis{class_id, track(6)};
+  detection.id = std::to_string(track.id);
+  detection.box.center_x = (track.box(0) + track.box(2)) / 2.0;
+  detection.box.center_y = (track.box(1) + track.box(3)) / 2.0;
+  detection.box.width = track.box(2) - track.box(0);
+  detection.box.height = track.box(3) - track.box(1);
+  detection.hypothesis = RecognitionHypothesis{class_id, track.confidence};
   return detection;
 }
 
@@ -166,9 +164,9 @@ RecognitionDetections SegTracker::update(const RecognitionDetections & input)
       state.input.row(i) = state.detections[i];
     }
     // 空帧也调用 update，推进预测和 time_since_update；超过 max_age 才删除未命中轨迹。
-    for (const auto & row : state.tracker->update(state.input)) {
-      if (row.size() != 7 || !row.allFinite()) {continue;}
-      output.push_back(toDetection(row, it->first));
+    for (const auto & track : state.tracker->update(state.input)) {
+      if (!track.box.allFinite() || !std::isfinite(track.confidence)) {continue;}
+      output.push_back(toDetection(track, it->first));
     }
     // 最后一条轨迹过期后释放该类别会话；下次出现会重新执行 OC-SORT 的启动预热规则。
     if (state.tracker->trackers.empty()) {it = trackers_.erase(it);} else {++it;}

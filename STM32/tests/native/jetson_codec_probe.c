@@ -106,32 +106,33 @@ static void Print_Snapshot(void)
            ",\"zero_sequence\":%" PRIu32 "},",
            (unsigned)manual.valid, (int)manual.vx, (int)manual.vy, (int)manual.wz, manual.received_ms,
            manual.sequence, manual.invalid_sequence, manual.zero_sequence);
-    printf("\"heartbeat\":{\"seen\":%u,\"received_ms\":%" PRIu32 ",\"sequence\":%" PRIu32
-           ",\"pause\":%u,\"mission_loss_sequence\":%" PRIu32 "},\"rx_sequence\":%" PRIu32 ",",
-           (unsigned)state.heartbeat_seen, state.heartbeat_received_ms, state.heartbeat_sequence,
-           (unsigned)state.heartbeat_pause, state.mission_loss_sequence, state.rx_sequence);
+    printf("\"action_result\":{\"valid\":%u,\"kind\":%u,\"success\":%u,\"request_id\":%" PRIu32
+           ",\"sequence\":%" PRIu32 "},\"rx_sequence\":%" PRIu32 ",",
+           (unsigned)state.action_result.valid, (unsigned)state.action_result.kind,
+           (unsigned)state.action_result.success, state.action_result.request_id,
+           state.action_result.sequence, state.rx_sequence);
     Print_Center("target", &state.target);
     printf(",");
     Print_Center("safety", &state.safety);
-    printf(",\"arrival_ack\":{\"valid\":%u,\"accepted\":%u,\"received_ms\":%" PRIu32 "},",
+    printf(",\"arrival_ack\":{\"valid\":%u,\"accepted\":%u,\"sequence\":%" PRIu32 "},",
            (unsigned)state.arrival_ack.valid, (unsigned)state.arrival_ack.accepted,
-           state.arrival_ack.received_ms);
-    printf("\"roi_reply\":{\"valid\":%u,\"passed\":%u,\"destination\":%u,\"received_ms\":%" PRIu32 "},",
+           state.arrival_ack.sequence);
+    printf("\"roi_reply\":{\"valid\":%u,\"passed\":%u,\"destination\":%u,\"sequence\":%" PRIu32 "},",
            (unsigned)state.roi_reply.valid, (unsigned)state.roi_reply.passed,
-           (unsigned)state.roi_reply.destination, state.roi_reply.received_ms);
+           (unsigned)state.roi_reply.destination, state.roi_reply.sequence);
     printf("\"command_reply\":{\"valid\":%u,\"accepted\":%u,\"command\":%u,"
-           "\"token\":%" PRIu32 ",\"received_ms\":%" PRIu32 "},",
+           "\"token\":%" PRIu32 ",\"sequence\":%" PRIu32 "},",
            (unsigned)state.command_reply.valid, (unsigned)state.command_reply.accepted,
            (unsigned)state.command_reply.command, state.command_reply.token,
-           state.command_reply.received_ms);
+           state.command_reply.sequence);
     printf("\"turn_to_safety\":{\"valid\":%u,\"destination\":%u,"
-           "\"token\":%" PRIu32 ",\"received_ms\":%" PRIu32 "}}\n",
+           "\"token\":%" PRIu32 ",\"sequence\":%" PRIu32 "}}\n",
            (unsigned)state.turn_to_safety.valid, (unsigned)state.turn_to_safety.destination,
-           state.turn_to_safety.token, state.turn_to_safety.received_ms);
+           state.turn_to_safety.token, state.turn_to_safety.sequence);
 }
 
 /**
- * @brief 按 ^ID:参数 调用真实上行编码，输出 {"uplink":"ID#HEX"}；编码拒绝时 HEX 为空串。
+ * @brief 按 ^ID:参数 调用真实上行编码；类型21使用 ^15:kind:request_id。
  * @param[in] line 以 ^ 开头的文本，ID 为十六进制，参数为十进制 uint32。
  * @return 文本格式正确返回 1；否则返回 0。
  */
@@ -143,10 +144,24 @@ static int Print_Uplink(const char *line)
     if (errno != 0 || *end != ':' || id > 0x7FFUL)
         return 0;
     unsigned long argument = strtoul(end + 1, &end, 10);
-    if (errno != 0 || (*end != '\0' && *end != '\n' && *end != '\r') || argument > UINT32_MAX)
+    if (errno != 0 || argument > UINT32_MAX)
         return 0;
     uint8_t data[8];
-    uint8_t length = Jetson_CAN_Encode_Uplink((uint16_t)id, (uint32_t)argument, data);
+    uint8_t length;
+    if (id == JETSON_CAN_POINT_REACHED_ID)
+    {
+        if (*end != ':')
+            return 0;
+        unsigned long request_id = strtoul(end + 1, &end, 10);
+        if (errno != 0 || request_id > UINT32_MAX)
+            return 0;
+        length = argument > UINT8_MAX ? 0U :
+            Jetson_CAN_Encode_Action_Request((uint8_t)argument, (uint32_t)request_id, data);
+    }
+    else
+        length = Jetson_CAN_Encode_Uplink((uint16_t)id, (uint32_t)argument, data);
+    if (*end != '\0' && *end != '\n' && *end != '\r')
+        return 0;
     if (length == 0U)
     {
         printf("{\"uplink\":\"\"}\n");

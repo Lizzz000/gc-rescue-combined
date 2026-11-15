@@ -15,6 +15,12 @@ def _resolver(package):
 
 
 class AutoGripperConfigTest(unittest.TestCase):
+    def test_official_black_band_width_reaches_detect_node(self):
+        snapshot = load_configuration(OFFICIAL, run='vision', package_resolver=_resolver,
+                                      require_assets=False)
+        self.assertEqual(snapshot['values']['vision.field.black_width_m'], 0.020)
+        self.assertEqual(snapshot['nodes']['detect_node']['field.black_width_m'], 0.020)
+
     def test_official_yaml_rejects_empty_move_s_when_bridge_enabled(self):
         with self.assertRaises(ConfigurationError) as raised:
             load_configuration(OFFICIAL, run='all', package_resolver=_resolver, require_assets=False)

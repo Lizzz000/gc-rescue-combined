@@ -21,6 +21,7 @@ typedef struct
     float Ki;
     float Kd;
     float max_out;
+    float min_out; /* 默认 -max_out；单向执行器可设为 0。 */
     float max_iout;
     float set;
     float fdb;
@@ -44,7 +45,7 @@ typedef struct
 void PID_init(pid_type_def *pid, uint8_t mode, const float PID[3], float max_out, float max_iout);
 
 /**
- * @brief 沿官方教程计算位置式 PID，保留积分和输出限幅。
+ * @brief 计算位置式 PID；按实例实际输出上下限防止饱和期间继续积累积分。
  * @param[in,out] pid PID 数据结构。
  * @param[in] ref 测量值，与 set 使用相同单位。
  * @param[in] set 目标值，与 ref 使用相同单位。
@@ -58,7 +59,7 @@ float PID_calc(pid_type_def *pid, float ref, float set);
  * @param[in] error 目标减测量误差，航向控制使用 rad，调用前处理角度跨圈。
  * @param[in] measurement_rate 测量值导数，航向控制使用 rad/s。
  * @param[in] dt 本次实际控制间隔，s，须为有限正数。
- * @return 对称限幅后的控制输出，航向控制为 rad/s；空指针返回 0。
+ * @return 按实例 min_out/max_out 限幅后的控制输出，航向控制为 rad/s；空指针返回 0。
  * @note 来源：旧车 Core/Control/PID/pid.c 的 PID_Step。
  *       保留 I+=Ki*error*dt、D=-Kd*measurement_rate、积分限幅和同向饱和抗积分。
  *       Kp 单位为输出/误差，Ki 为输出/(误差*s)，Kd 为输出*s/误差。

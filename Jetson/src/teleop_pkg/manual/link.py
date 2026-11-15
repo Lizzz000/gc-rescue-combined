@@ -8,7 +8,7 @@ import time
 from manual.frame import encode
 
 # 类型 2，长度 7：valid(u8) + vx/vy/wz(int16 小端，×1000)。
-# 不带 pause。自动桥的类型 1 是另一条编码，这里不能复用。
+# 独立手动调试协议，不经过自动任务桥。
 MANUAL_ID = 2
 MANUAL_DLC = 7
 WRITE_TIMEOUT_S = 0.05

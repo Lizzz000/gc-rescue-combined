@@ -157,13 +157,13 @@ std::string configToString(const FieldConfig & cfg)
   std::snprintf(buf, sizeof(buf),
                   "proc=%dx%d field=%.2fx%.2fm wall=%.3fm bev_ppm=%.0f "
                   "purple[H=%.0f..%.0f C/L>=%.2f L=%.0f..%.0f] "
-                  "fill>=%.2f ratio=%.2f..%.2f corner_tol=%.2f black[depth>=%.2f suspect_offset>%.2f width<=%.2f lift<=%.2f] "
+                  "fill>=%.2f ratio=%.2f..%.2f corner_tol=%.2f black[physical=%.3fm depth>=%.2f suspect_offset>%.2f width<=%.2f lift<=%.2f] "
                   "interior[%s H=%.0f..%.0f C/L>=%.2f L>=%.0f]",
                   cfg.proc_width, cfg.proc_height, cfg.field_w_m, cfg.field_h_m, cfg.wall_thickness_m, cfg.bev_px_per_m,
                   cfg.purple_hue_lo_deg, cfg.purple_hue_hi_deg, cfg.purple_chroma_ratio_min,
                   cfg.purple_L_min, cfg.purple_L_max,
                   cfg.min_fill_ratio, cfg.min_rect_ratio_lo, cfg.min_rect_ratio_hi,
-                  cfg.prior_corner_tol_frac, cfg.black_min_depth, cfg.black_max_offset_frac,
+                  cfg.prior_corner_tol_frac, cfg.black_width_m, cfg.black_min_depth, cfg.black_max_offset_frac,
                   cfg.black_max_width_frac, cfg.black_max_lift,
                   cfg.use_blue_interior ? "blue" : "red",
                   cfg.use_blue_interior ? cfg.blue_hue_lo_deg : cfg.red_hue_lo_deg,
@@ -199,6 +199,7 @@ void validateFieldConfig(const FieldConfig & c)
   range(c.bev_height, 0, 4096, "bev_height");
   // 围边厚度小于短边 1/4，保证内部尺寸为正且内沿先验不越过中线。
   range(c.wall_thickness_m, 0, 0.25 * std::min(c.field_w_m, c.field_h_m), "wall_thickness_m");
+  range(c.black_width_m, 0.001, c.field_w_m - 2 * c.wall_thickness_m, "black_width_m");
   // 显式尺寸逐轴覆盖；任一轴为 0 时使用内部米制尺寸乘像素密度，并检查最终有效尺寸。
   range(c.bev_width > 0 ? c.bev_width : (c.field_w_m - 2 * c.wall_thickness_m) * c.bev_px_per_m, 16, 4096,
     "effective bev width");

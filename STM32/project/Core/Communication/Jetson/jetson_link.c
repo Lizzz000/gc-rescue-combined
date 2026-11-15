@@ -10,6 +10,8 @@
 static volatile Jetson_CAN_Data_t jetson_data;
 static volatile uint8_t expected_reply_command;
 static volatile uint32_t expected_reply_token;
+static volatile uint8_t expected_action_kind;
+static volatile uint32_t expected_action_id;
 
 /**
  * @brief 逐字节读取小端有符号定点值，不依赖结构体对齐或主机字节序。
@@ -58,13 +60,15 @@ void Jetson_CAN_Init(void)
     jetson_data = (Jetson_CAN_Data_t){0};
     expected_reply_command = 0U;
     expected_reply_token = 0U;
+    expected_action_kind = 0U;
+    expected_action_id = 0U;
     taskEXIT_CRITICAL();
 }
 
-/** @brief alive=0 的失联帧要求三个速度定点值都是 0。 */
-static uint8_t Heartbeat_Speeds_Are_Zero(const uint8_t *data)
+/** @brief 撤销旧 USB 会话的周期流准入标记；调用约束见头文件。 @return 无。 */
+void Jetson_CAN_Invalidate_Periodic(void)
 {
-    return Read_Signed(data + 2U) == 0 && Read_Signed(data + 4U) == 0 && Read_Signed(data + 6U) == 0;
+    jetson_data.periodic_received = 0U;
 }
 
 /**
@@ -77,32 +81,18 @@ void Jetson_CAN_Receive(uint16_t type, const uint8_t *data, uint8_t len)
     uint32_t now_ms = (uint32_t)xTaskGetTickCount();
     switch (type)
     {
-    case JETSON_CAN_HEARTBEAT_ID:
-        ++jetson_data.rx_sequence;
-        /* 长度必须是 8。pause 只取 0 或 1。alive=0 且速度非 0 不是失联。 */
-        if (data != NULL && len == JETSON_CAN_HEARTBEAT_DLC &&
-            data[JETSON_CAN_HEARTBEAT_PAUSE_BYTE] <= 1U)
-        {
-            if (data[JETSON_CAN_HEARTBEAT_ALIVE_BYTE] == 1U)
-            {
-                jetson_data.heartbeat_received_ms = now_ms;
-                jetson_data.heartbeat_sequence = jetson_data.rx_sequence;
-                jetson_data.heartbeat_seen = 1U;
-                jetson_data.heartbeat_pause = data[JETSON_CAN_HEARTBEAT_PAUSE_BYTE];
-            }
-            else if (data[JETSON_CAN_HEARTBEAT_ALIVE_BYTE] == 0U && Heartbeat_Speeds_Are_Zero(data))
-            {
-                jetson_data.heartbeat_seen = 0U;
-                ++jetson_data.mission_loss_sequence;
-            }
-        }
-        break;
     case JETSON_CAN_TARGET_CENTER_ID:
     case JETSON_CAN_SAFETY_CENTER_ID:
     {
         Jetson_CAN_Center_t center = {0};
         center.received_ms = now_ms;
         center.sequence = ++jetson_data.rx_sequence;
+        /* 无目标仍会周期发布 valid=0；只有合法中心帧证明周期流还在运行。 */
+        if (data != NULL && len == 8U && data[0] <= 1U)
+        {
+            jetson_data.periodic_received = 1U;
+            jetson_data.periodic_received_ms = now_ms;
+        }
         if (data != NULL && len == 8U && data[0] == 1U)
         {
             center.valid = 1U;
@@ -120,7 +110,6 @@ void Jetson_CAN_Receive(uint16_t type, const uint8_t *data, uint8_t len)
     case JETSON_CAN_ARRIVAL_REPLY_ID:
     {
         Jetson_CAN_Arrival_Ack_t reply = {0};
-        reply.received_ms = now_ms;
         reply.sequence = ++jetson_data.rx_sequence;
         if (data != NULL && len == 1U && data[0] <= 1U)
         {
@@ -133,7 +122,6 @@ void Jetson_CAN_Receive(uint16_t type, const uint8_t *data, uint8_t len)
     case JETSON_CAN_ROI_REPLY_ID:
     {
         Jetson_CAN_ROI_Reply_t reply = {0};
-        reply.received_ms = now_ms;
         reply.sequence = ++jetson_data.rx_sequence;
         /* 仅四种合法组合：000、100、111、112；000 保持无效。 */
         if (data != NULL && len == 3U && data[0] == 1U &&
@@ -150,13 +138,12 @@ void Jetson_CAN_Receive(uint16_t type, const uint8_t *data, uint8_t len)
     case JETSON_CAN_COMMAND_REPLY_ID:
     {
         Jetson_CAN_Command_Reply_t reply = {0};
-        reply.received_ms = now_ms;
         reply.sequence = ++jetson_data.rx_sequence;
         if (data != NULL && len == 6U && data[0] <= 1U &&
             data[1] >= 1U && data[1] <= JETSON_CAN_POINT_REPLY_COMMAND)
         {
             uint32_t token = Read_Token(data + 2U);
-            if ((data[1] != 3U && data[1] != JETSON_CAN_POINT_REPLY_COMMAND) || token == 0U)
+            if ((data[1] != 3U && data[1] != JETSON_CAN_POINT_REPLY_COMMAND) || token != 0U)
             {
                 reply.valid = 1U;
                 reply.accepted = data[0];
@@ -164,7 +151,7 @@ void Jetson_CAN_Receive(uint16_t type, const uint8_t *data, uint8_t len)
                 reply.token = token;
             }
         }
-        /* 等待当前握手时保留首个匹配的受理帧及到达时间，迟到重复不能覆盖它。 */
+        /* 等待当前握手时保留首个匹配的受理帧及接收序号，迟到重复不能覆盖它。 */
         if (expected_reply_command == 0U ||
             (!jetson_data.command_reply.accepted && reply.valid &&
              reply.command == expected_reply_command && reply.token == expected_reply_token))
@@ -174,7 +161,6 @@ void Jetson_CAN_Receive(uint16_t type, const uint8_t *data, uint8_t len)
     case JETSON_CAN_TURN_REQUEST_ID:
     {
         Jetson_CAN_Turn_Request_t request = {0};
-        request.received_ms = now_ms;
         request.sequence = ++jetson_data.rx_sequence;
         if (data != NULL && len == 6U && data[0] == 1U &&
             (data[1] == 1U || data[1] == 2U))
@@ -184,6 +170,25 @@ void Jetson_CAN_Receive(uint16_t type, const uint8_t *data, uint8_t len)
             request.token = Read_Token(data + 2U);
         }
         jetson_data.turn_to_safety = request;
+        break;
+    }
+    case JETSON_CAN_ACTION_RESULT_ID:
+    {
+        Jetson_CAN_Action_Result_t result = {0};
+        result.sequence = ++jetson_data.rx_sequence;
+        if (data != NULL && len == 6U && data[0] <= JETSON_CAN_POINT_REJECT_OPEN &&
+            data[1] <= 1U && Read_Token(data + 2U) != 0U)
+        {
+            result.valid = 1U;
+            result.kind = data[0];
+            result.success = data[1];
+            result.request_id = Read_Token(data + 2U);
+        }
+        /* 两种终态都锁存，后来的坏帧、旧编号或其他动作不能覆盖。 */
+        if (expected_action_id == 0U ||
+            (!jetson_data.action_result.valid && result.valid &&
+             result.kind == expected_action_kind && result.request_id == expected_action_id))
+            jetson_data.action_result = result;
         break;
     }
     default:
@@ -201,10 +206,19 @@ void Jetson_CAN_Expect_Command_Reply(uint16_t request_type, uint32_t token)
         command = (uint8_t)(request_type - JETSON_CAN_TURN_COMPLETED_ID + 1U);
     taskENTER_CRITICAL();
     expected_reply_command = command;
-    expected_reply_token = request_type == JETSON_CAN_START_SEARCH_ID ||
-                           request_type == JETSON_CAN_POINT_REACHED_ID ? 0U : token;
+    expected_reply_token = token;
     if (command != 0U)
         jetson_data.command_reply = (Jetson_CAN_Command_Reply_t){0};
+    taskEXIT_CRITICAL();
+}
+
+void Jetson_CAN_Expect_Action_Result(uint8_t kind, uint32_t request_id)
+{
+    taskENTER_CRITICAL();
+    expected_action_kind = kind;
+    expected_action_id = request_id;
+    if (request_id != 0U)
+        jetson_data.action_result = (Jetson_CAN_Action_Result_t){0};
     taskEXIT_CRITICAL();
 }
 
@@ -221,24 +235,17 @@ void Jetson_CAN_Get_Data(Jetson_CAN_Data_t *out)
 /** @brief 编码上行载荷。 @return 载荷长度，失败为 0。 */
 uint8_t Jetson_CAN_Encode_Uplink(uint16_t type, uint32_t argument, uint8_t data[8])
 {
-    if (data == NULL)
+    if (data == NULL || (type == JETSON_CAN_START_SEARCH_ID && argument == 0U))
         return 0U;
 
     uint8_t length;
     switch (type)
     {
     case JETSON_CAN_ARRIVAL_ID:
-    case JETSON_CAN_START_SEARCH_ID:
         length = 1U;
         break;
-    case JETSON_CAN_POINT_REACHED_ID:
-        /* 命令 5 只表示受理到点，不是夹爪到位。 */
-        if (argument != JETSON_CAN_POINT_GRASP && argument != JETSON_CAN_POINT_RELEASE)
-            return 0U;
-        memset(data, 0, 8U);
-        data[0] = (uint8_t)argument;
-        return 1U;
     case JETSON_CAN_TURN_COMPLETED_ID:
+    case JETSON_CAN_START_SEARCH_ID:
     case JETSON_CAN_SAFETY_ARRIVED_ID:
     case JETSON_CAN_DELIVERY_COMPLETED_ID:
         length = 5U;
@@ -257,4 +264,15 @@ uint8_t Jetson_CAN_Encode_Uplink(uint16_t type, uint32_t argument, uint8_t data[
         data[4] = (uint8_t)(argument >> 24U);
     }
     return length;
+}
+
+uint8_t Jetson_CAN_Encode_Action_Request(uint8_t kind, uint32_t request_id, uint8_t data[8])
+{
+    if (data == NULL || kind > JETSON_CAN_POINT_REJECT_OPEN || request_id == 0U)
+        return 0U;
+    memset(data, 0, 8U);
+    data[0] = kind;
+    for (unsigned byte = 0U; byte < 4U; ++byte)
+        data[byte + 1U] = (uint8_t)(request_id >> (byte * 8U));
+    return 5U;
 }

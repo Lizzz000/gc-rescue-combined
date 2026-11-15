@@ -75,6 +75,6 @@ digraph system {
   mission -> bridge [label="/mission_node/status\n/mission_node/active_task"];
   bridge -> mission [label="/mission_node/arrived\n/mission_node/command", style=dashed];
   stream -> http [label="/healthz  /view\n/snapshot.jpg  /stream.mjpg"];
-  bridge -> can [label="类型 1、3、4\n类型 5–8"];
+  bridge -> can [label="类型 3、4\n类型 5–9"];
   can -> bridge [label="类型 16–18\n类型 19–21"];
 }
