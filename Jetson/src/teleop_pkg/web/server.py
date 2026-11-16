@@ -14,15 +14,17 @@ GET  /                                       控制页面
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import math
 from pathlib import Path
+import threading
 import time
 
-from manual.command import MAX_ANGULAR_RADPS, MAX_LINEAR_MPS
 from servo.s288 import ServoBusy
 
 BIND_ADDRESS = '127.0.0.1'
 _PAGE = (Path(__file__).resolve().parent / 'index.html').read_bytes()
 _MAX_BODY = 1024
+_MAX_COMMAND_CLIENTS = 256
 
 
 class ManualServer(ThreadingHTTPServer):
@@ -34,6 +36,35 @@ class ManualServer(ThreadingHTTPServer):
         self.command = command
         self.status = status
         self.servo = servo
+        self._motion_lock = threading.Lock()
+        self._command_sequences = {}
+
+    def apply_motion(self, action, body, now, *, stopping=False):
+        """同一页面的停车、续租和定时动作按发起序号执行，迟到或重复请求不续租。
+
+        无元数据的直接 API 调用保持兼容，但不具有跨 HTTP 连接的乱序保护。
+        客户端表不淘汰旧序号，避免被淘汰页面的迟到运动重新生效。
+        """
+        client, sequence = body.get('client_id'), body.get('sequence')
+        ordered = 'client_id' in body or 'sequence' in body
+        if ordered:
+            if (not isinstance(client, str) or not 1 <= len(client) <= 64
+                    or not client.isascii() or not all(c.isalnum() or c in '-_' for c in client)
+                    or type(sequence) is not int or not 1 <= sequence <= 2 ** 53 - 1):
+                raise ValueError('client_id 和 sequence 须成对提供有效的页面标识及正整数序号')
+        with self._motion_lock:
+            if ordered:
+                previous = self._command_sequences.get(client)
+                if previous is not None and sequence <= previous:
+                    return
+                if previous is None and len(self._command_sequences) >= _MAX_COMMAND_CLIENTS:
+                    if stopping:
+                        return action(body, now)
+                    raise ValueError('控制页面会话数已达上限，请重启手动控制服务')
+            result = action(body, now)
+            if ordered:
+                self._command_sequences[client] = sequence
+            return result
 
 
 def _numbers(body, names):
@@ -42,7 +73,13 @@ def _numbers(body, names):
         value = body.get(name)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f'{name} 须为数值')
-        values.append(float(value))
+        try:
+            value = float(value)
+        except OverflowError as error:
+            raise ValueError(f'{name} 须为有限数值') from error
+        if not math.isfinite(value):
+            raise ValueError(f'{name} 须为有限数值')
+        values.append(value)
     return values
 
 
@@ -71,7 +108,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.NOT_FOUND, {'error': 'not found'})
             return
         try:
-            status = action(self._body(), time.monotonic())
+            body = self._body()
+            if self.path in ('/api/hold', '/api/timed', '/api/stop'):
+                status = self.server.apply_motion(action, body, time.monotonic(),
+                                                  stopping=self.path == '/api/stop')
+            else:
+                status = action(body, time.monotonic())
         except ServoBusy as error:
             self._json(HTTPStatus.CONFLICT, {'error': str(error), **self._state()})
             return
@@ -122,7 +164,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _state(self):
         return {**self.server.command.snapshot(time.monotonic()), **self.server.status(),
-                'limits': {'linear_mps': MAX_LINEAR_MPS, 'angular_radps': MAX_ANGULAR_RADPS},
+                'limits': self.server.command.limits,
                 'servo': self.server.servo.snapshot()}
 
     def _json(self, status, payload):

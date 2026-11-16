@@ -19,8 +19,8 @@
   <depend>std_srvs</depend>
   <depend>geometry_msgs</depend>
   <depend>vision_msgs</depend>
-  <!-- 图像适配保持与 OpenCV 一致的 cv_bridge；GPU 后端选择在 CMake 中显式配置。 -->
-  <depend>cv_bridge</depend>
+  <!-- ROS Image 直接适配八位像素，所有 OpenCV 调用使用 CMake 选择的同一版本。 -->
+  <depend>libopencv-dev</depend>
   <depend>interface_pkg</depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>ament_index_python</exec_depend>

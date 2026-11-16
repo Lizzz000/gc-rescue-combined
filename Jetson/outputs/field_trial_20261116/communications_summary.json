@@ -1,0 +1,538 @@
+{
+  "date": "2026-11-16",
+  "scope": "Recorded before operator power-off; no delivery performed. Raw samples remain local.",
+  "sources": {
+    "communications_pc_stream_01.json": {
+      "sha256": "81a84cfd491cdde75cc7eeb8e972a1cf0464b2c9849a9fbb8fca5d30755c2c32",
+      "bytes": 153448,
+      "record": {
+        "schema_version": 1,
+        "url": "http://10.95.40.9:8080/stream.mjpg",
+        "started_utc": "2026-11-16T13:05:32.488469+00:00",
+        "requested_duration_s": 15.0,
+        "frame_timeout_s": 5.0,
+        "status": "ok",
+        "exit_reason": "duration_elapsed",
+        "error": null,
+        "http_status": 200,
+        "http_content_type": "multipart/x-mixed-replace; boundary=frame",
+        "boundary": "frame",
+        "elapsed_total_window_s": 15.01600000000326,
+        "complete_frames": 251,
+        "first_complete_elapsed_s": 0.34399999998277053,
+        "last_complete_elapsed_s": 14.905999999988126,
+        "fps_first_to_last": 17.167971432489225,
+        "fps_total_window": 16.7155034629692,
+        "receive_interval_ms": {
+          "count": 250,
+          "min": 0.0,
+          "mean": 58.24800000002142,
+          "p50": 54.5000000129221,
+          "p95": 118.25000000681004,
+          "max": 172.0000000204891
+        },
+        "jpeg_bytes": {
+          "count": 251,
+          "min": 152948,
+          "mean": 158751.8047808765,
+          "p50": 158795.0,
+          "p95": 159287.0,
+          "max": 159675,
+          "total": 39846703
+        },
+        "socket_received_bytes_including_http_headers": 39911435,
+        "sequence": {
+          "valid_frames": 251,
+          "missing_or_invalid_header_frames": 0,
+          "forward_gap_events": 183,
+          "forward_gap_sequence_slots": 799,
+          "out_of_order_frames": 0,
+          "duplicate_frames": 0
+        },
+        "server_metric_ms": {
+          "X-Frame-Age-At-Encode-Ms": {
+            "count": 251,
+            "min": 18.927293,
+            "mean": 28.393893685258966,
+            "p50": 28.246364,
+            "p95": 36.165336499999995,
+            "max": 43.32586
+          },
+          "X-Frame-Age-At-Publish-Ms": {
+            "count": 251,
+            "min": 27.502905,
+            "mean": 37.58582396812749,
+            "p50": 37.451794,
+            "p95": 45.375717,
+            "max": 51.429702
+          },
+          "X-Jpeg-Encode-Ms": {
+            "count": 251,
+            "min": 7.905068,
+            "mean": 9.065501047808764,
+            "p50": 8.609121,
+            "p95": 11.606624499999999,
+            "max": 16.147138
+          }
+        },
+        "definitions": {
+          "fps_first_to_last": "(complete_frames - 1) / seconds between first and last complete JPEG",
+          "fps_total_window": "complete_frames / client elapsed time including DNS/connect/HTTP and final wait",
+          "receive_interval_ms": "Client parser completion intervals; buffered/burst delivery may shorten intervals",
+          "server_metric_ms": "Server-reported frame age/encode time, NOT end-to-end or network latency",
+          "forward_gap_sequence_slots": "Missing slots at each new high-water sequence jump; not a proven network drop count",
+          "frame_timeout_s": "Maximum wait for a complete JPEG, including initial connection/headers; slow partial data does not reset it"
+        }
+      }
+    },
+    "communications_pc_stream_02.json": {
+      "sha256": "1a08da00b73ab2c766b5817eea899b3f51718baa87022945b641a18b37b2e71b",
+      "bytes": 124419,
+      "record": {
+        "schema_version": 1,
+        "url": "http://10.95.40.9:8080/stream.mjpg",
+        "started_utc": "2026-11-16T13:16:05.028793+00:00",
+        "requested_duration_s": 8.0,
+        "frame_timeout_s": 3.0,
+        "status": "ok",
+        "exit_reason": "duration_elapsed",
+        "error": null,
+        "http_status": 200,
+        "http_content_type": "multipart/x-mixed-replace; boundary=frame",
+        "boundary": "frame",
+        "elapsed_total_window_s": 8.01600000000326,
+        "complete_frames": 203,
+        "first_complete_elapsed_s": 0.125,
+        "last_complete_elapsed_s": 7.969000000011874,
+        "fps_first_to_last": 25.75216726156224,
+        "fps_total_window": 25.32435129739489,
+        "receive_interval_ms": {
+          "count": 202,
+          "min": 0.0,
+          "mean": 38.83168316837562,
+          "p50": 32.00000000651926,
+          "p95": 78.00000000861473,
+          "max": 109.99999998603016
+        },
+        "jpeg_bytes": {
+          "count": 203,
+          "min": 158192,
+          "mean": 158796.78325123154,
+          "p50": 158804.0,
+          "p95": 159278.6,
+          "max": 159746,
+          "total": 32235747
+        },
+        "socket_received_bytes_including_http_headers": 32288142,
+        "sequence": {
+          "valid_frames": 203,
+          "missing_or_invalid_header_frames": 0,
+          "forward_gap_events": 128,
+          "forward_gap_sequence_slots": 359,
+          "out_of_order_frames": 0,
+          "duplicate_frames": 0
+        },
+        "server_metric_ms": {
+          "X-Frame-Age-At-Encode-Ms": {
+            "count": 203,
+            "min": 18.978174,
+            "mean": 29.2167887635468,
+            "p50": 29.38818,
+            "p95": 37.57387609999999,
+            "max": 40.679656
+          },
+          "X-Frame-Age-At-Publish-Ms": {
+            "count": 203,
+            "min": 27.456482,
+            "mean": 38.57389975862069,
+            "p50": 38.471866,
+            "p95": 46.753909,
+            "max": 51.850353
+          },
+          "X-Jpeg-Encode-Ms": {
+            "count": 203,
+            "min": 7.899289,
+            "mean": 9.184652743842364,
+            "p50": 8.707727,
+            "p95": 11.932484799999997,
+            "max": 13.088132
+          }
+        },
+        "definitions": {
+          "fps_first_to_last": "(complete_frames - 1) / seconds between first and last complete JPEG",
+          "fps_total_window": "complete_frames / client elapsed time including DNS/connect/HTTP and final wait",
+          "receive_interval_ms": "Client parser completion intervals; buffered/burst delivery may shorten intervals",
+          "server_metric_ms": "Server-reported frame age/encode time, NOT end-to-end or network latency",
+          "forward_gap_sequence_slots": "Missing slots at each new high-water sequence jump; not a proven network drop count",
+          "frame_timeout_s": "Maximum wait for a complete JPEG, including initial connection/headers; slow partial data does not reset it"
+        }
+      }
+    },
+    "communications_loopback_stream_01.json": {
+      "sha256": "b881659c436e9be3ebc7397b28e2c47dae257f12243d42839329acfd96ac099b",
+      "bytes": 331053,
+      "record": {
+        "schema_version": 1,
+        "url": "http://127.0.0.1:8080/stream.mjpg",
+        "started_utc": "2026-11-16T13:14:51.001942+00:00",
+        "requested_duration_s": 8.0,
+        "frame_timeout_s": 3.0,
+        "status": "ok",
+        "exit_reason": "duration_elapsed",
+        "error": null,
+        "http_status": 200,
+        "http_content_type": "multipart/x-mixed-replace; boundary=frame",
+        "boundary": "frame",
+        "elapsed_total_window_s": 8.000638942999103,
+        "complete_frames": 568,
+        "first_complete_elapsed_s": 0.006611429999793472,
+        "last_complete_elapsed_s": 7.995296433999101,
+        "fps_first_to_last": 70.97538577577507,
+        "fps_total_window": 70.99432983374709,
+        "receive_interval_ms": {
+          "count": 567,
+          "min": 5.009144999348791,
+          "mean": 14.089391541444988,
+          "p50": 13.362642999709351,
+          "p95": 20.65532500009793,
+          "max": 28.84072999950149
+        },
+        "jpeg_bytes": {
+          "count": 568,
+          "min": 157795,
+          "mean": 158748.5545774648,
+          "p50": 158754.0,
+          "p95": 159252.65,
+          "max": 159827,
+          "total": 90169179
+        },
+        "socket_received_bytes_including_http_headers": 90315433,
+        "sequence": {
+          "valid_frames": 568,
+          "missing_or_invalid_header_frames": 0,
+          "forward_gap_events": 0,
+          "forward_gap_sequence_slots": 0,
+          "out_of_order_frames": 0,
+          "duplicate_frames": 0
+        },
+        "server_metric_ms": {
+          "X-Frame-Age-At-Encode-Ms": {
+            "count": 568,
+            "min": 18.877194,
+            "mean": 30.60443358274648,
+            "p50": 30.020233500000003,
+            "p95": 39.831004799999995,
+            "max": 46.155171
+          },
+          "X-Frame-Age-At-Publish-Ms": {
+            "count": 568,
+            "min": 27.280595,
+            "mean": 39.78525852992958,
+            "p50": 39.381112,
+            "p95": 49.94299699999999,
+            "max": 56.862659
+          },
+          "X-Jpeg-Encode-Ms": {
+            "count": 568,
+            "min": 7.897499,
+            "mean": 9.080146033450704,
+            "p50": 8.6613285,
+            "p95": 11.629084849999998,
+            "max": 17.235032
+          }
+        },
+        "definitions": {
+          "fps_first_to_last": "(complete_frames - 1) / seconds between first and last complete JPEG",
+          "fps_total_window": "complete_frames / client elapsed time including DNS/connect/HTTP and final wait",
+          "receive_interval_ms": "Client parser completion intervals; buffered/burst delivery may shorten intervals",
+          "server_metric_ms": "Server-reported frame age/encode time, NOT end-to-end or network latency",
+          "forward_gap_sequence_slots": "Missing slots at each new high-water sequence jump; not a proven network drop count",
+          "frame_timeout_s": "Maximum wait for a complete JPEG, including initial connection/headers; slow partial data does not reset it"
+        }
+      }
+    },
+    "communications_vision_01.json": {
+      "sha256": "d5c00af4961adef9bde8681281136cc9bb807078ef2d10a98a1bde3d8d91b4ea",
+      "bytes": 1642681,
+      "record": {
+        "schema": 1,
+        "probe": "vision",
+        "mode": "field",
+        "started_utc": "2026-11-16T13:07:44.921941+00:00",
+        "requested_duration_s": 10.0,
+        "warmup_s": 3.0,
+        "errors": [],
+        "frame_width": 1920,
+        "frame_height": 1080,
+        "scene_notes": "Communication check only; no chassis motion",
+        "notes": [
+          "Status FPS/latencies are server diagnostics, not independently measured delivery FPS or end-to-end latency.",
+          "Counter deltas use the last warmup status through the last sampled status; actual observed span is reported.",
+          "Field valid/committed counts describe this camera scene, not overall recognition accuracy."
+        ],
+        "service_response": {
+          "success": true,
+          "message": "active_task=field"
+        },
+        "stage_at_sample_start": {
+          "task": "field",
+          "epoch": 2,
+          "source_stamp_ns": 1794834016810211735,
+          "receive_monotonic_s": 4273.379385519
+        },
+        "summary": {
+          "sample_duration_s": 10.0,
+          "sample_counts": {
+            "detect": 10,
+            "stream": 10,
+            "field": 682
+          },
+          "detect": {
+            "capture_fps": {
+              "n": 10,
+              "mean": 118.98742376962016,
+              "min": 114.98304804922611,
+              "max": 120.98772458546355,
+              "last": 118.98917567367815
+            },
+            "seg_fps": {
+              "n": 10,
+              "mean": 0.0,
+              "min": 0.0,
+              "max": 0.0,
+              "last": 0.0
+            },
+            "field_fps": {
+              "n": 10,
+              "mean": 68.19307143700095,
+              "min": 66.99011078586557,
+              "max": 70.0903110854724,
+              "last": 66.99390355477651
+            },
+            "raw_fps": {
+              "n": 10,
+              "mean": 0.0,
+              "min": 0.0,
+              "max": 0.0,
+              "last": 0.0
+            },
+            "seg_inference_ms": {
+              "n": 10,
+              "mean": 10.26704468287897,
+              "min": 10.26704468287897,
+              "max": 10.26704468287897,
+              "last": 10.26704468287897
+            },
+            "field_inference_ms": {
+              "n": 10,
+              "mean": 14.353747759029128,
+              "min": 13.715297563793435,
+              "max": 15.831595226452613,
+              "last": 15.831595226452613
+            },
+            "seg_gpu_ms": {
+              "n": 10,
+              "mean": 10.032622,
+              "min": 10.032622,
+              "max": 10.032622,
+              "last": 10.032622
+            },
+            "seg_post_ms": {
+              "n": 10,
+              "mean": 0.011904,
+              "min": 0.011904,
+              "max": 0.011904,
+              "last": 0.011904
+            },
+            "field_gpu_ms": {
+              "n": 10,
+              "mean": 0.0,
+              "min": 0.0,
+              "max": 0.0,
+              "last": 0.0
+            },
+            "field_post_ms": {
+              "n": 10,
+              "mean": 6.202973699999999,
+              "min": 6.110761000000001,
+              "max": 6.297438999999999,
+              "last": 6.182313999999998
+            }
+          },
+          "stream": {
+            "image_fps": {
+              "n": 10,
+              "mean": 68.1923476923428,
+              "min": 66.96235985486433,
+              "max": 70.99191664739479,
+              "last": 68.02280301216256
+            },
+            "compose_fps": {
+              "n": 10,
+              "mean": 68.19243888756705,
+              "min": 66.96236199645611,
+              "max": 70.99191664739479,
+              "last": 68.02280083470299
+            },
+            "compose_ms": {
+              "n": 10,
+              "mean": 11.504431016154612,
+              "min": 10.743106464266013,
+              "max": 12.769859257032756,
+              "last": 12.769859257032756
+            },
+            "stream_fps": {
+              "n": 10,
+              "mean": 71.65495361733957,
+              "min": 66.65699771364804,
+              "max": 74.68787395514623,
+              "last": 66.65699771364804
+            },
+            "viewers": {
+              "n": 10,
+              "mean": 2.0,
+              "min": 2,
+              "max": 2,
+              "last": 2
+            },
+            "instances": {
+              "n": 10,
+              "mean": 1.0,
+              "min": 1,
+              "max": 1,
+              "last": 1
+            }
+          },
+          "detect_counters": {
+            "inference_replaced": {
+              "delta": 508,
+              "observed_span_s": 10.000356782000381,
+              "first": 21633,
+              "last": 22141,
+              "reset_detected": false
+            },
+            "raw_replaced": {
+              "delta": 0,
+              "observed_span_s": 10.000356782000381,
+              "first": 0,
+              "last": 0,
+              "reset_detected": false
+            },
+            "camera_reopens": {
+              "delta": 0,
+              "observed_span_s": 10.000356782000381,
+              "first": 0,
+              "last": 0,
+              "reset_detected": false
+            },
+            "seg_skipped": {
+              "delta": 0,
+              "observed_span_s": 10.000356782000381,
+              "first": 0,
+              "last": 0,
+              "reset_detected": false
+            },
+            "field_skipped": {
+              "delta": 0,
+              "observed_span_s": 10.000356782000381,
+              "first": 0,
+              "last": 0,
+              "reset_detected": false
+            }
+          },
+          "stream_counters": {
+            "replaced_frames": {
+              "delta": 0,
+              "observed_span_s": 10.001198887999635,
+              "first": 5,
+              "last": 5,
+              "reset_detected": false
+            }
+          },
+          "max_receive_gap_s": {
+            "detect": 1.0023729229997116,
+            "stream": 1.0029398099995888,
+            "field": 0.028624857999602682
+          },
+          "mode_mismatch_status_count": 0,
+          "field": {
+            "received": 682,
+            "unique_source_stamps": 682,
+            "duplicate_source_stamps": 0,
+            "received_messages_per_s": 68.2,
+            "valid": 680,
+            "valid_and_committed": 680,
+            "invalid": 2,
+            "states": {
+              "TRACK": 682
+            },
+            "qualities": {
+              "good": 680,
+              "none": 2
+            },
+            "reasons": {
+              "": 680,
+              "没有可测的内沿; 没有可测的内沿; 没有可测的内沿": 2
+            }
+          }
+        },
+        "counter_baselines": {
+          "detect": {
+            "capture_fps": 118.99141643518404,
+            "seg_fps": 0.0,
+            "field_fps": 68.99504063647906,
+            "raw_fps": 0.0,
+            "seg_inference_ms": 10.26704468287897,
+            "field_inference_ms": 14.557666144553131,
+            "seg_gpu_ms": 10.032622,
+            "seg_post_ms": 0.011904,
+            "field_gpu_ms": 0.0,
+            "field_post_ms": 6.104619,
+            "inference_replaced": 21633,
+            "raw_replaced": 0,
+            "camera_reopens": 0,
+            "seg_skipped": 0,
+            "field_skipped": 0,
+            "raw_subscribers": 0,
+            "seg_active": false,
+            "field_active": true,
+            "serial_inference": true,
+            "source_stamp_ns": 1794834469493522356,
+            "receive_monotonic_s": 4273.379101167
+          },
+          "stream": {
+            "image_fps": 68.99146423806152,
+            "compose_fps": 68.99146423806152,
+            "compose_ms": 12.068032975461074,
+            "stream_fps": 70.35525070796677,
+            "viewers": 2,
+            "instances": 1,
+            "replaced_frames": 5,
+            "source_stamp_ns": 1794834469517377313,
+            "receive_monotonic_s": 4273.402111614
+          }
+        },
+        "stage_events": [
+          {
+            "key": [
+              "field",
+              2,
+              1794834016810211735
+            ],
+            "task": "field",
+            "epoch": 2,
+            "source_stamp_ns": 1794834016810211735,
+            "receive_monotonic_s": 4270.648566797
+          }
+        ],
+        "stage_at_end": {
+          "task": "field",
+          "epoch": 2,
+          "source_stamp_ns": 1794834016810211735,
+          "receive_monotonic_s": 4283.379734363
+        },
+        "ok": true
+      }
+    }
+  }
+}

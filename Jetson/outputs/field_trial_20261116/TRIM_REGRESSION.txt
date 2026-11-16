@@ -1,0 +1,44 @@
+Required endpoint-regression cases (outputs only; never starts hardware):
+
+test_trim_endpoint_regression.cpp uses the existing check.hpp assertion runner.
+It can compile the complete selected geometry.cpp with OpenCV by defining:
+  FIELD_GEOMETRY_SOURCE="/absolute/path/to/geometry.cpp"
+Include vision_pkg and vision_pkg/test/host; link OpenCV core/imgproc.
+
+For the present Windows host without OpenCV development files, run
+extract_trim_minimal_test.py SOURCE_GEOMETRY_CPP OUTPUT_DIRECTORY, then compile
+the same test with FIELD_TRIM_MINIMAL and OUTPUT_DIRECTORY on the include path.
+The helper extracts the actual trimNearCorners and pointLineDistance function
+text verbatim, plus the original kMinInlierBandPx. Only Point2f float arithmetic
+and the unused surrounding FieldConfig fields are replaced by a small adapter.
+This checks the real endpoint logic, not a Python reimplementation. It does not
+replace full OpenCV/CMake regression or source-image replay.
+
+Cases:
+1. A continuous near edge bends six pixels outside the three-pixel line band;
+   true endpoints remain visible. Rotated -0.15/0/+0.15 rad variants must keep
+   endpoint identity and far corners. This reproduces the actual failure feature.
+2. A physically projected raised wall: outer 0.66x0.36 m, height .04 m, camera
+   height .22 m and distance .40 m. The six-vertex outer contour includes wall-top
+   and ground-bottom points. Near corners must meet the existing 3px corner
+   accuracy gate; choosing the nearest wall-top/front-face point is wrong.
+3. A cropped near corner with explicit clipped evidence must keep its extrapolated
+   outside-image intersection. Test exact near-line contact and a 6px normal
+   discrepancy. Neither may invent a new visible corner at the first un-clipped
+   evidence point. The latter also exposes an existing clipped-band weakness.
+4. A purple fragment near the corner is closer to the extrapolated intersection
+   than the real ground endpoint. It lies outside the near-line band; adding it
+   must not move a correct physical endpoint. This represents merged candidate
+   evidence; full image negatives remain necessary for caller-level rejection.
+
+All groups preserve far corners and check the existing TL/TR/BR/BL order using
+the production orderCorners implementation. Run the original test_corner_order
+unchanged as well. Before any adoption, run full geometry/split/matrix at their
+existing gates, the frozen real failures, and clipped/near-purple-clutter cases.
+
+Nearest-contour candidate is intentionally NOT accepted merely because case 1
+passes. It can select a raised wall or purple fragment. The cropped-discrepancy
+case is unresolved in both baseline and the candidate. A safe endpoint estimator
+needs positive association with the physical near-bottom contour, or must reject
+an ambiguous endpoint before marking current geometry valid. No smoothing or
+numeric threshold relaxation is justified by these tests.

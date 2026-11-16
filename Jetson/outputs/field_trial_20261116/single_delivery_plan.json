@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "date": "2026-11-16",
+  "scope": "One delivery from the current green item in the claw; no target search, grasp, return turn or second cycle",
+  "operator_requested_start": "Task ended at the operator's request after power-off. No delivery was executed. Do not auto-start; a new run requires a new operator instruction and fresh checks.",
+  "ready_for_execution": false,
+  "execution_blocker": "SWD recovered after removing a stale OpenOCD process and reconnecting the probe; current Flash and USB receive/IMU updates were verified before power-off. Fresh three-wheel feedback after zero-speed enable, READY, actual chassis motion, and relative +60 degree release remain unverified. Do not release before actual alignment, forward motion and stopping are verified.",
+  "scene_config": "field_rescue.yaml",
+  "camera_profile": "camera_profile.json",
+  "destination": "left",
+  "steps": [
+    {"action": "align_left_region_x", "target_image_x_ratio": 0.5, "vx_mps": 0, "wz_rad_s": 0, "maintain_current_fore_aft_distance": true, "feedback": "Fresh committed field observations; confirm physical lateral response and alignment before advancing"},
+    {"action": "forward", "vx_mps": 0.25, "vy_mps": 0, "wz_rad_s": 0, "duration_s": 1.5, "distance_note": "0.375 m is command-speed times duration only, not measured travel; acceleration, braking and slip apply"},
+    {"action": "stop", "require_actual_motion_completion": true},
+    {"action": "gripper_relative", "degrees": 60, "id": 0, "kp": 1.0, "kd": 0.05, "duration_s": null, "duration_note": "Release duration is not calibrated. The preceding -30 degree checks used a 1 s command window and did not both reach their target.", "require_feedback_stop": true, "require_actual_release_check": true},
+    {"action": "reverse", "vx_mps": -0.25, "vy_mps": 0, "wz_rad_s": 0, "duration_s": 1.5, "duration_source": "Operator explicitly confirmed 1.5 seconds of reverse in the final sequence; actual retreat distance is not measured"},
+    {"action": "stop_and_disable", "repeat": false}
+  ],
+  "limits": {"linear_mps": 0.25, "angular_radps": 0.5, "timed_motion_s": 1.5},
+  "manual_startup": {"arm_zero_s": 0.6, "previous_arm_zero_s": 0.1, "status": "Saved candidate; not yet validated on hardware. All STM32 readiness and fault checks remain unchanged."},
+  "gripper_reference": "Use current feedback for the requested relative +60 degrees. Do not replace this with the full bridge startup open command or assume a persistent servo zero.",
+  "failure_behavior": "Stop chassis and abort later steps on stale perception, missing physical motion, communication failure or failed gripper confirmation. Do not treat HTTP acceptance as motion completion.",
+  "full_autonomous_firmware": "Unchanged and not enabled; this file does not calibrate or activate the original full-cycle state machine."
+}

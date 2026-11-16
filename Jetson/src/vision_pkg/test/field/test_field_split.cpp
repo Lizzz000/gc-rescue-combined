@@ -88,6 +88,17 @@ int main()
       if (mode == 3) {bev.row(65).colRange(124, 146).setTo(cv::Scalar(20, 20, 22));}
       CHECK(!field_detail::detectSplitBlack(bev, config).valid);
     }
+    // 两级灰度阶梯之间的平坦像素不是材质边界。平台跨四像素求差会把它拼成
+    // 标定宽度的假黑带；各真实阶梯附近的另一阶梯则是原有局部噪声判据的反证。
+    for (bool rising : {false, true}) {
+      cv::Mat stepped(132, 252, CV_8UC3, field_test::kRed);
+      for (int x = 116; x < stepped.cols; ++x) {
+        const int level = x < 123 ? 40 : x < 125 ? 34 : 28;
+        const int value = rising ? 68 - level : level;
+        stepped.col(x).setTo(cv::Scalar::all(value));
+      }
+      CHECK(!field_detail::detectSplitBlack(stepped, config).valid);
+    }
   }
   {
     Group group("Split same-frame visible edge beside touching blocks");
@@ -274,6 +285,14 @@ int main()
         CHECK(std::abs(split.top_x - center) < 1.5);
         CHECK(std::abs(split.bottom_x - center) < 1.5);
       }
+      // 稀疏的双边片段宽过标定带时，不能用宽块外沿补成整条中线。
+      // 多出的 3 px 仍通过旧 1.5 倍像素宽度粗筛，却超出实测边距的既有 2 px 容差。
+      const int broad_band = band + 3;
+      cv::Mat broad(sized.bev_height, width, CV_8UC3, field_test::kRed);
+      cv::rectangle(broad, {left, 0, broad_band, broad.rows}, field_test::kBlack, cv::FILLED);
+      cv::rectangle(broad, {left + broad_band, block_top, 3 * broad_band, broad.rows - block_top},
+        field_test::kBlack, cv::FILLED);
+      CHECK(!field_detail::detectSplitBlack(broad, sized).valid);
     }
   }
   {

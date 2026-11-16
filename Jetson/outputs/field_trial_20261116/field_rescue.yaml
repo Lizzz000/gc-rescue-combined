@@ -1,0 +1,37 @@
+version: 1
+advanced_config: /home/nvidia/WorkSpace/GC_Rescue/Jetson/outputs/field_trial_20261116/field_advanced.yaml
+shared:
+  image:
+    width: 1920
+    height: 1080
+vision:
+  detect:
+    seg_model_path: package://vision_pkg/models/seg.ad2322286d06b71.trt
+    seg_labels_path: package://vision_pkg/models/classes.txt
+    conf_threshold_seg: 0.5
+    camera_device: /dev/video0
+    camera_fps: 120
+    camera_fourcc: MJPG
+    camera_backend: gstreamer
+  stream:
+    stream_address: 0.0.0.0
+    stream_port: 8080
+    stream_quality: 80
+  field:
+    field_w_m: 0.66
+    field_h_m: 0.64
+    black_width_m: 0.02
+tracking:
+  select:
+    blue_min_distance_ratio: 0.1
+mission:
+  target:
+    roi_x: 0.25
+    roi_y: 0.5
+    roi_width: 0.5
+    roi_height: 0.5
+link:
+  device: /dev/serial/by-id/usb-GC_Rescue_STM32_Link_004300353034510530343537-if00
+gripper:
+  device: ''
+  id: 0

@@ -40,6 +40,7 @@ class ShutdownTest(unittest.TestCase):
                       shutdown=lambda: events.append('http stop'),
                       server_close=lambda: events.append('http close'))
         args = SimpleNamespace(lease_s=0.2, arm_zero_s=0.1, rate_hz=100, port=0,
+            max_linear_mps=0.5, max_angular_radps=2.0, max_timed_s=3600.0,
             manual_config=dict(link_device='/fake', gripper_device='', gripper_id=0,
                                kp=0, kd=0, closed_deg=None, open_deg=None))
         clock = [0.0]

@@ -54,11 +54,11 @@ CPU 分割后处理在 `src/vision_pkg/yolo/postprocess.cpp`，GPU 提交在 `yo
 
 ## 运行
 
-板端工作区 `/home/nvidia/WorkSpace/GC_Rescue`：
+板端 ROS 工作区 `/home/nvidia/WorkSpace/GC_Rescue/Jetson`：
 
 ```bash
 source /opt/ros/humble/setup.bash
-source /home/nvidia/WorkSpace/GC_Rescue/install/setup.bash
+source /home/nvidia/WorkSpace/GC_Rescue/Jetson/install/setup.bash
 export PYTHONNOUSERSITE=1
 export PATH=/usr/local/cuda/bin:$PATH
 ros2 launch bringup_pkg rescue.launch.py run:=vision
@@ -86,13 +86,19 @@ ros2 launch bringup_pkg rescue.launch.py run:=all
 
 手动控制由 `teleop_pkg/manual_control.py` 经 USB 发送类型 2，不启动 ROS 桥接。自动固件忽略该帧。STM32 须运行手动固件。bridge 与手动程序用同一把设备锁，不能同时打开 `link.device`。
 
-板间通信固定使用 USB CDC，不再提供其他传输后端。连接后用 `ls -l /dev/serial/by-id/` 核对 `link.device`，与 S288 夹爪串口分别配置。当前 STM32 的 USB 序列号为 `0028003D3034470E31353233`，更换板卡后需要更新路径。STM32 到电机仍使用 CAN1。
+板间通信固定使用 USB CDC，不再提供其他传输后端。连接后用 `ls -l /dev/serial/by-id/` 核对 `link.device`，与 S288 夹爪串口分别配置。当前 STM32 的 USB 序列号为 `004300353034510530343537`，更换板卡后需要更新路径。STM32 到电机仍使用 CAN1。
 
 ```bash
 python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/manual_control.py --config /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/bringup_pkg/config/rescue.yaml
 ```
 
+上场地前的低速手动控制可追加 `--max-linear-mps 0.25 --max-angular-radps 0.5 --max-timed-s 1.5`。这些限制由后端同时作用于按住和定时接口，网页从 `/api/state` 读取有效范围；平移按合速度限幅，超长定时请求会被拒绝。不传这些参数时仍保留原协议上限。配置中的 USB 路径须与实际设备一致；不使用夹爪时可在现场配置副本中将 `gripper.device` 设为空字符串。
+
 默认先使能零速 0.1 s，再按网页指令以 100 Hz 发送。速度按向零截断量化，不是四舍五入。此程序不会驱动自动搬运。
+
+手动页面的空格停车在输入框聚焦时仍有效；停车后仍按着方向键的自动重复不会重新起步，须松键后重新按下。页面为底盘请求附带 `client_id` 和递增 `sequence`，后端在同一锁内按序执行，迟到及重复请求不覆盖新动作、不延长租约。直接调用 HTTP API 时也可提供这两个字段；省略时保持旧调用方式，但没有跨连接的乱序保护。序号按页面独立记录，不能将其当作多个操作者之间的全局急停锁。
+
+任务侧保留本进程已见 ROI 编号高水位；Target 单独重启造成重复或倒退编号时，新检查会返回无效、编号 0，并清除本次路线。旧送达记录仍只读确认，不会因此建立新路线。出现该诊断时应在停车后协调重启任务链，并核对运输阶段。Mission 纯核心回归已纳入 `colcon test --packages-select mission_pkg`。串口打开失败的实例只释放自己成功获取的独占标记，避免争抢设备时误清除已有进程的锁。
 
 常用话题：`/detect_node/status`、`/detect_node/seg/detections`、`/detect_node/field/results`、`/detect_node/active_task`、`/track_node/seg/tracks`、`/select_node/target`、`/mission_node/status`、`/safety_node/target`、`/bridge_node/status`。`/detect_node/active_task` 和 `/mission_node/status` 是 `transient_local`。
 
@@ -102,7 +108,11 @@ python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/manual_control.py
 
 安全区识别仍需实车校准。左右区域沿黑带中心线分割，安全区目标为各区域四边形对角线的交点；对矩形区域，这对应矩形中心经过透视投影后的位置。仿真采用已确认的 20 mm 黑带宽度，中心真值与消息中的分区定义一致。
 
-2026-11-15 的 Windows/OpenCV 主机验证中，完整矩阵 1162 条断言通过，原先 9 条失败已修复；连续帧、颜色、几何、黑带、角点与真值专项也通过。贴线黑块、高光和强阴影继续使用原验收门槛，黑带完全遮挡仍必须无效。详情见 [安全区测试](../src/vision_pkg/test/field/README.md)。尚无带标注的实车回放数据，NEON、ROS/TensorRT 集成及实车成功率、位置精度、车辆运动仍待板端验收。
+2026-11-16 的 Jetson Orin Nano / OpenCV 4.10 板端验证中，完整矩阵 1162 条断言、中线专项 385 条及 ROS 图像适配 33 条全部通过。修复了杂物反向透视外框、伪弱边及稀疏锚点授权补线的问题，保留原覆盖率和误差门槛。图像适配直接持有八位 ROS 消息，移除了引入另一版本 OpenCV 的 cv_bridge 依赖；支持 BGR8/RGB8/BGRA8/RGBA8/MONO8，类别掩膜只接受 MONO8/8UC1。详情见 [安全区测试](../src/vision_pkg/test/field/README.md)。尚无带标注的实车回放数据，该项测试会明确跳过；真实场地识别成功率和位置精度仍需现场校准。
+
+同日完成安全区性能优化：内色阴影掩膜按候选需要计算，ARM NEON 加速阴影候选像素扫描。分辨率、颜色和几何阈值、覆盖率门槛及 JPEG 质量均保持。130 张冻结输入组成 13 组序列，前后各运行 432 次，非计时结果及鸟瞰图像素全部一致；含 SEARCH、LOCATE、TRACK、遮挡保持、切换及动态配置。新增 144 条阴影掩膜像素等价断言通过，优化后的完整视觉回归无失败（标注回放因缺少数据跳过）。
+
+现有桌面画面没有真实安全区，前后配对的 30 秒实测均正确保持 SEARCH/INVALID：识别诊断均值从 50.4 提升至 71.5 FPS，电脑经 SSH 隧道收到的完整 JPEG 从 50.5 提升至 69.6 FPS，均无相机重开或图传超时。固定桌面图的处理耗时中位数从 15.39 降至 8.39 ms；有效跟踪场景的收益较小，不能把搜索场景增益推广到所有场景，也不能据此认定真实场地精度已完成验证。记录位于 `outputs/preflight_20261116/field_live_comparison.json` 和 `field_equivalence_comparison.json`。
 
 ## 术语
 

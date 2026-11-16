@@ -1,0 +1,52 @@
+{
+  "requested_relative_deg": -30.0,
+  "max_command_s": 1.0,
+  "kp": 1.0,
+  "kd": 0.05,
+  "device": "/dev/serial/by-id/usb-Artery_AT32_Virtual_Com_Port_26BDB9203057-if00",
+  "errors": [],
+  "before": {
+    "id": 0,
+    "mode": 0,
+    "timeout": false,
+    "temperature": 56,
+    "winding_temperature": 43,
+    "voltage": 10.5,
+    "torque": 0.0011263824588477367,
+    "speed": 0.0,
+    "position": 5.041108015525577,
+    "output_encoder": 6601,
+    "warning": 0,
+    "error": 0
+  },
+  "final": {
+    "id": 0,
+    "mode": 0,
+    "timeout": false,
+    "temperature": 57,
+    "winding_temperature": 43,
+    "voltage": 10.5,
+    "torque": -0.03153870884773663,
+    "speed": 0.0,
+    "position": 4.554290504899682,
+    "output_encoder": 5988,
+    "warning": 0,
+    "error": 0,
+    "turned_deg": -27.892588751928876
+  },
+  "actual_turn_deg": -27.892588751928876,
+  "stop_confirm": {
+    "id": 0,
+    "mode": 0,
+    "timeout": false,
+    "temperature": 57,
+    "winding_temperature": 43,
+    "voltage": 10.5,
+    "torque": -0.01689573688271605,
+    "speed": 0.0,
+    "position": 4.55429183484592,
+    "output_encoder": 5988,
+    "warning": 0,
+    "error": 0
+  }
+}

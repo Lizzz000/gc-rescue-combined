@@ -503,6 +503,11 @@ bool checkQuad(
   const double top = dist(q[0], q[1]), bottom = dist(q[3], q[2]);
   const double left = dist(q[0], q[3]), right = dist(q[1], q[2]);
   if (std::min(top, bottom) < 8 || std::min(left, right) < 5) {why = "边长退化"; return false;}
+  // 与内沿地面近锚使用同一约定：上边在远端，下边在近端；地面不能向近端显著收窄。
+  // 紫盒叠红盒也能形成很强的颜色包围，但其立面/顶面轮廓会出现相反的透视方向。
+  // 允许两倍现有拟合内点带宽的差值，避免等宽或近似正视的边被像素误差拒绝。
+  const double perspective_tolerance = 2.0 * std::max(cfg.fit_outlier_px, kMinInlierBandPx);
+  if (top > bottom + perspective_tolerance) {why = "近边短于远边, 地面透视方向不符"; return false;}
   const double r1 = std::max(top, bottom) / std::max(std::min(top, bottom), 1e-6);
   const double r2 = std::max(left, right) / std::max(std::min(left, right), 1e-6);
   if (r1 < cfg.quad_side_ratio_lo || r1 > cfg.quad_side_ratio_hi) {why = "上下边长度比异常"; return false;}

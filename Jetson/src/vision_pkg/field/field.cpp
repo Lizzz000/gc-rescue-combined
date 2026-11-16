@@ -111,7 +111,7 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
     return search_result;
   }
   const cv::Mat geometry_purple = shadowGeometryMask(lab, purple_raw, HueSector::purple(cfg_));
-  const cv::Mat geometry_interior = shadowGeometryMask(lab, interior_mask, HueSector::interior(cfg_));
+  cv::Mat geometry_interior;
   cv::Mat mask = morph(geometry_purple, cfg_);
   // 阶段: 轮廓与候选 —— 取面积最大的若干连通域（含碎片并集凸包），按面积占比/长宽比/贴边数/填充率过滤后才进入拟合。
   std::vector<std::vector<cv::Point>> contours;
@@ -243,6 +243,10 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
     CandidateScore score;
     scoreEdges(purple_probe, fit_result.quad, cfg_, score);
     // 内部颜色只在内沿地面四边形里计：外沿四边形还含围边立面，远/低视角时围边占去大半。
+    // 只有进入内沿拟合的候选才需要阴影内色支持；无候选时省去整图扫描，后续候选共用。
+    if (geometry_interior.empty()) {
+      geometry_interior = shadowGeometryMask(lab, interior_mask, HueSector::interior(cfg_));
+    }
     const InnerQuad inner = fitInnerQuad(geometry_interior, fit_result.quad, cfg_, lab, geometry_purple);
     if (inner.measured_edges == 0) {
       if (!reasons.empty()) {reasons += "; ";}

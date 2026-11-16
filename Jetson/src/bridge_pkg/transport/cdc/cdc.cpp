@@ -60,6 +60,7 @@ bool CdcLink::open(const std::string & interface_name, std::string & error)
     error = std::strerror(reason);
     return false;
   }
+  exclusive_claimed_ = true;
   termios settings{};
   struct stat identity{};
   if (::tcgetattr(fd_, &settings) < 0 || ::fstat(fd_, &identity) < 0 || !S_ISCHR(identity.st_mode)) {
@@ -85,7 +86,10 @@ bool CdcLink::open(const std::string & interface_name, std::string & error)
 void CdcLink::close()
 {
   if (fd_ < 0) {return;}
-  ::ioctl(fd_, TIOCNXCL);
+  // A descriptor may predate another owner's TIOCEXCL and then lose flock.
+  // Only release the tty-wide exclusion if this instance actually acquired it.
+  if (exclusive_claimed_) {::ioctl(fd_, TIOCNXCL);}
+  exclusive_claimed_ = false;
   ::close(fd_);
   fd_ = -1;
 }

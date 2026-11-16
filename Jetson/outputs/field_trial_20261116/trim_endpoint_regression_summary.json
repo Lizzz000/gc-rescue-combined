@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "candidate_status": "rejected_by_isolated_geometry_regression",
+  "results": {
+    "baseline": {
+      "pass": 54,
+      "fail": 4,
+      "failed_groups": [
+        "curved endpoint: 3",
+        "clip normal discrepancy: 1"
+      ]
+    },
+    "nearest_candidate": {
+      "pass": 54,
+      "fail": 4,
+      "failed_groups": [
+        "raised wall ground endpoint: 2",
+        "clip normal discrepancy: 1",
+        "near purple fragment: 1"
+      ]
+    },
+    "raised_wall_corner_error_processing_px": {
+      "baseline": 0.834839,
+      "nearest_candidate": 10.296509,
+      "existing_gate": 3.0
+    },
+    "original_corner_order": {
+      "pass": 406,
+      "fail": 0
+    },
+    "scope": "verbatim isolated trim function with float Point2f adapter; full OpenCV integration not run",
+    "production_changed": false
+  },
+  "evidence_sha256": {
+    "test_trim_endpoint_regression.cpp": "96ff1ef0d9719764d6ffc217f81edeef6b167d02ba62d1475307a5b4b8e4e16d",
+    "extract_trim_minimal_test.py": "aa9dd3d663b140dbb4df4915da3194c2ed726732ff65f66d27cd28f37640199b",
+    "trim_regression_baseline\\test.log": "29851bbad8d45d60b91eb6a9c4654cdeed561b8c907a0beac62477142ab56b53",
+    "trim_regression_candidate\\test.log": "9722ff0a0803c4f05adf144cb60db76c3eace63d0b517661eb83c54e7749b86c",
+    "trim_regression_baseline\\original_corner_tests.log": "1ee3ed6f8d8ed248f98613f11ee6d8be06fbd07e3668de47b467c2f05895da8e"
+  },
+  "next_requirement": "identify physical near-bottom endpoint from the associated contour/edge support; ambiguous endpoint must not become a formal valid route; preserve original matrix/geometry/split gates"
+}

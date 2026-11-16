@@ -22,10 +22,30 @@ typedef struct
 /* ISR更新最近一次反馈，数组下标0/1/2对应电机ID1/2/3，供调试器观察。 */
 extern volatile dm_motor_t dm_motor[3];
 
+typedef struct
+{
+    uint8_t reg;
+    uint32_t value_bits; /* 寄存器原始32位，小端解包；调用者按float或uint32解释。 */
+    uint32_t received_ms;
+    uint32_t sequence; /* 完整匹配读回后最后递增，允许回绕。 */
+} dm_param_reply_t;
+
+extern volatile dm_param_reply_t dm_param_reply[3];
+
+/** @brief 通过官方0x7FF/0x33命令读取一个电机寄存器，不写参数或Flash。
+ * @param[in] id 电机ID，1～3。 @param[in] reg 寄存器编号（Kt为1）。
+ * @return HAL提交结果；非法ID或已观察到电机使能返回HAL_ERROR；未到期请求返回HAL_BUSY。
+ * @note 仅控制任务在底盘失能期间调用；一次只容许一个请求，100ms超时后可重新请求。
+ *       HAL_OK不等于读成功，须观察对应dm_param_reply.sequence发生变化并核对reg。
+ *       本车MST_ID均为0，回复仍经StdID 0接收。参数读取期间不采纳失能运动反馈，
+ *       避免共用ID/载荷长度的参数数据污染位置、速度或停车确认。
+ */
+HAL_StatusTypeDef DM_Motor_ReadParam(uint16_t id, uint8_t reg);
+
 /**
  * @brief 解码达妙反馈，由共用 CAN1 接收中断在筛选帧头后调用。
  * @param[in] data StdID=0、DLC=8 的八字节载荷，非空；仅接受帧内 ID 1～3。
- * @return 无；更新对应电机反馈、RTOS 到达时刻及序号，非法帧内 ID 不改变状态。
+ * @return 无；优先分流参数回复，其余更新电机反馈、RTOS到达时刻及序号。
  * @note 不在此处读取 HAL FIFO，不执行动作或发送报文。
  */
 void DM_Motor_ReceiveFeedback(const uint8_t data[8]);

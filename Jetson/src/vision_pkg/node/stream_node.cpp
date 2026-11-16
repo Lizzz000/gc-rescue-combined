@@ -235,7 +235,7 @@ bool StreamNode::freshFrame(const Frame & frame) const
 
 // ---- 源图与图层交接 ----
 
-// 保留 cv_bridge 视图所有者；源帧在接收前消耗的年龄也扣入本地有效期。
+// 保留 ROS 消息像素所有者；源帧在接收前消耗的年龄也扣入本地有效期。
 void StreamNode::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr & msg)
 {
   const auto received_at = std::chrono::steady_clock::now();
@@ -243,15 +243,11 @@ void StreamNode::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr & m
   std::int64_t stamp = 0;
   if (!RecognitionValidation::sourceTime(msg->header.stamp, current, stamp) ||
     static_cast<double>(current - stamp) > input_timeout_s_ * 1e9) {return;}
-  cv_bridge::CvImageConstPtr view;
+  vision_ros::ImageViewConstPtr view;
   try {
-    if (msg->encoding == sensor_msgs::image_encodings::BGR8 && msg->is_bigendian == 0) {
-      view = cv_bridge::toCvShare(msg, sensor_msgs::image_encodings::BGR8);
-    } else {
-      view = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8);
-    }
-  } catch (const cv_bridge::Exception & e) {
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000, "cv_bridge: %s", e.what());
+    view = vision_ros::bgrImageView(msg);
+  } catch (const std::exception & e) {
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000, "image input: %s", e.what());
     return;
   }
   if (view->image.empty()) {return;}
@@ -279,7 +275,7 @@ void StreamNode::segDetectionCallback(
     current, input_timeout_s_, [&](Overlay & overlay) {overlay.seg = msg;});
 }
 
-// 通过 cv_bridge 取得 MONO8 视图；若输入编码可转换，桥接层可能分配转换结果。
+// MONO8/8UC1 原始标签共享视图，不转换或缩放类别字节。
 // 缓存持有该视图的所有者，绘制时仍须与源图匹配 header。
 void StreamNode::segMaskCallback(const sensor_msgs::msg::Image::ConstSharedPtr & msg)
 {
@@ -287,11 +283,11 @@ void StreamNode::segMaskCallback(const sensor_msgs::msg::Image::ConstSharedPtr &
   const auto current = now().nanoseconds();
   if (!RecognitionValidation::sourceTime(msg->header.stamp, current, stamp) ||
     static_cast<double>(current - stamp) > input_timeout_s_ * 1e9) {return;}
-  cv_bridge::CvImageConstPtr view;
+  vision_ros::ImageViewConstPtr view;
   try {
-    view = cv_bridge::toCvShare(msg, sensor_msgs::image_encodings::MONO8);
-  } catch (const cv_bridge::Exception & e) {
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000, "mask cv_bridge: %s", e.what());
+    view = vision_ros::labelMaskView(msg);
+  } catch (const std::exception & e) {
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000, "mask input: %s", e.what());
     return;
   }
   if (view->image.empty() || view->image.type() != CV_8UC1) {return;}

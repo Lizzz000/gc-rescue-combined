@@ -1,0 +1,478 @@
+{
+  "schema": 1,
+  "input": "C:\\Users\\Lenovo\\OneDrive\\Desktop\\gc-rescue-combined\\Jetson\\outputs\\field_trial_20261116\\camera_ab_02",
+  "camera_trials_ok": true,
+  "restore": {
+    "errors": [],
+    "mismatches": {},
+    "ok": true
+  },
+  "trials": [
+    {
+      "trial": "saturation90",
+      "geometry_path": "C:\\Users\\Lenovo\\OneDrive\\Desktop\\gc-rescue-combined\\Jetson\\outputs\\field_trial_20261116\\camera_ab_02\\saturation90\\geometry.json",
+      "geometry_sha256": "3e338e6336078bde1ec9442bcdd586980b67f463f089a125364c9841a44c9a63",
+      "probe_ok": true,
+      "probe_errors": [],
+      "sample_duration_s": 30.0,
+      "counts": {
+        "received": 2036,
+        "unique_source_frames": 2036,
+        "duplicate_source_frames": 0,
+        "invalid_source_stamps": 0,
+        "valid": 2036,
+        "valid_and_committed": 2036,
+        "invalid_or_uncommitted": 0,
+        "valid_and_committed_fraction": 1.0,
+        "unique_received_fps": 67.86666666666666,
+        "switched": 0,
+        "split_suspect": 0
+      },
+      "valid_fraction": 1.0,
+      "valid_and_committed_fraction": 1.0,
+      "unique_received_fps": 67.86666666666666,
+      "server_reported_fps": {
+        "capture_fps": {
+          "n": 30,
+          "mean": 118.9312484051527,
+          "min": 116.99409495704523,
+          "max": 121.01204275545889,
+          "last": 117.00052030131378
+        },
+        "field_fps": {
+          "n": 30,
+          "mean": 67.79881027660096,
+          "min": 66.99391112439963,
+          "max": 70.00195018433018,
+          "last": 67.0003022383634
+        }
+      },
+      "invalid_or_uncommitted_runs": {
+        "runs": 0,
+        "longest_frames": 0,
+        "longest_observed_source_span_s": 0.0,
+        "longest_observed_receive_span_s": 0.0
+      },
+      "split_suspect": {
+        "frames": 0,
+        "fraction_of_unique_frames": 0.0
+      },
+      "labels": {
+        "state": {
+          "TRACK": 2036
+        },
+        "quality": {
+          "good": 2035,
+          "degraded": 1
+        },
+        "reason": {
+          "": 2036
+        },
+        "hold_reason": {
+          "": 2036
+        },
+        "measured_edges": {
+          "4": 2035,
+          "3": 1
+        }
+      },
+      "geometry_by_frame_id": {
+        "camera": {
+          "accepted_frames": 2036,
+          "corner_order": [
+            "TL",
+            "TR",
+            "BR",
+            "BL"
+          ],
+          "corners": [
+            {
+              "median_xy_px": [
+                643.8860168457031,
+                51.06271171569824
+              ],
+              "distance_from_median_px": {
+                "n": 2036,
+                "mean": 1.473695548055448,
+                "p95": 3.5481128746858843,
+                "max": 8.409639002035199
+              }
+            },
+            {
+              "median_xy_px": [
+                1541.4127807617188,
+                82.18107986450195
+              ],
+              "distance_from_median_px": {
+                "n": 2036,
+                "mean": 1.14905184100074,
+                "p95": 3.1251153547776576,
+                "max": 5.586123324487887
+              }
+            },
+            {
+              "median_xy_px": [
+                1818.150390625,
+                266.4308624267578
+              ],
+              "distance_from_median_px": {
+                "n": 2036,
+                "mean": 0.6726074246159968,
+                "p95": 1.6383550752431386,
+                "max": 5.680747327006621
+              }
+            },
+            {
+              "median_xy_px": [
+                386.0268859863281,
+                201.9321517944336
+              ],
+              "distance_from_median_px": {
+                "n": 2036,
+                "mean": 0.7932821054782041,
+                "p95": 1.6622349294822927,
+                "max": 5.693871584507623
+              }
+            }
+          ],
+          "corner_adjacent_rms_px": {
+            "n": 2035,
+            "mean": 1.773489509131391,
+            "p95": 3.267395836153364,
+            "max": 5.598940274920359
+          },
+          "corner_adjacent_max_jump": {
+            "pairs": 2035,
+            "per_corner_max_px": [
+              9.555825240774348,
+              7.724041355835457,
+              5.6767555072260665,
+              6.812943065895574
+            ],
+            "max_any_corner_px": 9.555825240774348,
+            "max_source_pair_ns": [
+              1794832342099326025,
+              1794832342116300657
+            ]
+          },
+          "region_centers": {
+            "left_region": {
+              "frames": 2036,
+              "projective_center": {
+                "median_xy_px": [
+                  804.1053465892494,
+                  120.00291276822367
+                ],
+                "distance_from_median_px": {
+                  "n": 2036,
+                  "mean": 1.0917507031902125,
+                  "p95": 2.6076852318583406,
+                  "max": 6.4320260239292155
+                }
+              },
+              "adjacent_displacement_px": {
+                "n": 2035,
+                "mean": 1.5696487396221404,
+                "p95": 3.8363947126397013,
+                "max": 8.045624171703636
+              }
+            },
+            "right_region": {
+              "frames": 2036,
+              "projective_center": {
+                "median_xy_px": [
+                  1355.2362573529158,
+                  140.99995492644962
+                ],
+                "distance_from_median_px": {
+                  "n": 2036,
+                  "mean": 1.014635135499783,
+                  "p95": 2.405218868944395,
+                  "max": 5.098790978940721
+                }
+              },
+              "adjacent_displacement_px": {
+                "n": 2035,
+                "mean": 1.465334502996627,
+                "p95": 3.4726306666134397,
+                "max": 6.4536488468255335
+              }
+            }
+          },
+          "geometry_issues": {
+            "corners": {
+              "missing_field": 0,
+              "missing_or_malformed_frames": 0
+            },
+            "left_region": {
+              "missing_field": 0,
+              "missing_or_malformed_frames": 0
+            },
+            "right_region": {
+              "missing_field": 0,
+              "missing_or_malformed_frames": 0
+            },
+            "split_line": {
+              "missing_field": 0,
+              "missing_or_malformed_frames": 0
+            }
+          }
+        }
+      },
+      "trial_metadata": {
+        "name": "saturation90",
+        "changes_from_baseline": {
+          "saturation": 90
+        },
+        "ok": true,
+        "readback_mismatches": {},
+        "probe_returncode": 0,
+        "capture_returncode": 0
+      },
+      "matched_reference": {
+        "png": "C:\\Users\\Lenovo\\OneDrive\\Desktop\\gc-rescue-combined\\Jetson\\outputs\\field_trial_20261116\\camera_ab_02\\saturation90\\matched\\raw.png",
+        "png_exists": true,
+        "source_stamp_ns": 1794832359798316604,
+        "same_source_stamp": true,
+        "valid": true,
+        "committed": true
+      }
+    },
+    {
+      "trial": "baseline",
+      "geometry_path": "C:\\Users\\Lenovo\\OneDrive\\Desktop\\gc-rescue-combined\\Jetson\\outputs\\field_trial_20261116\\camera_ab_02\\baseline\\geometry.json",
+      "geometry_sha256": "4136ad6757a3149deddd7d3bdec7ea0a28984246f7807b892851bb1a465ec1ca",
+      "probe_ok": true,
+      "probe_errors": [],
+      "sample_duration_s": 30.0,
+      "counts": {
+        "received": 2005,
+        "unique_source_frames": 2005,
+        "duplicate_source_frames": 0,
+        "invalid_source_stamps": 0,
+        "valid": 2005,
+        "valid_and_committed": 2005,
+        "invalid_or_uncommitted": 0,
+        "valid_and_committed_fraction": 1.0,
+        "unique_received_fps": 66.83333333333333,
+        "switched": 0,
+        "split_suspect": 0
+      },
+      "valid_fraction": 1.0,
+      "valid_and_committed_fraction": 1.0,
+      "unique_received_fps": 66.83333333333333,
+      "server_reported_fps": {
+        "capture_fps": {
+          "n": 30,
+          "mean": 118.3310156998043,
+          "min": 113.28553687540769,
+          "max": 121.01297731067382,
+          "last": 117.01450804377981
+        },
+        "field_fps": {
+          "n": 30,
+          "mean": 66.83237439771015,
+          "min": 64.96771358009151,
+          "max": 69.09310676148196,
+          "last": 67.00832518132886
+        }
+      },
+      "invalid_or_uncommitted_runs": {
+        "runs": 0,
+        "longest_frames": 0,
+        "longest_observed_source_span_s": 0.0,
+        "longest_observed_receive_span_s": 0.0
+      },
+      "split_suspect": {
+        "frames": 0,
+        "fraction_of_unique_frames": 0.0
+      },
+      "labels": {
+        "state": {
+          "TRACK": 2005
+        },
+        "quality": {
+          "good": 2005
+        },
+        "reason": {
+          "": 2005
+        },
+        "hold_reason": {
+          "": 2005
+        },
+        "measured_edges": {
+          "4": 2005
+        }
+      },
+      "geometry_by_frame_id": {
+        "camera": {
+          "accepted_frames": 2005,
+          "corner_order": [
+            "TL",
+            "TR",
+            "BR",
+            "BL"
+          ],
+          "corners": [
+            {
+              "median_xy_px": [
+                643.8748779296875,
+                50.76178741455078
+              ],
+              "distance_from_median_px": {
+                "n": 2005,
+                "mean": 1.6954706426472241,
+                "p95": 4.4185224699877566,
+                "max": 7.878589846893256
+              }
+            },
+            {
+              "median_xy_px": [
+                1540.958251953125,
+                82.1304702758789
+              ],
+              "distance_from_median_px": {
+                "n": 2005,
+                "mean": 1.4370275716800993,
+                "p95": 3.642913367107319,
+                "max": 5.628791646727423
+              }
+            },
+            {
+              "median_xy_px": [
+                1818.315185546875,
+                266.2008056640625
+              ],
+              "distance_from_median_px": {
+                "n": 2005,
+                "mean": 1.7693128263046247,
+                "p95": 5.419053577171627,
+                "max": 8.285244827480456
+              }
+            },
+            {
+              "median_xy_px": [
+                386.44000244140625,
+                201.7914276123047
+              ],
+              "distance_from_median_px": {
+                "n": 2005,
+                "mean": 1.6390490502354917,
+                "p95": 5.047784206064133,
+                "max": 10.18882744023232
+              }
+            }
+          ],
+          "corner_adjacent_rms_px": {
+            "n": 2004,
+            "mean": 2.711148236122623,
+            "p95": 5.066914791479028,
+            "max": 10.482269659560005
+          },
+          "corner_adjacent_max_jump": {
+            "pairs": 2004,
+            "per_corner_max_px": [
+              11.749768480844647,
+              8.031363809627939,
+              14.613596866776437,
+              11.102258194563285
+            ],
+            "max_any_corner_px": 14.613596866776437,
+            "max_source_pair_ns": [
+              1794832390758735653,
+              1794832390771076156
+            ]
+          },
+          "region_centers": {
+            "left_region": {
+              "frames": 2005,
+              "projective_center": {
+                "median_xy_px": [
+                  804.5250944185458,
+                  119.92182978128965
+                ],
+                "distance_from_median_px": {
+                  "n": 2005,
+                  "mean": 1.1083365429096024,
+                  "p95": 2.8371358144499923,
+                  "max": 6.504588602448228
+                }
+              },
+              "adjacent_displacement_px": {
+                "n": 2004,
+                "mean": 1.6068620144787176,
+                "p95": 3.972197260562354,
+                "max": 8.730741024565162
+              }
+            },
+            "right_region": {
+              "frames": 2005,
+              "projective_center": {
+                "median_xy_px": [
+                  1355.4031415003333,
+                  140.7916957494718
+                ],
+                "distance_from_median_px": {
+                  "n": 2005,
+                  "mean": 1.0838101070299664,
+                  "p95": 2.57741530439624,
+                  "max": 5.018500658282131
+                }
+              },
+              "adjacent_displacement_px": {
+                "n": 2004,
+                "mean": 1.5399640181006942,
+                "p95": 3.5966850124329635,
+                "max": 6.774146973187203
+              }
+            }
+          },
+          "geometry_issues": {
+            "corners": {
+              "missing_field": 0,
+              "missing_or_malformed_frames": 0
+            },
+            "left_region": {
+              "missing_field": 0,
+              "missing_or_malformed_frames": 0
+            },
+            "right_region": {
+              "missing_field": 0,
+              "missing_or_malformed_frames": 0
+            },
+            "split_line": {
+              "missing_field": 0,
+              "missing_or_malformed_frames": 0
+            }
+          }
+        }
+      },
+      "trial_metadata": {
+        "name": "baseline",
+        "changes_from_baseline": {},
+        "ok": true,
+        "readback_mismatches": {},
+        "probe_returncode": 0,
+        "capture_returncode": 0
+      },
+      "matched_reference": {
+        "png": "C:\\Users\\Lenovo\\OneDrive\\Desktop\\gc-rescue-combined\\Jetson\\outputs\\field_trial_20261116\\camera_ab_02\\baseline\\matched\\raw.png",
+        "png_exists": true,
+        "source_stamp_ns": 1794832396124112229,
+        "same_source_stamp": true,
+        "valid": true,
+        "committed": true
+      }
+    }
+  ],
+  "errors": [],
+  "interpretation": [
+    "No ranking or automatic winner is assigned.",
+    "Geometry is original-image pixels, valid AND committed frames only, deduplicated by source stamp and frame_id.",
+    "Per-corner and center p95/max are Euclidean distances from each coordinate-wise median over that trial.",
+    "Adjacent max jump is the largest single corner displacement between consecutive observed usable frames; corner RMS is separate.",
+    "Invalid-run time is the observed first-to-last span, a lower bound; a singleton has zero span.",
+    "Stationary-scene stability and valid rate do not establish boundary accuracy without ground truth.",
+    "Trials run sequentially, so illumination changes and short sample duration can confound camera setting comparisons."
+  ]
+}

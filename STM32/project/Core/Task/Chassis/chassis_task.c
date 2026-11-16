@@ -4,6 +4,9 @@
 #include "bsp_buzzer.h"
 #include "bsp_led.h"
 #include "chassis.h"
+#if CHASSIS_TUNING_ENABLED
+#include "live_tuning.h"
+#endif
 #include "jetson_auto.h"
 #if JETSON_AUTO_CAN_ENABLED
 #include "jetson_link.h"
@@ -41,6 +44,9 @@ void test_task(void const *argument)
     Manual_Control_Init();
 #endif
     can_filter_init();
+#if CHASSIS_TUNING_ENABLED
+    Live_Tuning_Init();
+#endif
     buzzer_off();
     TickType_t wake = xTaskGetTickCount();
     battery_voltage = get_battery_voltage();
@@ -48,10 +54,15 @@ void test_task(void const *argument)
     for (;;)
     {
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(5U));
-#if !JETSON_AUTO_CAN_ENABLED
+#if CHASSIS_TUNING_ENABLED
+        Live_Tuning_Loop();
+#elif !JETSON_AUTO_CAN_ENABLED
         Manual_Control_Loop();
 #endif
         Chassis_Loop();
+#if CHASSIS_TUNING_ENABLED
+        Live_Tuning_Snapshot();
+#endif
 #if JETSON_AUTO_CAN_ENABLED
         Jetson_Auto_Loop();
 #endif

@@ -1,0 +1,90 @@
+{
+  "hardware_access": false,
+  "arm_zero_s": 0.6,
+  "timed_timeline": [
+    [
+      0,
+      [
+        true,
+        0,
+        0,
+        0
+      ],
+      "prepare"
+    ],
+    [
+      0.2,
+      [
+        true,
+        0,
+        0,
+        0
+      ],
+      "prepare"
+    ],
+    [
+      0.599,
+      [
+        true,
+        0,
+        0,
+        0
+      ],
+      "prepare"
+    ],
+    [
+      0.6,
+      [
+        true,
+        250,
+        0,
+        0
+      ],
+      "active"
+    ],
+    [
+      0.8,
+      [
+        true,
+        250,
+        0,
+        0
+      ],
+      "active"
+    ],
+    [
+      2.099,
+      [
+        true,
+        250,
+        0,
+        0
+      ],
+      "active"
+    ],
+    [
+      2.101,
+      [
+        true,
+        0,
+        0,
+        0
+      ],
+      "stopping"
+    ],
+    [
+      2.402,
+      [
+        false,
+        0,
+        0,
+        0
+      ],
+      "idle"
+    ]
+  ],
+  "zero_then_timed_at_0_8_s": "passed: full1.5 s command interval, no second prepare",
+  "single_hold": "expires before preparation ends; do not use once",
+  "stop_from_idle": "valid0, does not arm",
+  "limitations": "Host scheduling verification only; does not prove MCU readiness or actual displacement."
+}

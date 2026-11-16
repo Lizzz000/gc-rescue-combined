@@ -80,7 +80,8 @@ HAL_StatusTypeDef ctrl_motor(CAN_HandleTypeDef *can, uint16_t id, float position
 {
     const float expected_kd[3] = {0.2f, 0.25f, 0.2f};
     assert(can == &hcan1 && id >= 1U && id <= 3U && free_mailboxes > 0U && !abort_pending);
-    assert(position == 0.0f && kp == 0.0f && torque == 0.0f && kd == expected_kd[id - 1U]);
+    assert(position == 0.0f && kp == 0.0f && isfinite(torque) && fabsf(torque) <= 0.05f &&
+           kd == expected_kd[id - 1U]);
     assert(isfinite(velocity) && fabsf(velocity) <= 40.0f);
     motor_velocity[id - 1U] = velocity;
     last_sent_id = (uint8_t)id;

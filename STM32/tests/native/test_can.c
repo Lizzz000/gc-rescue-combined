@@ -49,6 +49,10 @@ static HAL_StatusTypeDef start_result = HAL_OK;
 static HAL_StatusTypeDef tx_result = HAL_OK;
 static HAL_StatusTypeDef rx_result = HAL_OK;
 static jmp_buf task_finished;
+static unsigned critical_depth;
+
+void test_enter_critical(void) { assert(critical_depth == 0U); ++critical_depth; }
+void test_exit_critical(void) { assert(critical_depth == 1U); --critical_depth; }
 
 /** @brief 捕获共用入口交给 Jetson 的帧，确认未混入电机报文。
  * @param[in] type 类型号。 @param[in] data 数据。 @param[in] length 字节数。 @return 无。
@@ -212,6 +216,96 @@ void vTaskDelayUntil(TickType_t *wake, TickType_t ticks)
     if (++loops == 201U) longjmp(task_finished,1);
 }
 
+/** @brief 参数读回与运动反馈共用ID时仍隔离；仅0x33当前请求能发布结果。 */
+static void test_param_read_only(void)
+{
+    dm_motor_t motor_before[3];
+    uint32_t before_tx = tx_count;
+    assert(DM_Motor_ReadParam(0U, 1U) == HAL_ERROR);
+    assert(DM_Motor_ReadParam(4U, 1U) == HAL_ERROR);
+    assert(DM_Motor_ReadParam(1U, 1U) == HAL_ERROR); /* ID1仍处于使能反馈。 */
+    assert(tx_count == before_tx && critical_depth == 0U);
+    for (unsigned i = 0U; i < 3U; ++i)
+        dm_motor[i].state = 0U;
+    memcpy(motor_before, (const void *)dm_motor, sizeof(motor_before));
+    memset(&rx_header, 0, sizeof(rx_header));
+    rx_header.DLC = 8U;
+    const uint8_t request[8] = {1U, 0U, 0x33U, 1U, 0U, 0U, 0U, 0U};
+    const uint8_t response[8] = {1U, 0U, 0x33U, 1U, 0U, 0U, 0x80U, 0x3FU};
+
+    /* 发送失败不留下待回请求；下一次可立即重新读取。 */
+    test_tick = 1000U;
+    tx_result = HAL_BUSY;
+    assert(DM_Motor_ReadParam(1U, 1U) == HAL_BUSY);
+    tx_result = HAL_ERROR;
+    assert(DM_Motor_ReadParam(1U, 1U) == HAL_ERROR);
+    tx_result = HAL_OK;
+    assert(DM_Motor_ReadParam(1U, 1U) == HAL_OK);
+    assert(tx_header.StdId == 0x7FFU && tx_header.DLC == 8U);
+    assert(tx_header.IDE == CAN_ID_STD && tx_header.RTR == CAN_RTR_DATA);
+    assert(memcmp(tx_data, request, sizeof(request)) == 0 && critical_depth == 0U);
+    before_tx = tx_count;
+    assert(DM_Motor_ReadParam(2U, 1U) == HAL_BUSY && tx_count == before_tx);
+
+    memcpy(rx_data, response, 8U);
+    rx_header.StdId = 0x7FFU; Receive_Current_Frame();
+    rx_header.StdId = 1U; Receive_Current_Frame();
+    rx_header.StdId = 0U; rx_header.DLC = 7U; Receive_Current_Frame();
+    rx_header.DLC = 9U; Receive_Current_Frame();
+    rx_header.DLC = 8U; rx_header.IDE = CAN_ID_EXT; Receive_Current_Frame();
+    rx_header.IDE = CAN_ID_STD; rx_header.RTR = CAN_RTR_REMOTE; Receive_Current_Frame();
+    rx_header.RTR = CAN_RTR_DATA;
+    assert(dm_param_reply[0].sequence == 0U);
+
+    rx_data[0] = 2U; Receive_Current_Frame(); /* 其他电机不完成请求。 */
+    rx_data[0] = 1U; rx_data[1] = 1U; Receive_Current_Frame(); /* 完整ID必须匹配。 */
+    rx_data[1] = 0U; rx_data[2] = 0x34U; Receive_Current_Frame();
+    rx_data[2] = 0x55U; Receive_Current_Frame(); /* 写回不得当成读回。 */
+    rx_data[2] = 0xAAU; Receive_Current_Frame();
+    rx_data[2] = 0x33U; rx_data[3] = 2U; Receive_Current_Frame();
+    assert(dm_param_reply[0].sequence == 0U && dm_param_reply[1].sequence == 0U);
+    assert(memcmp(motor_before, (const void *)dm_motor, sizeof(motor_before)) == 0);
+
+    test_tick = 1005U;
+    memcpy(rx_data, response, 8U); Receive_Current_Frame();
+    assert(dm_param_reply[0].sequence == 1U && dm_param_reply[0].reg == 1U);
+    assert(dm_param_reply[0].value_bits == 0x3F800000U && dm_param_reply[0].received_ms == 1005U);
+    Receive_Current_Frame(); /* 重复/迟到参数回复不得污染运动反馈或再次发布。 */
+    assert(dm_param_reply[0].sequence == 1U);
+    assert(memcmp(motor_before, (const void *)dm_motor, sizeof(motor_before)) == 0);
+
+    /* 超时边界、重新请求、旧寄存器回包及序号回绕。 */
+    assert(DM_Motor_ReadParam(1U, 1U) == HAL_OK);
+    test_tick = 1105U;
+    Receive_Current_Frame();
+    assert(dm_param_reply[0].sequence == 1U);
+    assert(DM_Motor_ReadParam(1U, 23U) == HAL_OK);
+    Receive_Current_Frame();
+    assert(dm_param_reply[0].sequence == 1U);
+    dm_param_reply[0].sequence = UINT32_MAX;
+    rx_data[3] = 23U; rx_data[6] = 0U; rx_data[7] = 0x40U;
+    Receive_Current_Frame();
+    assert(dm_param_reply[0].sequence == 0U && dm_param_reply[0].reg == 23U);
+    assert(dm_param_reply[0].value_bits == 0x40000000U);
+
+    test_tick = UINT32_MAX - 20U;
+    assert(DM_Motor_ReadParam(3U, 1U) == HAL_OK);
+    test_tick = 5U;
+    memcpy(rx_data, response, 8U); rx_data[0] = 3U;
+    Receive_Current_Frame();
+    assert(dm_param_reply[2].sequence == 1U && dm_param_reply[2].received_ms == 5U);
+    assert(memcmp(motor_before, (const void *)dm_motor, sizeof(motor_before)) == 0);
+
+    /* 读取期间若收到使能反馈，仍报告实际状态并撤销参数等待。 */
+    assert(DM_Motor_ReadParam(2U, 1U) == HAL_OK);
+    const uint8_t enabled[8] = {0x12U, 0x7FU, 0xFFU, 0x7FU, 0xF7U, 0xFFU, 25U, 26U};
+    memcpy(rx_data, enabled, 8U); Receive_Current_Frame();
+    assert(dm_motor[1].state == 1U && dm_motor[1].feedback_seq == motor_before[1].feedback_seq + 1U);
+    memcpy(rx_data, response, 8U); rx_data[0] = 2U; Receive_Current_Frame();
+    assert(dm_param_reply[1].sequence == 0U && dm_motor[1].state == 1U);
+    assert(DM_Motor_ReadParam(2U, 1U) == HAL_ERROR && critical_depth == 0U);
+}
+
 /** @brief 验证手册MIT向量、反馈解码、CAN1筛选与任务无自动命令。 @return 成功为0。 */
 int main(void)
 {
@@ -362,6 +456,8 @@ int main(void)
     HAL_CAN_RxFifo0MsgPendingCallback(&hcan1);
     assert(rx_count == previous_rx);
 
+    test_param_read_only();
+    previous_tx = tx_count;
     setup_steps = filter_count = 0U; test_tick = 0U;
     if (setjmp(task_finished) == 0) test_task(NULL);
     assert(tx_count == previous_tx);

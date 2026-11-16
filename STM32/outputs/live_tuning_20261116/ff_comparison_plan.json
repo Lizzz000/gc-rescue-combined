@@ -1,0 +1,124 @@
+[
+  {
+    "name": "inertia_ff",
+    "arguments": [
+      "--command",
+      "3",
+      "--kd",
+      "0.20",
+      "0.25",
+      "0.20",
+      "--ff-gain",
+      "1",
+      "--friction",
+      "0",
+      "0",
+      "0"
+    ]
+  },
+  {
+    "name": "inertia_ff_forward",
+    "arguments": [
+      "--command",
+      "4",
+      "--vx",
+      "0.25",
+      "--duration-ms",
+      "1200"
+    ]
+  },
+  {
+    "name": "inertia_ff_backward",
+    "arguments": [
+      "--command",
+      "4",
+      "--vx",
+      "-0.25",
+      "--duration-ms",
+      "1200"
+    ]
+  },
+  {
+    "name": "inertia_ff_ccw",
+    "arguments": [
+      "--command",
+      "4",
+      "--wz",
+      "0.5",
+      "--duration-ms",
+      "1000"
+    ]
+  },
+  {
+    "name": "inertia_ff_cw",
+    "arguments": [
+      "--command",
+      "4",
+      "--wz",
+      "-0.5",
+      "--duration-ms",
+      "1000"
+    ]
+  },
+  {
+    "name": "inertia_friction_ff",
+    "arguments": [
+      "--command",
+      "3",
+      "--kd",
+      "0.20",
+      "0.25",
+      "0.20",
+      "--ff-gain",
+      "1",
+      "--friction",
+      "0.005",
+      "0.015",
+      "0.015"
+    ]
+  },
+  {
+    "name": "inertia_friction_ff_forward",
+    "arguments": [
+      "--command",
+      "4",
+      "--vx",
+      "0.25",
+      "--duration-ms",
+      "1200"
+    ]
+  },
+  {
+    "name": "inertia_friction_ff_backward",
+    "arguments": [
+      "--command",
+      "4",
+      "--vx",
+      "-0.25",
+      "--duration-ms",
+      "1200"
+    ]
+  },
+  {
+    "name": "inertia_friction_ff_ccw",
+    "arguments": [
+      "--command",
+      "4",
+      "--wz",
+      "0.5",
+      "--duration-ms",
+      "1000"
+    ]
+  },
+  {
+    "name": "inertia_friction_ff_cw",
+    "arguments": [
+      "--command",
+      "4",
+      "--wz",
+      "-0.5",
+      "--duration-ms",
+      "1000"
+    ]
+  }
+]

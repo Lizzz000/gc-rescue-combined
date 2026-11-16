@@ -1,0 +1,107 @@
+[
+  {
+    "name": "selected_translation_only_ff",
+    "arguments": [
+      "--command",
+      "3",
+      "--kd",
+      "0.20",
+      "0.25",
+      "0.20",
+      "--ff-gain",
+      "1",
+      "--friction",
+      "0",
+      "0.015",
+      "0.015"
+    ]
+  },
+  {
+    "name": "final_1_forward",
+    "arguments": [
+      "--command",
+      "4",
+      "--vx",
+      "0.25",
+      "--duration-ms",
+      "1200"
+    ]
+  },
+  {
+    "name": "final_1_backward",
+    "arguments": [
+      "--command",
+      "4",
+      "--vx",
+      "-0.25",
+      "--duration-ms",
+      "1200"
+    ]
+  },
+  {
+    "name": "final_1_ccw",
+    "arguments": [
+      "--command",
+      "4",
+      "--wz",
+      "0.5",
+      "--duration-ms",
+      "1000"
+    ]
+  },
+  {
+    "name": "final_1_cw",
+    "arguments": [
+      "--command",
+      "4",
+      "--wz",
+      "-0.5",
+      "--duration-ms",
+      "1000"
+    ]
+  },
+  {
+    "name": "final_2_forward",
+    "arguments": [
+      "--command",
+      "4",
+      "--vx",
+      "0.25",
+      "--duration-ms",
+      "1200"
+    ]
+  },
+  {
+    "name": "final_2_backward",
+    "arguments": [
+      "--command",
+      "4",
+      "--vx",
+      "-0.25",
+      "--duration-ms",
+      "1200"
+    ]
+  },
+  {
+    "name": "final_2_ccw",
+    "arguments": [
+      "--command",
+      "4",
+      "--wz",
+      "0.5",
+      "--duration-ms",
+      "1000"
+    ]
+  },
+  {
+    "name": "final_2_cw",
+    "arguments": [
+      "--command",
+      "4",
+      "--wz",
+      "-0.5",
+      "--duration-ms",
+      "1000"
+    ]
+  }
+]

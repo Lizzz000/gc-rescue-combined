@@ -292,8 +292,11 @@ private:
   MissionOut & out_;
   MissionState state_;
   // 仅缓存最近一次已记录的完整送达编号，不依赖当前路由；发布失败和重找不能抹掉回执。
-  // 零表示尚未确认。仅进程内有效，新一次送达替换；不提供跨重启或编号重用防重放。
+  // 零表示尚未确认。仅进程内有效，新一次送达替换；不提供 Mission 跨重启持久收据。
   std::uint64_t delivered_roi_request_id_{0};
+  // Target 编号在其进程内递增。仅当前有效代次的非零应答推进高水位，
+  // 单独重启 Target 导致编号回退时拒绝新路由，不能与旧送达收据混用。
+  std::uint64_t roi_response_id_high_water_{0};
   TransportPolicy policy_;
   RoiContext roi_;
   AutomaticSwitchContext automatic_;

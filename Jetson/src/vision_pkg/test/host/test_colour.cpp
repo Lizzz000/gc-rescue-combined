@@ -33,6 +33,80 @@ bool rejects(FieldConfig config)
   return false;
 }
 
+// 原标量阴影支持流程作为精确参考：候选扫描、4 连通和严格种子传播均保留。
+cv::Mat scalarShadow(const cv::Mat & lab, const cv::Mat & strict, const HueSector & sector)
+{
+  cv::Mat support;
+  for (int y = 0; y < lab.rows; ++y) {
+    const auto * pixels = lab.ptr<cv::Vec3b>(y);
+    const auto * seeds = strict.ptr<uchar>(y);
+    for (int x = 0; x < lab.cols; ++x) {
+      const auto & p = pixels[x];
+      if (seeds[x] || p[0] >= sector.light_lo || (p[1] == 128 && p[2] == 128)) {continue;}
+      const uchar at_minimum[3] = {sector.light_lo, p[1], p[2]};
+      if (!sector.classify(at_minimum)) {continue;}
+      if (support.empty()) {support = strict.clone();}
+      support.at<uchar>(y, x) = 255;
+    }
+  }
+  if (support.empty()) {return strict;}
+  const cv::Rect bounds = cv::boundingRect(support);
+  cv::Mat labels;
+  const int count = cv::connectedComponents(support(bounds), labels, 4, CV_32S);
+  std::vector<uchar> seeded(count, 0);
+  for (int y = 0; y < bounds.height; ++y) {
+    const auto * ids = labels.ptr<int>(y);
+    const auto * seeds = strict.ptr<uchar>(y + bounds.y) + bounds.x;
+    for (int x = 0; x < bounds.width; ++x) {if (seeds[x]) {seeded[ids[x]] = 255;}}
+  }
+  for (int y = 0; y < bounds.height; ++y) {
+    auto * output = support.ptr<uchar>(y + bounds.y) + bounds.x;
+    const auto * ids = labels.ptr<int>(y);
+    for (int x = 0; x < bounds.width; ++x) {output[x] = seeded[ids[x]];}
+  }
+  return support;
+}
+
+void shadowScalarEquivalence(const FieldConfig & config)
+{
+  FieldConfig blue = config; blue.use_blue_interior = true;
+  const HueSector sectors[] = {HueSector::purple(config), HueSector::interior(config), HueSector::interior(blue)};
+  cv::RNG random(192837u);
+  for (const auto & sector : sectors) {
+    for (int width : {1, 15, 16, 17, 31, 32, 33, 101}) {
+      for (int mode = 0; mode < 2; ++mode) {
+        cv::Mat lab_parent(23, width + 8, CV_8UC3), seed_parent = cv::Mat::zeros(23, width + 8, CV_8U);
+        random.fill(lab_parent, cv::RNG::UNIFORM, 0, 256);
+        cv::Mat lab = lab_parent(cv::Rect(3, 2, width, 19));
+        cv::Mat seeds = seed_parent(cv::Rect(3, 2, width, 19));
+        for (int y = 0; y < lab.rows; ++y) {
+          for (int x = 0; x < lab.cols; ++x) {
+            auto & p = lab.at<cv::Vec3b>(y, x);
+            if (mode == 0) {
+              // 覆盖整个原始 Lab 空间、最低亮度边界和任意非零种子值。
+              if ((x + y) % 3 == 0) {p[0] = sector.light_lo;}
+              if (random.uniform(0, 19) == 0) {seeds.at<uchar>(y, x) = uchar(1 + random.uniform(0, 255));}
+            } else {
+              // 大片暗色连接与无种子孤岛；中性竖列切断四连通，不能被阴影补色。
+              p[0] = sector.light_lo == 0 ? 0 : uchar(random.uniform(0, int(sector.light_lo)));
+              p[1] = cv::saturate_cast<uchar>(128 + sector.lo_a + sector.hi_a);
+              p[2] = cv::saturate_cast<uchar>(128 + sector.lo_b + sector.hi_b);
+              if (x == width / 2 || (x + 7 * y) % 17 == 0) {p[1] = p[2] = 128;}
+              if (x == 0 && y == 0) {seeds.at<uchar>(y, x) = 127;}
+            }
+          }
+        }
+        const cv::Mat lab_before = lab_parent.clone(), seeds_before = seed_parent.clone();
+        const auto expected = scalarShadow(lab, seeds, sector);
+        const auto actual = field_detail::shadowGeometryMask(lab, seeds, sector);
+        CHECK(cv::countNonZero(actual != expected) == 0);
+        CHECK(cv::norm(lab_parent, lab_before, cv::NORM_INF) == 0);
+        CHECK(cv::norm(seed_parent, seeds_before, cv::NORM_INF) == 0);
+      }
+    }
+  }
+}
+
 }  // namespace
 
 void testColourClassification()
@@ -136,4 +210,5 @@ void testColourClassification()
     bad.black_width_m = width;
     CHECK(rejects(bad));
   }
+  shadowScalarEquivalence(config);
 }

@@ -1,0 +1,1914 @@
+{
+  "schema": 1,
+  "runs": {
+    "camera_ab_01": {
+      "comparison_sha256": "871c20e33fee5a5cce15b1726ce57ad6778b760b6702e3acb9456fa82828e057",
+      "seconds_per_trial": 12.0,
+      "restore": {
+        "errors": [],
+        "mismatches": {},
+        "ok": true
+      },
+      "trials": [
+        {
+          "name": "baseline",
+          "changes_from_baseline": {},
+          "frames": 816,
+          "valid_fraction": 1.0,
+          "received_fps": 68.0,
+          "corner_order": [
+            "TL",
+            "TR",
+            "BR",
+            "BL"
+          ],
+          "corner_median_xy_px": [
+            [
+              644.0091857910156,
+              51.36760711669922
+            ],
+            [
+              1540.8987426757812,
+              82.36056137084961
+            ],
+            [
+              1817.998046875,
+              266.3366394042969
+            ],
+            [
+              386.292236328125,
+              202.0974884033203
+            ]
+          ],
+          "corner_p95_distance_from_window_median_px": [
+            3.590500223437032,
+            3.2816800372378707,
+            5.403629601204155,
+            5.015609740197959
+          ],
+          "corner_max_distance_from_window_median_px": [
+            10.30772011586975,
+            5.257556964295571,
+            6.976695795870974,
+            8.218261056671311
+          ],
+          "corner_adjacent_rms_px": {
+            "n": 815,
+            "mean": 2.3601929399807866,
+            "p95": 4.894894113816259,
+            "max": 7.804063856401366
+          },
+          "center_p95_distance_from_window_median_px": {
+            "left_region": 2.5031440998410766,
+            "right_region": 2.587185770219297
+          },
+          "controls": {
+            "after": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {},
+              "values": {
+                "brightness": 150,
+                "contrast": 65,
+                "saturation": 76,
+                "hue": 200,
+                "white_balance_automatic": 1,
+                "gamma": 128,
+                "gain": 48,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 150,
+                "dynamic_framerate": 0,
+                "focus_auto": 1,
+                "focus_absolute": 403,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            },
+            "end": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {
+                "focus_absolute": {
+                  "expected": 403,
+                  "readback": 359
+                }
+              },
+              "values": {
+                "brightness": 150,
+                "contrast": 65,
+                "saturation": 76,
+                "hue": 200,
+                "white_balance_automatic": 1,
+                "gamma": 128,
+                "gain": 48,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 150,
+                "dynamic_framerate": 0,
+                "focus_auto": 1,
+                "focus_absolute": 359,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            }
+          }
+        },
+        {
+          "name": "focus_lock403",
+          "changes_from_baseline": {
+            "focus_auto": 0,
+            "focus_absolute": 403
+          },
+          "frames": 807,
+          "valid_fraction": 1.0,
+          "received_fps": 67.25,
+          "corner_order": [
+            "TL",
+            "TR",
+            "BR",
+            "BL"
+          ],
+          "corner_median_xy_px": [
+            [
+              643.78076171875,
+              51.48103332519531
+            ],
+            [
+              1540.706787109375,
+              82.37934875488281
+            ],
+            [
+              1817.9593505859375,
+              266.46502685546875
+            ],
+            [
+              386.2451477050781,
+              202.1822509765625
+            ]
+          ],
+          "corner_p95_distance_from_window_median_px": [
+            3.580050929483388,
+            3.278040708666621,
+            5.510993855740023,
+            5.192476382348028
+          ],
+          "corner_max_distance_from_window_median_px": [
+            8.25487821028751,
+            5.307570944885557,
+            7.448840272457335,
+            6.786061195078521
+          ],
+          "corner_adjacent_rms_px": {
+            "n": 806,
+            "mean": 2.4010059679163533,
+            "p95": 4.941557303583685,
+            "max": 8.220054811989241
+          },
+          "center_p95_distance_from_window_median_px": {
+            "left_region": 2.3032437854350785,
+            "right_region": 2.3697744467712587
+          },
+          "controls": {
+            "after": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {},
+              "values": {
+                "brightness": 150,
+                "contrast": 65,
+                "saturation": 76,
+                "hue": 200,
+                "white_balance_automatic": 1,
+                "gamma": 128,
+                "gain": 48,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 150,
+                "dynamic_framerate": 0,
+                "focus_auto": 0,
+                "focus_absolute": 403,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            },
+            "end": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {},
+              "values": {
+                "brightness": 150,
+                "contrast": 65,
+                "saturation": 76,
+                "hue": 200,
+                "white_balance_automatic": 1,
+                "gamma": 128,
+                "gain": 48,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 150,
+                "dynamic_framerate": 0,
+                "focus_auto": 0,
+                "focus_absolute": 403,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            }
+          }
+        },
+        {
+          "name": "exposure100",
+          "changes_from_baseline": {
+            "exposure_time_absolute": 100
+          },
+          "frames": 739,
+          "valid_fraction": 1.0,
+          "received_fps": 61.583333333333336,
+          "corner_order": [
+            "TL",
+            "TR",
+            "BR",
+            "BL"
+          ],
+          "corner_median_xy_px": [
+            [
+              643.8974609375,
+              51.256553649902344
+            ],
+            [
+              1540.6072998046875,
+              82.1899185180664
+            ],
+            [
+              1817.7227783203125,
+              266.58905029296875
+            ],
+            [
+              386.28765869140625,
+              202.2529296875
+            ]
+          ],
+          "corner_p95_distance_from_window_median_px": [
+            4.431739468351401,
+            3.3465692646013165,
+            3.4529782427342868,
+            2.8404905613196627
+          ],
+          "corner_max_distance_from_window_median_px": [
+            8.297743745425414,
+            4.98185504003907,
+            6.241618716644327,
+            6.648288945985341
+          ],
+          "corner_adjacent_rms_px": {
+            "n": 738,
+            "mean": 2.077547807431557,
+            "p95": 3.989433420271308,
+            "max": 5.63593897234432
+          },
+          "center_p95_distance_from_window_median_px": {
+            "left_region": 2.8240411561566856,
+            "right_region": 2.661558200109773
+          },
+          "controls": {
+            "after": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {},
+              "values": {
+                "brightness": 150,
+                "contrast": 65,
+                "saturation": 76,
+                "hue": 200,
+                "white_balance_automatic": 1,
+                "gamma": 128,
+                "gain": 48,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 100,
+                "dynamic_framerate": 0,
+                "focus_auto": 1,
+                "focus_absolute": 403,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            },
+            "end": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {
+                "focus_absolute": {
+                  "expected": 403,
+                  "readback": 359
+                }
+              },
+              "values": {
+                "brightness": 150,
+                "contrast": 65,
+                "saturation": 76,
+                "hue": 200,
+                "white_balance_automatic": 1,
+                "gamma": 128,
+                "gain": 48,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 100,
+                "dynamic_framerate": 0,
+                "focus_auto": 1,
+                "focus_absolute": 359,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            }
+          }
+        },
+        {
+          "name": "exposure80",
+          "changes_from_baseline": {
+            "exposure_time_absolute": 80
+          },
+          "frames": 726,
+          "valid_fraction": 1.0,
+          "received_fps": 60.5,
+          "corner_order": [
+            "TL",
+            "TR",
+            "BR",
+            "BL"
+          ],
+          "corner_median_xy_px": [
+            [
+              643.91552734375,
+              50.825143814086914
+            ],
+            [
+              1540.885009765625,
+              82.00215911865234
+            ],
+            [
+              1817.0013427734375,
+              266.5282287597656
+            ],
+            [
+              386.42832946777344,
+              202.16464233398438
+            ]
+          ],
+          "corner_p95_distance_from_window_median_px": [
+            5.4659305946735195,
+            4.139110361399799,
+            3.93448784764031,
+            3.4610030358581563
+          ],
+          "corner_max_distance_from_window_median_px": [
+            10.977553544079596,
+            10.238030063624565,
+            6.752964166496669,
+            18.018944505690964
+          ],
+          "corner_adjacent_rms_px": {
+            "n": 725,
+            "mean": 2.741784797625247,
+            "p95": 4.801144985118982,
+            "max": 10.702604863185412
+          },
+          "center_p95_distance_from_window_median_px": {
+            "left_region": 3.692419260350877,
+            "right_region": 3.2687806477643555
+          },
+          "controls": {
+            "after": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {},
+              "values": {
+                "brightness": 150,
+                "contrast": 65,
+                "saturation": 76,
+                "hue": 200,
+                "white_balance_automatic": 1,
+                "gamma": 128,
+                "gain": 48,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 80,
+                "dynamic_framerate": 0,
+                "focus_auto": 1,
+                "focus_absolute": 403,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            },
+            "end": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {
+                "focus_absolute": {
+                  "expected": 403,
+                  "readback": 0
+                }
+              },
+              "values": {
+                "brightness": 150,
+                "contrast": 65,
+                "saturation": 76,
+                "hue": 200,
+                "white_balance_automatic": 1,
+                "gamma": 128,
+                "gain": 48,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 80,
+                "dynamic_framerate": 0,
+                "focus_auto": 1,
+                "focus_absolute": 0,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            }
+          }
+        },
+        {
+          "name": "gain36",
+          "changes_from_baseline": {
+            "gain": 36
+          },
+          "frames": 744,
+          "valid_fraction": 1.0,
+          "received_fps": 62.0,
+          "corner_order": [
+            "TL",
+            "TR",
+            "BR",
+            "BL"
+          ],
+          "corner_median_xy_px": [
+            [
+              643.8587036132812,
+              50.583831787109375
+            ],
+            [
+              1540.2711181640625,
+              81.87023162841797
+            ],
+            [
+              1817.7745971679688,
+              266.37120056152344
+            ],
+            [
+              386.4624481201172,
+              201.9691162109375
+            ]
+          ],
+          "corner_p95_distance_from_window_median_px": [
+            4.85633607864209,
+            3.3837830886515694,
+            4.52292454724139,
+            4.6630070248816375
+          ],
+          "corner_max_distance_from_window_median_px": [
+            9.816952365536135,
+            6.424625403037734,
+            10.191975691167501,
+            6.711893587627205
+          ],
+          "corner_adjacent_rms_px": {
+            "n": 743,
+            "mean": 2.5532078643293135,
+            "p95": 4.940379394145891,
+            "max": 9.175907965329108
+          },
+          "center_p95_distance_from_window_median_px": {
+            "left_region": 3.012226831949756,
+            "right_region": 2.5485900758871978
+          },
+          "controls": {
+            "after": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {},
+              "values": {
+                "brightness": 150,
+                "contrast": 65,
+                "saturation": 76,
+                "hue": 200,
+                "white_balance_automatic": 1,
+                "gamma": 128,
+                "gain": 36,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 150,
+                "dynamic_framerate": 0,
+                "focus_auto": 1,
+                "focus_absolute": 403,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            },
+            "end": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {
+                "focus_absolute": {
+                  "expected": 403,
+                  "readback": 575
+                }
+              },
+              "values": {
+                "brightness": 150,
+                "contrast": 65,
+                "saturation": 76,
+                "hue": 200,
+                "white_balance_automatic": 1,
+                "gamma": 128,
+                "gain": 36,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 150,
+                "dynamic_framerate": 0,
+                "focus_auto": 1,
+                "focus_absolute": 575,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            }
+          }
+        },
+        {
+          "name": "brightness135",
+          "changes_from_baseline": {
+            "brightness": 135
+          },
+          "frames": 741,
+          "valid_fraction": 1.0,
+          "received_fps": 61.75,
+          "corner_order": [
+            "TL",
+            "TR",
+            "BR",
+            "BL"
+          ],
+          "corner_median_xy_px": [
+            [
+              643.9644775390625,
+              51.085899353027344
+            ],
+            [
+              1541.28125,
+              82.21821594238281
+            ],
+            [
+              1818.2105712890625,
+              266.49176025390625
+            ],
+            [
+              386.23480224609375,
+              201.95205688476562
+            ]
+          ],
+          "corner_p95_distance_from_window_median_px": [
+            3.402715614288492,
+            2.7563041902469276,
+            1.5711177165870005,
+            1.565258427629219
+          ],
+          "corner_max_distance_from_window_median_px": [
+            7.997989547880506,
+            5.021662690807459,
+            15.210536055154595,
+            15.545526602871742
+          ],
+          "corner_adjacent_rms_px": {
+            "n": 740,
+            "mean": 1.5942624275589359,
+            "p95": 2.8345387112727267,
+            "max": 11.426890026512138
+          },
+          "center_p95_distance_from_window_median_px": {
+            "left_region": 2.300905431859417,
+            "right_region": 2.2005750614456847
+          },
+          "controls": {
+            "after": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {},
+              "values": {
+                "brightness": 135,
+                "contrast": 65,
+                "saturation": 76,
+                "hue": 200,
+                "white_balance_automatic": 1,
+                "gamma": 128,
+                "gain": 48,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 150,
+                "dynamic_framerate": 0,
+                "focus_auto": 1,
+                "focus_absolute": 403,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            },
+            "end": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {
+                "focus_absolute": {
+                  "expected": 403,
+                  "readback": 742
+                }
+              },
+              "values": {
+                "brightness": 135,
+                "contrast": 65,
+                "saturation": 76,
+                "hue": 200,
+                "white_balance_automatic": 1,
+                "gamma": 128,
+                "gain": 48,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 150,
+                "dynamic_framerate": 0,
+                "focus_auto": 1,
+                "focus_absolute": 742,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            }
+          }
+        },
+        {
+          "name": "saturation90",
+          "changes_from_baseline": {
+            "saturation": 90
+          },
+          "frames": 813,
+          "valid_fraction": 1.0,
+          "received_fps": 67.75,
+          "corner_order": [
+            "TL",
+            "TR",
+            "BR",
+            "BL"
+          ],
+          "corner_median_xy_px": [
+            [
+              643.9937744140625,
+              51.25629425048828
+            ],
+            [
+              1541.344482421875,
+              82.28619384765625
+            ],
+            [
+              1818.25048828125,
+              266.5825500488281
+            ],
+            [
+              386.2301330566406,
+              202.06764221191406
+            ]
+          ],
+          "corner_p95_distance_from_window_median_px": [
+            3.482073510379966,
+            2.639033613316241,
+            1.5438519390756336,
+            1.5828082919725932
+          ],
+          "corner_max_distance_from_window_median_px": [
+            7.2930446821709225,
+            5.651329985926965,
+            3.2148248979298475,
+            5.85936854340277
+          ],
+          "corner_adjacent_rms_px": {
+            "n": 812,
+            "mean": 1.5809278611375963,
+            "p95": 2.959782613335091,
+            "max": 5.287524303637929
+          },
+          "center_p95_distance_from_window_median_px": {
+            "left_region": 2.483263051937441,
+            "right_region": 2.2998105268641353
+          },
+          "controls": {
+            "after": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {},
+              "values": {
+                "brightness": 150,
+                "contrast": 65,
+                "saturation": 90,
+                "hue": 200,
+                "white_balance_automatic": 1,
+                "gamma": 128,
+                "gain": 48,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 150,
+                "dynamic_framerate": 0,
+                "focus_auto": 1,
+                "focus_absolute": 403,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            },
+            "end": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {
+                "focus_absolute": {
+                  "expected": 403,
+                  "readback": 630
+                }
+              },
+              "values": {
+                "brightness": 150,
+                "contrast": 65,
+                "saturation": 90,
+                "hue": 200,
+                "white_balance_automatic": 1,
+                "gamma": 128,
+                "gain": 48,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 150,
+                "dynamic_framerate": 0,
+                "focus_auto": 1,
+                "focus_absolute": 630,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            }
+          }
+        },
+        {
+          "name": "whitebal_lock4650",
+          "changes_from_baseline": {
+            "white_balance_automatic": 0,
+            "white_balance_temperature": 4650
+          },
+          "frames": 715,
+          "valid_fraction": 1.0,
+          "received_fps": 59.583333333333336,
+          "corner_order": [
+            "TL",
+            "TR",
+            "BR",
+            "BL"
+          ],
+          "corner_median_xy_px": [
+            [
+              641.0226440429688,
+              50.995113372802734
+            ],
+            [
+              1541.1463623046875,
+              82.34654998779297
+            ],
+            [
+              1820.89599609375,
+              266.0729064941406
+            ],
+            [
+              389.8338317871094,
+              201.94207763671875
+            ]
+          ],
+          "corner_p95_distance_from_window_median_px": [
+            14.835726505646914,
+            4.221168625300513,
+            15.490263945176654,
+            10.91510371069154
+          ],
+          "corner_max_distance_from_window_median_px": [
+            22.184973436562743,
+            7.094628892516376,
+            19.15096850442448,
+            13.425561512565935
+          ],
+          "corner_adjacent_rms_px": {
+            "n": 714,
+            "mean": 3.6058284481902056,
+            "p95": 9.518419784618377,
+            "max": 14.536673565246325
+          },
+          "center_p95_distance_from_window_median_px": {
+            "left_region": 4.94443893264258,
+            "right_region": 2.457812302708542
+          },
+          "controls": {
+            "after": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {},
+              "values": {
+                "brightness": 150,
+                "contrast": 65,
+                "saturation": 76,
+                "hue": 200,
+                "white_balance_automatic": 0,
+                "gamma": 128,
+                "gain": 48,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 150,
+                "dynamic_framerate": 0,
+                "focus_auto": 1,
+                "focus_absolute": 403,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            },
+            "end": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {
+                "focus_absolute": {
+                  "expected": 403,
+                  "readback": 466
+                }
+              },
+              "values": {
+                "brightness": 150,
+                "contrast": 65,
+                "saturation": 76,
+                "hue": 200,
+                "white_balance_automatic": 0,
+                "gamma": 128,
+                "gain": 48,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 150,
+                "dynamic_framerate": 0,
+                "focus_auto": 1,
+                "focus_absolute": 466,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            }
+          }
+        }
+      ],
+      "saturation90_vs_baseline": {
+        "bl_p95_reduction_fraction": 0.6844235548696973,
+        "br_p95_reduction_fraction": 0.7142935299022719,
+        "fps_ratio": 0.9963235294117647,
+        "median_corner_position_difference_px": [
+          0.11237466228507823,
+          0.4519009291356188,
+          0.35241837165966866,
+          0.06890291336743677
+        ]
+      }
+    },
+    "camera_ab_02": {
+      "comparison_sha256": "4eb84e6229f841628b3968fa7541aa413aa17676429f9a46ea09a2dde27ef4f2",
+      "seconds_per_trial": 30.0,
+      "restore": {
+        "errors": [],
+        "mismatches": {},
+        "ok": true
+      },
+      "trials": [
+        {
+          "name": "saturation90",
+          "changes_from_baseline": {
+            "saturation": 90
+          },
+          "frames": 2036,
+          "valid_fraction": 1.0,
+          "received_fps": 67.86666666666666,
+          "corner_order": [
+            "TL",
+            "TR",
+            "BR",
+            "BL"
+          ],
+          "corner_median_xy_px": [
+            [
+              643.8860168457031,
+              51.06271171569824
+            ],
+            [
+              1541.4127807617188,
+              82.18107986450195
+            ],
+            [
+              1818.150390625,
+              266.4308624267578
+            ],
+            [
+              386.0268859863281,
+              201.9321517944336
+            ]
+          ],
+          "corner_p95_distance_from_window_median_px": [
+            3.5481128746858843,
+            3.1251153547776576,
+            1.6383550752431386,
+            1.6622349294822927
+          ],
+          "corner_max_distance_from_window_median_px": [
+            8.409639002035199,
+            5.586123324487887,
+            5.680747327006621,
+            5.693871584507623
+          ],
+          "corner_adjacent_rms_px": {
+            "n": 2035,
+            "mean": 1.773489509131391,
+            "p95": 3.267395836153364,
+            "max": 5.598940274920359
+          },
+          "center_p95_distance_from_window_median_px": {
+            "left_region": 2.6076852318583406,
+            "right_region": 2.405218868944395
+          },
+          "controls": {
+            "after": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {},
+              "values": {
+                "brightness": 150,
+                "contrast": 65,
+                "saturation": 90,
+                "hue": 200,
+                "white_balance_automatic": 1,
+                "gamma": 128,
+                "gain": 48,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 150,
+                "dynamic_framerate": 0,
+                "focus_auto": 1,
+                "focus_absolute": 403,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            },
+            "end": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {
+                "focus_absolute": {
+                  "expected": 403,
+                  "readback": 0
+                }
+              },
+              "values": {
+                "brightness": 150,
+                "contrast": 65,
+                "saturation": 90,
+                "hue": 200,
+                "white_balance_automatic": 1,
+                "gamma": 128,
+                "gain": 48,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 150,
+                "dynamic_framerate": 0,
+                "focus_auto": 1,
+                "focus_absolute": 0,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            }
+          }
+        },
+        {
+          "name": "baseline",
+          "changes_from_baseline": {},
+          "frames": 2005,
+          "valid_fraction": 1.0,
+          "received_fps": 66.83333333333333,
+          "corner_order": [
+            "TL",
+            "TR",
+            "BR",
+            "BL"
+          ],
+          "corner_median_xy_px": [
+            [
+              643.8748779296875,
+              50.76178741455078
+            ],
+            [
+              1540.958251953125,
+              82.1304702758789
+            ],
+            [
+              1818.315185546875,
+              266.2008056640625
+            ],
+            [
+              386.44000244140625,
+              201.7914276123047
+            ]
+          ],
+          "corner_p95_distance_from_window_median_px": [
+            4.4185224699877566,
+            3.642913367107319,
+            5.419053577171627,
+            5.047784206064133
+          ],
+          "corner_max_distance_from_window_median_px": [
+            7.878589846893256,
+            5.628791646727423,
+            8.285244827480456,
+            10.18882744023232
+          ],
+          "corner_adjacent_rms_px": {
+            "n": 2004,
+            "mean": 2.711148236122623,
+            "p95": 5.066914791479028,
+            "max": 10.482269659560005
+          },
+          "center_p95_distance_from_window_median_px": {
+            "left_region": 2.8371358144499923,
+            "right_region": 2.57741530439624
+          },
+          "controls": {
+            "after": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {},
+              "values": {
+                "brightness": 150,
+                "contrast": 65,
+                "saturation": 76,
+                "hue": 200,
+                "white_balance_automatic": 1,
+                "gamma": 128,
+                "gain": 48,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 150,
+                "dynamic_framerate": 0,
+                "focus_auto": 1,
+                "focus_absolute": 403,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            },
+            "end": {
+              "returncode": 0,
+              "controlled_mismatches": {},
+              "inactive_readback_differences": {
+                "focus_absolute": {
+                  "expected": 403,
+                  "readback": 151
+                }
+              },
+              "values": {
+                "brightness": 150,
+                "contrast": 65,
+                "saturation": 76,
+                "hue": 200,
+                "white_balance_automatic": 1,
+                "gamma": 128,
+                "gain": 48,
+                "power_line_frequency": 1,
+                "white_balance_temperature": 4650,
+                "sharpness": 2000,
+                "backlight": 0,
+                "auto_exposure": 1,
+                "exposure_time_absolute": 150,
+                "dynamic_framerate": 0,
+                "focus_auto": 1,
+                "focus_absolute": 151,
+                "zoom": 100
+              },
+              "unsupported_privacy_read": true
+            }
+          }
+        }
+      ],
+      "saturation90_vs_baseline": {
+        "bl_p95_reduction_fraction": 0.6707000811394881,
+        "br_p95_reduction_fraction": 0.6976676735316119,
+        "fps_ratio": 1.0154613466334164,
+        "median_corner_position_difference_px": [
+          0.30113038782409673,
+          0.45733769613082176,
+          0.28299024777831955,
+          0.4364269708578585
+        ]
+      }
+    }
+  },
+  "image_method": {
+    "rois_xyxy_exclusive": {
+      "neutral_floor": [
+        500,
+        400,
+        800,
+        600
+      ],
+      "left_red_interior": [
+        700,
+        80,
+        900,
+        130
+      ],
+      "right_red_interior": [
+        1250,
+        100,
+        1450,
+        140
+      ],
+      "near_purple_wall": [
+        900,
+        190,
+        1000,
+        220
+      ]
+    },
+    "luma": "0.299 R + 0.587 G + 0.114 B on stored 8-bit RGB; display-brightness proxy, not calibrated radiance/exposure",
+    "saturation": "HSV S = (max(R,G,B)-min(R,G,B))/max(R,G,B), zero for black; no OpenCV dependence",
+    "sampling": "One saved raw image per trial, captured after its geometry sampling window; fixed pixel ROIs, no geometric registration"
+  },
+  "images": {
+    "before_control_rewrite": {
+      "path": "camera_before.png",
+      "sha256": "0f04727d5c5d2eb535e1ef63d5823669b7b369239249f8c78f0feaab6e887c47",
+      "width": 1920,
+      "height": 1080,
+      "rois": {
+        "neutral_floor": {
+          "rgb_mean": [
+            104.85395,
+            106.28335,
+            103.22285
+          ],
+          "luma_8bit_mean": 105.5070624,
+          "luma_8bit_median": 105.989,
+          "luma_8bit_p95": 109.49,
+          "hsv_saturation_0to1_mean": 0.0364602404223123,
+          "hsv_saturation_0to1_median": 0.036036036036036036,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "left_red_interior": {
+          "rgb_mean": [
+            89.4151,
+            46.1179,
+            35.2187
+          ],
+          "luma_8bit_mean": 57.821254,
+          "luma_8bit_median": 58.016,
+          "luma_8bit_p95": 60.76169999999997,
+          "hsv_saturation_0to1_mean": 0.6063919470711475,
+          "hsv_saturation_0to1_median": 0.6067415730337079,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "right_red_interior": {
+          "rgb_mean": [
+            79.9485,
+            35.756125,
+            29.415125
+          ],
+          "luma_8bit_mean": 48.246771125,
+          "luma_8bit_median": 47.885,
+          "luma_8bit_p95": 53.244,
+          "hsv_saturation_0to1_mean": 0.6349122629371899,
+          "hsv_saturation_0to1_median": 0.6410256410256411,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "near_purple_wall": {
+          "rgb_mean": [
+            41.755,
+            38.54,
+            75.33766666666666
+          ],
+          "luma_8bit_mean": 43.696219,
+          "luma_8bit_median": 43.175,
+          "luma_8bit_p95": 46.794,
+          "hsv_saturation_0to1_mean": 0.4898676880526198,
+          "hsv_saturation_0to1_median": 0.49333333333333335,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        }
+      }
+    },
+    "camera_ab_01/baseline": {
+      "path": "camera_ab_01\\baseline\\matched\\raw.png",
+      "sha256": "d2781727fa6209b66b1742439ea3e4f83e99f05f5856372fbfba2746413aeb67",
+      "width": 1920,
+      "height": 1080,
+      "rois": {
+        "neutral_floor": {
+          "rgb_mean": [
+            216.73486666666668,
+            216.16256666666666,
+            212.54395
+          ],
+          "luma_8bit_mean": 215.92116206666665,
+          "luma_8bit_median": 216.51199999999997,
+          "luma_8bit_p95": 223.28399999999996,
+          "hsv_saturation_0to1_mean": 0.024399040770996507,
+          "hsv_saturation_0to1_median": 0.023148148148148147,
+          "any_channel_ge250_fraction": 1.6666666666666667e-05,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "left_red_interior": {
+          "rgb_mean": [
+            191.6036,
+            110.5781,
+            94.2245
+          ],
+          "luma_8bit_mean": 132.94041409999997,
+          "luma_8bit_median": 132.563,
+          "luma_8bit_p95": 137.242,
+          "hsv_saturation_0to1_mean": 0.5082383867816381,
+          "hsv_saturation_0to1_median": 0.5076923076923077,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "right_red_interior": {
+          "rgb_mean": [
+            173.20825,
+            92.52075,
+            84.5255
+          ],
+          "luma_8bit_mean": 115.734854,
+          "luma_8bit_median": 115.313,
+          "luma_8bit_p95": 123.324,
+          "hsv_saturation_0to1_mean": 0.5135026858551125,
+          "hsv_saturation_0to1_median": 0.5146198830409356,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "near_purple_wall": {
+          "rgb_mean": [
+            106.58433333333333,
+            98.56766666666667,
+            162.431
+          ],
+          "luma_8bit_mean": 108.24506999999998,
+          "luma_8bit_median": 108.39999999999999,
+          "luma_8bit_p95": 111.68854999999999,
+          "hsv_saturation_0to1_mean": 0.3929935019374305,
+          "hsv_saturation_0to1_median": 0.3902439024390244,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        }
+      }
+    },
+    "camera_ab_01/focus_lock403": {
+      "path": "camera_ab_01\\focus_lock403\\matched\\raw.png",
+      "sha256": "81481bf7f4acd9bb6043dad79dd38fb5298f1004468bcbe68a079bc1262dd377",
+      "width": 1920,
+      "height": 1080,
+      "rois": {
+        "neutral_floor": {
+          "rgb_mean": [
+            216.71975,
+            216.07075,
+            212.22086666666667
+          ],
+          "luma_8bit_mean": 215.8259143,
+          "luma_8bit_median": 216.50099999999998,
+          "luma_8bit_p95": 223.28399999999996,
+          "hsv_saturation_0to1_mean": 0.025547122205275045,
+          "hsv_saturation_0to1_median": 0.02358490566037736,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "left_red_interior": {
+          "rgb_mean": [
+            191.6157,
+            110.5989,
+            93.1217
+          ],
+          "luma_8bit_mean": 132.8305224,
+          "luma_8bit_median": 132.552,
+          "luma_8bit_p95": 137.167,
+          "hsv_saturation_0to1_mean": 0.5140179940852958,
+          "hsv_saturation_0to1_median": 0.515625,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "right_red_interior": {
+          "rgb_mean": [
+            172.877375,
+            92.34225,
+            83.644375
+          ],
+          "luma_8bit_mean": 115.43069462499999,
+          "luma_8bit_median": 115.019,
+          "luma_8bit_p95": 123.324,
+          "hsv_saturation_0to1_mean": 0.5170459550026656,
+          "hsv_saturation_0to1_median": 0.5176470588235295,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "near_purple_wall": {
+          "rgb_mean": [
+            106.098,
+            98.532,
+            162.05866666666665
+          ],
+          "luma_8bit_mean": 108.03627399999999,
+          "luma_8bit_median": 108.2935,
+          "luma_8bit_p95": 111.61699999999999,
+          "hsv_saturation_0to1_mean": 0.39191446674220487,
+          "hsv_saturation_0to1_median": 0.391304347826087,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        }
+      }
+    },
+    "camera_ab_01/exposure100": {
+      "path": "camera_ab_01\\exposure100\\matched\\raw.png",
+      "sha256": "729e193b83da53308b05d1c9b9126cfc77042ee8889b80e5ee588850eacf5dc7",
+      "width": 1920,
+      "height": 1080,
+      "rois": {
+        "neutral_floor": {
+          "rgb_mean": [
+            183.06906666666666,
+            183.71635,
+            178.85236666666665
+          ],
+          "luma_8bit_mean": 182.96831818333334,
+          "luma_8bit_median": 183.821,
+          "luma_8bit_p95": 189.626,
+          "hsv_saturation_0to1_mean": 0.031898627678933304,
+          "hsv_saturation_0to1_median": 0.03208556149732621,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "left_red_interior": {
+          "rgb_mean": [
+            160.1309,
+            90.5714,
+            76.0965
+          ],
+          "luma_8bit_mean": 109.71955190000001,
+          "luma_8bit_median": 109.377,
+          "luma_8bit_p95": 113.231,
+          "hsv_saturation_0to1_mean": 0.524798997226223,
+          "hsv_saturation_0to1_median": 0.5283018867924528,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "right_red_interior": {
+          "rgb_mean": [
+            142.477875,
+            76.19625,
+            67.473375
+          ],
+          "luma_8bit_mean": 95.020048125,
+          "luma_8bit_median": 95.235,
+          "luma_8bit_p95": 101.377,
+          "hsv_saturation_0to1_mean": 0.5268317632942329,
+          "hsv_saturation_0to1_median": 0.5244755244755245,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "near_purple_wall": {
+          "rgb_mean": [
+            86.77033333333334,
+            81.077,
+            132.33733333333333
+          ],
+          "luma_8bit_mean": 88.62298466666665,
+          "luma_8bit_median": 88.48299999999999,
+          "luma_8bit_p95": 90.78200000000001,
+          "hsv_saturation_0to1_mean": 0.38721680644047074,
+          "hsv_saturation_0to1_median": 0.38636363636363635,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        }
+      }
+    },
+    "camera_ab_01/exposure80": {
+      "path": "camera_ab_01\\exposure80\\matched\\raw.png",
+      "sha256": "783c1d58872cd747ebf1e3bf29908d826a09d6379794c33e1ada3d44881f7976",
+      "width": 1920,
+      "height": 1080,
+      "rois": {
+        "neutral_floor": {
+          "rgb_mean": [
+            155.91203333333334,
+            156.5211,
+            152.03976666666668
+          ],
+          "luma_8bit_mean": 155.82811706666664,
+          "luma_8bit_median": 156.903,
+          "luma_8bit_p95": 162.903,
+          "hsv_saturation_0to1_mean": 0.03505429865029829,
+          "hsv_saturation_0to1_median": 0.032679738562091505,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "left_red_interior": {
+          "rgb_mean": [
+            133.5926,
+            77.7437,
+            61.152
+          ],
+          "luma_8bit_mean": 92.5510673,
+          "luma_8bit_median": 92.225,
+          "luma_8bit_p95": 95.46399999999998,
+          "hsv_saturation_0to1_mean": 0.5422544342757274,
+          "hsv_saturation_0to1_median": 0.546875,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "right_red_interior": {
+          "rgb_mean": [
+            118.698375,
+            62.945625,
+            53.004375
+          ],
+          "luma_8bit_mean": 78.48239475000001,
+          "luma_8bit_median": 78.131,
+          "luma_8bit_p95": 87.05999999999999,
+          "hsv_saturation_0to1_mean": 0.5546746482231178,
+          "hsv_saturation_0to1_median": 0.5508474576271186,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "near_purple_wall": {
+          "rgb_mean": [
+            72.717,
+            67.47066666666667,
+            110.93133333333333
+          ],
+          "luma_8bit_mean": 73.99383633333333,
+          "luma_8bit_median": 74.337,
+          "luma_8bit_p95": 78.27199999999999,
+          "hsv_saturation_0to1_mean": 0.3923524747253323,
+          "hsv_saturation_0to1_median": 0.39090909090909093,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        }
+      }
+    },
+    "camera_ab_01/gain36": {
+      "path": "camera_ab_01\\gain36\\matched\\raw.png",
+      "sha256": "e1f0b6c07ce12e4f50659c9a6ecfac55bbf16efd576a767420f02503bb08ff10",
+      "width": 1920,
+      "height": 1080,
+      "rois": {
+        "neutral_floor": {
+          "rgb_mean": [
+            168.4551,
+            168.62695,
+            164.35721666666666
+          ],
+          "luma_8bit_mean": 168.08881725,
+          "luma_8bit_median": 168.626,
+          "luma_8bit_p95": 174.62599999999998,
+          "hsv_saturation_0to1_mean": 0.031417185478094155,
+          "hsv_saturation_0to1_median": 0.029940119760479042,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "left_red_interior": {
+          "rgb_mean": [
+            145.0703,
+            83.2004,
+            67.6029
+          ],
+          "luma_8bit_mean": 99.92138510000001,
+          "luma_8bit_median": 99.996,
+          "luma_8bit_p95": 102.643,
+          "hsv_saturation_0to1_mean": 0.5339216716235662,
+          "hsv_saturation_0to1_median": 0.541095890410959,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "right_red_interior": {
+          "rgb_mean": [
+            128.57025,
+            69.82375,
+            58.0255
+          ],
+          "luma_8bit_mean": 86.04395299999999,
+          "luma_8bit_median": 86.056,
+          "luma_8bit_p95": 92.04499999999999,
+          "hsv_saturation_0to1_mean": 0.549377929157561,
+          "hsv_saturation_0to1_median": 0.5511811023622047,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "near_purple_wall": {
+          "rgb_mean": [
+            79.262,
+            74.817,
+            118.80866666666667
+          ],
+          "luma_8bit_mean": 81.16110499999998,
+          "luma_8bit_median": 81.386,
+          "luma_8bit_p95": 83.625,
+          "hsv_saturation_0to1_mean": 0.37018944637728707,
+          "hsv_saturation_0to1_median": 0.36666666666666664,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        }
+      }
+    },
+    "camera_ab_01/brightness135": {
+      "path": "camera_ab_01\\brightness135\\matched\\raw.png",
+      "sha256": "8dd4f147fe886ccb641b3b798c8836815bf43a8e4dff9215483d5224e7e68053",
+      "width": 1920,
+      "height": 1080,
+      "rois": {
+        "neutral_floor": {
+          "rgb_mean": [
+            200.61528333333334,
+            200.18565,
+            196.1583
+          ],
+          "luma_8bit_mean": 199.8549924666666,
+          "luma_8bit_median": 200.996,
+          "luma_8bit_p95": 207.21299999999997,
+          "hsv_saturation_0to1_mean": 0.027464971261236815,
+          "hsv_saturation_0to1_median": 0.02512562814070352,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "left_red_interior": {
+          "rgb_mean": [
+            175.6635,
+            94.6349,
+            77.2322
+          ],
+          "luma_8bit_mean": 116.8785436,
+          "luma_8bit_median": 116.526,
+          "luma_8bit_p95": 121.22699999999999,
+          "hsv_saturation_0to1_mean": 0.5603209737910203,
+          "hsv_saturation_0to1_median": 0.5632183908045977,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "right_red_interior": {
+          "rgb_mean": [
+            157.187625,
+            76.397125,
+            67.56575
+          ],
+          "luma_8bit_mean": 99.54670775,
+          "luma_8bit_median": 99.047,
+          "luma_8bit_p95": 107.32399999999998,
+          "hsv_saturation_0to1_mean": 0.5708416634890766,
+          "hsv_saturation_0to1_median": 0.5714285714285714,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "near_purple_wall": {
+          "rgb_mean": [
+            90.155,
+            82.95266666666667,
+            146.33233333333334
+          ],
+          "luma_8bit_mean": 92.33144633333333,
+          "luma_8bit_median": 92.047,
+          "luma_8bit_p95": 95.67699999999999,
+          "hsv_saturation_0to1_mean": 0.4330099548887902,
+          "hsv_saturation_0to1_median": 0.42953020134228187,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        }
+      }
+    },
+    "camera_ab_01/saturation90": {
+      "path": "camera_ab_01\\saturation90\\matched\\raw.png",
+      "sha256": "bb6c7d81b3ad733ecabac3f1cdf7eed1e915c3f917313610ca38d9494accc326",
+      "width": 1920,
+      "height": 1080,
+      "rois": {
+        "neutral_floor": {
+          "rgb_mean": [
+            217.10808333333333,
+            216.10906666666668,
+            212.13971666666666
+          ],
+          "luma_8bit_mean": 215.95526675,
+          "luma_8bit_median": 216.50099999999998,
+          "luma_8bit_p95": 223.28399999999996,
+          "hsv_saturation_0to1_mean": 0.028282596385559206,
+          "hsv_saturation_0to1_median": 0.026785714285714284,
+          "any_channel_ge250_fraction": 1.6666666666666667e-05,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "left_red_interior": {
+          "rgb_mean": [
+            202.3752,
+            107.3689,
+            85.9629
+          ],
+          "luma_8bit_mean": 133.33549969999999,
+          "luma_8bit_median": 132.854,
+          "luma_8bit_p95": 138.256,
+          "hsv_saturation_0to1_mean": 0.5752334097381032,
+          "hsv_saturation_0to1_median": 0.5771144278606966,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "right_red_interior": {
+          "rgb_mean": [
+            183.475625,
+            88.545,
+            79.323625
+          ],
+          "luma_8bit_mean": 115.87802012499998,
+          "luma_8bit_median": 115.45,
+          "luma_8bit_p95": 123.402,
+          "hsv_saturation_0to1_mean": 0.5687255832061326,
+          "hsv_saturation_0to1_median": 0.569060773480663,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "near_purple_wall": {
+          "rgb_mean": [
+            105.59266666666667,
+            96.69833333333334,
+            173.78366666666668
+          ],
+          "luma_8bit_mean": 108.14546699999998,
+          "luma_8bit_median": 108.284,
+          "luma_8bit_p95": 111.88199999999999,
+          "hsv_saturation_0to1_mean": 0.44349651943885615,
+          "hsv_saturation_0to1_median": 0.4411764705882353,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        }
+      }
+    },
+    "camera_ab_01/whitebal_lock4650": {
+      "path": "camera_ab_01\\whitebal_lock4650\\matched\\raw.png",
+      "sha256": "fdeaf43787a6180a3a08997dfcfed5a508053b88ebde43f760640a0ead501f6f",
+      "width": 1920,
+      "height": 1080,
+      "rois": {
+        "neutral_floor": {
+          "rgb_mean": [
+            228.37418333333332,
+            215.00863333333334,
+            199.5374
+          ],
+          "luma_8bit_mean": 217.24121218333332,
+          "luma_8bit_median": 217.476,
+          "luma_8bit_p95": 223.72099999999998,
+          "hsv_saturation_0to1_mean": 0.12584909348260284,
+          "hsv_saturation_0to1_median": 0.12608695652173912,
+          "any_channel_ge250_fraction": 0.0009166666666666666,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "left_red_interior": {
+          "rgb_mean": [
+            201.0427,
+            108.4125,
+            83.8132
+          ],
+          "luma_8bit_mean": 133.30460960000002,
+          "luma_8bit_median": 132.843,
+          "luma_8bit_p95": 137.48514999999998,
+          "hsv_saturation_0to1_mean": 0.5830973800242942,
+          "hsv_saturation_0to1_median": 0.587378640776699,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "right_red_interior": {
+          "rgb_mean": [
+            183.1445,
+            89.855,
+            75.56725
+          ],
+          "luma_8bit_mean": 116.11975699999998,
+          "luma_8bit_median": 116.08,
+          "luma_8bit_p95": 123.48419999999999,
+          "hsv_saturation_0to1_mean": 0.5873429902015805,
+          "hsv_saturation_0to1_median": 0.5879120879120879,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "near_purple_wall": {
+          "rgb_mean": [
+            113.43133333333333,
+            98.43733333333333,
+            152.561
+          ],
+          "luma_8bit_mean": 109.09063733333333,
+          "luma_8bit_median": 109.527,
+          "luma_8bit_p95": 112.826,
+          "hsv_saturation_0to1_mean": 0.3546655698293606,
+          "hsv_saturation_0to1_median": 0.3509933774834437,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        }
+      }
+    },
+    "camera_ab_02/saturation90": {
+      "path": "camera_ab_02\\saturation90\\matched\\raw.png",
+      "sha256": "8212fb863d6b5e779faf9c5abf90c85a3c7d383dc7e5024baeeaf82f451751a0",
+      "width": 1920,
+      "height": 1080,
+      "rois": {
+        "neutral_floor": {
+          "rgb_mean": [
+            217.14521666666667,
+            216.02846666666667,
+            211.6533
+          ],
+          "luma_8bit_mean": 215.86360591666667,
+          "luma_8bit_median": 216.50099999999998,
+          "luma_8bit_p95": 223.28399999999996,
+          "hsv_saturation_0to1_mean": 0.030081330302641353,
+          "hsv_saturation_0to1_median": 0.027777777777777776,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "left_red_interior": {
+          "rgb_mean": [
+            202.2401,
+            106.6878,
+            85.9612
+          ],
+          "luma_8bit_mean": 132.8951053,
+          "luma_8bit_median": 132.641,
+          "luma_8bit_p95": 137.256,
+          "hsv_saturation_0to1_mean": 0.574952795271711,
+          "hsv_saturation_0to1_median": 0.5792079207920792,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "right_red_interior": {
+          "rgb_mean": [
+            183.916,
+            87.847125,
+            78.661
+          ],
+          "luma_8bit_mean": 115.524500375,
+          "luma_8bit_median": 115.30799999999999,
+          "luma_8bit_p95": 123.342,
+          "hsv_saturation_0to1_mean": 0.5734885717584295,
+          "hsv_saturation_0to1_median": 0.5737704918032787,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "near_purple_wall": {
+          "rgb_mean": [
+            105.61833333333334,
+            97.09433333333334,
+            173.43366666666665
+          ],
+          "luma_8bit_mean": 108.34569333333332,
+          "luma_8bit_median": 108.36599999999999,
+          "luma_8bit_p95": 111.81454999999997,
+          "hsv_saturation_0to1_mean": 0.440080657428465,
+          "hsv_saturation_0to1_median": 0.44,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        }
+      }
+    },
+    "camera_ab_02/baseline": {
+      "path": "camera_ab_02\\baseline\\matched\\raw.png",
+      "sha256": "24cee0f7dd2297931fbc4b72480e807ed4ab651e1046e36db5a7895539d25be7",
+      "width": 1920,
+      "height": 1080,
+      "rois": {
+        "neutral_floor": {
+          "rgb_mean": [
+            216.7166,
+            216.1781,
+            212.12376666666665
+          ],
+          "luma_8bit_mean": 215.87691750000002,
+          "luma_8bit_median": 216.50099999999998,
+          "luma_8bit_p95": 223.28399999999996,
+          "hsv_saturation_0to1_mean": 0.02605105260415565,
+          "hsv_saturation_0to1_median": 0.023474178403755867,
+          "any_channel_ge250_fraction": 1.6666666666666667e-05,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "left_red_interior": {
+          "rgb_mean": [
+            191.8734,
+            110.9162,
+            93.4032
+          ],
+          "luma_8bit_mean": 133.12592080000002,
+          "luma_8bit_median": 132.694,
+          "luma_8bit_p95": 137.45499999999998,
+          "hsv_saturation_0to1_mean": 0.5132336162835002,
+          "hsv_saturation_0to1_median": 0.5130890052356021,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "right_red_interior": {
+          "rgb_mean": [
+            173.18025,
+            92.710625,
+            83.64225
+          ],
+          "luma_8bit_mean": 115.737248125,
+          "luma_8bit_median": 115.361,
+          "luma_8bit_p95": 123.324,
+          "hsv_saturation_0to1_mean": 0.5178597083150039,
+          "hsv_saturation_0to1_median": 0.5193370165745856,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        },
+        "near_purple_wall": {
+          "rgb_mean": [
+            105.975,
+            98.69766666666666,
+            162.88266666666667
+          ],
+          "luma_8bit_mean": 108.19067933333334,
+          "luma_8bit_median": 108.39999999999999,
+          "luma_8bit_p95": 111.688,
+          "hsv_saturation_0to1_mean": 0.3939444190749756,
+          "hsv_saturation_0to1_median": 0.39263803680981596,
+          "any_channel_ge250_fraction": 0.0,
+          "all_channels_ge250_fraction": 0.0
+        }
+      }
+    }
+  },
+  "before_to_rewritten_baseline_luma_mean_ratio": {
+    "neutral_floor": 2.046509088160023,
+    "left_red_interior": 2.2991617252022927,
+    "right_red_interior": 2.3988103514771733,
+    "near_purple_wall": 2.477218223389076
+  },
+  "assessment": [
+    "Both trial orders support lower near-corner temporal scatter at saturation 90 in this static view; corner p95 is relative to each window median, not ground-truth error.",
+    "All eight 12-second trials and both 30-second repeats report 100% valid and committed; validity does not establish absolute geometry accuracy.",
+    "The large brightness change occurred before the first rewritten baseline. Its nominal controls match the pre-run controls, but the script disabled AF/AWB, rewrote the full control set, then restored automatic modes. Do not attribute this global improvement to saturation or field dimensions.",
+    "Active requested controls match in after/end readbacks. AF-enabled trials show varying inactive focus_absolute readbacks; this is not a controlled fixed-focus experiment and not evidence that the inactive value was enforced.",
+    "Automatic white balance remains enabled except for its dedicated trial. Nominal readback/restoration does not establish identical hidden ISP/automatic state.",
+    "No motion, varied distance, illumination, object-color segmentation, or calibrated physical ground truth is evaluated here. The results justify a local camera-setting candidate, not a guarantee of operational accuracy.",
+    "Privacy control enumeration prints error 32 while v4l2-ctl returns zero; requested camera controls were parsed and matched, and Privacy was not modified."
+  ]
+}

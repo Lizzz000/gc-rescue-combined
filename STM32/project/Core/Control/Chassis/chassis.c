@@ -29,9 +29,19 @@ typedef enum { IDLE, TRANSLATION, DISTANCE, VELOCITY, TURN } Chassis_Mode_t;
 static const uint16_t motor_id[3] = {1U, 2U, 3U};
 static const float motor_direction[3] = {-1.0f, -1.0f, -1.0f};
 static const float motor_gear_ratio[3] = {1.0f, 1.0f, 1.0f};
-static const float motor_kd[3] = {0.2f, 0.25f, 0.2f};
+static const float motor_kd_default[3] = {0.2f, 0.25f, 0.2f};
+/* 2026-11-16：1.8 kg、0.25 m/s 前后与双向旋转复测。摩擦项只用于平移。 */
+static const float motor_friction_default[3] = {0.0f, 0.015f, 0.015f};
 static const float motor_vmax[3] = {40.0f, 40.0f, 40.0f};
 float chassis_speed[3];
+float chassis_tuning_kd[3];
+float chassis_tuning_ff_gain;
+float chassis_tuning_friction[3];
+float chassis_motor_target[3], chassis_motor_ff[3];
+static float ff_previous_vx, ff_previous_vy;
+static float ff_control_interval_s;
+static uint32_t ff_previous_us;
+static uint8_t ff_history_valid;
 static pid_type_def yaw_pid, turn_pid;
 static uint8_t enabled, pending_disable, pending_enable;
 static uint8_t monitoring_stop, stop_groups, disable_after_stop;
@@ -160,7 +170,12 @@ void Chassis_Stop(void)
     run_duration_ms = 0U;
     run_started = turn_settling = 0U;
     for (unsigned i = 0U; i < 3U; ++i)
+    {
         vector_target[i] = vector_ramp[i] = 0.0f;
+        chassis_motor_ff[i] = 0.0f;
+    }
+    ff_previous_vx = ff_previous_vy = 0.0f;
+    ff_history_valid = 0U;
     PID_clear(&yaw_pid);
     PID_clear(&turn_pid);
 }
@@ -182,8 +197,35 @@ void Chassis_Init(void)
     monitoring_stop = stop_groups = disable_after_stop = 0U;
     Chassis_Stop();
     for (unsigned i = 0U; i < 3U; ++i)
+    {
         chassis_speed[i] = 0.0f;
+        chassis_tuning_kd[i] = motor_kd_default[i];
+        chassis_tuning_friction[i] = motor_friction_default[i];
+        chassis_motor_target[i] = chassis_motor_ff[i] = 0.0f;
+    }
+    chassis_tuning_ff_gain = 1.0f;
     Reset_Control_Time();
+}
+
+/** @brief 在失能或已确认停稳时原子受理整组调参；非法输入不部分生效。 */
+uint8_t Chassis_Set_Tuning(const float kd[3], float ff_gain, const float friction[3])
+{
+    if (kd == NULL || friction == NULL || !isfinite(ff_gain) || ff_gain < 0.0f || ff_gain > 1.0f ||
+        (enabled && !Chassis_Is_Stopped()))
+        return 0U;
+    for (unsigned i = 0U; i < 3U; ++i)
+        if (!isfinite(kd[i]) || kd[i] < 0.05f || kd[i] > 0.5f ||
+            !isfinite(friction[i]) || friction[i] < 0.0f || friction[i] > 0.03f)
+            return 0U;
+    for (unsigned i = 0U; i < 3U; ++i)
+    {
+        chassis_tuning_kd[i] = kd[i];
+        chassis_tuning_friction[i] = friction[i];
+    }
+    chassis_tuning_ff_gain = ff_gain;
+    ff_history_valid = 0U;
+    ff_previous_vx = ff_previous_vy = 0.0f;
+    return 1U;
 }
 
 /** @brief 清目标并撤销待发帧，失能帧交由 Loop 等待三个邮箱空闲后提交。
@@ -417,17 +459,54 @@ static uint8_t Send_Chassis_Targets(float vx, float vy, float wz)
         if (speed > motor_vmax[i])
             scale = fminf(scale, motor_vmax[i] / speed);
     }
+    /* 只对已限幅、实际提交的车体平移目标求导。长间隔不补偿累计误差，
+     * Stop/故障/使能包序始终零前馈；未标定的偏航惯性项保持零。 */
+    const uint32_t ff_now_us = __HAL_TIM_GET_COUNTER(&htim2);
+    const float ff_dt = ff_history_valid ? (ff_now_us - ff_previous_us) * 0.000001f : ff_control_interval_s;
+    float fx = 0.0f, fy = 0.0f;
+    if (mode != IDLE && ff_dt > 0.0f && ff_dt <= 0.05f)
+    {
+        float ax = (vx * scale - ff_previous_vx) / ff_dt;
+        float ay = (vy * scale - ff_previous_vy) / ff_dt;
+        const float acceleration = hypotf(ax, ay);
+        if (acceleration > CHASSIS_DISTANCE_ACCELERATION_MPS2)
+        {
+            ax *= CHASSIS_DISTANCE_ACCELERATION_MPS2 / acceleration;
+            ay *= CHASSIS_DISTANCE_ACCELERATION_MPS2 / acceleration;
+        }
+        fx = 1.8f * ax * chassis_tuning_ff_gain;
+        fy = 1.8f * ay * chassis_tuning_ff_gain;
+    }
+    const float wheel_torque[3] = {
+        CHASSIS_WHEEL_RADIUS * (2.0f * fy / 3.0f),
+        CHASSIS_WHEEL_RADIUS * (fx / 1.7320508f - fy / 3.0f),
+        CHASSIS_WHEEL_RADIUS * (-fx / 1.7320508f - fy / 3.0f)
+    };
     for (unsigned i = 0U; i < 3U; ++i)
     {
         float target = wheel[i] * scale * motor_gear_ratio[i] * motor_direction[i];
-        if (ctrl_motor(&MOTOR_CAN, motor_id[i], 0.0f, target, 0.0f, motor_kd[i], 0.0f) != HAL_OK)
+        float ff = 0.0f;
+        if (mode != IDLE)
+        {
+            ff = wheel_torque[i] * motor_direction[i] / motor_gear_ratio[i] +
+                 ((vx != 0.0f || vy != 0.0f) ?
+                  chassis_tuning_friction[i] * target / (fabsf(target) + 0.5f) : 0.0f);
+            ff = fmaxf(-0.05f, fminf(0.05f, ff));
+        }
+        if (ctrl_motor(&MOTOR_CAN, motor_id[i], 0.0f, target, 0.0f, chassis_tuning_kd[i], ff) != HAL_OK)
         {
             Chassis_Disable();
             return 0U;
         }
+        chassis_motor_target[i] = target;
+        chassis_motor_ff[i] = ff;
         if (i < 2U)
             vTaskDelay(pdMS_TO_TICKS(1U));
     }
+    ff_previous_vx = vx * scale;
+    ff_previous_vy = vy * scale;
+    ff_previous_us = ff_now_us;
+    ff_history_valid = mode != IDLE;
     return 1U;
 }
 
@@ -598,6 +677,7 @@ void Chassis_Loop(void)
         }
     }
     float dt = elapsed_us * 0.000001f;
+    ff_control_interval_s = dt;
     /* 任务被堵住后再醒来时，不把整段空白算进一次加速。25 ms 的正常抖动仍按实测间隔。 */
     if (dt > 0.05f)
         dt = 0.05f;

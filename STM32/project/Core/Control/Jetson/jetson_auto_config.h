@@ -15,6 +15,9 @@
 #endif
 /* 自动搬运或底盘联调固件：USB 收 Jetson 下行并运行自动流程；否则为类型 2 手动固件。 */
 #define JETSON_AUTO_CAN_ENABLED (JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST)
+#if defined(CHASSIS_TUNING_ENABLED) && CHASSIS_TUNING_ENABLED && JETSON_AUTO_CAN_ENABLED
+#error "Chassis tuning cannot share control with Jetson auto or chassis-only test"
+#endif
 #define JETSON_AUTO_CHASSIS_TEST_TIMEOUT_MS 90000U
 
 /* 到位窗口为 x、y 设定点及各轴允许误差。单位为原图宽/高的比例，0 待标定。 */

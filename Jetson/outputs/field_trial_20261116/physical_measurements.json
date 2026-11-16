@@ -1,0 +1,23 @@
+{
+  "outer_width_mm": 660,
+  "outer_depth_mm": 640,
+  "wall_horizontal_thickness_mm": 20,
+  "wall_height_mm": 20,
+  "red_regions_reported_mm": [
+    [
+      300,
+      300
+    ],
+    [
+      300,
+      300
+    ]
+  ],
+  "source": "user-confirmed at field; region placement not independently measured",
+  "candidate_config_active": true,
+  "active_profile": "outputs/field_trial_20261116/field_rescue.yaml",
+  "active_geometry_verified_bev_px": [
+    248,
+    240
+  ]
+}

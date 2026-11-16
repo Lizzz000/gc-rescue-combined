@@ -1,0 +1,4 @@
+# Runtime captures, raw logs, temporary experiments and local device state.
+# Selected final settings, tools and evidence are explicitly tracked in Git.
+/Jetson/outputs/
+/STM32/outputs/

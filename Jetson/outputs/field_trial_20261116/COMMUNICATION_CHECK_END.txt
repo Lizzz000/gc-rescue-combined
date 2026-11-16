@@ -1,0 +1,34 @@
+2026-11-16 — 用户已断电，要求总结并结束任务。
+
+本轮结果（均为断电前观测，不代表重新上电后的状态）
+1. PC↔Jetson SSH 可用；10 次 ping 全部返回，0 丢包，20–178 ms，平均 78 ms。
+2. ROS 直接发现 /detect_node、/stream_node；旧 CLI daemon 缓存曾为空，停止 daemon 后用 no-daemon 核实。实际 topic 采样正常。
+3. 安全区识别 10 秒收到 682 帧，680 帧 valid+committed，约 68.2 FPS；未发生相机重开。当前场景统计，不是绝对定位精度证明。
+4. MJPEG 本机 8 秒 568 帧，约 71.0 FPS；电脑实收先为 16.7 FPS，复测 25.3 FPS，无接收报错。存在无线端吞吐/抖动影响，现场还有两个图传客户端，不能宣称各端均达到 68 FPS。
+5. S288 夹爪 10 次 Stop 查询均成功，往返约 0.4–1.1 ms，warning/error 为 0；温度 57 C、电压 10.5 V。本轮未发送夹爪转角。
+6. 清理无响应旧 OpenOCD 后仍 CMD_INFO 失败；用户拔插 CMSIS-DAP USB 后恢复。只读逐字节 Flash 核验通过，与当前 Debug ELF 一致。
+7. STM32 只读 27 个快照：CRC 校验后手动帧 sequence 从 43202 增至 43697；USB overflow=0，IMU ready=1 且更新，CAN HAL error_code=0。
+8. 此时底盘 DISARMED=0、enabled=0、目标速度全零。三轮是失能后的旧反馈，尚未完成有效零速使能后的新反馈验证；因此三轮 CAN 响应、READY 和运动响应仍待验证，不能把 HAL error=0 当作全部正常。
+
+执行状态
+- 本轮没有下发非零底盘速度，也没有松爪，搬运没有开始。
+- 手动服务曾以 idle/valid=0 运行。用户断电后 SSH 已被 reset，无法取得远程 systemctl stop 回执；没有声称已远程关闭服务。已关闭本轮 PC OpenOCD。
+- 用户结束任务后，不再继续动作或测试。今后重新上电需重新核查链路和场景，再取得新的启动指令。
+
+已保存方案（未执行）
+横向对齐左区 → 车体 0.25 m/s 前进 1.5 s → 实际停稳 → 夹爪相对 +60° → 同速后退 1.5 s → 停车失能，不重复。
+0.375 m 只是速度×时间，不是实测距离。+60° 松爪时限/到位效果尚未校准。
+arm-zero=0.6 s 已保存并通过离线时序复核，尚未完成实车零速使能验收。
+场地 660×640 mm，围栏水平厚度 20 mm、高度 20 mm；相机 saturation=90，完整相机参数见 camera_profile.json。
+
+证据
+communications_devices_01.json
+communications_vision_01.json
+communications_pc_stream_01.json / communications_pc_stream_02.json
+communications_loopback_stream_01.json
+../../../STM32/outputs/preflight_20261116/communications_idle_03.jsonl
+../../../STM32/outputs/preflight_20261116/openocd_recovered_02.stderr.log
+
+只读工具 observe_links_readonly.py 已完成离线验证及真实采样。
+sample_verified_links.py 为复用最近核验的只读辅助脚本，本轮未执行。
+任何未完成的 one_delivery_runner 候选均未部署或验证，不视为可运行搬运程序。

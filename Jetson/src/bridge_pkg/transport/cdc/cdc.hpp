@@ -25,6 +25,7 @@ public:
 
 private:
   int fd_{-1};
+  bool exclusive_claimed_{false};
   link_frame::Parser parser_;
   std::array<std::uint8_t, 256> stash_{};
   std::size_t stash_count_{0};

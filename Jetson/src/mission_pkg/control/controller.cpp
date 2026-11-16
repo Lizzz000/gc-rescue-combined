@@ -581,6 +581,17 @@ void MissionController::roiReply(
   std::uint64_t generation, const RoiRuleResult & result, std::uint64_t request_id)
 {
   if (!accepts(Kind::RoiCheck, generation)) return;
+  if (request_id != 0 && request_id <= roi_response_id_high_water_) {
+    RoiRuleResult rejected;
+    rejected.roi = result.roi;
+    rejected.reason = "ROI request ID reused or moved backwards; Target may have restarted (" +
+      std::to_string(request_id) + " <= " + std::to_string(roi_response_id_high_water_) + ")";
+    // 不把旧编号提交为当前路由；历史送达收据仍可独立只读查询。
+    armRoi(rejected, 0, std::nullopt);
+    publishArmedRoi(true);
+    return;
+  }
+  if (request_id != 0) roi_response_id_high_water_ = request_id;
   armRoi(result, request_id, std::nullopt);
   publishArmedRoi(true);
 }

@@ -208,10 +208,34 @@ cv::Mat field_detail::shadowGeometryMask(
   const cv::Mat & lab, const cv::Mat & strict, const HueSector & sector)
 {
   cv::Mat support;
+#if defined(__aarch64__) && defined(__ARM_NEON)
+  const NeonSector neon_sector(sector);
+  const auto zero = vdupq_n_u8(0);
+  const auto neutral = vdupq_n_u8(kLabOffset);
+  const auto minimum = vdupq_n_u8(sector.light_lo);
+#endif
   for (int y = 0; y < lab.rows; ++y) {
     const auto * pixels = lab.ptr<cv::Vec3b>(y);
     const auto * seeds = strict.ptr<uchar>(y);
-    for (int x = 0; x < lab.cols; ++x) {
+    int x = 0;
+#if defined(__aarch64__) && defined(__ARM_NEON)
+    for (; x <= lab.cols - 16; x += 16) {
+      auto channels = vld3q_u8(reinterpret_cast<const uchar *>(pixels + x));
+      // 与标量相同：只补非种子的低亮像素，且排除无色的黑/灰；分类时固定原最低亮度。
+      const auto unseeded = vceqq_u8(vld1q_u8(seeds + x), zero);
+      const auto dark = vcltq_u8(channels.val[0], minimum);
+      const auto achromatic = vandq_u8(vceqq_u8(channels.val[1], neutral),
+          vceqq_u8(channels.val[2], neutral));
+      channels.val[0] = minimum;
+      const auto candidate = vandq_u8(neon_sector.classify(channels),
+          vandq_u8(vandq_u8(unseeded, dark), vmvnq_u8(achromatic)));
+      if (vmaxvq_u8(candidate) == 0) {continue;}
+      if (support.empty()) {support = strict.clone();}
+      auto * output = support.ptr<uchar>(y) + x;
+      vst1q_u8(output, vorrq_u8(vld1q_u8(output), candidate));
+    }
+#endif
+    for (; x < lab.cols; ++x) {
       const auto & p = pixels[x];
       if (seeds[x] || p[0] >= sector.light_lo || (p[1] == 128 && p[2] == 128)) {continue;}
       // 保留原色相与最低可靠亮度下的绝对色度要求；低亮度本身不能降低所需色度。

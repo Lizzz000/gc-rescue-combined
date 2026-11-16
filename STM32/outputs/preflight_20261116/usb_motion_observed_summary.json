@@ -1,0 +1,684 @@
+{
+  "schema": 1,
+  "analysis": "offline_usb_motion_observation",
+  "overall_observed_pass": true,
+  "sources": {
+    "usb_six_directions_observed.jsonl": {
+      "sha256": "416e697304fe068a95d8a1c0dea68e765a0070b20e06d9cde56babb3dbe3270f",
+      "records": 1023
+    }
+  },
+  "elf_sha256": "541c513b5f4a7a164de60875549ce6acbb3304c8c693f85b4097f1cbc9fdb94a",
+  "motion_setup": {
+    "wheels_raised": true,
+    "requested_duration_s": 1.2,
+    "translation_mps": 0.25,
+    "rotation_radps": 0.5,
+    "duration_source": "explicit session setup; HTTP remaining_s includes preparation"
+  },
+  "human_observation": {
+    "source": "user's explicit on-site reply, supplied by parent task; not inferred from telemetry",
+    "quote": "平顺，没有异响或方向异常",
+    "smooth": true,
+    "no_abnormal_sound": true,
+    "no_direction_anomaly": true
+  },
+  "all_samples": 1008,
+  "six_direction_samples": 303,
+  "total_running_samples": 148,
+  "swd_read_span_ms": {
+    "min": 13,
+    "mean": 18.356150793650794,
+    "max": 50
+  },
+  "observed_motor_fault_samples": 0,
+  "invalid_numeric_or_state_samples": 0,
+  "maximum_abs_observed_motor_velocity_rad_s": 7.140415191650391,
+  "maximum_abs_final_motor_velocity_rad_s": 0.08791351318359375,
+  "mixed_transition_samples": [
+    {
+      "label": "left",
+      "tick_before": 4773621,
+      "tick_after": 4773653,
+      "manual_state": 0,
+      "enabled": 1
+    }
+  ],
+  "complete_event_ok": true,
+  "final_host_stop_idle": true,
+  "actions": [
+    {
+      "action": "forward",
+      "requested_milli": [
+        250,
+        0,
+        0
+      ],
+      "requested_duration_s": 1.2,
+      "samples": 44,
+      "manual_state_counts": {
+        "1": 3,
+        "2": 5,
+        "3": 21,
+        "0": 15
+      },
+      "running_samples": 21,
+      "running_sample_window_ms": 1165,
+      "all_running_commands_match": true,
+      "running_command_sequence_delta": 115,
+      "running_command_strictly_progresses": true,
+      "running_invalid_sequence_delta": 0,
+      "all_running_motors_enabled": true,
+      "running_feedback_sequence_delta": [
+        115,
+        115,
+        115
+      ],
+      "running_feedback_strictly_progresses": [
+        true,
+        true,
+        true
+      ],
+      "expected_motor_signs": [
+        0,
+        -1,
+        1
+      ],
+      "direction_check": {
+        "target_threshold_rad_s": 0.15,
+        "compared_motor_samples": 46,
+        "sign_mismatches": 0,
+        "target_vs_requested_direction_mismatches": 0,
+        "near_zero_target_samples_excluded": 17,
+        "near_zero_feedback_samples": 1,
+        "wheel_estimate_requested_axis_sign_matches": true,
+        "wheel_estimate_compared_samples": 21,
+        "wheel_estimate_all_targets_near_zero_samples_excluded": 0,
+        "wheel_estimate_raw_running_sign_mismatches": 0
+      },
+      "last_running_target_rad_s": [
+        0.8204424977302551,
+        -5.365452766418457,
+        7.006338119506836
+      ],
+      "last_running_feedback_rad_s": [
+        0.8302803039550781,
+        -5.4407806396484375,
+        7.101341247558594
+      ],
+      "last_running_wheel_estimate_mps_mps_radps": [
+        0.25344191178009684,
+        0.0,
+        -0.26907232072618276
+      ],
+      "final_stop": {
+        "observed": true,
+        "manual_state": 0,
+        "enabled": 0,
+        "mode": 0,
+        "motor_states": [
+          0,
+          0,
+          0
+        ],
+        "motor_sequence": [
+          1234,
+          1234,
+          1234
+        ],
+        "motor_sequence_delta_from_previous_action": [
+          162,
+          162,
+          162
+        ],
+        "motor_feedback_ms": [
+          4762745,
+          4762746,
+          4762747
+        ],
+        "newer_than_last_running_read": [
+          true,
+          true,
+          true
+        ],
+        "motor_velocity_rad_s": [
+          -0.048839569091796875,
+          -0.08791351318359375,
+          -0.0683746337890625
+        ],
+        "velocity_limit_rad_s": 0.2
+      },
+      "observed_pass": true
+    },
+    {
+      "action": "backward",
+      "requested_milli": [
+        -250,
+        0,
+        0
+      ],
+      "requested_duration_s": 1.2,
+      "samples": 54,
+      "manual_state_counts": {
+        "0": 18,
+        "1": 4,
+        "2": 5,
+        "3": 27
+      },
+      "running_samples": 27,
+      "running_sample_window_ms": 1153,
+      "all_running_commands_match": true,
+      "running_command_sequence_delta": 114,
+      "running_command_strictly_progresses": true,
+      "running_invalid_sequence_delta": 0,
+      "all_running_motors_enabled": true,
+      "running_feedback_sequence_delta": [
+        114,
+        114,
+        114
+      ],
+      "running_feedback_strictly_progresses": [
+        true,
+        true,
+        true
+      ],
+      "expected_motor_signs": [
+        0,
+        1,
+        -1
+      ],
+      "direction_check": {
+        "target_threshold_rad_s": 0.15,
+        "compared_motor_samples": 54,
+        "sign_mismatches": 0,
+        "target_vs_requested_direction_mismatches": 0,
+        "near_zero_target_samples_excluded": 27,
+        "near_zero_feedback_samples": 0,
+        "wheel_estimate_requested_axis_sign_matches": true,
+        "wheel_estimate_compared_samples": 27,
+        "wheel_estimate_all_targets_near_zero_samples_excluded": 0,
+        "wheel_estimate_raw_running_sign_mismatches": 0
+      },
+      "last_running_target_rad_s": [
+        0.03531016409397125,
+        6.223076343536377,
+        -6.148714542388916
+      ],
+      "last_running_feedback_rad_s": [
+        0.009769439697265625,
+        6.202686309814453,
+        -6.241756439208984
+      ],
+      "last_running_wheel_estimate_mps_mps_radps": [
+        -0.25146808408611365,
+        -0.0006837717692057292,
+        0.0031651979611243735
+      ],
+      "final_stop": {
+        "observed": true,
+        "manual_state": 0,
+        "enabled": 0,
+        "mode": 0,
+        "motor_states": [
+          0,
+          0,
+          0
+        ],
+        "motor_sequence": [
+          1396,
+          1396,
+          1396
+        ],
+        "motor_sequence_delta_from_previous_action": [
+          162,
+          162,
+          162
+        ],
+        "motor_feedback_ms": [
+          4768210,
+          4768211,
+          4768212
+        ],
+        "newer_than_last_running_read": [
+          true,
+          true,
+          true
+        ],
+        "motor_velocity_rad_s": [
+          -0.009769439697265625,
+          -0.02930450439453125,
+          -0.0683746337890625
+        ],
+        "velocity_limit_rad_s": 0.2
+      },
+      "observed_pass": true
+    },
+    {
+      "action": "left",
+      "requested_milli": [
+        0,
+        250,
+        0
+      ],
+      "requested_duration_s": 1.2,
+      "samples": 46,
+      "manual_state_counts": {
+        "1": 3,
+        "2": 5,
+        "3": 20,
+        "0": 18
+      },
+      "running_samples": 20,
+      "running_sample_window_ms": 1160,
+      "all_running_commands_match": true,
+      "running_command_sequence_delta": 114,
+      "running_command_strictly_progresses": true,
+      "running_invalid_sequence_delta": 0,
+      "all_running_motors_enabled": true,
+      "running_feedback_sequence_delta": [
+        114,
+        114,
+        114
+      ],
+      "running_feedback_strictly_progresses": [
+        true,
+        true,
+        true
+      ],
+      "expected_motor_signs": [
+        -1,
+        1,
+        1
+      ],
+      "direction_check": {
+        "target_threshold_rad_s": 0.15,
+        "compared_motor_samples": 60,
+        "sign_mismatches": 0,
+        "target_vs_requested_direction_mismatches": 0,
+        "near_zero_target_samples_excluded": 0,
+        "near_zero_feedback_samples": 0,
+        "wheel_estimate_requested_axis_sign_matches": true,
+        "wheel_estimate_compared_samples": 20,
+        "wheel_estimate_all_targets_near_zero_samples_excluded": 0,
+        "wheel_estimate_raw_running_sign_mismatches": 0
+      },
+      "last_running_target_rad_s": [
+        -7.106748104095459,
+        3.6075375080108643,
+        3.6075375080108643
+      ],
+      "last_running_feedback_rad_s": [
+        -7.081806182861328,
+        3.623931884765625,
+        3.6630020141601562
+      ],
+      "last_running_wheel_estimate_mps_mps_radps": [
+        0.0007895002437622464,
+        0.25025637308756515,
+        -0.022158858216839075
+      ],
+      "final_stop": {
+        "observed": true,
+        "manual_state": 0,
+        "enabled": 0,
+        "mode": 0,
+        "motor_states": [
+          0,
+          0,
+          0
+        ],
+        "motor_sequence": [
+          1557,
+          1557,
+          1557
+        ],
+        "motor_sequence_delta_from_previous_action": [
+          161,
+          161,
+          161
+        ],
+        "motor_feedback_ms": [
+          4773640,
+          4773641,
+          4773642
+        ],
+        "newer_than_last_running_read": [
+          true,
+          true,
+          true
+        ],
+        "motor_velocity_rad_s": [
+          -0.009769439697265625,
+          -0.009769439697265625,
+          -0.048839569091796875
+        ],
+        "velocity_limit_rad_s": 0.2
+      },
+      "observed_pass": true
+    },
+    {
+      "action": "right",
+      "requested_milli": [
+        0,
+        -250,
+        0
+      ],
+      "requested_duration_s": 1.2,
+      "samples": 53,
+      "manual_state_counts": {
+        "1": 4,
+        "3": 26,
+        "2": 4,
+        "0": 19
+      },
+      "running_samples": 26,
+      "running_sample_window_ms": 1175,
+      "all_running_commands_match": true,
+      "running_command_sequence_delta": 116,
+      "running_command_strictly_progresses": true,
+      "running_invalid_sequence_delta": 0,
+      "all_running_motors_enabled": true,
+      "running_feedback_sequence_delta": [
+        116,
+        116,
+        116
+      ],
+      "running_feedback_strictly_progresses": [
+        true,
+        true,
+        true
+      ],
+      "expected_motor_signs": [
+        1,
+        -1,
+        -1
+      ],
+      "direction_check": {
+        "target_threshold_rad_s": 0.15,
+        "compared_motor_samples": 75,
+        "sign_mismatches": 0,
+        "target_vs_requested_direction_mismatches": 0,
+        "near_zero_target_samples_excluded": 3,
+        "near_zero_feedback_samples": 0,
+        "wheel_estimate_requested_axis_sign_matches": true,
+        "wheel_estimate_compared_samples": 25,
+        "wheel_estimate_all_targets_near_zero_samples_excluded": 1,
+        "wheel_estimate_raw_running_sign_mismatches": 1
+      },
+      "last_running_target_rad_s": [
+        7.1399149894714355,
+        -3.574370861053467,
+        -3.574370861053467
+      ],
+      "last_running_feedback_rad_s": [
+        7.120880126953125,
+        -3.6630020141601562,
+        -3.6043968200683594
+      ],
+      "last_running_wheel_estimate_mps_mps_radps": [
+        0.0011842503656433697,
+        -0.2509401893615723,
+        0.01582763813160084
+      ],
+      "final_stop": {
+        "observed": true,
+        "manual_state": 0,
+        "enabled": 0,
+        "mode": 0,
+        "motor_states": [
+          0,
+          0,
+          0
+        ],
+        "motor_sequence": [
+          1719,
+          1719,
+          1719
+        ],
+        "motor_sequence_delta_from_previous_action": [
+          162,
+          162,
+          162
+        ],
+        "motor_feedback_ms": [
+          4779100,
+          4779101,
+          4779102
+        ],
+        "newer_than_last_running_read": [
+          true,
+          true,
+          true
+        ],
+        "motor_velocity_rad_s": [
+          -0.009769439697265625,
+          -0.02930450439453125,
+          -0.009769439697265625
+        ],
+        "velocity_limit_rad_s": 0.2
+      },
+      "observed_pass": true
+    },
+    {
+      "action": "ccw",
+      "requested_milli": [
+        0,
+        0,
+        500
+      ],
+      "requested_duration_s": 1.2,
+      "samples": 53,
+      "manual_state_counts": {
+        "1": 3,
+        "2": 6,
+        "3": 26,
+        "4": 1,
+        "0": 17
+      },
+      "running_samples": 26,
+      "running_sample_window_ms": 1155,
+      "all_running_commands_match": true,
+      "running_command_sequence_delta": 114,
+      "running_command_strictly_progresses": true,
+      "running_invalid_sequence_delta": 0,
+      "all_running_motors_enabled": true,
+      "running_feedback_sequence_delta": [
+        114,
+        114,
+        114
+      ],
+      "running_feedback_strictly_progresses": [
+        true,
+        true,
+        true
+      ],
+      "expected_motor_signs": [
+        -1,
+        -1,
+        -1
+      ],
+      "direction_check": {
+        "target_threshold_rad_s": 0.15,
+        "compared_motor_samples": 75,
+        "sign_mismatches": 0,
+        "target_vs_requested_direction_mismatches": 0,
+        "near_zero_target_samples_excluded": 3,
+        "near_zero_feedback_samples": 0,
+        "wheel_estimate_requested_axis_sign_matches": true,
+        "wheel_estimate_compared_samples": 25,
+        "wheel_estimate_all_targets_near_zero_samples_excluded": 1,
+        "wheel_estimate_raw_running_sign_mismatches": 0
+      },
+      "last_running_target_rad_s": [
+        -1.5428571701049805,
+        -1.5428571701049805,
+        -1.5428571701049805
+      ],
+      "last_running_feedback_rad_s": [
+        -1.5140419006347656,
+        -1.5335769653320312,
+        -1.5140419006347656
+      ],
+      "last_running_wheel_estimate_mps_mps_radps": [
+        0.0003947501218811232,
+        -0.00022790908813476564,
+        0.49277199639214414
+      ],
+      "final_stop": {
+        "observed": true,
+        "manual_state": 0,
+        "enabled": 0,
+        "mode": 0,
+        "motor_states": [
+          0,
+          0,
+          0
+        ],
+        "motor_sequence": [
+          1880,
+          1880,
+          1880
+        ],
+        "motor_sequence_delta_from_previous_action": [
+          161,
+          161,
+          161
+        ],
+        "motor_feedback_ms": [
+          4784590,
+          4784591,
+          4784592
+        ],
+        "newer_than_last_running_read": [
+          true,
+          true,
+          true
+        ],
+        "motor_velocity_rad_s": [
+          -0.009769439697265625,
+          0.009769439697265625,
+          0.009769439697265625
+        ],
+        "velocity_limit_rad_s": 0.2
+      },
+      "observed_pass": true
+    },
+    {
+      "action": "cw",
+      "requested_milli": [
+        0,
+        0,
+        -500
+      ],
+      "requested_duration_s": 1.2,
+      "samples": 53,
+      "manual_state_counts": {
+        "1": 3,
+        "3": 28,
+        "2": 6,
+        "0": 16
+      },
+      "running_samples": 28,
+      "running_sample_window_ms": 1206,
+      "all_running_commands_match": true,
+      "running_command_sequence_delta": 119,
+      "running_command_strictly_progresses": true,
+      "running_invalid_sequence_delta": 0,
+      "all_running_motors_enabled": true,
+      "running_feedback_sequence_delta": [
+        118,
+        118,
+        118
+      ],
+      "running_feedback_strictly_progresses": [
+        true,
+        true,
+        true
+      ],
+      "expected_motor_signs": [
+        1,
+        1,
+        1
+      ],
+      "direction_check": {
+        "target_threshold_rad_s": 0.15,
+        "compared_motor_samples": 81,
+        "sign_mismatches": 0,
+        "target_vs_requested_direction_mismatches": 0,
+        "near_zero_target_samples_excluded": 3,
+        "near_zero_feedback_samples": 2,
+        "wheel_estimate_requested_axis_sign_matches": true,
+        "wheel_estimate_compared_samples": 27,
+        "wheel_estimate_all_targets_near_zero_samples_excluded": 1,
+        "wheel_estimate_raw_running_sign_mismatches": 1
+      },
+      "last_running_target_rad_s": [
+        1.5428571701049805,
+        1.5428571701049805,
+        1.5428571701049805
+      ],
+      "last_running_feedback_rad_s": [
+        1.4945068359375,
+        1.4554328918457031,
+        1.4945068359375
+      ],
+      "last_running_wheel_estimate_mps_mps_radps": [
+        0.0007895773283398449,
+        -0.0004558626810709636,
+        -0.48010996830316244
+      ],
+      "final_stop": {
+        "observed": true,
+        "manual_state": 0,
+        "enabled": 0,
+        "mode": 0,
+        "motor_states": [
+          0,
+          0,
+          0
+        ],
+        "motor_sequence": [
+          2041,
+          2041,
+          2041
+        ],
+        "motor_sequence_delta_from_previous_action": [
+          161,
+          161,
+          161
+        ],
+        "motor_feedback_ms": [
+          4790060,
+          4790061,
+          4790062
+        ],
+        "newer_than_last_running_read": [
+          true,
+          true,
+          true
+        ],
+        "motor_velocity_rad_s": [
+          -0.0683746337890625,
+          -0.048839569091796875,
+          -0.048839569091796875
+        ],
+        "velocity_limit_rad_s": 0.2
+      },
+      "observed_pass": true
+    }
+  ],
+  "pass_criteria": "Non-near-zero motor targets match feedback/requested direction; command and each motor sequence advance; no observed motor fault/invalid sample; each action finishes state 0, disabled and motor speeds <=0.2 rad/s; completion/final host STOP are confirmed.",
+  "limitations": [
+    "SWD snapshots span 13-50 ms and are not atomic; they do not certify the firmware's 30 ms feedback freshness condition.",
+    "Direction comparisons use RUNNING samples; targets within 0.15 rad/s of zero and phase-transition/STOP tails are excluded.",
+    "Body-axis direction checks exclude snapshots whose three targets are all within 0.15 rad/s of zero. Right/CW each have one such initial RUNNING snapshot with opposite-sign near-zero wheel estimate; raw counts remain reported.",
+    "Three compared motor feedback values are within 0.15 rad/s of zero but still have the same sign as their nonzero targets; this is not a tracking-error acceptance test.",
+    "One left STOP transition reads enabled=1 and manual_state=0 across a 32 ms snapshot; later samples confirm all motors stopped and disabled.",
+    "The reported RUNNING sample window is not exact commanded duration or stop latency; asynchronous reads can overlap transitions.",
+    "Three feedback counters need not match, but each must strictly advance during RUNNING.",
+    "Wheel-derived body speeds are estimates with raised wheels, not independent chassis displacement or ground-test stability.",
+    "No precise tracking RMSE or sender-loss timeout result is inferred from this six-direction log.",
+    "Final disabled feedback is newer than the action RUNNING interval; feedback may remain unchanged while disabled.",
+    "The human observation is separately attributed to the user and was not measured by the telemetry logger."
+  ]
+}

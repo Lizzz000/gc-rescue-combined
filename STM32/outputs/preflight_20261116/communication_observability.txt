@@ -1,0 +1,76 @@
+Offline review, 2026-11-16
+
+Tool: observe_links_readonly.py
+ELF: STM32/project/build/Debug/project.elf
+SHA256: 6fe88d9749d0de5cc4e57e3e56bf04bc97c0d92a214fe88af7d59fdca3915032
+Complete symbol addresses and DWARF-verified offsets: communication_symbols_current_debug.json
+
+The script has no motion/API/servo command path. It allows only read_memory in
+Flash/SRAM, rejects write_memory/halt/reset/peripheral accesses, and verifies all
+Flash PT_LOAD bytes against the supplied ELF before reading telemetry. Shutdown
+only closes TCP; it never publishes STOP. --describe does not create a TCP client.
+
+Example (root/device operator only):
+python observe_links_readonly.py --duration 5 --period 0.1 --output NEW_FILE.jsonl
+
+Evidence and interpretation:
+1. CPU: tick_before/after must advance. This proves the RTOS tick runs, not every task.
+2. Jetson -> STM32 USB: compare host Sender.frames progression with board
+   command.sequence/received_ms progression while the normal sender is running.
+   At default 100 Hz, approximately 100 received type-2 frames/s is expected.
+   Different observation-window boundaries preclude exact raw-total subtraction.
+   A received sequence increment proves the outer frame passed version/length/CRC
+   framing and reached the manual type-2 handler, not that a motion was executed.
+3. USB session: connected/configured should remain 1; session generation/reset
+   counts should remain unchanged during the window. rx_buffer overflow_count
+   should not increase; sustained ring backlog indicates service pressure.
+4. CRC: there is NO CRC rejection counter. command.invalid_sequence is NOT a CRC
+   failure counter: normal idle valid=0 revocations increase it, as can malformed
+   type-2 payloads. parser_partial_bytes is current partial length, not an error count.
+5. STM32 -> Jetson USB: manual firmware sends no type-2 acknowledgement; tx_busy=0
+   does not prove upstream data delivery. Enumeration/setup replies prove only
+   that the control endpoint worked at those times. No TX/RX byte-total counters.
+6. CAN: HAL state LISTENING=2 and error_code=0 are supportive, not sufficient.
+   The configured notification only covers FIFO0 pending, so HAL error_code does
+   not expose all live bus errors. No per-frame TX completion counter is available.
+   During a separately authorized zero-enable/motion window, all three motor IDs
+   1/2/3 must report advancing sequences, state=1, finite feedback and acceptable
+   age. Disarmed idle firmware stops periodic MIT sends, so stale idle feedback
+   cannot by itself establish a broken CAN link. This read-only tool does not
+   generate that test stimulus and cannot prove a dormant link's round-trip health.
+7. IMU: ready=1, finite yaw/wz and continually advancing sample_ms support healthy
+   acquisition. Motion code requires sample age <=20 ms. BMI088_error is an init
+   result, not a cumulative runtime read-failure counter.
+8. Manual control: states 0 disarmed, 1 preparing, 2 ready, 3 running, 4 braking.
+   Mode values 0 idle, 1 translation, 2 distance, 3 velocity, 4 turn.
+   A new valid zero frame is required to arm. Ready requires three fresh quiet
+   feedback groups, all motors enabled, absolute wheel speed <=0.2 rad/s and
+   feedback age <=30 ms. A nonzero command arriving during initial preparation
+   aborts preparation. Command age >=250 ms, invalidation or motor readiness loss
+   causes braking. Normal preparation timeout 1000 ms; brake timeout 500 ms.
+
+Sampling limitations:
+RAM reads are not atomic and do not stop the CPU. Read window is logged using
+both RTOS ticks and host duration. Ages use tick_after and include read skew;
+a single age over a guard threshold does not prove the controller saw an old
+sample. Persistent non-advancing sequences and expanding age are stronger evidence.
+Nonfinite floats are stored as null, never changed to zero.
+HTTP/SSH/ROS/camera/S288 are outside this script and require their own root-owned
+checks. Host HTTP success and Linux write success do not prove physical actuation.
+
+Offline validation performed, no hardware or TCP access:
+- Actual Debug ELF symbols and expected sizes resolved by nm.
+- Structure offsets verified through GDB DWARF without target attachment.
+- Fake SRAM snapshot decoded command, USB counters, IMU and three motor records.
+- Guard rejected write_words, write_memory, halt, reset, command injection,
+  peripheral address and oversized read; accepted permitted read-only forms.
+
+Source evidence:
+Core/Communication/Jetson/link_frame.c: CRC checks precede successful Feed return.
+Core/Communication/Jetson/usb_link.c: USB task type-2 dispatch and session/debug fields.
+Core/Communication/Jetson/usb_rx_buffer.h: ring generation/overflow semantics.
+Core/Communication/Manual/manual_link.c: received/invalid/zero sequence semantics.
+Core/Control/Manual/manual_control.c: arming, freshness, braking state machine.
+Core/Control/Chassis/chassis.c: motor feedback/IMU readiness and CAN submit guards.
+Core/Bsp/CAN/bsp_can.c: CAN FIFO0 notification and motor feedback dispatch.
+Core/Task/INS/INS_task.c: control-ready and sample publication semantics.

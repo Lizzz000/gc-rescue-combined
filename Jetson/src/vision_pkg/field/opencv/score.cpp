@@ -627,6 +627,12 @@ void weakBoundaryRuns(
       const double right = 0.5 * (light[x + 2] + light[x + 3]);
       const double difference = std::abs(right - left);
       const double noise = std::hypot(light[x - 1] - light[x - 2], light[x + 3] - light[x + 2]);
+      // 平台均值之差不能代替 x 与 x+1 之间的真实边界。暗块上的光照坡和 JPEG
+      // 阶梯可在两侧给出低噪声平台，中间却平坦或反向；必须把边定位在同向局部梯度峰。
+      // 相邻峰相等仍保留，允许透视插值把一条真实弱边分摊到两个像素。
+      const double step = light[x + 1] - light[x];
+      if (step * (right - left) <= 0 || std::abs(step) <
+        std::max(std::abs(light[x] - light[x - 1]), std::abs(light[x + 2] - light[x + 1]))) {continue;}
       // 三倍局部噪声才算可分辨阶跃；一个 Lab 量化级防止常值平台把微小舍入误差当信号。
       if (difference <= 3.0 * std::max(1.0, noise)) {continue;}
       // 与常规完整带相同：整段必须比紧邻地面缺色且不明显更亮。
@@ -694,17 +700,21 @@ SplitLine acceptLine(
   }
   // 黑带在 BEV 中宽度恒定：宽度偏离沿线中位数超过 kWidthSpread 倍的段是贴线物块或噪声，不算支持。
   std::vector<float> line_widths;
+  std::vector<float> anchor_widths;
   bool have_strong_boundary = false;
   for (int y = 0; y < rows; ++y) {
     if (best[y] >= 0) {
-      line_widths.push_back(runs[best[y]].width);
+      const auto & run = runs[best[y]];
+      line_widths.push_back(run.width);
+      if (!run.weak_boundary && run.reference_side == 0) {anchor_widths.push_back(run.width);}
     }
   }
   if (line_widths.empty()) {return result;}
-  const double measured_width = upperMedian(line_widths);
+  const double measured_width = upperMedian(anchor_widths.empty() ? line_widths : anchor_widths);
   // 完整双边行不足时，物理宽度只补“宽度”，不能补一条根本未测到的分界。
   // 仍须至少一个宽度相符的真实双边段来区分黑带与贴邻物块的外沿。
-  const bool calibrated = line_widths.size() < kMinRowsFloor;
+  // 弱边和只有一侧地面的段不能充当完整双边锚点；数量再多也不能解锁实测带宽。
+  const bool calibrated = anchor_widths.size() < kMinRowsFloor;
   // 段宽按像素个数计，物理宽度是两边坐标间距，因此对应个数为该间距 + 1。
   const double typical_width = calibrated ? calibrated_width + 1.0 : measured_width;
   if (calibrated && (measured_width > kWidthSpread * typical_width ||
@@ -719,7 +729,11 @@ SplitLine acceptLine(
     if (best[y] < 0) {continue;}
     const auto & run = runs[best[y]];
     if (run.width > kWidthSpread * typical_width || run.width * kWidthSpread < typical_width) {continue;}
-    have_strong_boundary |= !run.weak_boundary;
+    // 少量双地面段靠标定宽度辨认身份，续接前须核对真实边距；阈值段的像素
+    // 宽度会受光照扩散影响，1.5 倍粗筛不能代替与弱边搜索相同的物理宽度容差。
+    const bool physical_identity = !calibrated ||
+      std::abs((run.right - run.left) - calibrated_width) <= kLineTolerancePx;
+    have_strong_boundary |= !run.weak_boundary && run.reference_side == 0 && physical_identity;
     if (run.reference_side == 0) {
       anchors.emplace_back(run.x, float(y));
       left_offsets.push_back(run.x - run.left);

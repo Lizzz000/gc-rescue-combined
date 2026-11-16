@@ -8,8 +8,93 @@
 #include "task.h"
 
 volatile dm_motor_t dm_motor[3];
+volatile dm_param_reply_t dm_param_reply[3];
+#define DM_PARAM_TIMEOUT_MS 100U
+/* 由控制任务发布，CAN ISR消费；提交时短临界区防止回复先于请求登记。 */
+static volatile struct
+{
+    uint8_t active, id, reg;
+    uint32_t started_ms;
+} param_request;
 /* 用户已确认的电机幅值，必须与电机端参数一致。 */
 static const float motor_tmax[3] = {1.0f, 1.0f, 2.0f};
+
+HAL_StatusTypeDef DM_Motor_ReadParam(uint16_t id, uint8_t reg)
+{
+    if (id < 1U || id > 3U)
+        return HAL_ERROR;
+
+    CAN_TxHeaderTypeDef header = {0};
+    uint32_t mailbox;
+    uint8_t data[8] = {(uint8_t)id, 0U, 0x33U, reg, 0U, 0U, 0U, 0U};
+    header.StdId = 0x7FFU;
+    header.IDE = CAN_ID_STD;
+    header.RTR = CAN_RTR_DATA;
+    header.DLC = 8U;
+
+    taskENTER_CRITICAL();
+    for (unsigned i = 0U; i < 3U; ++i)
+    {
+        if (dm_motor[i].state == 1U)
+        {
+            taskEXIT_CRITICAL();
+            return HAL_ERROR;
+        }
+    }
+    uint32_t now_ms = (uint32_t)xTaskGetTickCount();
+    if (param_request.active &&
+        (uint32_t)(now_ms - param_request.started_ms) < DM_PARAM_TIMEOUT_MS)
+    {
+        taskEXIT_CRITICAL();
+        return HAL_BUSY;
+    }
+    param_request.id = (uint8_t)id;
+    param_request.reg = reg;
+    param_request.started_ms = now_ms;
+    param_request.active = 1U;
+    HAL_StatusTypeDef result = HAL_CAN_AddTxMessage(&MOTOR_CAN, &header, data, &mailbox);
+    if (result != HAL_OK)
+        param_request.active = 0U;
+    taskEXIT_CRITICAL();
+    return result;
+}
+
+/** @brief 参数/运动回复共用MST_ID=0；只发布当前请求的0x33读回。
+ * 官方SDK依据：dmBots/motor-sdk/Python例程/u2can/DM_CAN.py，
+ * __read_RID_param、__process_set_param_packet。0x55/0xAA绝不作为运动反馈。
+ */
+static uint8_t receive_param_reply(const uint8_t data[8], uint32_t now_ms)
+{
+    const uint8_t waiting = param_request.active &&
+        (uint32_t)(now_ms - param_request.started_ms) < DM_PARAM_TIMEOUT_MS;
+    if (!waiting)
+        param_request.active = 0U;
+
+    if (data[0] >= 1U && data[0] <= 3U && data[1] == 0U &&
+        (data[2] == 0x33U || data[2] == 0x55U || data[2] == 0xAAU))
+    {
+        if (waiting && data[0] == param_request.id && data[2] == 0x33U &&
+            data[3] == param_request.reg)
+        {
+            volatile dm_param_reply_t *reply = &dm_param_reply[data[0] - 1U];
+            reply->reg = data[3];
+            reply->value_bits = (uint32_t)data[4] | ((uint32_t)data[5] << 8U) |
+                ((uint32_t)data[6] << 16U) | ((uint32_t)data[7] << 24U);
+            reply->received_ms = now_ms;
+            ++reply->sequence;
+            param_request.active = 0U;
+        }
+        /* 包括迟到、重复、错误寄存器回复，均不可更新运动反馈。 */
+        return 1U;
+    }
+    /* 参数回复的首字节与state=0运动回复不能完全区分。只读窗口内隔离该类帧，
+     * 非零状态反馈仍正常处理，使能反馈还会撤销当前读取。 */
+    if (waiting && (data[0] >> 4U) == 0U)
+        return 1U;
+    if ((data[0] >> 4U) == 1U)
+        param_request.active = 0U;
+    return 0U;
+}
 
 /** @brief 沿用手册uint_to_float公式；输入范围及单位见头文件。 */
 float uint_to_float(int x_int, float x_min, float x_max, int bits)
@@ -98,6 +183,9 @@ void DM_Motor_ReceiveFeedback(const uint8_t data[8])
 {
     if (data == NULL)
         return;
+    uint32_t now_ms = (uint32_t)xTaskGetTickCountFromISR();
+    if (receive_param_reply(data, now_ms))
+        return;
     uint8_t id = data[0] & 0x0FU;
     if (id < 1U || id > 3U)
         return;
@@ -112,6 +200,6 @@ void DM_Motor_ReceiveFeedback(const uint8_t data[8])
     dm_motor[index].torque = uint_to_float(t_int, -motor_tmax[index], motor_tmax[index], 12);
     dm_motor[index].t_mos = data[6];
     dm_motor[index].t_rotor = data[7];
-    dm_motor[index].feedback_time_ms = (uint32_t)xTaskGetTickCountFromISR();
+    dm_motor[index].feedback_time_ms = now_ms;
     ++dm_motor[index].feedback_seq;
 }

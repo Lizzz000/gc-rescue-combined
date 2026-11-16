@@ -70,7 +70,7 @@ static HAL_StatusTypeDef Submit_Motor(CAN_HandleTypeDef *can, uint16_t id)
 HAL_StatusTypeDef ctrl_motor(CAN_HandleTypeDef *can, uint16_t id, float position,
                             float velocity, float kp, float kd, float torque)
 {
-    assert(position == 0.0f && kp == 0.0f && kd > 0.0f && torque == 0.0f);
+    assert(position == 0.0f && kp == 0.0f && kd > 0.0f && isfinite(torque) && fabsf(torque) <= 0.05f);
     assert(isfinite(velocity) && fabsf(velocity) <= 40.0f);
     last_wheels[id - 1U] = -velocity; /* 三轮安装方向均为 -1。 */
     if (id == 3U)

@@ -1,0 +1,51 @@
+{
+  "date": "2026-11-16",
+  "scope": "Final local cloud-sync snapshot after power-off, not remote Jetson verification. Normalize CRLF to LF before hashing to match Git text checkout.",
+  "ready_for_execution": false,
+  "files": {
+    "field_rescue.yaml": {
+      "sha256_lf": "033caf0c0009f53fdc4cf312d4251faa376b7a23ed97006b71be5ae987ae911c",
+      "bytes_lf": 868
+    },
+    "field_advanced.yaml": {
+      "sha256_lf": "f0e71251941feb6bef090b68bdaea7e9d31a48f5f936cebe1cf4296e6044fb99",
+      "bytes_lf": 4871
+    },
+    "camera_profile.json": {
+      "sha256_lf": "3736369eabbcf8f376cb6eb830f3f43e2cbb321ecebd27b19ab45baa6abe0b0d",
+      "bytes_lf": 1521
+    },
+    "physical_measurements.json": {
+      "sha256_lf": "b030de098bbc4f19b88553302b297c22525d7cdecb787c89ca923867ce6cef80",
+      "bytes_lf": 468
+    },
+    "FIELD_PARAMETERS.txt": {
+      "sha256_lf": "366fc3d259a0441e20c78e60e202c4a4c1cf47ca83910d285013772bf72f23c7",
+      "bytes_lf": 4856
+    },
+    "COMMUNICATION_CHECK_END.txt": {
+      "sha256_lf": "41a5f045ad65f4a4b82fb02b18ed1b5170b623a9bf66ecde1ca170adbaab3372",
+      "bytes_lf": 3013
+    },
+    "single_delivery_plan.json": {
+      "sha256_lf": "19bd20db5b3a38ca48a05a2abbebc8997a3afae1a3db5b333a6059d1a5a3a299",
+      "bytes_lf": 2851
+    },
+    "start_services.sh": {
+      "sha256_lf": "007b089df342025f93b4984549b4cdaecdf6f05fc8213bbda88eaad5571cedd7",
+      "bytes_lf": 2341
+    },
+    "apply_camera_profile.py": {
+      "sha256_lf": "50d05a87acf3fbd04d723e06d4ed95396e2d3bbcdf6c877c64d0e4658862b60d",
+      "bytes_lf": 4331
+    },
+    "camera_trials.py": {
+      "sha256_lf": "d482fd6d741183d8c5f3624af3697f5c432768c67beae7f6bf9dfb24d0a04288",
+      "bytes_lf": 13622
+    },
+    "wait_camera_frame.py": {
+      "sha256_lf": "f3c87f5b8eaaea28f0195d59fbb593c5d5cbef25a106dd9aa6ae23fda4f05a45",
+      "bytes_lf": 847
+    }
+  }
+}

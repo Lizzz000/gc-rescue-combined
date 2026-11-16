@@ -4,12 +4,16 @@
 #include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 #include <cerrno>
 #include <vector>
 
 namespace {
 enum class WriteMode { Ready, Blocked, Interrupted, Short, Zero, Failed };
 WriteMode mode = WriteMode::Ready;
+bool deny_lock = false, deny_exclusive = false, deny_tty = false;
+bool kernel_exclusive = false;
+int exclusive_releases = 0;
 std::vector<unsigned char> wire;
 std::vector<unsigned> types()
 {
@@ -25,10 +29,20 @@ std::vector<unsigned> types()
 
 int open(const char *, int, ...) {return 42;}
 int close(int) {return 0;}
-int flock(int, int) {return 0;}
-int ioctl(int, unsigned long, ...) {return 0;}
+int flock(int, int) {if (deny_lock) {errno = EWOULDBLOCK; return -1;} return 0;}
+int ioctl(int, unsigned long request, ...)
+{
+  if (request == TIOCEXCL) {
+    if (deny_exclusive) {errno = EIO; return -1;}
+    kernel_exclusive = true;
+  } else if (request == TIOCNXCL) {
+    ++exclusive_releases;
+    kernel_exclusive = false;
+  }
+  return 0;
+}
 int fstat(int, struct stat *out) {out->st_mode = 1; return 0;}
-int tcgetattr(int, termios *out) {*out = {}; return 0;}
+int tcgetattr(int, termios *out) {if (deny_tty) {errno = EIO; return -1;} *out = {}; return 0;}
 void cfmakeraw(termios *) {}
 int tcsetattr(int, int, const termios *) {return 0;}
 ssize_t read(int, void *, std::size_t) {errno = EAGAIN; return -1;}
@@ -46,6 +60,37 @@ ssize_t write(int, const void *data, std::size_t size)
 
 int main()
 {
+  {
+    Group group("CDC failed claimant cannot release another owner's tty exclusion");
+    CdcLink rejected;
+    std::string error;
+    // Both descriptors opened before owner A set TIOCEXCL. B now loses flock.
+    kernel_exclusive = true;
+    exclusive_releases = 0;
+    deny_lock = true;
+    bool fatal = false;
+    try {rejected.open("/dev/mock", error);} catch (const CanTransport::FatalError &) {fatal = true;}
+    CHECK(fatal);
+    CHECK(!rejected.socketOpen());
+    CHECK(kernel_exclusive);
+    CHECK(exclusive_releases == 0);
+    deny_lock = false;
+    // A failed TIOCEXCL also gives this instance no exclusion to release.
+    deny_exclusive = true;
+    CHECK(!rejected.open("/dev/mock", error));
+    CHECK(exclusive_releases == 0);
+    deny_exclusive = false;
+    // Once this instance acquired exclusion, later configuration failure releases it.
+    kernel_exclusive = false;
+    exclusive_releases = 0;
+    deny_tty = true;
+    CHECK(!rejected.open("/dev/mock", error));
+    CHECK(!kernel_exclusive);
+    CHECK(exclusive_releases == 1);
+    rejected.close();
+    CHECK(exclusive_releases == 1);
+    deny_tty = false;
+  }
   CdcLink link;
   std::string error;
   CHECK(link.open("/dev/mock", error));

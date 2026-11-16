@@ -268,7 +268,8 @@ class HttpTest(ProcessTestBase):
         status, state = self.request('/api/state', method='GET')
         limits = json.loads(state)['limits']
         self.assertEqual(limits, {'linear_mps': manual_command.MAX_LINEAR_MPS,
-                                  'angular_radps': manual_command.MAX_ANGULAR_RADPS})
+                                  'angular_radps': manual_command.MAX_ANGULAR_RADPS,
+                                  'timed_s': manual_command.MAX_TIMED_S})
         stopping = time.monotonic()
         frames = self.stop_cleanly()
         before = [f for f in frames if f.t < stopping]

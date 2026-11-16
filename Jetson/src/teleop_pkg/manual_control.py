@@ -6,6 +6,8 @@
 访问：在 PC 上 ssh -L 8090:127.0.0.1:8090 nvidia@<jetson>，浏览器打开 http://127.0.0.1:8090/。
 
 设备路径和夹爪参数来自 --config 中的 link.device 与 gripper.*，不读 bridge.* / mission / vision。
+现场低速可加 --max-linear-mps 0.25 --max-angular-radps 0.5 --max-timed-s 1.5；
+这些上限由后端执行，网页读取同一组有效值。
 """
 
 import argparse
@@ -18,7 +20,8 @@ import time
 import yaml
 
 from manual.command import (
-    DEFAULT_ARM_ZERO_S, MAX_ARM_ZERO_S, MAX_LEASE_S, STOP_ZERO_S, ManualCommand)
+    DEFAULT_ARM_ZERO_S, MAX_ARM_ZERO_S, MAX_LEASE_S, MAX_LINEAR_MPS,
+    MAX_ANGULAR_RADPS, MAX_TIMED_S, STOP_ZERO_S, ManualCommand)
 from manual.link import CdcLink, LinkError, manual_packet
 from servo.s288 import ServoSession
 from web.server import BIND_ADDRESS, ManualServer
@@ -124,6 +127,12 @@ def parse_arguments(argv=None):
                         help=f'按住指令租约，(0, {MAX_LEASE_S}] 秒')
     parser.add_argument('--arm-zero-s', type=float, default=DEFAULT_ARM_ZERO_S,
                         help=f'从 valid=0 起步前的使能零速时长，(0, {MAX_ARM_ZERO_S}] 秒；需实车确认')
+    parser.add_argument('--max-linear-mps', type=float, default=MAX_LINEAR_MPS,
+                        help=f'后端平移合速度上限，(0, {MAX_LINEAR_MPS}] m/s')
+    parser.add_argument('--max-angular-radps', type=float, default=MAX_ANGULAR_RADPS,
+                        help=f'后端转向速度上限，(0, {MAX_ANGULAR_RADPS}] rad/s')
+    parser.add_argument('--max-timed-s', type=float, default=MAX_TIMED_S,
+                        help=f'定时动作最长时长，(0, {MAX_TIMED_S:g}] 秒')
     args = parser.parse_args(argv)
     if not 0 <= args.port <= 65535:
         parser.error('端口须在 0..65535')
@@ -133,6 +142,11 @@ def parse_arguments(argv=None):
         parser.error(f'租约须在 (0, {MAX_LEASE_S}] 秒')
     if not 0.0 < args.arm_zero_s <= MAX_ARM_ZERO_S:
         parser.error(f'使能零速须在 (0, {MAX_ARM_ZERO_S}] 秒')
+    try:
+        ManualCommand(args.lease_s, args.arm_zero_s, max_linear_mps=args.max_linear_mps,
+                      max_angular_radps=args.max_angular_radps, max_timed_s=args.max_timed_s)
+    except ValueError as error:
+        parser.error(str(error))
     try:
         config = load_manual_config(args.config)
     except (OSError, ValueError, yaml.YAMLError) as error:
@@ -181,7 +195,8 @@ class Sender:
 def main(argv=None):
     args = parse_arguments(argv)
     config = args.manual_config
-    command = ManualCommand(args.lease_s, args.arm_zero_s)
+    command = ManualCommand(args.lease_s, args.arm_zero_s, max_linear_mps=args.max_linear_mps,
+                            max_angular_radps=args.max_angular_radps, max_timed_s=args.max_timed_s)
     try:
         link = CdcLink(config['link_device'])
     except OSError as error:

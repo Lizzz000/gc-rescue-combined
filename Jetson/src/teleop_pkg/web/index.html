@@ -72,7 +72,7 @@
 <main>
   <section class="card">
     <h2>运动控制</h2>
-    <div class="slider"><span>平移速度</span><input id="linear" type="range" min="0.02" step="0.01" value="0.1"><output id="linear_v"></output></div>
+    <div class="slider"><span>平移速度</span><input id="linear" type="range" min="0.02" step="0.01" value="0.25"><output id="linear_v"></output></div>
     <div class="slider"><span>转向速度</span><input id="angular" type="range" min="0.1" step="0.05" value="0.5"><output id="angular_v"></output></div>
     <div class="pad">
       <button data-move="ccw">⟲<small>Q 左转</small></button>
@@ -106,10 +106,10 @@
     <section class="card">
       <h2>定时动作</h2>
       <div class="timed">
-        <label>vx（m/s）<input id="t_vx" type="number" step="0.01" value="0.08"></label>
+        <label>vx（m/s）<input id="t_vx" type="number" step="0.01" value="0.25"></label>
         <label>vy（m/s）<input id="t_vy" type="number" step="0.01" value="0"></label>
         <label>wz（rad/s）<input id="t_wz" type="number" step="0.05" value="0"></label>
-        <label>时长（s）<input id="t_s" type="number" step="0.1" value="1.2"></label>
+        <label>时长（s）<input id="t_s" type="number" step="0.1" value="0.8"></label>
       </div>
       <button class="submit" id="timed">执行</button>
       <div id="timed_error" class="error"></div>
@@ -149,6 +149,10 @@ const RENEW_MS = 50;
 const POLL_MS = 250;
 const held = new Set();
 let timer = null;
+// 所有底盘请求共享页面标识及递增序号，避免跨 HTTP 连接乱序时旧运动覆盖停车。
+const commandClient = Array.from(crypto.getRandomValues(new Uint8Array(16)),
+  (value) => value.toString(16).padStart(2, '0')).join('');
+let commandSequence = 0;
 
 const $ = (id) => document.getElementById(id);
 for (const id of ['linear', 'angular']) {
@@ -177,7 +181,7 @@ async function postJson(path, body, errorId) {
 }
 
 function post(path, body) {
-  return postJson(path, body, 'error');
+  return postJson(path, {...body, client_id: commandClient, sequence: ++commandSequence}, 'error');
 }
 
 function velocity() {
@@ -193,6 +197,7 @@ function renew() {
 }
 
 function press(move) {
+  if (limits === null) { $('error').textContent = '尚未取得限幅'; return; }
   if (held.has(move)) { return; }
   held.add(move);
   highlight();
@@ -221,8 +226,10 @@ for (const button of document.querySelectorAll('[data-move]')) {
   }
 }
 document.addEventListener('keydown', (event) => {
-  if (event.target.tagName === 'INPUT') { return; }
   if (event.code === 'Space') { event.preventDefault(); stop(); return; }
+  if (event.target.tagName === 'INPUT') { return; }
+  // 续租由 timer 负责；停车清空 held 后，旧按键的自动重复不能重新起步。
+  if (event.repeat) { return; }
   const move = KEYS[event.code];
   if (move) { event.preventDefault(); press(move); }
 });
@@ -234,7 +241,7 @@ window.addEventListener('blur', stop);
 document.addEventListener('visibilitychange', () => { if (document.hidden) { stop(); } });
 $('stop').addEventListener('click', stop);
 $('pad_stop').addEventListener('click', stop);
-// 限幅来自 /api/state；未取得前拒绝定时提交。
+// 限幅由服务端强制，页面同步输入范围；未取得前拒绝启动运动。
 let limits = null;
 $('timed').addEventListener('click', () => {
   const body = {vx: Number($('t_vx').value), vy: Number($('t_vy').value), wz: Number($('t_wz').value),
@@ -243,6 +250,7 @@ $('timed').addEventListener('click', () => {
   if (limits === null) { problems.push('尚未取得限幅'); } else {
     if (Math.hypot(body.vx, body.vy) > limits.linear_mps) { problems.push(`平移合速度 ≤ ${limits.linear_mps} m/s`); }
     if (Math.abs(body.wz) > limits.angular_radps) { problems.push(`|wz| ≤ ${limits.angular_radps} rad/s`); }
+    if (!(body.seconds > 0 && body.seconds <= limits.timed_s)) { problems.push(`时长须在 (0, ${limits.timed_s}] s`); }
   }
   if (!Object.values(body).every(Number.isFinite)) { problems.push('请输入有效数字'); }
   $('timed_error').textContent = problems.join('；');
@@ -267,11 +275,30 @@ $('servo_stop').addEventListener('click', () => { postServo('/api/servo/stop'); 
 let lastCount = null;
 const fixed = (value, digits) => Number(value).toFixed(digits);
 function show(state) {
-  if (state.limits && limits === null) {
+  if (state.limits && (limits === null || ['linear_mps', 'angular_radps', 'timed_s'].some(
+      (key) => state.limits[key] !== limits[key]))) {
+    const first = limits === null;
     limits = state.limits;
+    $('linear').min = Math.min(0.02, limits.linear_mps);
+    $('angular').min = Math.min(0.1, limits.angular_radps);
     $('linear').max = limits.linear_mps;
     $('angular').max = limits.angular_radps;
-    $('limits').textContent = `${limits.linear_mps} m/s · ${limits.angular_radps} rad/s`;
+    $('linear').value = Math.min(first ? 0.25 : Number($('linear').value), limits.linear_mps);
+    $('angular').value = Math.min(first ? 0.5 : Number($('angular').value), limits.angular_radps);
+    $('linear_v').textContent = $('linear').value + ' m/s';
+    $('angular_v').textContent = $('angular').value + ' rad/s';
+    for (const id of ['t_vx', 't_vy', 't_wz']) {
+      const maximum = id === 't_wz' ? limits.angular_radps : limits.linear_mps;
+      $(id).min = -maximum;
+      $(id).max = maximum;
+      const value = first && id === 't_vx' ? 0.25 : Number($(id).value);
+      if (Number.isFinite(value)) { $(id).value = Math.max(-maximum, Math.min(maximum, value)); }
+    }
+    $('t_s').min = Math.min(0.1, limits.timed_s);
+    $('t_s').max = limits.timed_s;
+    const seconds = first ? 0.8 : Number($('t_s').value);
+    if (Number.isFinite(seconds)) { $('t_s').value = Math.min(seconds, limits.timed_s); }
+    $('limits').textContent = `${limits.linear_mps} m/s · ${limits.angular_radps} rad/s · 定时 ≤ ${limits.timed_s} s`;
   }
   const phase = $('phase');
   phase.className = 'badge ' + state.phase;

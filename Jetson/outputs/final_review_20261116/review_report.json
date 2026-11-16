@@ -1,0 +1,122 @@
+{
+  "updated_at_utc": "2026-11-16T11:49:56.722026+00:00",
+  "status": "ready_for_low_speed_manual_and_vision_field_trial",
+  "scope": [
+    "STM32 application/state machines/USB/CAN/build modes",
+    "Jetson vision/capture/segmentation/field/stream/record",
+    "Jetson bridge/mission/tracking/interfaces",
+    "teleop/configuration/launch/deployment"
+  ],
+  "fixed": [
+    {
+      "issue": "Space stop ignored while an input is focused",
+      "change": "Handle Space before input filtering"
+    },
+    {
+      "issue": "Held direction autorepeat could restart motion after Space stop",
+      "change": "Ignore repeated movement keydown; require release and a new key press"
+    },
+    {
+      "issue": "A late HTTP motion request could undo a newer stop from the same page",
+      "change": "Per-page sequence high-water mark, atomic validation and action; duplicates do not renew the lease",
+      "boundary": "No cross-operator global stop latch; unsequenced legacy API remains compatible"
+    },
+    {
+      "issue": "Failed CDC contender could clear another process TIOCEXCL",
+      "change": "Release only the exclusion successfully acquired by this CdcLink instance"
+    },
+    {
+      "issue": "Target restart could reuse an already delivered ROI identity",
+      "change": "Mission rejects repeated/backwards IDs with invalid ROI, route ID 0 and no destination",
+      "boundary": "High-water mark is process-local; Mission receipts are not persistent across restart"
+    },
+    {
+      "issue": "Tuning and autonomous chassis-test controllers could be compiled together",
+      "change": "Compile-time mutually exclusive mode guard; no tuned parameter changes"
+    }
+  ],
+  "validation": {
+    "stm32_native_suites": {
+      "pass": 25,
+      "fail": 0
+    },
+    "stm32_build_mode_cases": {
+      "pass": 9,
+      "fail": 0
+    },
+    "stm32_arm_build": "pass",
+    "stm32_binary_sha256": "7f428489109fd9f972b23a67d51c2154a933d6617d82c8212d3d3a155258aa76",
+    "stm32_binary_matches_previously_flashed": true,
+    "stm32_reflashed_this_review": false,
+    "mission_arm_assertions": {
+      "pass": 487,
+      "fail": 0
+    },
+    "cdc_assertions": {
+      "pass": 41,
+      "fail": 0
+    },
+    "new_manual_ordering_tests": {
+      "pass": 8,
+      "fail": 0
+    },
+    "actual_web_script_vm_regression": "pass on desktop Node; no Node installed on Jetson",
+    "manual_link_fixture_tests": {
+      "pass": 10,
+      "fail": 0
+    },
+    "jetson_builds": [
+      "teleop_pkg",
+      "bridge_pkg",
+      "mission_pkg"
+    ],
+    "colcon_final": "126 result entries, 0 errors, 0 failures, 2 skipped; includes earlier unaffected-package results and duplicate CTest/JUnit accounting",
+    "initial_test_failure": "Two STM32 replay tests used an incomplete old remote STM32 checkout; original failure log retained",
+    "fixture_resolution": "95 current source files frozen and SHA256-verified under final_review/fixture; explicitly selected with GC_RESCUE_STM32_ROOT",
+    "skipped_reason": "Previously recorded annotated real-field replay has no dataset",
+    "source_structure_and_diff_check": "pass"
+  },
+  "deployment": {
+    "workspace": "/home/nvidia/WorkSpace/GC_Rescue/Jetson",
+    "source_files_exactly_matched": 354,
+    "installed_teleop_matches_source": {
+      "web/server.py": true,
+      "web/index.html": true,
+      "manual_control.py": true
+    },
+    "running_vision_matches_install": true,
+    "vision_sha256": "0ae723b2ac492641111869c68cb6331639366253d9931247dc0e53b07bc8ac04",
+    "vision_unchanged_from_fps_optimized_build": true,
+    "vision_service": "active",
+    "manual_service": "inactive",
+    "no_vehicle_commands_sent": true
+  },
+  "field_trial_scope": {
+    "manual_limits": {
+      "linear_mps": 0.25,
+      "angular_radps": 0.5,
+      "timed_s": 1.5
+    },
+    "first_check": "After reconnecting STM32, start with short 0.1 m/s movements and verify release/Space stop before increasing toward 0.25 m/s",
+    "vision": "Collect real purple-field images across distance, angle and lighting; physical recognition/position accuracy remains unmeasured",
+    "autonomous_transport": "Not ready for full autonomous trial: distance and gripper calibration remain incomplete; normal firmware stays manual",
+    "physical_fault_boundary": "Prior USB tests and offline stubs do not prove motor standalone timeout after CAN loss or MCU stall",
+    "later_investigation": "GPU submission exception-path synchronization could benefit from fault injection; no reproduced fault, vision code left unchanged"
+  },
+  "evidence_sha256": {
+    "local_manifest.json": "100e7a02c327b88632e26f21c7645c682b010b40c91a5764821ea04f1a0eb870",
+    "source_audit.json": "e2c3f2f0d85dd3d60a6ea38919d27482c791495cd97717f5f0cb77fcb818ef12",
+    "runtime_final.json": "27a4f2311ecfd2ab12db209697ac67d82ba7fe1a112f05285f9c753c07807088",
+    "installed_teleop.json": "d7d96b6724f917cac0848beb6fc412df101f0feb24c75c17bc606de19385cd1e",
+    "build_teleop_bridge.log": "6298e0ef5893f4e59200ebe4b87301588d0d3e1deb4a1c481f4aff499bff1c8a",
+    "build_mission.log": "894dfef6b6ee819429774e1798099a3e215bfaebab7c2620d82ea0acd4f4c705",
+    "teleop_ctest_initial.log": "66c1306a3a21e6567ccc56071263c5aa51cabbbc65d79064a1007983868736b8",
+    "bridge_ctest.log": "dcac65367feb9cc84191bcc1a4dc609a169a4cf4ad80cd8ca7406a2c9155a8ac",
+    "manual_link_fixture_ctest.log": "1b41970439477147a3bc5639986c470b498c2eb5a6901a79b602c28aaa8e95c3",
+    "mission_ctest.log": "5c69aecf37aacf4d871cd00506dae66a96f129b634774a3d4a185344c096c2bc",
+    "test_result_final.log": "f312ce612f897689a046ee8318fd16482b26ba8e98b60bfa357dbe42e467895e",
+    "stm32_fixture_manifest.json": "906258d1c776b0ec1d94214764c273dd2868d3d7ed3944ee25a8eab0ca07351a"
+  },
+  "stm32_record": "STM32/outputs/audit_20261116/review_record.json",
+  "prior_fps_and_accuracy_evidence": "Jetson/outputs/preflight_20261116/preflight_summary.json"
+}

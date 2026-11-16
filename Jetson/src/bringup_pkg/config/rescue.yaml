@@ -52,7 +52,7 @@ mission:
 # 板间 USB 全速 CDC，12 Mbit/s。C 板没有 ULPI，不是 480 Mbit/s。
 # STM32 是设备，Jetson 打开这个 by-id。首次枚举后用 ls 核对序列号，不要写 ttyACM 号。
 link:
-  device: /dev/serial/by-id/usb-GC_Rescue_STM32_Link_0028003D3034470E31353233-if00
+  device: /dev/serial/by-id/usb-GC_Rescue_STM32_Link_004300353034510530343537-if00
 # 夹爪 S288 的中性配置；自动与手动都只读这一段，互不读取对方业务段。
 gripper:
   # 板上当前单总线适配器。开合角默认值见高级配置。

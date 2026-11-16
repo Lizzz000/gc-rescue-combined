@@ -20,8 +20,10 @@ from manual.frame import Parser
 
 TELEOP = Path(__file__).resolve().parents[1]
 REPO = TELEOP.parents[2]
-STM32_CORE = REPO / 'STM32/project/Core'
-STM32_STUBS = REPO / 'STM32/tests/native/stubs'
+# Jetson 单独部署时可显式指定冻结的 STM32 源码夹具，不依赖板端旧/不完整检出。
+STM32_ROOT = Path(os.environ.get('GC_RESCUE_STM32_ROOT', str(REPO / 'STM32'))).resolve()
+STM32_CORE = STM32_ROOT / 'project/Core'
+STM32_STUBS = STM32_ROOT / 'tests/native/stubs'
 REPLAY_SOURCE = Path(__file__).resolve().parent / 'stm32_manual_replay.c'
 
 

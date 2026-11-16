@@ -1,0 +1,703 @@
+{
+  "schema": 1,
+  "status": "pass",
+  "equivalent": true,
+  "before_records": 432,
+  "after_records": 432,
+  "metadata_differences": [],
+  "missing_frames": [],
+  "extra_frames": [],
+  "mismatch_count": 0,
+  "first_mismatches": [],
+  "timing_before": {
+    "red_track_roi_refit": {
+      "n": 48,
+      "mean_ms": 6.580365083333334,
+      "median_ms": 5.5976585,
+      "p95_ms": 11.55240045,
+      "max_ms": 12.20735,
+      "serial_update_fps": 151.96725217158354
+    },
+    "blue_track_roi_refit": {
+      "n": 36,
+      "mean_ms": 6.864573361111112,
+      "median_ms": 6.2547525,
+      "p95_ms": 12.0050635,
+      "max_ms": 12.190294,
+      "serial_update_fps": 145.67547717752677
+    },
+    "search_zero_purple": {
+      "n": 24,
+      "mean_ms": 2.5427552499999995,
+      "median_ms": 2.5031875,
+      "p95_ms": 2.8542873499999994,
+      "max_ms": 2.905953,
+      "serial_update_fps": 393.27418555128344
+    },
+    "search_noisy_purple": {
+      "n": 24,
+      "mean_ms": 6.838873208333333,
+      "median_ms": 6.7935225,
+      "p95_ms": 7.147998,
+      "max_ms": 7.150254,
+      "serial_update_fps": 146.22291853305245
+    },
+    "shadow_glare_lowcontrast": {
+      "n": 36,
+      "mean_ms": 9.44236075,
+      "median_ms": 7.7800675,
+      "p95_ms": 15.75755725,
+      "max_ms": 15.79259,
+      "serial_update_fps": 105.90571854607438
+    },
+    "touching_tall_black": {
+      "n": 24,
+      "mean_ms": 6.368458750000001,
+      "median_ms": 5.628219,
+      "p95_ms": 11.60016345,
+      "max_ms": 11.621891,
+      "serial_update_fps": 157.0238638979957
+    },
+    "warm_fully_occluded": {
+      "n": 24,
+      "mean_ms": 7.452204333333333,
+      "median_ms": 5.8398745000000005,
+      "p95_ms": 14.101281199999999,
+      "max_ms": 14.115158,
+      "serial_update_fps": 134.1884837385699
+    },
+    "shaded_red_no_divider": {
+      "n": 24,
+      "mean_ms": 5.7782605416666675,
+      "median_ms": 5.171916,
+      "p95_ms": 10.4534648,
+      "max_ms": 10.483358,
+      "serial_update_fps": 173.06246279292253
+    },
+    "hold_loss_recovery": {
+      "n": 60,
+      "mean_ms": 6.374635966666665,
+      "median_ms": 5.528840000000001,
+      "p95_ms": 11.1284559,
+      "max_ms": 11.571137,
+      "serial_update_fps": 156.8717029849323
+    },
+    "jump_confirmation_and_fallback": {
+      "n": 48,
+      "mean_ms": 8.2606981875,
+      "median_ms": 5.991032,
+      "p95_ms": 12.946372449999998,
+      "max_ms": 13.092692,
+      "serial_update_fps": 121.0551429554937
+    },
+    "dynamic_config_and_input_size": {
+      "n": 36,
+      "mean_ms": 10.101967222222223,
+      "median_ms": 11.309512999999999,
+      "p95_ms": 12.205568000000001,
+      "max_ms": 12.370045,
+      "serial_update_fps": 98.99062014378826
+    },
+    "live_tabletop_original": {
+      "n": 24,
+      "mean_ms": 15.635445666666664,
+      "median_ms": 15.391522,
+      "p95_ms": 16.2064847,
+      "max_ms": 16.820882,
+      "serial_update_fps": 63.95724313326791
+    },
+    "live_tabletop_noncontinuous": {
+      "n": 24,
+      "mean_ms": 15.496011874999995,
+      "median_ms": 15.3903695,
+      "p95_ms": 16.13905165,
+      "max_ms": 16.322113,
+      "serial_update_fps": 64.5327332004255
+    }
+  },
+  "timing_after": {
+    "red_track_roi_refit": {
+      "n": 48,
+      "mean_ms": 6.261037729166666,
+      "median_ms": 5.5155285,
+      "p95_ms": 11.0314384,
+      "max_ms": 11.120595,
+      "serial_update_fps": 159.71793227527772
+    },
+    "blue_track_roi_refit": {
+      "n": 36,
+      "mean_ms": 6.331329666666667,
+      "median_ms": 5.314769999999999,
+      "p95_ms": 10.89763625,
+      "max_ms": 10.981327,
+      "serial_update_fps": 157.94470555921663
+    },
+    "search_zero_purple": {
+      "n": 24,
+      "mean_ms": 2.485423125,
+      "median_ms": 2.4865155,
+      "p95_ms": 2.5037304,
+      "max_ms": 2.505012,
+      "serial_update_fps": 402.34597881598125
+    },
+    "search_noisy_purple": {
+      "n": 24,
+      "mean_ms": 5.012242125000001,
+      "median_ms": 4.982854,
+      "p95_ms": 5.3771992,
+      "max_ms": 6.205967,
+      "serial_update_fps": 199.51151102860973
+    },
+    "shadow_glare_lowcontrast": {
+      "n": 36,
+      "mean_ms": 9.238067777777779,
+      "median_ms": 7.7045455,
+      "p95_ms": 15.16210625,
+      "max_ms": 16.143131,
+      "serial_update_fps": 108.24774444776268
+    },
+    "touching_tall_black": {
+      "n": 24,
+      "mean_ms": 6.651992875,
+      "median_ms": 5.6347165,
+      "p95_ms": 10.861748599999999,
+      "max_ms": 11.760905,
+      "serial_update_fps": 150.33088862110364
+    },
+    "warm_fully_occluded": {
+      "n": 24,
+      "mean_ms": 7.406734458333333,
+      "median_ms": 5.7179675,
+      "p95_ms": 14.336759149999999,
+      "max_ms": 14.345856,
+      "serial_update_fps": 135.01226561118278
+    },
+    "shaded_red_no_divider": {
+      "n": 24,
+      "mean_ms": 5.703894625,
+      "median_ms": 5.15494,
+      "p95_ms": 10.21472585,
+      "max_ms": 10.216245,
+      "serial_update_fps": 175.31880684068562
+    },
+    "hold_loss_recovery": {
+      "n": 60,
+      "mean_ms": 6.253563366666666,
+      "median_ms": 5.4571745,
+      "p95_ms": 10.86151665,
+      "max_ms": 10.878828,
+      "serial_update_fps": 159.90882979299363
+    },
+    "jump_confirmation_and_fallback": {
+      "n": 48,
+      "mean_ms": 8.223155916666666,
+      "median_ms": 6.0476265,
+      "p95_ms": 12.65736115,
+      "max_ms": 12.883471,
+      "serial_update_fps": 121.60781215071006
+    },
+    "dynamic_config_and_input_size": {
+      "n": 36,
+      "mean_ms": 9.689817777777778,
+      "median_ms": 10.6704375,
+      "p95_ms": 11.4290945,
+      "max_ms": 11.611493,
+      "serial_update_fps": 103.20111512244927
+    },
+    "live_tabletop_original": {
+      "n": 24,
+      "mean_ms": 8.405736000000001,
+      "median_ms": 8.3917375,
+      "p95_ms": 8.493111899999999,
+      "max_ms": 8.683139,
+      "serial_update_fps": 118.9663820039078
+    },
+    "live_tabletop_noncontinuous": {
+      "n": 24,
+      "mean_ms": 8.547441,
+      "median_ms": 8.42817,
+      "p95_ms": 8.9901295,
+      "max_ms": 9.025454,
+      "serial_update_fps": 116.99408045051146
+    }
+  },
+  "observed_coverage_before": {
+    "red_track_roi_refit": {
+      "states": {
+        "LOCATE": 3,
+        "TRACK": 45
+      },
+      "qualities": {
+        "good": 48
+      },
+      "committed": 48,
+      "split_valid": 48,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3861.0
+      ]
+    },
+    "blue_track_roi_refit": {
+      "states": {
+        "LOCATE": 3,
+        "TRACK": 33
+      },
+      "qualities": {
+        "good": 36
+      },
+      "committed": 36,
+      "split_valid": 36,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3861.0
+      ]
+    },
+    "search_zero_purple": {
+      "states": {
+        "SEARCH": 24
+      },
+      "qualities": {
+        "none": 24
+      },
+      "committed": 0,
+      "split_valid": 0,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3861.0
+      ]
+    },
+    "search_noisy_purple": {
+      "states": {
+        "SEARCH": 24
+      },
+      "qualities": {
+        "none": 24
+      },
+      "committed": 0,
+      "split_valid": 0,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3861.0
+      ]
+    },
+    "shadow_glare_lowcontrast": {
+      "states": {
+        "LOCATE": 6,
+        "TRACK": 30
+      },
+      "qualities": {
+        "good": 21,
+        "hold": 15
+      },
+      "committed": 21,
+      "split_valid": 33,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3861.0
+      ]
+    },
+    "touching_tall_black": {
+      "states": {
+        "LOCATE": 3,
+        "TRACK": 21
+      },
+      "qualities": {
+        "good": 24
+      },
+      "committed": 24,
+      "split_valid": 18,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3861.0
+      ]
+    },
+    "warm_fully_occluded": {
+      "states": {
+        "LOCATE": 3,
+        "TRACK": 21
+      },
+      "qualities": {
+        "good": 21,
+        "hold": 3
+      },
+      "committed": 21,
+      "split_valid": 0,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3861.0
+      ]
+    },
+    "shaded_red_no_divider": {
+      "states": {
+        "LOCATE": 3,
+        "TRACK": 21
+      },
+      "qualities": {
+        "good": 24
+      },
+      "committed": 24,
+      "split_valid": 0,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3861.0
+      ]
+    },
+    "hold_loss_recovery": {
+      "states": {
+        "LOCATE": 6,
+        "TRACK": 39,
+        "SEARCH": 15
+      },
+      "qualities": {
+        "good": 30,
+        "none": 30
+      },
+      "committed": 30,
+      "split_valid": 30,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3861.0
+      ]
+    },
+    "jump_confirmation_and_fallback": {
+      "states": {
+        "LOCATE": 3,
+        "TRACK": 45
+      },
+      "qualities": {
+        "good": 42,
+        "hold": 6
+      },
+      "committed": 42,
+      "split_valid": 42,
+      "switched": 6,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3855.0
+      ]
+    },
+    "dynamic_config_and_input_size": {
+      "states": {
+        "LOCATE": 6,
+        "TRACK": 30
+      },
+      "qualities": {
+        "good": 36
+      },
+      "committed": 36,
+      "split_valid": 36,
+      "switched": 0,
+      "distinct_configs": 2,
+      "distinct_strides": [
+        1920.0,
+        1935.0,
+        3840.0,
+        3855.0
+      ]
+    },
+    "live_tabletop_original": {
+      "states": {
+        "SEARCH": 24
+      },
+      "qualities": {
+        "overflow": 24
+      },
+      "committed": 0,
+      "split_valid": 0,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        5760.0
+      ]
+    },
+    "live_tabletop_noncontinuous": {
+      "states": {
+        "SEARCH": 24
+      },
+      "qualities": {
+        "overflow": 24
+      },
+      "committed": 0,
+      "split_valid": 0,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        5787.0
+      ]
+    }
+  },
+  "observed_coverage_after": {
+    "red_track_roi_refit": {
+      "states": {
+        "LOCATE": 3,
+        "TRACK": 45
+      },
+      "qualities": {
+        "good": 48
+      },
+      "committed": 48,
+      "split_valid": 48,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3861.0
+      ]
+    },
+    "blue_track_roi_refit": {
+      "states": {
+        "LOCATE": 3,
+        "TRACK": 33
+      },
+      "qualities": {
+        "good": 36
+      },
+      "committed": 36,
+      "split_valid": 36,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3861.0
+      ]
+    },
+    "search_zero_purple": {
+      "states": {
+        "SEARCH": 24
+      },
+      "qualities": {
+        "none": 24
+      },
+      "committed": 0,
+      "split_valid": 0,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3861.0
+      ]
+    },
+    "search_noisy_purple": {
+      "states": {
+        "SEARCH": 24
+      },
+      "qualities": {
+        "none": 24
+      },
+      "committed": 0,
+      "split_valid": 0,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3861.0
+      ]
+    },
+    "shadow_glare_lowcontrast": {
+      "states": {
+        "LOCATE": 6,
+        "TRACK": 30
+      },
+      "qualities": {
+        "good": 21,
+        "hold": 15
+      },
+      "committed": 21,
+      "split_valid": 33,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3861.0
+      ]
+    },
+    "touching_tall_black": {
+      "states": {
+        "LOCATE": 3,
+        "TRACK": 21
+      },
+      "qualities": {
+        "good": 24
+      },
+      "committed": 24,
+      "split_valid": 18,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3861.0
+      ]
+    },
+    "warm_fully_occluded": {
+      "states": {
+        "LOCATE": 3,
+        "TRACK": 21
+      },
+      "qualities": {
+        "good": 21,
+        "hold": 3
+      },
+      "committed": 21,
+      "split_valid": 0,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3861.0
+      ]
+    },
+    "shaded_red_no_divider": {
+      "states": {
+        "LOCATE": 3,
+        "TRACK": 21
+      },
+      "qualities": {
+        "good": 24
+      },
+      "committed": 24,
+      "split_valid": 0,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3861.0
+      ]
+    },
+    "hold_loss_recovery": {
+      "states": {
+        "LOCATE": 6,
+        "TRACK": 39,
+        "SEARCH": 15
+      },
+      "qualities": {
+        "good": 30,
+        "none": 30
+      },
+      "committed": 30,
+      "split_valid": 30,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3861.0
+      ]
+    },
+    "jump_confirmation_and_fallback": {
+      "states": {
+        "LOCATE": 3,
+        "TRACK": 45
+      },
+      "qualities": {
+        "good": 42,
+        "hold": 6
+      },
+      "committed": 42,
+      "split_valid": 42,
+      "switched": 6,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        3840.0,
+        3855.0
+      ]
+    },
+    "dynamic_config_and_input_size": {
+      "states": {
+        "LOCATE": 6,
+        "TRACK": 30
+      },
+      "qualities": {
+        "good": 36
+      },
+      "committed": 36,
+      "split_valid": 36,
+      "switched": 0,
+      "distinct_configs": 2,
+      "distinct_strides": [
+        1920.0,
+        1935.0,
+        3840.0,
+        3855.0
+      ]
+    },
+    "live_tabletop_original": {
+      "states": {
+        "SEARCH": 24
+      },
+      "qualities": {
+        "overflow": 24
+      },
+      "committed": 0,
+      "split_valid": 0,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        5760.0
+      ]
+    },
+    "live_tabletop_noncontinuous": {
+      "states": {
+        "SEARCH": 24
+      },
+      "qualities": {
+        "overflow": 24
+      },
+      "committed": 0,
+      "split_valid": 0,
+      "switched": 0,
+      "distinct_configs": 1,
+      "distinct_strides": [
+        5787.0
+      ]
+    }
+  },
+  "median_speedup_by_sequence": {
+    "search_noisy_purple": 1.363379802017077,
+    "shaded_red_no_divider": 1.0032931518116603,
+    "hold_loss_recovery": 1.0131323453189927,
+    "search_zero_purple": 1.0067049652415199,
+    "jump_confirmation_and_fallback": 0.9906418658625826,
+    "live_tabletop_original": 1.8341281528408153,
+    "touching_tall_black": 0.9988468807614367,
+    "live_tabletop_noncontinuous": 1.826063012492629,
+    "dynamic_config_and_input_size": 1.059892155312282,
+    "blue_track_roi_refit": 1.17686231012819,
+    "warm_fully_occluded": 1.021319988265061,
+    "red_track_roi_refit": 1.014890685452899,
+    "shadow_glare_lowcontrast": 1.0098022654288952
+  },
+  "limitations": [
+    "Exact equality is required; no numeric tolerance silently relaxes outputs.",
+    "FNV signatures identify decoded pixels and floating-point bit patterns; archive artifact/corpus SHA256 separately.",
+    "Offline serial-update timing excludes camera, ROS scheduling, visualization and network delivery.",
+    "Identical outputs on this corpus do not replace unchanged full accuracy regressions or real-runtime FPS repeats."
+  ],
+  "inputs": [
+    {
+      "path": "outputs/preflight_20261116/field_perf/before.jsonl",
+      "sha256": "46a8c1ea1442272597a444e18102b7ddf57b212d4628483770ed3f6f6efbc93c"
+    },
+    {
+      "path": "outputs/preflight_20261116/field_perf/after.jsonl",
+      "sha256": "ff856c1a0afcce8d599a90723bfb76df1c1d3fba979d2a0b3a02b4a03d3bce10"
+    }
+  ]
+}

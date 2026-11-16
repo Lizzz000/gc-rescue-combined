@@ -1,0 +1,4021 @@
+{
+  "schema_version": 1,
+  "revision": 2,
+  "updated_at_utc": "2026-11-16T11:26:45.631881+00:00",
+  "session": "preflight_20261116",
+  "path_base": "repository_root",
+  "overall_status": "passed_jetson_readiness_and_historical_wheels_raised_preflight",
+  "final_preflight_pass": true,
+  "summary_scope": "Jetson software/vision readiness and historical wheels-raised manual USB acceptance. Current vehicle control is disabled by user request. This aggregation accessed local files only.",
+  "status_definitions": {
+    "pass": "The named scoped check passed its evidence-based requirements; historical failures and skipped tests remain separately recorded.",
+    "fail": "The referenced run failed its own requirements.",
+    "pending": "Root must perform or attach final validation before this item can pass.",
+    "inconclusive": "The observation does not cover the intended test event.",
+    "preliminary_observation": "Measurements are retained without final acceptance.",
+    "reported_progress": "Root-reported intermediate progress, not locally verified final test results.",
+    "not_performed": "Outside completed acceptance; no pass is inferred.",
+    "not_enabled_by_user_choice": "Intentionally inactive, not a software failure."
+  },
+  "configuration": {
+    "stm32": {
+      "checked_at": "2026-11-16T17:43:42.1248191+08:00",
+      "cache": "C:\\Users\\Lenovo\\OneDrive\\Desktop\\gc-rescue-combined\\STM32\\project\\build\\Debug\\CMakeCache.txt",
+      "build_type": "Debug",
+      "chassis_tuning_enabled": "OFF",
+      "ins_use_magnetometer": "OFF",
+      "jetson_auto_enabled_default": 0,
+      "jetson_auto_chassis_test_default": 0,
+      "notes": "Inspected existing cache and compile_commands; no configure flags or source parameters changed."
+    },
+    "hardware_test_condition": "Wheels raised; six-direction and timeout evidence do not establish ground-motion stability.",
+    "command_units": {
+      "vx_vy": "integer mm/s",
+      "wz": "integer mrad/s"
+    },
+    "normal_manual_usb_uplink": "No type-2 command ACK or motor telemetry; reception and motor states were verified with SWD observations."
+  },
+  "checks": {
+    "stm32_build": {
+      "status": "pass",
+      "evidence": [
+        "STM32/outputs/preflight_20261116/summary.json",
+        "STM32/outputs/preflight_20261116/build.log"
+      ],
+      "exit_code": 0,
+      "result": "Ninja reports up-to-date, no work to do",
+      "fresh_compile_performed_in_this_log": false,
+      "firmware": [
+        {
+          "name": "project.elf",
+          "path": "C:\\Users\\Lenovo\\OneDrive\\Desktop\\gc-rescue-combined\\STM32\\project\\build\\Debug\\project.elf",
+          "bytes": 1737268,
+          "sha256": "541c513b5f4a7a164de60875549ce6acbb3304c8c693f85b4097f1cbc9fdb94a"
+        },
+        {
+          "name": "project.bin",
+          "path": "C:\\Users\\Lenovo\\OneDrive\\Desktop\\gc-rescue-combined\\STM32\\project\\build\\Debug\\project.bin",
+          "bytes": 83284,
+          "sha256": "7f428489109fd9f972b23a67d51c2154a933d6617d82c8212d3d3a155258aa76"
+        },
+        {
+          "name": "project.hex",
+          "path": "C:\\Users\\Lenovo\\OneDrive\\Desktop\\gc-rescue-combined\\STM32\\project\\build\\Debug\\project.hex",
+          "bytes": 234324,
+          "sha256": "6b4b7f4f8075b5451506a1060ea50033cc5a8aea525f0e5a0e99148a2fa2e2f9"
+        }
+      ],
+      "current_local_elf_matches_recorded_sha256": true
+    },
+    "stm32_native": {
+      "status": "pass",
+      "evidence": [
+        "STM32/outputs/preflight_20261116/native.log"
+      ],
+      "suites_passed": 25,
+      "exit_code": 0
+    },
+    "stm32_jetson_codec": {
+      "status": "pass",
+      "evidence": [
+        "STM32/outputs/preflight_20261116/codec.log"
+      ],
+      "exit_code": 0,
+      "downlink_frames": 155,
+      "uplink_frames": 33,
+      "jetson_cross_check": "PASS",
+      "log": "codec.log"
+    },
+    "gripper_deadline_budget_static": {
+      "status": "pass",
+      "evidence": [
+        "STM32/outputs/preflight_20261116/gripper_budget.log"
+      ],
+      "exit_code": 0,
+      "maximum_ms": 11870,
+      "stm32_deadline_ms": 12000,
+      "log": "gripper_budget.log",
+      "scope_limit": "Static timing-budget check, not a hardware gripper motion test."
+    },
+    "stm32_flash_readback": {
+      "status": "pass",
+      "evidence": [
+        "STM32/outputs/preflight_20261116/flash_preflight.json"
+      ],
+      "flash_matches_final_normal": true,
+      "segments": [
+        {
+          "address": 134217728,
+          "bytes": 83108
+        },
+        {
+          "address": 134300836,
+          "bytes": 176
+        }
+      ],
+      "elf_sha256": "541c513b5f4a7a164de60875549ce6acbb3304c8c693f85b4097f1cbc9fdb94a",
+      "target_state": "TargetName         Type       Endian TapName            State       \n--  ------------------ ---------- ------ ------------------ ------------\n 0* stm32f4x.cpu       cortex_m   little stm32f4x.cpu       running",
+      "scope_limit": "Readback equivalence evidence; no new flashing operation is claimed by this aggregation."
+    },
+    "usb_zero_command": {
+      "status": "pass",
+      "evidence": [
+        "STM32/outputs/preflight_20261116/usb_motion_summary.json",
+        "STM32/outputs/preflight_20261116/usb_zero_enable.jsonl"
+      ],
+      "samples": 23,
+      "action_samples": 19,
+      "manual_state_counts": {
+        "1": 1,
+        "2": 11,
+        "0": 7
+      },
+      "ready_observed": true,
+      "running_observed": false,
+      "final_new_feedback_disabled": true,
+      "motor_sequence_start": [
+        0,
+        0,
+        0
+      ],
+      "motor_sequence_final": [
+        122,
+        122,
+        122
+      ],
+      "final_motor_velocity_rad_s": [
+        -0.04884,
+        -0.009769,
+        -0.029305
+      ],
+      "interpretation": "A valid zero-speed command reaches PREPARING/READY without RUNNING, then stops with new disabled feedback."
+    },
+    "usb_six_directions": {
+      "status": "pass",
+      "evidence": [
+        "STM32/outputs/preflight_20261116/usb_motion_summary.json",
+        "STM32/outputs/preflight_20261116/usb_six_directions.jsonl"
+      ],
+      "samples": 99,
+      "running_samples": 36,
+      "observed_motor_fault_samples": 0,
+      "swd_read_span_ms": {
+        "min": 103,
+        "mean": 127.0,
+        "max": 180
+      },
+      "actions": [
+        {
+          "action": "forward",
+          "status": "pass",
+          "requested_milli_vx_vy_wz": [
+            250,
+            0,
+            0
+          ],
+          "running_samples": 6,
+          "all_running_commands_match": true,
+          "all_running_motors_enabled": true,
+          "motor_feedback_strictly_progresses": [
+            true,
+            true,
+            true
+          ],
+          "checked_motor_direction_samples": 12,
+          "direction_sign_mismatches": 0,
+          "wheel_estimated_requested_axis_sign_matches": true,
+          "final_stop_observed": true,
+          "final_motor_states": [
+            0,
+            0,
+            0
+          ],
+          "final_motor_sequence": [
+            244,
+            244,
+            244
+          ],
+          "final_feedback_newer_than_running": [
+            true,
+            true,
+            true
+          ]
+        },
+        {
+          "action": "backward",
+          "status": "pass",
+          "requested_milli_vx_vy_wz": [
+            -250,
+            0,
+            0
+          ],
+          "running_samples": 6,
+          "all_running_commands_match": true,
+          "all_running_motors_enabled": true,
+          "motor_feedback_strictly_progresses": [
+            true,
+            true,
+            true
+          ],
+          "checked_motor_direction_samples": 12,
+          "direction_sign_mismatches": 0,
+          "wheel_estimated_requested_axis_sign_matches": true,
+          "final_stop_observed": true,
+          "final_motor_states": [
+            0,
+            0,
+            0
+          ],
+          "final_motor_sequence": [
+            367,
+            367,
+            367
+          ],
+          "final_feedback_newer_than_running": [
+            true,
+            true,
+            true
+          ]
+        },
+        {
+          "action": "left",
+          "status": "pass",
+          "requested_milli_vx_vy_wz": [
+            0,
+            250,
+            0
+          ],
+          "running_samples": 6,
+          "all_running_commands_match": true,
+          "all_running_motors_enabled": true,
+          "motor_feedback_strictly_progresses": [
+            true,
+            true,
+            true
+          ],
+          "checked_motor_direction_samples": 18,
+          "direction_sign_mismatches": 0,
+          "wheel_estimated_requested_axis_sign_matches": true,
+          "final_stop_observed": true,
+          "final_motor_states": [
+            0,
+            0,
+            0
+          ],
+          "final_motor_sequence": [
+            488,
+            488,
+            488
+          ],
+          "final_feedback_newer_than_running": [
+            true,
+            true,
+            true
+          ]
+        },
+        {
+          "action": "right",
+          "status": "pass",
+          "requested_milli_vx_vy_wz": [
+            0,
+            -250,
+            0
+          ],
+          "running_samples": 6,
+          "all_running_commands_match": true,
+          "all_running_motors_enabled": true,
+          "motor_feedback_strictly_progresses": [
+            true,
+            true,
+            true
+          ],
+          "checked_motor_direction_samples": 18,
+          "direction_sign_mismatches": 0,
+          "wheel_estimated_requested_axis_sign_matches": true,
+          "final_stop_observed": true,
+          "final_motor_states": [
+            0,
+            0,
+            0
+          ],
+          "final_motor_sequence": [
+            609,
+            609,
+            609
+          ],
+          "final_feedback_newer_than_running": [
+            true,
+            true,
+            true
+          ]
+        },
+        {
+          "action": "ccw",
+          "status": "pass",
+          "requested_milli_vx_vy_wz": [
+            0,
+            0,
+            500
+          ],
+          "running_samples": 7,
+          "all_running_commands_match": true,
+          "all_running_motors_enabled": true,
+          "motor_feedback_strictly_progresses": [
+            true,
+            true,
+            true
+          ],
+          "checked_motor_direction_samples": 21,
+          "direction_sign_mismatches": 0,
+          "wheel_estimated_requested_axis_sign_matches": true,
+          "final_stop_observed": true,
+          "final_motor_states": [
+            0,
+            0,
+            0
+          ],
+          "final_motor_sequence": [
+            731,
+            731,
+            731
+          ],
+          "final_feedback_newer_than_running": [
+            true,
+            true,
+            true
+          ]
+        },
+        {
+          "action": "cw",
+          "status": "pass",
+          "requested_milli_vx_vy_wz": [
+            0,
+            0,
+            -500
+          ],
+          "running_samples": 5,
+          "all_running_commands_match": true,
+          "all_running_motors_enabled": true,
+          "motor_feedback_strictly_progresses": [
+            true,
+            true,
+            true
+          ],
+          "checked_motor_direction_samples": 15,
+          "direction_sign_mismatches": 0,
+          "wheel_estimated_requested_axis_sign_matches": true,
+          "final_stop_observed": true,
+          "final_motor_states": [
+            0,
+            0,
+            0
+          ],
+          "final_motor_sequence": [
+            852,
+            852,
+            852
+          ],
+          "final_feedback_newer_than_running": [
+            true,
+            true,
+            true
+          ]
+        }
+      ],
+      "limitations": [
+        "SWD reads span 103-180 ms and are not atomic; tick_after minus feedback_ms cannot certify or reject the firmware 30 ms freshness condition.",
+        "Direction checks use RUNNING samples and ignore motor targets within 0.15 rad/s of zero; phase-transition and STOP tails are excluded.",
+        "One backward transition has manual_state=0 with earlier-read enabled=1; subsequent samples consistently show disabled. This is compatible with non-atomic transition sampling.",
+        "Three motor sequence counters need not be identical because CAN replies are asynchronous; each must progress.",
+        "Wheel-derived body speeds are estimates with the wheels raised, not independently measured chassis motion or ground-test stability.",
+        "No precise tracking RMSE or stop latency is inferred from these asynchronous reads. This log does not test sender-loss timeout.",
+        "Final disabled feedback is newer than each action RUNNING interval; its later age while disabled is expected without periodic MIT commands."
+      ]
+    },
+    "usb_sender_pause_timeout_v2": {
+      "status": "pass",
+      "evidence": [
+        "STM32/outputs/preflight_20261116/usb_timeout_v2_summary.json",
+        "STM32/outputs/preflight_20261116/usb_sender_timeout_v2.jsonl"
+      ],
+      "samples": 119,
+      "running_qualified": true,
+      "running_samples": 9,
+      "frozen_command_sequence": 120051,
+      "frozen_command_received_ms": 2948968,
+      "same_sequence_sample_count": 30,
+      "inter_command_rx_gap_ms": 1422,
+      "first_braking_zero_target_observation_ms_after_last_rx": [
+        262,
+        289
+      ],
+      "conservative_braking_transition_bound_ms": [
+        218,
+        289
+      ],
+      "first_software_disarm_observation_ms_after_last_rx": [
+        358,
+        379
+      ],
+      "first_complete_disabled_confirmation_ms_after_last_rx": [
+        403,
+        421
+      ],
+      "within_750ms_plus_scheduling_bound": true,
+      "new_motor_disabled_feedback": {
+        "first_read_interval_from_rx_ms": [
+          358,
+          379
+        ],
+        "new_sequence": [
+          1041,
+          1041,
+          1041
+        ],
+        "feedback_receive_times_from_rx_ms": [
+          367,
+          368,
+          369
+        ],
+        "maximum_absolute_velocity_rad_s": 0.04884,
+        "meaning": "These are CAN feedback receive timestamps for state=0 and quiet wheels, not exact physical stopping times."
+      },
+      "resume": {
+        "first_received_ms": 2950390,
+        "first_received_command": {
+          "valid": 1,
+          "vx": 0,
+          "vy": 0,
+          "wz": 0,
+          "received_ms": 2950390,
+          "sequence": 120052,
+          "invalid_sequence": 119089,
+          "zero_sequence": 416
+        },
+        "first_observation_interval_from_old_rx_ms": [
+          1430,
+          1444
+        ],
+        "observed_zero_speed_reenable": true,
+        "manual_state_counts": {
+          "1": 2,
+          "2": 5,
+          "0": 67
+        },
+        "nonzero_command_samples": 0,
+        "nonzero_target_samples": 0,
+        "running_or_velocity_mode_samples": 0,
+        "maximum_absolute_motor_velocity_rad_s": 0.087914,
+        "new_disabled_feedback_sequence": [
+          1072,
+          1072,
+          1072
+        ],
+        "first_final_disabled_read_interval_from_resumed_rx_ms": [
+          339,
+          358
+        ],
+        "final_feedback_receive_times_from_resumed_rx_ms": [
+          310,
+          311,
+          312
+        ],
+        "final_state_remained_disabled": true,
+        "no_nonzero_resume_observed": true
+      },
+      "swd_read_span_ms": {
+        "min": 14,
+        "mean": 18.672,
+        "max": 50
+      },
+      "limitations": [
+        "All observation intervals use device xTickCount, with the frozen command received_ms as zero unless stated otherwise.",
+        "SWD field reads are sequential. Transition bounds use the previous contrary sample start through the first matching sample end, not an assumed atomic sampling time.",
+        "The first disarmed sample combines pending_disable=1 read earlier with new motor state=0 read later. The following sample confirms pending_disable=0; this is compatible with a transition during the read.",
+        "Inter-command receive gap is observable; exact SIGSTOP/SIGCONT times are not recorded here.",
+        "Resumed expired timed command produces valid zero-speed preparation/ready frames before invalid stop frames. Brief zero-speed re-enabling is expected.",
+        "Wheel feedback with wheels raised does not establish ground-motion stopping distance or chassis stability.",
+        "The earlier usb_timeout_summary.json is retained as an inconclusive observation window and is not overwritten."
+      ]
+    },
+    "jetson_source_sync_before_vision_fix": {
+      "status": "pass",
+      "evidence": [
+        "Jetson/outputs/preflight_20261116/local_manifest_before_vision_fix.json",
+        "Jetson/outputs/preflight_20261116/source_audit_before_vision_fix.json"
+      ],
+      "scope": "Historical snapshot before ongoing vision fixes; final source audit must be refreshed.",
+      "source_commit": "40132c013059c088892f8a586e28754de83d11ee",
+      "includes_uncommitted_teleop_limits": true,
+      "checked_files": 349,
+      "missing": [],
+      "mismatched": [],
+      "extra_source_files": [],
+      "artifact_sha256": {
+        "install/vision_pkg/lib/vision_pkg/vision_runtime": "fd89052ccb697ad674ab57fb0b6de0925604f9e96ac7874ad1a700999102a6c2",
+        "install/track_pkg/lib/track_pkg/tracking_runtime": "69d79420536f8f17b90d445d0e8aed15b2127ff3a18e9d4907dcdc799422839c",
+        "install/mission_pkg/lib/mission_pkg/mission_runtime": "59a0c3e6aa0c7870997ff3fd4b3efc7d2d96e967e1076cd885fd7028d5d1c639",
+        "install/bridge_pkg/lib/bridge_pkg/bridge_runtime": "f80f6dd7bb0b00c88cc2be2e8fb3eb18a246cc001741478562cfd6beb4d2ad9d",
+        "install/record_pkg/lib/record_pkg/camera_record": "b97b3eaba1ba1661af24f60e30befc96ec0300be3a40ea9b0fec6819d177481c",
+        "install/teleop_pkg/lib/teleop_pkg/move_timed.py": "6d41379abcde1b169609d95a8b994cacaf839d8b09e098d47b188efed9f74b59",
+        "install/teleop_pkg/lib/teleop_pkg/manual_control.py": "5c4773ea5db066c230ecf7116d3308e14718b1ff285f1af82e10eac3de2a9c30"
+      },
+      "ok": true,
+      "manifest_src_path_count": 301
+    },
+    "jetson_build_before_vision_fix": {
+      "status": "pass",
+      "evidence": [
+        "Jetson/outputs/preflight_20261116/build_clean.log",
+        "Jetson/outputs/preflight_20261116/build_vision.log"
+      ],
+      "remote_workspace": "/home/nvidia/WorkSpace/GC_Rescue/Jetson",
+      "completed_package_groups": [
+        {
+          "packages": [
+            "record_pkg",
+            "teleop_pkg",
+            "bridge_pkg",
+            "mission_pkg",
+            "track_pkg"
+          ],
+          "summary": "5 packages finished [8min 11s]"
+        },
+        {
+          "packages": [
+            "interface_pkg",
+            "vision_pkg",
+            "bringup_pkg"
+          ],
+          "summary": "3 packages finished [2min 24s]"
+        }
+      ],
+      "stderr_packages": [
+        "vision_pkg"
+      ],
+      "observed_linker_warning": "cv_bridge depends on OpenCV 4.5d libraries while vision links OpenCV 4.10 libraries; linker reports may conflict.",
+      "scope_limit": "Build completion is separate from runtime correctness and regression acceptance."
+    },
+    "jetson_supplemental_tests_before_vision_fix": {
+      "status": "pass",
+      "evidence": [
+        "Jetson/outputs/preflight_20261116/extra_tests_launcher.log"
+      ],
+      "suites": [
+        {
+          "suite": "source_structure",
+          "exit_code": 0,
+          "elapsed_s": 1,
+          "remote_log": "/home/nvidia/WorkSpace/GC_Rescue/Jetson/outputs/preflight_20261116/extra_tests_20261116T100303Z_20634/source_structure.log"
+        },
+        {
+          "suite": "tool_usb_contract",
+          "exit_code": 0,
+          "elapsed_s": 0,
+          "remote_log": "/home/nvidia/WorkSpace/GC_Rescue/Jetson/outputs/preflight_20261116/extra_tests_20261116T100303Z_20634/tool_usb_contract.log"
+        },
+        {
+          "suite": "bridge_core",
+          "exit_code": 0,
+          "elapsed_s": 7,
+          "remote_log": "/home/nvidia/WorkSpace/GC_Rescue/Jetson/outputs/preflight_20261116/extra_tests_20261116T100303Z_20634/bridge_core.log"
+        },
+        {
+          "suite": "mission_host",
+          "exit_code": 0,
+          "elapsed_s": 6,
+          "remote_log": "/home/nvidia/WorkSpace/GC_Rescue/Jetson/outputs/preflight_20261116/extra_tests_20261116T100303Z_20634/mission_host.log"
+        },
+        {
+          "suite": "vision_legacy_host",
+          "exit_code": 0,
+          "elapsed_s": 95,
+          "remote_log": "/home/nvidia/WorkSpace/GC_Rescue/Jetson/outputs/preflight_20261116/extra_tests_20261116T100303Z_20634/vision_legacy_host.log"
+        }
+      ],
+      "scope_limit": "These supplemental passes do not supersede failing field matrix/split/geometry suites."
+    },
+    "vision_regression_before_fix": {
+      "status": "fail",
+      "evidence": [
+        "Jetson/outputs/preflight_20261116/colcon_test_result_before_fix.log",
+        "Jetson/outputs/preflight_20261116/geometry_probe.log",
+        "Jetson/outputs/preflight_20261116/split_probe.log"
+      ],
+      "colcon_reported_totals": {
+        "tests": 121,
+        "errors": 3,
+        "failures": 3,
+        "skipped": 2
+      },
+      "field_suite_assertions": {
+        "matrix": {
+          "assertions_passed": 1159,
+          "assertions_failed": 5
+        },
+        "split": {
+          "assertions_passed": 377,
+          "assertions_failed": 4
+        },
+        "geometry": {
+          "assertions_passed": 1031,
+          "assertions_failed": 2
+        }
+      },
+      "counting_note": "Colcon output repeats CTest and per-suite xUnit reporting; errors/failures are not additional independent assertion counts.",
+      "failure_categories": [
+        "occluded or shaded ground falsely accepted as divider",
+        "no-tray clutter falsely committed as field outline"
+      ],
+      "scope": "Historical before-fix run, retained even after future fixes pass."
+    },
+    "vision_regression_fixes": {
+      "status": "pass",
+      "evidence": [
+        "Jetson/outputs/preflight_20261116/vision_ctest_details_final.log",
+        "Jetson/outputs/preflight_20261116/colcon_test_result_final.log",
+        "Jetson/outputs/preflight_20261116/legacy_final.log",
+        "Jetson/outputs/preflight_20261116/build_image_adapter.log",
+        "Jetson/outputs/preflight_20261116/build_final.log"
+      ],
+      "phase": "After geometry/split/image-adapter fixes, before field performance optimization",
+      "ctest_registered": 12,
+      "ctest_passed": 11,
+      "ctest_failed": 0,
+      "ctest_skipped": 1,
+      "skipped_suite": "test_field_replay",
+      "skip_reason": "No annotated replay data",
+      "suite_assertions": {
+        "matrix": {
+          "assertions_passed": 1162,
+          "assertions_failed": 0
+        },
+        "sequence": {
+          "assertions_passed": 15,
+          "assertions_failed": 0
+        },
+        "colour": {
+          "assertions_passed": 97,
+          "assertions_failed": 0
+        },
+        "corner_order": {
+          "assertions_passed": 406,
+          "assertions_failed": 0
+        },
+        "centers": {
+          "assertions_passed": 12,
+          "assertions_failed": 0
+        },
+        "truth": {
+          "assertions_passed": 27,
+          "assertions_failed": 0
+        },
+        "split": {
+          "assertions_passed": 385,
+          "assertions_failed": 0
+        },
+        "geometry": {
+          "assertions_passed": 1034,
+          "assertions_failed": 0
+        },
+        "nvmm_pixels": {
+          "assertions_passed": 58,
+          "assertions_failed": 0
+        },
+        "postprocess": {
+          "assertions_passed": 20857,
+          "assertions_failed": 0
+        },
+        "image_view": {
+          "assertions_passed": 33,
+          "assertions_failed": 0
+        }
+      },
+      "workspace_report": {
+        "reported_results": 123,
+        "errors": 0,
+        "failures": 0,
+        "reported_skipped": 2,
+        "counting_note": "Aggregate includes repeated CTest/xUnit reporting; 123 is not a unique test count and the one replay skip appears twice."
+      },
+      "legacy_assertions_passed": 131,
+      "legacy_assertions_failed": 0,
+      "historical_before_fix_failures_retained": true
+    },
+    "final_source_sync_and_build": {
+      "status": "pass",
+      "evidence": [
+        "Jetson/outputs/preflight_20261116/local_manifest.json",
+        "Jetson/outputs/preflight_20261116/source_audit.json",
+        "Jetson/outputs/preflight_20261116/field_build_optimized.log",
+        "Jetson/outputs/preflight_20261116/field_artifacts.json"
+      ],
+      "audit": {
+        "source_commit": "40132c013059c088892f8a586e28754de83d11ee",
+        "includes_uncommitted_teleop_limits": true,
+        "includes_uncommitted_vision_fixes": true,
+        "checked_files": 352,
+        "missing": [],
+        "mismatched": [],
+        "extra_source_files": [],
+        "artifact_sha256": {
+          "install/vision_pkg/lib/vision_pkg/vision_runtime": "0ae723b2ac492641111869c68cb6331639366253d9931247dc0e53b07bc8ac04",
+          "install/track_pkg/lib/track_pkg/tracking_runtime": "69d79420536f8f17b90d445d0e8aed15b2127ff3a18e9d4907dcdc799422839c",
+          "install/mission_pkg/lib/mission_pkg/mission_runtime": "59a0c3e6aa0c7870997ff3fd4b3efc7d2d96e967e1076cd885fd7028d5d1c639",
+          "install/bridge_pkg/lib/bridge_pkg/bridge_runtime": "f80f6dd7bb0b00c88cc2be2e8fb3eb18a246cc001741478562cfd6beb4d2ad9d",
+          "install/record_pkg/lib/record_pkg/camera_record": "b97b3eaba1ba1661af24f60e30befc96ec0300be3a40ea9b0fec6819d177481c",
+          "install/teleop_pkg/lib/teleop_pkg/move_timed.py": "6d41379abcde1b169609d95a8b994cacaf839d8b09e098d47b188efed9f74b59",
+          "install/teleop_pkg/lib/teleop_pkg/manual_control.py": "5c4773ea5db066c230ecf7116d3308e14718b1ff285f1af82e10eac3de2a9c30"
+        },
+        "ok": true
+      },
+      "build_completed": true,
+      "build_summary": "1 package finished [11.2s]",
+      "nonfatal_build_diagnostics": [
+        "GCC C++17 std::pair ABI note",
+        "FrameEvidence full_interior missing-field-initializer warning; omitted cv::Mat is default initialized"
+      ],
+      "installed_vision_sha256": "0ae723b2ac492641111869c68cb6331639366253d9931247dc0e53b07bc8ac04"
+    },
+    "vision_runtime_dependencies": {
+      "status": "pass",
+      "evidence": [
+        "Jetson/outputs/preflight_20261116/runtime_final.json"
+      ],
+      "collected_utc": "2026-11-16T11:21:50.735951+00:00",
+      "running_matches_install": true,
+      "mixed_opencv_absent": true,
+      "running_vision": [
+        {
+          "pid": 70174,
+          "exe": "/home/nvidia/WorkSpace/GC_Rescue/Jetson/install/vision_pkg/lib/vision_pkg/vision_runtime",
+          "sha256": "0ae723b2ac492641111869c68cb6331639366253d9931247dc0e53b07bc8ac04",
+          "cmdline": "/home/nvidia/WorkSpace/GC_Rescue/Jetson/install/vision_pkg/lib/vision_pkg/vision_runtime --role vision --ros-args --params-file /home/nvidia/WorkSpace/GC_Rescue/Jetson/outputs/preflight_20261116/vision_run/ros-parameters.yaml ",
+          "opencv_maps": [
+            "/usr/local/lib/libopencv_core.so.4.10.0",
+            "/usr/local/lib/libopencv_imgcodecs.so.4.10.0",
+            "/usr/local/lib/libopencv_imgproc.so.4.10.0",
+            "/usr/local/lib/libopencv_videoio.so.4.10.0"
+          ]
+        }
+      ],
+      "stream_health": {
+        "ok": true,
+        "http_status": 200,
+        "content_type": "text/plain",
+        "data": "ok\nsubmitted=5553\nviewers=1\nskipped_backpressure=3962\nframe_age_at_encode_ms=55.348890\njpeg_encode_ms=18.486293\n"
+      },
+      "opencv_runtime_versions": [
+        "4.10.0"
+      ],
+      "manual_inactive_expected": true
+    },
+    "final_fps_and_stream": {
+      "status": "pass",
+      "evidence": [
+        "Jetson/outputs/preflight_20261116/field_live_comparison.json",
+        "Jetson/outputs/preflight_20261116/field_live_baseline_ros.json",
+        "Jetson/outputs/preflight_20261116/field_live_baseline_local.json",
+        "Jetson/outputs/preflight_20261116/field_live_baseline_pc.json",
+        "Jetson/outputs/preflight_20261116/field_live_optimized_ros.json",
+        "Jetson/outputs/preflight_20261116/field_live_optimized_local.json",
+        "Jetson/outputs/preflight_20261116/field_live_optimized_pc.json"
+      ],
+      "latest_measured_mode": "field",
+      "historical_seg_check": "vision_pre_field_optimization_runtime_and_fps",
+      "latest_field_check": "field_optimization_live_performance",
+      "preliminary_mjpeg": {
+        "seg": {
+          "evidence": "Jetson/outputs/preflight_20261116/seg_pc_mjpeg.json",
+          "status": "preliminary_observation",
+          "probe_status": "ok",
+          "started_utc": "2026-11-16T09:39:36.615805+00:00",
+          "complete_frames": 1057,
+          "elapsed_total_window_s": 15.01600000000326,
+          "client_complete_frame_fps_total_window": 70.39158231218504,
+          "client_receive_interval_p95_ms": 46.999999991385266,
+          "client_receive_interval_max_ms": 109.99999998603016,
+          "sequence": {
+            "valid_frames": 1057,
+            "missing_or_invalid_header_frames": 0,
+            "forward_gap_events": 68,
+            "forward_gap_sequence_slots": 84,
+            "out_of_order_frames": 0,
+            "duplicate_frames": 0
+          },
+          "counts_as_final_fps_pass": false
+        },
+        "field": {
+          "evidence": "Jetson/outputs/preflight_20261116/field_pc_mjpeg.json",
+          "status": "preliminary_observation",
+          "probe_status": "ok",
+          "started_utc": "2026-11-16T09:41:15.244186+00:00",
+          "complete_frames": 614,
+          "elapsed_total_window_s": 15.0,
+          "client_complete_frame_fps_total_window": 40.93333333333333,
+          "client_receive_interval_p95_ms": 62.000000005355105,
+          "client_receive_interval_max_ms": 219.00000001187436,
+          "sequence": {
+            "valid_frames": 614,
+            "missing_or_invalid_header_frames": 0,
+            "forward_gap_events": 0,
+            "forward_gap_sequence_slots": 0,
+            "out_of_order_frames": 0,
+            "duplicate_frames": 0
+          },
+          "counts_as_final_fps_pass": false
+        }
+      },
+      "limitations": [
+        "Throughput improves; PC p95 stays about47ms and max rises78 to94ms; publish-age and encoding tails also increase.",
+        "No frame timeout, camera reopen, emitted-JPEG sequence gap or probe error observed in fresh field windows; stream replacements increase0 to4.",
+        "Server age headers are not end-to-end latency, and FPS is not accuracy."
+      ]
+    },
+    "final_repeat": {
+      "status": "pass",
+      "scope": "Historical wheels-raised repeat before user powered off STM32; not a current full-chain run after field optimization",
+      "evidence": [
+        "STM32/outputs/preflight_20261116/usb_motion_observed_summary.json",
+        "STM32/outputs/preflight_20261116/usb_six_directions_observed.jsonl"
+      ],
+      "user_reported_smooth": true,
+      "final_host_stop_idle": true,
+      "ground_field_trial_completed": false
+    },
+    "usb_six_directions_observed_repeat": {
+      "status": "pass",
+      "evidence": [
+        "STM32/outputs/preflight_20261116/usb_motion_observed_summary.json",
+        "STM32/outputs/preflight_20261116/usb_six_directions_observed.jsonl"
+      ],
+      "motion_setup": {
+        "wheels_raised": true,
+        "requested_duration_s": 1.2,
+        "translation_mps": 0.25,
+        "rotation_radps": 0.5,
+        "duration_source": "explicit session setup; HTTP remaining_s includes preparation"
+      },
+      "human_observation": {
+        "source": "user's explicit on-site reply, supplied by parent task; not inferred from telemetry",
+        "quote": "平顺，没有异响或方向异常",
+        "smooth": true,
+        "no_abnormal_sound": true,
+        "no_direction_anomaly": true
+      },
+      "all_samples": 1008,
+      "six_direction_samples": 303,
+      "running_samples": 148,
+      "swd_read_span_ms": {
+        "min": 13,
+        "mean": 18.356150793650794,
+        "max": 50
+      },
+      "motor_direction_checks": 391,
+      "motor_direction_sign_mismatches": 0,
+      "motor_fault_samples": 0,
+      "invalid_numeric_or_state_samples": 0,
+      "maximum_abs_final_motor_velocity_rad_s": 0.08791351318359375,
+      "actions": [
+        {
+          "action": "forward",
+          "status": "pass",
+          "requested_milli": [
+            250,
+            0,
+            0
+          ],
+          "running_samples": 21,
+          "commands_match": true,
+          "motors_enabled_during_running": true,
+          "feedback_strictly_progresses": [
+            true,
+            true,
+            true
+          ],
+          "final_stop": {
+            "observed": true,
+            "manual_state": 0,
+            "enabled": 0,
+            "mode": 0,
+            "motor_states": [
+              0,
+              0,
+              0
+            ],
+            "motor_sequence": [
+              1234,
+              1234,
+              1234
+            ],
+            "motor_sequence_delta_from_previous_action": [
+              162,
+              162,
+              162
+            ],
+            "motor_feedback_ms": [
+              4762745,
+              4762746,
+              4762747
+            ],
+            "newer_than_last_running_read": [
+              true,
+              true,
+              true
+            ],
+            "motor_velocity_rad_s": [
+              -0.048839569091796875,
+              -0.08791351318359375,
+              -0.0683746337890625
+            ],
+            "velocity_limit_rad_s": 0.2
+          }
+        },
+        {
+          "action": "backward",
+          "status": "pass",
+          "requested_milli": [
+            -250,
+            0,
+            0
+          ],
+          "running_samples": 27,
+          "commands_match": true,
+          "motors_enabled_during_running": true,
+          "feedback_strictly_progresses": [
+            true,
+            true,
+            true
+          ],
+          "final_stop": {
+            "observed": true,
+            "manual_state": 0,
+            "enabled": 0,
+            "mode": 0,
+            "motor_states": [
+              0,
+              0,
+              0
+            ],
+            "motor_sequence": [
+              1396,
+              1396,
+              1396
+            ],
+            "motor_sequence_delta_from_previous_action": [
+              162,
+              162,
+              162
+            ],
+            "motor_feedback_ms": [
+              4768210,
+              4768211,
+              4768212
+            ],
+            "newer_than_last_running_read": [
+              true,
+              true,
+              true
+            ],
+            "motor_velocity_rad_s": [
+              -0.009769439697265625,
+              -0.02930450439453125,
+              -0.0683746337890625
+            ],
+            "velocity_limit_rad_s": 0.2
+          }
+        },
+        {
+          "action": "left",
+          "status": "pass",
+          "requested_milli": [
+            0,
+            250,
+            0
+          ],
+          "running_samples": 20,
+          "commands_match": true,
+          "motors_enabled_during_running": true,
+          "feedback_strictly_progresses": [
+            true,
+            true,
+            true
+          ],
+          "final_stop": {
+            "observed": true,
+            "manual_state": 0,
+            "enabled": 0,
+            "mode": 0,
+            "motor_states": [
+              0,
+              0,
+              0
+            ],
+            "motor_sequence": [
+              1557,
+              1557,
+              1557
+            ],
+            "motor_sequence_delta_from_previous_action": [
+              161,
+              161,
+              161
+            ],
+            "motor_feedback_ms": [
+              4773640,
+              4773641,
+              4773642
+            ],
+            "newer_than_last_running_read": [
+              true,
+              true,
+              true
+            ],
+            "motor_velocity_rad_s": [
+              -0.009769439697265625,
+              -0.009769439697265625,
+              -0.048839569091796875
+            ],
+            "velocity_limit_rad_s": 0.2
+          }
+        },
+        {
+          "action": "right",
+          "status": "pass",
+          "requested_milli": [
+            0,
+            -250,
+            0
+          ],
+          "running_samples": 26,
+          "commands_match": true,
+          "motors_enabled_during_running": true,
+          "feedback_strictly_progresses": [
+            true,
+            true,
+            true
+          ],
+          "final_stop": {
+            "observed": true,
+            "manual_state": 0,
+            "enabled": 0,
+            "mode": 0,
+            "motor_states": [
+              0,
+              0,
+              0
+            ],
+            "motor_sequence": [
+              1719,
+              1719,
+              1719
+            ],
+            "motor_sequence_delta_from_previous_action": [
+              162,
+              162,
+              162
+            ],
+            "motor_feedback_ms": [
+              4779100,
+              4779101,
+              4779102
+            ],
+            "newer_than_last_running_read": [
+              true,
+              true,
+              true
+            ],
+            "motor_velocity_rad_s": [
+              -0.009769439697265625,
+              -0.02930450439453125,
+              -0.009769439697265625
+            ],
+            "velocity_limit_rad_s": 0.2
+          }
+        },
+        {
+          "action": "ccw",
+          "status": "pass",
+          "requested_milli": [
+            0,
+            0,
+            500
+          ],
+          "running_samples": 26,
+          "commands_match": true,
+          "motors_enabled_during_running": true,
+          "feedback_strictly_progresses": [
+            true,
+            true,
+            true
+          ],
+          "final_stop": {
+            "observed": true,
+            "manual_state": 0,
+            "enabled": 0,
+            "mode": 0,
+            "motor_states": [
+              0,
+              0,
+              0
+            ],
+            "motor_sequence": [
+              1880,
+              1880,
+              1880
+            ],
+            "motor_sequence_delta_from_previous_action": [
+              161,
+              161,
+              161
+            ],
+            "motor_feedback_ms": [
+              4784590,
+              4784591,
+              4784592
+            ],
+            "newer_than_last_running_read": [
+              true,
+              true,
+              true
+            ],
+            "motor_velocity_rad_s": [
+              -0.009769439697265625,
+              0.009769439697265625,
+              0.009769439697265625
+            ],
+            "velocity_limit_rad_s": 0.2
+          }
+        },
+        {
+          "action": "cw",
+          "status": "pass",
+          "requested_milli": [
+            0,
+            0,
+            -500
+          ],
+          "running_samples": 28,
+          "commands_match": true,
+          "motors_enabled_during_running": true,
+          "feedback_strictly_progresses": [
+            true,
+            true,
+            true
+          ],
+          "final_stop": {
+            "observed": true,
+            "manual_state": 0,
+            "enabled": 0,
+            "mode": 0,
+            "motor_states": [
+              0,
+              0,
+              0
+            ],
+            "motor_sequence": [
+              2041,
+              2041,
+              2041
+            ],
+            "motor_sequence_delta_from_previous_action": [
+              161,
+              161,
+              161
+            ],
+            "motor_feedback_ms": [
+              4790060,
+              4790061,
+              4790062
+            ],
+            "newer_than_last_running_read": [
+              true,
+              true,
+              true
+            ],
+            "motor_velocity_rad_s": [
+              -0.0683746337890625,
+              -0.048839569091796875,
+              -0.048839569091796875
+            ],
+            "velocity_limit_rad_s": 0.2
+          }
+        }
+      ],
+      "limitations": [
+        "SWD snapshots span 13-50 ms and are not atomic; they do not certify the firmware's 30 ms feedback freshness condition.",
+        "Direction comparisons use RUNNING samples; targets within 0.15 rad/s of zero and phase-transition/STOP tails are excluded.",
+        "Body-axis direction checks exclude snapshots whose three targets are all within 0.15 rad/s of zero. Right/CW each have one such initial RUNNING snapshot with opposite-sign near-zero wheel estimate; raw counts remain reported.",
+        "Three compared motor feedback values are within 0.15 rad/s of zero but still have the same sign as their nonzero targets; this is not a tracking-error acceptance test.",
+        "One left STOP transition reads enabled=1 and manual_state=0 across a 32 ms snapshot; later samples confirm all motors stopped and disabled.",
+        "The reported RUNNING sample window is not exact commanded duration or stop latency; asynchronous reads can overlap transitions.",
+        "Three feedback counters need not match, but each must strictly advance during RUNNING.",
+        "Wheel-derived body speeds are estimates with raised wheels, not independent chassis displacement or ground-test stability.",
+        "No precise tracking RMSE or sender-loss timeout result is inferred from this six-direction log.",
+        "Final disabled feedback is newer than the action RUNNING interval; feedback may remain unchanged while disabled.",
+        "The human observation is separately attributed to the user and was not measured by the telemetry logger."
+      ]
+    },
+    "vision_regression_after_field_optimization": {
+      "status": "pass",
+      "evidence": [
+        "Jetson/outputs/preflight_20261116/field_vision_ctest_optimized.log",
+        "Jetson/outputs/preflight_20261116/field_colcon_test_result_optimized.log",
+        "Jetson/outputs/preflight_20261116/field_colour_optimized.log",
+        "Jetson/outputs/preflight_20261116/field_legacy_optimized.log"
+      ],
+      "ctest_registered": 12,
+      "ctest_passed": 11,
+      "ctest_failed": 0,
+      "ctest_skipped": 1,
+      "skipped_suite": "test_field_replay",
+      "skip_reason": "No annotated replay data",
+      "suite_assertions": {
+        "matrix": {
+          "assertions_passed": 1162,
+          "assertions_failed": 0
+        },
+        "sequence": {
+          "assertions_passed": 15,
+          "assertions_failed": 0
+        },
+        "colour": {
+          "assertions_passed": 241,
+          "assertions_failed": 0
+        },
+        "corner_order": {
+          "assertions_passed": 406,
+          "assertions_failed": 0
+        },
+        "centers": {
+          "assertions_passed": 12,
+          "assertions_failed": 0
+        },
+        "truth": {
+          "assertions_passed": 27,
+          "assertions_failed": 0
+        },
+        "split": {
+          "assertions_passed": 385,
+          "assertions_failed": 0
+        },
+        "geometry": {
+          "assertions_passed": 1034,
+          "assertions_failed": 0
+        },
+        "nvmm_pixels": {
+          "assertions_passed": 58,
+          "assertions_failed": 0
+        },
+        "postprocess": {
+          "assertions_passed": 20857,
+          "assertions_failed": 0
+        },
+        "image_view": {
+          "assertions_passed": 33,
+          "assertions_failed": 0
+        }
+      },
+      "workspace_report": {
+        "reported_results": 123,
+        "errors": 0,
+        "failures": 0,
+        "reported_skipped": 2,
+        "counting_note": "Aggregate includes repeated CTest/xUnit reporting; 123 is not a unique test count and the one replay skip appears twice."
+      },
+      "legacy_assertions_passed": 275,
+      "legacy_assertions_failed": 0,
+      "colour_scalar_equivalence_additional_assertions": 144,
+      "original_accuracy_thresholds_preserved": true
+    },
+    "jetson_source_before_field_optimization": {
+      "status": "pass",
+      "evidence": [
+        "Jetson/outputs/preflight_20261116/local_manifest_before_field_perf.json",
+        "Jetson/outputs/preflight_20261116/source_audit_before_field_perf.json"
+      ],
+      "source_commit": "40132c013059c088892f8a586e28754de83d11ee",
+      "includes_uncommitted_teleop_limits": true,
+      "includes_uncommitted_vision_fixes": true,
+      "checked_files": 352,
+      "missing": [],
+      "mismatched": [],
+      "extra_source_files": [],
+      "artifact_sha256": {
+        "install/vision_pkg/lib/vision_pkg/vision_runtime": "85b5490d1af089428da99e52cb94231ecf87867c870d89281361c99927587651",
+        "install/track_pkg/lib/track_pkg/tracking_runtime": "69d79420536f8f17b90d445d0e8aed15b2127ff3a18e9d4907dcdc799422839c",
+        "install/mission_pkg/lib/mission_pkg/mission_runtime": "59a0c3e6aa0c7870997ff3fd4b3efc7d2d96e967e1076cd885fd7028d5d1c639",
+        "install/bridge_pkg/lib/bridge_pkg/bridge_runtime": "f80f6dd7bb0b00c88cc2be2e8fb3eb18a246cc001741478562cfd6beb4d2ad9d",
+        "install/record_pkg/lib/record_pkg/camera_record": "b97b3eaba1ba1661af24f60e30befc96ec0300be3a40ea9b0fec6819d177481c",
+        "install/teleop_pkg/lib/teleop_pkg/move_timed.py": "6d41379abcde1b169609d95a8b994cacaf839d8b09e098d47b188efed9f74b59",
+        "install/teleop_pkg/lib/teleop_pkg/manual_control.py": "5c4773ea5db066c230ecf7116d3308e14718b1ff285f1af82e10eac3de2a9c30"
+      },
+      "ok": true
+    },
+    "field_optimization_equivalence": {
+      "status": "pass",
+      "evidence": [
+        "Jetson/outputs/preflight_20261116/field_equivalence_comparison.json",
+        "Jetson/outputs/preflight_20261116/field_artifacts.json",
+        "Jetson/outputs/preflight_20261116/profile_baseline_t6.json",
+        "Jetson/outputs/preflight_20261116/profile_optimized_t6.json"
+      ],
+      "before_records": 432,
+      "after_records": 432,
+      "non_timing_mismatches": 0,
+      "frozen_png_files": 130,
+      "sequences": 13,
+      "updates_per_repeat": 144,
+      "repeats": 3,
+      "opencv_threads": 6,
+      "comparison": "Exact non-timing fields and fingerprints, including BEV pixels, state and geometry; same frozen inputs and config",
+      "coverage": {
+        "red_track_roi_refit": {
+          "states": {
+            "LOCATE": 3,
+            "TRACK": 45
+          },
+          "qualities": {
+            "good": 48
+          },
+          "committed": 48,
+          "split_valid": 48,
+          "switched": 0,
+          "distinct_configs": 1,
+          "distinct_strides": [
+            3840.0,
+            3861.0
+          ]
+        },
+        "blue_track_roi_refit": {
+          "states": {
+            "LOCATE": 3,
+            "TRACK": 33
+          },
+          "qualities": {
+            "good": 36
+          },
+          "committed": 36,
+          "split_valid": 36,
+          "switched": 0,
+          "distinct_configs": 1,
+          "distinct_strides": [
+            3840.0,
+            3861.0
+          ]
+        },
+        "search_zero_purple": {
+          "states": {
+            "SEARCH": 24
+          },
+          "qualities": {
+            "none": 24
+          },
+          "committed": 0,
+          "split_valid": 0,
+          "switched": 0,
+          "distinct_configs": 1,
+          "distinct_strides": [
+            3840.0,
+            3861.0
+          ]
+        },
+        "search_noisy_purple": {
+          "states": {
+            "SEARCH": 24
+          },
+          "qualities": {
+            "none": 24
+          },
+          "committed": 0,
+          "split_valid": 0,
+          "switched": 0,
+          "distinct_configs": 1,
+          "distinct_strides": [
+            3840.0,
+            3861.0
+          ]
+        },
+        "shadow_glare_lowcontrast": {
+          "states": {
+            "LOCATE": 6,
+            "TRACK": 30
+          },
+          "qualities": {
+            "good": 21,
+            "hold": 15
+          },
+          "committed": 21,
+          "split_valid": 33,
+          "switched": 0,
+          "distinct_configs": 1,
+          "distinct_strides": [
+            3840.0,
+            3861.0
+          ]
+        },
+        "touching_tall_black": {
+          "states": {
+            "LOCATE": 3,
+            "TRACK": 21
+          },
+          "qualities": {
+            "good": 24
+          },
+          "committed": 24,
+          "split_valid": 18,
+          "switched": 0,
+          "distinct_configs": 1,
+          "distinct_strides": [
+            3840.0,
+            3861.0
+          ]
+        },
+        "warm_fully_occluded": {
+          "states": {
+            "LOCATE": 3,
+            "TRACK": 21
+          },
+          "qualities": {
+            "good": 21,
+            "hold": 3
+          },
+          "committed": 21,
+          "split_valid": 0,
+          "switched": 0,
+          "distinct_configs": 1,
+          "distinct_strides": [
+            3840.0,
+            3861.0
+          ]
+        },
+        "shaded_red_no_divider": {
+          "states": {
+            "LOCATE": 3,
+            "TRACK": 21
+          },
+          "qualities": {
+            "good": 24
+          },
+          "committed": 24,
+          "split_valid": 0,
+          "switched": 0,
+          "distinct_configs": 1,
+          "distinct_strides": [
+            3840.0,
+            3861.0
+          ]
+        },
+        "hold_loss_recovery": {
+          "states": {
+            "LOCATE": 6,
+            "TRACK": 39,
+            "SEARCH": 15
+          },
+          "qualities": {
+            "good": 30,
+            "none": 30
+          },
+          "committed": 30,
+          "split_valid": 30,
+          "switched": 0,
+          "distinct_configs": 1,
+          "distinct_strides": [
+            3840.0,
+            3861.0
+          ]
+        },
+        "jump_confirmation_and_fallback": {
+          "states": {
+            "LOCATE": 3,
+            "TRACK": 45
+          },
+          "qualities": {
+            "good": 42,
+            "hold": 6
+          },
+          "committed": 42,
+          "split_valid": 42,
+          "switched": 6,
+          "distinct_configs": 1,
+          "distinct_strides": [
+            3840.0,
+            3855.0
+          ]
+        },
+        "dynamic_config_and_input_size": {
+          "states": {
+            "LOCATE": 6,
+            "TRACK": 30
+          },
+          "qualities": {
+            "good": 36
+          },
+          "committed": 36,
+          "split_valid": 36,
+          "switched": 0,
+          "distinct_configs": 2,
+          "distinct_strides": [
+            1920.0,
+            1935.0,
+            3840.0,
+            3855.0
+          ]
+        },
+        "live_tabletop_original": {
+          "states": {
+            "SEARCH": 24
+          },
+          "qualities": {
+            "overflow": 24
+          },
+          "committed": 0,
+          "split_valid": 0,
+          "switched": 0,
+          "distinct_configs": 1,
+          "distinct_strides": [
+            5760.0
+          ]
+        },
+        "live_tabletop_noncontinuous": {
+          "states": {
+            "SEARCH": 24
+          },
+          "qualities": {
+            "overflow": 24
+          },
+          "committed": 0,
+          "split_valid": 0,
+          "switched": 0,
+          "distinct_configs": 1,
+          "distinct_strides": [
+            5787.0
+          ]
+        }
+      },
+      "timings_by_sequence": {
+        "red_track_roi_refit": {
+          "n_per_build": 48,
+          "before_median_ms": 5.5976585,
+          "after_median_ms": 5.5155285,
+          "median_speedup": 1.014890685452899,
+          "before_p95_ms": 11.55240045,
+          "after_p95_ms": 11.0314384
+        },
+        "blue_track_roi_refit": {
+          "n_per_build": 36,
+          "before_median_ms": 6.2547525,
+          "after_median_ms": 5.314769999999999,
+          "median_speedup": 1.17686231012819,
+          "before_p95_ms": 12.0050635,
+          "after_p95_ms": 10.89763625
+        },
+        "search_zero_purple": {
+          "n_per_build": 24,
+          "before_median_ms": 2.5031875,
+          "after_median_ms": 2.4865155,
+          "median_speedup": 1.0067049652415199,
+          "before_p95_ms": 2.8542873499999994,
+          "after_p95_ms": 2.5037304
+        },
+        "search_noisy_purple": {
+          "n_per_build": 24,
+          "before_median_ms": 6.7935225,
+          "after_median_ms": 4.982854,
+          "median_speedup": 1.363379802017077,
+          "before_p95_ms": 7.147998,
+          "after_p95_ms": 5.3771992
+        },
+        "shadow_glare_lowcontrast": {
+          "n_per_build": 36,
+          "before_median_ms": 7.7800675,
+          "after_median_ms": 7.7045455,
+          "median_speedup": 1.0098022654288952,
+          "before_p95_ms": 15.75755725,
+          "after_p95_ms": 15.16210625
+        },
+        "touching_tall_black": {
+          "n_per_build": 24,
+          "before_median_ms": 5.628219,
+          "after_median_ms": 5.6347165,
+          "median_speedup": 0.9988468807614367,
+          "before_p95_ms": 11.60016345,
+          "after_p95_ms": 10.861748599999999
+        },
+        "warm_fully_occluded": {
+          "n_per_build": 24,
+          "before_median_ms": 5.8398745000000005,
+          "after_median_ms": 5.7179675,
+          "median_speedup": 1.021319988265061,
+          "before_p95_ms": 14.101281199999999,
+          "after_p95_ms": 14.336759149999999
+        },
+        "shaded_red_no_divider": {
+          "n_per_build": 24,
+          "before_median_ms": 5.171916,
+          "after_median_ms": 5.15494,
+          "median_speedup": 1.0032931518116603,
+          "before_p95_ms": 10.4534648,
+          "after_p95_ms": 10.21472585
+        },
+        "hold_loss_recovery": {
+          "n_per_build": 60,
+          "before_median_ms": 5.528840000000001,
+          "after_median_ms": 5.4571745,
+          "median_speedup": 1.0131323453189927,
+          "before_p95_ms": 11.1284559,
+          "after_p95_ms": 10.86151665
+        },
+        "jump_confirmation_and_fallback": {
+          "n_per_build": 48,
+          "before_median_ms": 5.991032,
+          "after_median_ms": 6.0476265,
+          "median_speedup": 0.9906418658625826,
+          "before_p95_ms": 12.946372449999998,
+          "after_p95_ms": 12.65736115
+        },
+        "dynamic_config_and_input_size": {
+          "n_per_build": 36,
+          "before_median_ms": 11.309512999999999,
+          "after_median_ms": 10.6704375,
+          "median_speedup": 1.059892155312282,
+          "before_p95_ms": 12.205568000000001,
+          "after_p95_ms": 11.4290945
+        },
+        "live_tabletop_original": {
+          "n_per_build": 24,
+          "before_median_ms": 15.391522,
+          "after_median_ms": 8.3917375,
+          "median_speedup": 1.8341281528408153,
+          "before_p95_ms": 16.2064847,
+          "after_p95_ms": 8.493111899999999
+        },
+        "live_tabletop_noncontinuous": {
+          "n_per_build": 24,
+          "before_median_ms": 15.3903695,
+          "after_median_ms": 8.42817,
+          "median_speedup": 1.826063012492629,
+          "before_p95_ms": 16.13905165,
+          "after_p95_ms": 8.9901295
+        }
+      },
+      "limitations": [
+        "432 includes three repeats, not 432 independent scenes; some PNG files have identical pixels.",
+        "Fixed tabletop median speedup about 1.83x does not apply to all scenes; most valid TRACK ROI medians change little.",
+        "Offline update timing excludes camera, ROS, rendering/encoding, network and client display."
+      ]
+    },
+    "field_optimization_live_performance": {
+      "status": "pass",
+      "evidence": [
+        "Jetson/outputs/preflight_20261116/field_live_comparison.json",
+        "Jetson/outputs/preflight_20261116/field_live_baseline_ros.json",
+        "Jetson/outputs/preflight_20261116/field_live_baseline_local.json",
+        "Jetson/outputs/preflight_20261116/field_live_baseline_pc.json",
+        "Jetson/outputs/preflight_20261116/field_live_optimized_ros.json",
+        "Jetson/outputs/preflight_20261116/field_live_optimized_local.json",
+        "Jetson/outputs/preflight_20261116/field_live_optimized_pc.json"
+      ],
+      "scope": "Sequential fresh 30-second live windows on current negative/tabletop SEARCH scene",
+      "runs": {
+        "baseline": {
+          "ros": {
+            "evidence": "Jetson/outputs/preflight_20261116/field_live_baseline_ros.json",
+            "mode": "field",
+            "started_utc": "2026-11-16T11:19:36.831435+00:00",
+            "requested_duration_s": 30.0,
+            "warmup_s": 3.0,
+            "ok": true,
+            "errors": [],
+            "service_response": {
+              "success": true,
+              "message": "active_task=field"
+            },
+            "summary": {
+              "sample_counts": {
+                "detect": 30,
+                "stream": 30,
+                "field": 1513
+              },
+              "detect": {
+                "capture_fps": {
+                  "n": 30,
+                  "mean": 113.76200784161078,
+                  "min": 109.01474130036286,
+                  "max": 116.99355236833543,
+                  "last": 116.07190910127024
+                },
+                "seg_fps": {
+                  "n": 30,
+                  "mean": 0.0,
+                  "min": 0.0,
+                  "max": 0.0,
+                  "last": 0.0
+                },
+                "field_fps": {
+                  "n": 30,
+                  "mean": 50.39792600955619,
+                  "min": 48.9915830010825,
+                  "max": 51.99676996065005,
+                  "last": 49.03038167600553
+                },
+                "seg_inference_ms": {
+                  "n": 30,
+                  "mean": 10.338841570246318,
+                  "min": 10.338841570246316,
+                  "max": 10.338841570246316,
+                  "last": 10.338841570246316
+                },
+                "field_inference_ms": {
+                  "n": 30,
+                  "mean": 19.730901052942627,
+                  "min": 18.76252441022802,
+                  "max": 20.55244723617364,
+                  "last": 20.16741240985177
+                }
+              },
+              "stream": {
+                "image_fps": {
+                  "n": 30,
+                  "mean": 50.39849386926782,
+                  "min": 48.93935586732924,
+                  "max": 52.04065238826353,
+                  "last": 48.99919607019008
+                },
+                "compose_fps": {
+                  "n": 30,
+                  "mean": 50.43174788039873,
+                  "min": 48.000865983623214,
+                  "max": 52.10685427549826,
+                  "last": 49.99917806351182
+                },
+                "stream_fps": {
+                  "n": 30,
+                  "mean": 51.47204130172638,
+                  "min": 49.44396518931501,
+                  "max": 54.417044814263704,
+                  "last": 49.83544486374333
+                }
+              },
+              "detect_counters": {
+                "inference_replaced": {
+                  "delta": 1900,
+                  "observed_span_s": 30.001013005999994,
+                  "reset_detected": false
+                },
+                "raw_replaced": {
+                  "delta": 0,
+                  "observed_span_s": 30.001013005999994,
+                  "reset_detected": false
+                },
+                "camera_reopens": {
+                  "delta": 0,
+                  "observed_span_s": 30.001013005999994,
+                  "reset_detected": false
+                },
+                "seg_skipped": {
+                  "delta": 0,
+                  "observed_span_s": 30.001013005999994,
+                  "reset_detected": false
+                },
+                "field_skipped": {
+                  "delta": 0,
+                  "observed_span_s": 30.001013005999994,
+                  "reset_detected": false
+                }
+              },
+              "stream_counters": {
+                "replaced_frames": {
+                  "delta": 0,
+                  "observed_span_s": 30.001273978000427,
+                  "reset_detected": false
+                }
+              },
+              "mode_mismatch_status_count": 0,
+              "field": {
+                "received": 1513,
+                "unique_source_stamps": 1513,
+                "duplicate_source_stamps": 0,
+                "received_messages_per_s": 50.43333333333333,
+                "valid": 0,
+                "valid_and_committed": 0,
+                "invalid": 1513,
+                "states": {
+                  "SEARCH": 1513
+                },
+                "qualities": {
+                  "none": 1513
+                },
+                "reasons": {
+                  "没有通过过滤的紫色候选": 1513
+                }
+              }
+            }
+          },
+          "local": {
+            "evidence": "Jetson/outputs/preflight_20261116/field_live_baseline_local.json",
+            "started_utc": "2026-11-16T11:19:45.695189+00:00",
+            "requested_duration_s": 30.0,
+            "elapsed_total_window_s": 30.001477411999986,
+            "status": "ok",
+            "exit_reason": "duration_elapsed",
+            "error": null,
+            "frame_timeout_s": 3.0,
+            "http_status": 200,
+            "complete_frames": 1516,
+            "fps_total_window": 50.530844837448925,
+            "fps_first_to_last": 50.52672073794425,
+            "receive_interval_ms": {
+              "count": 1515,
+              "min": 8.739029000025766,
+              "mean": 19.791508045544425,
+              "p50": 19.50286999999662,
+              "p95": 25.671651399989056,
+              "max": 33.23783699943306
+            },
+            "sequence": {
+              "valid_frames": 1516,
+              "missing_or_invalid_header_frames": 0,
+              "forward_gap_events": 0,
+              "forward_gap_sequence_slots": 0,
+              "out_of_order_frames": 0,
+              "duplicate_frames": 0
+            },
+            "server_metric_ms": {
+              "X-Frame-Age-At-Encode-Ms": {
+                "count": 1516,
+                "min": 23.5549,
+                "mean": 32.0116474591029,
+                "p50": 31.374277499999998,
+                "p95": 39.78973925,
+                "max": 48.876653
+              },
+              "X-Frame-Age-At-Publish-Ms": {
+                "count": 1516,
+                "min": 31.631918,
+                "mean": 41.03091243271768,
+                "p50": 40.3395855,
+                "p95": 49.018291500000004,
+                "max": 57.104525
+              },
+              "X-Jpeg-Encode-Ms": {
+                "count": 1516,
+                "min": 7.888403,
+                "mean": 8.961415479551452,
+                "p50": 8.568605,
+                "p95": 11.023868499999999,
+                "max": 15.637761
+              }
+            }
+          },
+          "pc": {
+            "evidence": "Jetson/outputs/preflight_20261116/field_live_baseline_pc.json",
+            "started_utc": "2026-11-16T11:19:46.666044+00:00",
+            "requested_duration_s": 30.0,
+            "elapsed_total_window_s": 30.0,
+            "status": "ok",
+            "exit_reason": "duration_elapsed",
+            "error": null,
+            "frame_timeout_s": 3.0,
+            "http_status": 200,
+            "complete_frames": 1514,
+            "fps_total_window": 50.46666666666667,
+            "fps_first_to_last": 50.59185447738249,
+            "receive_interval_ms": {
+              "count": 1513,
+              "min": 0.0,
+              "mean": 19.766027759410527,
+              "p50": 16.00000000325963,
+              "p95": 46.999999991385266,
+              "max": 78.00000000861473
+            },
+            "sequence": {
+              "valid_frames": 1514,
+              "missing_or_invalid_header_frames": 0,
+              "forward_gap_events": 0,
+              "forward_gap_sequence_slots": 0,
+              "out_of_order_frames": 0,
+              "duplicate_frames": 0
+            },
+            "server_metric_ms": {
+              "X-Frame-Age-At-Encode-Ms": {
+                "count": 1514,
+                "min": 23.5549,
+                "mean": 32.00938940554821,
+                "p50": 31.3921655,
+                "p95": 39.668912649999996,
+                "max": 48.876653
+              },
+              "X-Frame-Age-At-Publish-Ms": {
+                "count": 1514,
+                "min": 31.631918,
+                "mean": 41.030068663143986,
+                "p50": 40.3520015,
+                "p95": 49.030234099999994,
+                "max": 57.104525
+              },
+              "X-Jpeg-Encode-Ms": {
+                "count": 1514,
+                "min": 7.888403,
+                "mean": 8.962715044253633,
+                "p50": 8.568605,
+                "p95": 11.033871249999999,
+                "max": 15.637761
+              }
+            }
+          }
+        },
+        "optimized": {
+          "ros": {
+            "evidence": "Jetson/outputs/preflight_20261116/field_live_optimized_ros.json",
+            "mode": "field",
+            "started_utc": "2026-11-16T11:20:46.353182+00:00",
+            "requested_duration_s": 30.0,
+            "warmup_s": 3.0,
+            "ok": true,
+            "errors": [],
+            "service_response": {
+              "success": true,
+              "message": "active_task=field"
+            },
+            "summary": {
+              "sample_counts": {
+                "detect": 30,
+                "stream": 30,
+                "field": 2146
+              },
+              "detect": {
+                "capture_fps": {
+                  "n": 30,
+                  "mean": 111.36312367715169,
+                  "min": 104.98463402902499,
+                  "max": 117.0070545893353,
+                  "last": 109.99500963640781
+                },
+                "seg_fps": {
+                  "n": 30,
+                  "mean": 0.0,
+                  "min": 0.0,
+                  "max": 0.0,
+                  "last": 0.0
+                },
+                "field_fps": {
+                  "n": 30,
+                  "mean": 71.49771214187346,
+                  "min": 68.99686098780936,
+                  "max": 75.99710458631237,
+                  "last": 70.99677213175504
+                },
+                "seg_inference_ms": {
+                  "n": 30,
+                  "mean": 10.123544854444768,
+                  "min": 10.123544854444768,
+                  "max": 10.123544854444768,
+                  "last": 10.123544854444768
+                },
+                "field_inference_ms": {
+                  "n": 30,
+                  "mean": 13.488182631293322,
+                  "min": 12.504213266047222,
+                  "max": 15.121222338118296,
+                  "last": 13.095612671482751
+                }
+              },
+              "stream": {
+                "image_fps": {
+                  "n": 30,
+                  "mean": 71.53093792137278,
+                  "min": 69.82652821030393,
+                  "max": 75.01031054223557,
+                  "last": 71.04601742908704
+                },
+                "compose_fps": {
+                  "n": 30,
+                  "mean": 69.83085966060312,
+                  "min": 65.98642500870152,
+                  "max": 74.99573881711615,
+                  "last": 69.04471895261595
+                },
+                "stream_fps": {
+                  "n": 30,
+                  "mean": 74.41323054668197,
+                  "min": 67.21063712105531,
+                  "max": 81.80200269667955,
+                  "last": 78.2752578439076
+                }
+              },
+              "detect_counters": {
+                "inference_replaced": {
+                  "delta": 1197,
+                  "observed_span_s": 30.000191021999854,
+                  "reset_detected": false
+                },
+                "raw_replaced": {
+                  "delta": 0,
+                  "observed_span_s": 30.000191021999854,
+                  "reset_detected": false
+                },
+                "camera_reopens": {
+                  "delta": 0,
+                  "observed_span_s": 30.000191021999854,
+                  "reset_detected": false
+                },
+                "seg_skipped": {
+                  "delta": 0,
+                  "observed_span_s": 30.000191021999854,
+                  "reset_detected": false
+                },
+                "field_skipped": {
+                  "delta": 0,
+                  "observed_span_s": 30.000191021999854,
+                  "reset_detected": false
+                }
+              },
+              "stream_counters": {
+                "replaced_frames": {
+                  "delta": 4,
+                  "observed_span_s": 30.00099614299961,
+                  "reset_detected": false
+                }
+              },
+              "mode_mismatch_status_count": 0,
+              "field": {
+                "received": 2146,
+                "unique_source_stamps": 2146,
+                "duplicate_source_stamps": 0,
+                "received_messages_per_s": 71.53333333333333,
+                "valid": 0,
+                "valid_and_committed": 0,
+                "invalid": 2146,
+                "states": {
+                  "SEARCH": 2146
+                },
+                "qualities": {
+                  "none": 2146
+                },
+                "reasons": {
+                  "没有通过过滤的紫色候选": 2146
+                }
+              }
+            }
+          },
+          "local": {
+            "evidence": "Jetson/outputs/preflight_20261116/field_live_optimized_local.json",
+            "started_utc": "2026-11-16T11:20:55.236037+00:00",
+            "requested_duration_s": 30.0,
+            "elapsed_total_window_s": 30.000701159000528,
+            "status": "ok",
+            "exit_reason": "duration_elapsed",
+            "error": null,
+            "frame_timeout_s": 3.0,
+            "http_status": 200,
+            "complete_frames": 2098,
+            "fps_total_window": 69.93169889199666,
+            "fps_first_to_last": 69.95817521070508,
+            "receive_interval_ms": {
+              "count": 2097,
+              "min": 3.3993650004049414,
+              "mean": 14.294255060085943,
+              "p50": 13.690710999981093,
+              "p95": 21.2797116004367,
+              "max": 34.530758999608224
+            },
+            "sequence": {
+              "valid_frames": 2098,
+              "missing_or_invalid_header_frames": 0,
+              "forward_gap_events": 0,
+              "forward_gap_sequence_slots": 0,
+              "out_of_order_frames": 0,
+              "duplicate_frames": 0
+            },
+            "server_metric_ms": {
+              "X-Frame-Age-At-Encode-Ms": {
+                "count": 2098,
+                "min": 16.800689,
+                "mean": 31.326969639656816,
+                "p50": 29.710361499999998,
+                "p95": 47.739305349999974,
+                "max": 69.601954
+              },
+              "X-Frame-Age-At-Publish-Ms": {
+                "count": 2098,
+                "min": 25.810129,
+                "mean": 41.27034910533842,
+                "p50": 39.682272499999996,
+                "p95": 58.37386069999998,
+                "max": 83.905901
+              },
+              "X-Jpeg-Encode-Ms": {
+                "count": 2098,
+                "min": 7.958295,
+                "mean": 9.856907318398475,
+                "p50": 9.311276,
+                "p95": 13.6062472,
+                "max": 22.632916
+              }
+            }
+          },
+          "pc": {
+            "evidence": "Jetson/outputs/preflight_20261116/field_live_optimized_pc.json",
+            "started_utc": "2026-11-16T11:20:55.024451+00:00",
+            "requested_duration_s": 30.0,
+            "elapsed_total_window_s": 30.0,
+            "status": "ok",
+            "exit_reason": "duration_elapsed",
+            "error": null,
+            "frame_timeout_s": 3.0,
+            "http_status": 200,
+            "complete_frames": 2087,
+            "fps_total_window": 69.56666666666666,
+            "fps_first_to_last": 69.82426778242677,
+            "receive_interval_ms": {
+              "count": 2086,
+              "min": 0.0,
+              "mean": 14.321668264621286,
+              "p50": 15.000000013969839,
+              "p95": 46.999999991385266,
+              "max": 94.00000001187436
+            },
+            "sequence": {
+              "valid_frames": 2087,
+              "missing_or_invalid_header_frames": 0,
+              "forward_gap_events": 0,
+              "forward_gap_sequence_slots": 0,
+              "out_of_order_frames": 0,
+              "duplicate_frames": 0
+            },
+            "server_metric_ms": {
+              "X-Frame-Age-At-Encode-Ms": {
+                "count": 2087,
+                "min": 16.800689,
+                "mean": 31.28307183756588,
+                "p50": 29.713929,
+                "p95": 47.51763419999998,
+                "max": 69.601954
+              },
+              "X-Frame-Age-At-Publish-Ms": {
+                "count": 2087,
+                "min": 25.810129,
+                "mean": 41.23537027791088,
+                "p50": 39.724432,
+                "p95": 58.216484699999995,
+                "max": 83.905901
+              },
+              "X-Jpeg-Encode-Ms": {
+                "count": 2087,
+                "min": 7.958295,
+                "mean": 9.865527617153809,
+                "p50": 9.314572,
+                "p95": 13.603463199999998,
+                "max": 22.632916
+              }
+            }
+          }
+        }
+      },
+      "comparisons": {
+        "capture_fps_status_mean": {
+          "baseline": 113.76200784161078,
+          "optimized": 111.36312367715169,
+          "absolute_change": -2.3988841644590906,
+          "optimized_over_baseline": 0.9789131344464399,
+          "change_percent": -2.1086865553560097
+        },
+        "recognition_fps_status_mean": {
+          "baseline": 50.39792600955619,
+          "optimized": 71.49771214187346,
+          "absolute_change": 21.099786132317277,
+          "optimized_over_baseline": 1.4186637785117675,
+          "change_percent": 41.86637785117675
+        },
+        "field_inference_ms_status_ema_mean": {
+          "baseline": 19.730901052942627,
+          "optimized": 13.488182631293322,
+          "absolute_change": -6.242718421649306,
+          "optimized_over_baseline": 0.6836070281383182,
+          "change_percent": -31.63929718616818
+        },
+        "stream_input_fps_status_mean": {
+          "baseline": 50.39849386926782,
+          "optimized": 71.53093792137278,
+          "absolute_change": 21.132444052104965,
+          "optimized_over_baseline": 1.4193070552251401,
+          "change_percent": 41.93070552251401
+        },
+        "stream_compose_fps_status_mean": {
+          "baseline": 50.43174788039873,
+          "optimized": 69.83085966060312,
+          "absolute_change": 19.399111780204393,
+          "optimized_over_baseline": 1.3846607067082088,
+          "change_percent": 38.46607067082088
+        },
+        "stream_compose_ms_status_ema_mean": {
+          "baseline": 10.380253663314356,
+          "optimized": 11.619677931803283,
+          "absolute_change": 1.2394242684889267,
+          "optimized_over_baseline": 1.1194021175869016,
+          "change_percent": 11.940211758690156
+        },
+        "stream_fps_status_mean": {
+          "baseline": 51.47204130172638,
+          "optimized": 74.41323054668197,
+          "absolute_change": 22.941189244955595,
+          "optimized_over_baseline": 1.4457019512879927,
+          "change_percent": 44.57019512879927
+        },
+        "viewers_status_mean": {
+          "baseline": 2.6,
+          "optimized": 2.9,
+          "absolute_change": 0.2999999999999998,
+          "optimized_over_baseline": 1.1153846153846154,
+          "change_percent": 11.538461538461542
+        },
+        "recognition_received_messages_per_s": {
+          "baseline": 50.43333333333333,
+          "optimized": 71.53333333333333,
+          "absolute_change": 21.1,
+          "optimized_over_baseline": 1.4183740912095175,
+          "change_percent": 41.837409120951754
+        },
+        "field_message_max_receive_gap_ms": {
+          "baseline": 30.648936000034155,
+          "optimized": 26.796567000019422,
+          "absolute_change": -3.8523690000147326,
+          "optimized_over_baseline": 0.8743065990933441,
+          "change_percent": -12.569340090665593
+        },
+        "local_fps_first_to_last": {
+          "baseline": 50.52672073794425,
+          "optimized": 69.95817521070508,
+          "absolute_change": 19.431454472760826,
+          "optimized_over_baseline": 1.3845777875342762,
+          "change_percent": 38.45777875342762
+        },
+        "local_fps_total_window": {
+          "baseline": 50.530844837448925,
+          "optimized": 69.93169889199666,
+          "absolute_change": 19.400854054547736,
+          "optimized_over_baseline": 1.3839408210362945,
+          "change_percent": 38.394082103629444
+        },
+        "local_complete_frames": {
+          "baseline": 1516,
+          "optimized": 2098,
+          "absolute_change": 582,
+          "optimized_over_baseline": 1.383905013192612,
+          "change_percent": 38.390501319261205
+        },
+        "local_receive_interval_ms_mean": {
+          "baseline": 19.791508045544425,
+          "optimized": 14.294255060085943,
+          "absolute_change": -5.497252985458482,
+          "optimized_over_baseline": 0.7222418335779089,
+          "change_percent": -27.775816642209104
+        },
+        "local_receive_interval_ms_p50": {
+          "baseline": 19.50286999999662,
+          "optimized": 13.690710999981093,
+          "absolute_change": -5.8121590000155265,
+          "optimized_over_baseline": 0.7019844258810866,
+          "change_percent": -29.801557411891345
+        },
+        "local_receive_interval_ms_p95": {
+          "baseline": 25.671651399989056,
+          "optimized": 21.2797116004367,
+          "absolute_change": -4.3919397995523575,
+          "optimized_over_baseline": 0.8289186881232646,
+          "change_percent": -17.108131187673536
+        },
+        "local_receive_interval_ms_max": {
+          "baseline": 33.23783699943306,
+          "optimized": 34.530758999608224,
+          "absolute_change": 1.2929220001751673,
+          "optimized_over_baseline": 1.038899101653252,
+          "change_percent": 3.8899101653252055
+        },
+        "local_X-Frame-Age-At-Encode-Ms_mean": {
+          "baseline": 32.0116474591029,
+          "optimized": 31.326969639656816,
+          "absolute_change": -0.6846778194460867,
+          "optimized_over_baseline": 0.9786116031572317,
+          "change_percent": -2.1388396842768276
+        },
+        "local_X-Frame-Age-At-Encode-Ms_p50": {
+          "baseline": 31.374277499999998,
+          "optimized": 29.710361499999998,
+          "absolute_change": -1.6639160000000004,
+          "optimized_over_baseline": 0.9469655994468718,
+          "change_percent": -5.303440055312825
+        },
+        "local_X-Frame-Age-At-Encode-Ms_p95": {
+          "baseline": 39.78973925,
+          "optimized": 47.739305349999974,
+          "absolute_change": 7.949566099999977,
+          "optimized_over_baseline": 1.199789348958852,
+          "change_percent": 19.978934895885203
+        },
+        "local_X-Frame-Age-At-Encode-Ms_max": {
+          "baseline": 48.876653,
+          "optimized": 69.601954,
+          "absolute_change": 20.72530100000001,
+          "optimized_over_baseline": 1.4240327380845823,
+          "change_percent": 42.40327380845823
+        },
+        "local_X-Frame-Age-At-Publish-Ms_mean": {
+          "baseline": 41.03091243271768,
+          "optimized": 41.27034910533842,
+          "absolute_change": 0.23943667262074086,
+          "optimized_over_baseline": 1.0058355190860884,
+          "change_percent": 0.583551908608837
+        },
+        "local_X-Frame-Age-At-Publish-Ms_p50": {
+          "baseline": 40.3395855,
+          "optimized": 39.682272499999996,
+          "absolute_change": -0.657313000000002,
+          "optimized_over_baseline": 0.9837055093191277,
+          "change_percent": -1.6294490680872298
+        },
+        "local_X-Frame-Age-At-Publish-Ms_p95": {
+          "baseline": 49.018291500000004,
+          "optimized": 58.37386069999998,
+          "absolute_change": 9.355569199999977,
+          "optimized_over_baseline": 1.1908587368860046,
+          "change_percent": 19.085873688600465
+        },
+        "local_X-Frame-Age-At-Publish-Ms_max": {
+          "baseline": 57.104525,
+          "optimized": 83.905901,
+          "absolute_change": 26.801375999999998,
+          "optimized_over_baseline": 1.469338918413208,
+          "change_percent": 46.93389184132079
+        },
+        "local_X-Jpeg-Encode-Ms_mean": {
+          "baseline": 8.961415479551452,
+          "optimized": 9.856907318398475,
+          "absolute_change": 0.8954918388470237,
+          "optimized_over_baseline": 1.0999274992762467,
+          "change_percent": 9.992749927624667
+        },
+        "local_X-Jpeg-Encode-Ms_p50": {
+          "baseline": 8.568605,
+          "optimized": 9.311276,
+          "absolute_change": 0.7426709999999996,
+          "optimized_over_baseline": 1.086673501696017,
+          "change_percent": 8.667350169601695
+        },
+        "local_X-Jpeg-Encode-Ms_p95": {
+          "baseline": 11.023868499999999,
+          "optimized": 13.6062472,
+          "absolute_change": 2.5823787000000014,
+          "optimized_over_baseline": 1.234253402061173,
+          "change_percent": 23.425340206117305
+        },
+        "local_X-Jpeg-Encode-Ms_max": {
+          "baseline": 15.637761,
+          "optimized": 22.632916,
+          "absolute_change": 6.995155000000002,
+          "optimized_over_baseline": 1.447324588219503,
+          "change_percent": 44.732458821950296
+        },
+        "local_jpeg_bytes_mean": {
+          "baseline": 186980.2882585752,
+          "optimized": 194817.98856053385,
+          "absolute_change": 7837.7003019586555,
+          "optimized_over_baseline": 1.0419172543531428,
+          "change_percent": 4.191725435314275
+        },
+        "local_jpeg_payload_bytes_per_s": {
+          "baseline": 9448271.933655536,
+          "optimized": 13623952.914759701,
+          "absolute_change": 4175680.9811041653,
+          "optimized_over_baseline": 1.4419518204413697,
+          "change_percent": 44.19518204413697
+        },
+        "pc_fps_first_to_last": {
+          "baseline": 50.59185447738249,
+          "optimized": 69.82426778242677,
+          "absolute_change": 19.232413305044282,
+          "optimized_over_baseline": 1.3801484152679617,
+          "change_percent": 38.014841526796175
+        },
+        "pc_fps_total_window": {
+          "baseline": 50.46666666666667,
+          "optimized": 69.56666666666666,
+          "absolute_change": 19.099999999999994,
+          "optimized_over_baseline": 1.3784676354029062,
+          "change_percent": 37.84676354029062
+        },
+        "pc_complete_frames": {
+          "baseline": 1514,
+          "optimized": 2087,
+          "absolute_change": 573,
+          "optimized_over_baseline": 1.3784676354029062,
+          "change_percent": 37.84676354029062
+        },
+        "pc_receive_interval_ms_mean": {
+          "baseline": 19.766027759410527,
+          "optimized": 14.321668264621286,
+          "absolute_change": -5.444359494789241,
+          "optimized_over_baseline": 0.7245597567170671,
+          "change_percent": -27.544024328293293
+        },
+        "pc_receive_interval_ms_p50": {
+          "baseline": 16.00000000325963,
+          "optimized": 15.000000013969839,
+          "absolute_change": -0.9999999892897904,
+          "optimized_over_baseline": 0.937500000682121,
+          "change_percent": -6.249999931787897
+        },
+        "pc_receive_interval_ms_p95": {
+          "baseline": 46.999999991385266,
+          "optimized": 46.999999991385266,
+          "absolute_change": 0.0,
+          "optimized_over_baseline": 1.0,
+          "change_percent": 0.0
+        },
+        "pc_receive_interval_ms_max": {
+          "baseline": 78.00000000861473,
+          "optimized": 94.00000001187436,
+          "absolute_change": 16.00000000325963,
+          "optimized_over_baseline": 1.2051282051473398,
+          "change_percent": 20.512820514733974
+        },
+        "pc_X-Frame-Age-At-Encode-Ms_mean": {
+          "baseline": 32.00938940554821,
+          "optimized": 31.28307183756588,
+          "absolute_change": -0.7263175679823313,
+          "optimized_over_baseline": 0.9773092339007117,
+          "change_percent": -2.269076609928833
+        },
+        "pc_X-Frame-Age-At-Encode-Ms_p50": {
+          "baseline": 31.3921655,
+          "optimized": 29.713929,
+          "absolute_change": -1.6782365000000006,
+          "optimized_over_baseline": 0.9465396390064266,
+          "change_percent": -5.3460360993573435
+        },
+        "pc_X-Frame-Age-At-Encode-Ms_p95": {
+          "baseline": 39.668912649999996,
+          "optimized": 47.51763419999998,
+          "absolute_change": 7.848721549999986,
+          "optimized_over_baseline": 1.197855726958021,
+          "change_percent": 19.785572695802102
+        },
+        "pc_X-Frame-Age-At-Encode-Ms_max": {
+          "baseline": 48.876653,
+          "optimized": 69.601954,
+          "absolute_change": 20.72530100000001,
+          "optimized_over_baseline": 1.4240327380845823,
+          "change_percent": 42.40327380845823
+        },
+        "pc_X-Frame-Age-At-Publish-Ms_mean": {
+          "baseline": 41.030068663143986,
+          "optimized": 41.23537027791088,
+          "absolute_change": 0.20530161476689557,
+          "optimized_over_baseline": 1.0050036868437247,
+          "change_percent": 0.5003686843724653
+        },
+        "pc_X-Frame-Age-At-Publish-Ms_p50": {
+          "baseline": 40.3520015,
+          "optimized": 39.724432,
+          "absolute_change": -0.6275694999999999,
+          "optimized_over_baseline": 0.9844476239920837,
+          "change_percent": -1.5552376007916258
+        },
+        "pc_X-Frame-Age-At-Publish-Ms_p95": {
+          "baseline": 49.030234099999994,
+          "optimized": 58.216484699999995,
+          "absolute_change": 9.186250600000001,
+          "optimized_over_baseline": 1.1873588973951075,
+          "change_percent": 18.735889739510746
+        },
+        "pc_X-Frame-Age-At-Publish-Ms_max": {
+          "baseline": 57.104525,
+          "optimized": 83.905901,
+          "absolute_change": 26.801375999999998,
+          "optimized_over_baseline": 1.469338918413208,
+          "change_percent": 46.93389184132079
+        },
+        "pc_X-Jpeg-Encode-Ms_mean": {
+          "baseline": 8.962715044253633,
+          "optimized": 9.865527617153809,
+          "absolute_change": 0.9028125729001761,
+          "optimized_over_baseline": 1.100729808818256,
+          "change_percent": 10.0729808818256
+        },
+        "pc_X-Jpeg-Encode-Ms_p50": {
+          "baseline": 8.568605,
+          "optimized": 9.314572,
+          "absolute_change": 0.7459670000000003,
+          "optimized_over_baseline": 1.0870581617427808,
+          "change_percent": 8.70581617427808
+        },
+        "pc_X-Jpeg-Encode-Ms_p95": {
+          "baseline": 11.033871249999999,
+          "optimized": 13.603463199999998,
+          "absolute_change": 2.5695919499999995,
+          "optimized_over_baseline": 1.2328821763259201,
+          "change_percent": 23.288217632592012
+        },
+        "pc_X-Jpeg-Encode-Ms_max": {
+          "baseline": 15.637761,
+          "optimized": 22.632916,
+          "absolute_change": 6.995155000000002,
+          "optimized_over_baseline": 1.447324588219503,
+          "change_percent": 44.732458821950296
+        },
+        "pc_jpeg_bytes_mean": {
+          "baseline": 186982.63672391017,
+          "optimized": 194823.4839482511,
+          "absolute_change": 7840.84722434092,
+          "optimized_over_baseline": 1.0419335579052633,
+          "change_percent": 4.193355790526332
+        },
+        "pc_jpeg_payload_bytes_per_s": {
+          "baseline": 9436390.4,
+          "optimized": 13553220.366666667,
+          "absolute_change": 4116829.966666667,
+          "optimized_over_baseline": 1.4362716878126054,
+          "change_percent": 43.627168781260536
+        }
+      },
+      "health_checks": {
+        "baseline": {
+          "ros_probe_ok": true,
+          "ros_probe_errors": [],
+          "camera_reopens_delta": 0,
+          "field_skipped_delta": 0,
+          "inference_replaced_delta": 1900,
+          "stream_replaced_delta": 0,
+          "mode_mismatch_status_count": 0,
+          "field_duplicate_source_stamps": 0,
+          "counter_reset_detected": false,
+          "http": {
+            "local": {
+              "status": "ok",
+              "error": null,
+              "http_status": 200,
+              "sequence": {
+                "valid_frames": 1516,
+                "missing_or_invalid_header_frames": 0,
+                "forward_gap_events": 0,
+                "forward_gap_sequence_slots": 0,
+                "out_of_order_frames": 0,
+                "duplicate_frames": 0
+              }
+            },
+            "pc": {
+              "status": "ok",
+              "error": null,
+              "http_status": 200,
+              "sequence": {
+                "valid_frames": 1514,
+                "missing_or_invalid_header_frames": 0,
+                "forward_gap_events": 0,
+                "forward_gap_sequence_slots": 0,
+                "out_of_order_frames": 0,
+                "duplicate_frames": 0
+              }
+            }
+          }
+        },
+        "optimized": {
+          "ros_probe_ok": true,
+          "ros_probe_errors": [],
+          "camera_reopens_delta": 0,
+          "field_skipped_delta": 0,
+          "inference_replaced_delta": 1197,
+          "stream_replaced_delta": 4,
+          "mode_mismatch_status_count": 0,
+          "field_duplicate_source_stamps": 0,
+          "counter_reset_detected": false,
+          "http": {
+            "local": {
+              "status": "ok",
+              "error": null,
+              "http_status": 200,
+              "sequence": {
+                "valid_frames": 2098,
+                "missing_or_invalid_header_frames": 0,
+                "forward_gap_events": 0,
+                "forward_gap_sequence_slots": 0,
+                "out_of_order_frames": 0,
+                "duplicate_frames": 0
+              }
+            },
+            "pc": {
+              "status": "ok",
+              "error": null,
+              "http_status": 200,
+              "sequence": {
+                "valid_frames": 2087,
+                "missing_or_invalid_header_frames": 0,
+                "forward_gap_events": 0,
+                "forward_gap_sequence_slots": 0,
+                "out_of_order_frames": 0,
+                "duplicate_frames": 0
+              }
+            }
+          }
+        }
+      },
+      "assessment": {
+        "recognition_throughput_improved": true,
+        "inference_latency_reduced": true,
+        "delivered_stream_throughput_improved": true,
+        "stream_tail_latency_regressed": true,
+        "observed_camera_reopen_or_probe_error": false,
+        "observed_emitted_jpeg_sequence_gap": false,
+        "interpretation": "The optimized field path materially improves recognition and delivered video throughput. It does not improve every latency metric: encode/publish age tails, JPEG encoding time and worst receive intervals increase, and the stream queue replaces 4 frames. This is a modest stream-side tail regression rather than an observed transport/camera failure; it does not negate the measured throughput improvement.",
+        "practical_significance": "Retain the optimization on this evidence while reporting the tail tradeoff. PC receive p95 remains about 47 ms, worst gap rises from 78 to 94 ms, and PC delivery rises from 50.4667 to 69.5667 fps. Do not describe the new stream as uniformly lower-latency or lossless for every recognition frame.",
+        "possible_contributors_not_proven": "The optimized window has higher total JPEG traffic, about 4.2% larger average JPEGs, and slightly more simultaneous viewers. These differences can contribute to stream/CPU/network tail load, but this sequential live pair does not isolate a cause."
+      },
+      "limitations": [
+        "Both live windows contain only SEARCH/none results: 0 valid or committed fields among 1513 baseline and 2146 optimized messages. This pair measures no-candidate scene throughput, not positive-field tracking accuracy or full-scene accuracy equivalence.",
+        "Baseline and optimized were sequential live windows, not identical fixed-image replay. Camera contents/noise/exposure and load can vary; source reports do not contain frame-by-frame input equivalence or configuration hashes.",
+        "The task requires unchanged source/processing resolution, thresholds and image quality. These six reports do not independently prove those settings; implementation review and separate matched-input regression evidence establish that claim.",
+        "ROS status FPS values are window counters; inference and composition latency status values are smoothed EMA samples. Their means are not independent per-frame latency percentiles.",
+        "The ROS and HTTP measurements each last 30 seconds but start at different times. Their rates/counts cannot be subtracted as an exact count of lost frames.",
+        "HTTP sequence continuity proves continuity of emitted JPEGs observed by each client. Frames replaced or skipped before JPEG publication do not create HTTP sequence gaps.",
+        "Four stream queue replacements are observed in the optimized ROS status window versus zero baseline. This counter alone cannot explain the entire recognition-to-video rate difference.",
+        "Server frame-age headers end at encode/publish, exclude network/client display time and are not end-to-end motion-to-photon latency.",
+        "PC timestamps are visibly quantized (including zero receive intervals); its maximum gap is a single observed sample, not a stable worst-case guarantee.",
+        "Camera reopen and probe error checks are limited to these reports and sample windows; they are not an exhaustive journal/kernel fault audit."
+      ]
+    },
+    "vision_pre_field_optimization_runtime_and_fps": {
+      "status": "pass",
+      "phase": "Validated stage before performance optimization, not latest executable FPS",
+      "evidence": [
+        "Jetson/outputs/preflight_20261116/runtime_before_field_perf.json",
+        "Jetson/outputs/preflight_20261116/seg_ros_final.json",
+        "Jetson/outputs/preflight_20261116/field_ros_final.json",
+        "Jetson/outputs/preflight_20261116/seg_local_mjpeg_final.json",
+        "Jetson/outputs/preflight_20261116/seg_pc_mjpeg_final.json",
+        "Jetson/outputs/preflight_20261116/field_local_mjpeg_final.json",
+        "Jetson/outputs/preflight_20261116/field_pc_mjpeg_final.json",
+        "Jetson/outputs/preflight_20261116/seg_ros_repeat.json",
+        "Jetson/outputs/preflight_20261116/seg_local_mjpeg_repeat.json",
+        "Jetson/outputs/preflight_20261116/seg_pc_mjpeg_repeat.json",
+        "Jetson/outputs/preflight_20261116/seg_smoke_final.json",
+        "Jetson/outputs/preflight_20261116/field_preview_final.jpg",
+        "Jetson/outputs/preflight_20261116/seg_preview_final.jpg"
+      ],
+      "seg_20s": {
+        "ros": {
+          "evidence": "Jetson/outputs/preflight_20261116/seg_ros_final.json",
+          "mode": "seg",
+          "started_utc": "2026-11-16T10:43:46.347590+00:00",
+          "requested_duration_s": 20.0,
+          "warmup_s": 3.0,
+          "ok": true,
+          "errors": [],
+          "service_response": {
+            "success": true,
+            "message": "active_task=seg"
+          },
+          "summary": {
+            "sample_duration_s": 20.0,
+            "sample_counts": {
+              "detect": 20,
+              "stream": 20,
+              "field": 0
+            },
+            "detect": {
+              "capture_fps": {
+                "n": 20,
+                "mean": 114.49511060419539,
+                "min": 110.98803315927672,
+                "max": 118.99199053012542,
+                "last": 114.00201156549407
+              },
+              "seg_fps": {
+                "n": 20,
+                "mean": 95.29593530773403,
+                "min": 92.9870808399235,
+                "max": 96.00772583770588,
+                "last": 96.001666300922
+              },
+              "field_fps": {
+                "n": 20,
+                "mean": 0.0,
+                "min": 0.0,
+                "max": 0.0,
+                "last": 0.0
+              },
+              "raw_fps": {
+                "n": 20,
+                "mean": 0.0,
+                "min": 0.0,
+                "max": 0.0,
+                "last": 0.0
+              },
+              "seg_inference_ms": {
+                "n": 20,
+                "mean": 10.296383049384431,
+                "min": 10.130820700057916,
+                "max": 10.550728733581009,
+                "last": 10.31661499902194
+              },
+              "field_inference_ms": {
+                "n": 20,
+                "mean": 0.0,
+                "min": 0.0,
+                "max": 0.0,
+                "last": 0.0
+              },
+              "seg_gpu_ms": {
+                "n": 20,
+                "mean": 10.14364775,
+                "min": 9.781576,
+                "max": 10.621996,
+                "last": 10.5018
+              },
+              "seg_post_ms": {
+                "n": 20,
+                "mean": 0.0145814,
+                "min": 0.010817,
+                "max": 0.046466,
+                "last": 0.013216
+              },
+              "field_gpu_ms": {
+                "n": 20,
+                "mean": 0.0,
+                "min": 0.0,
+                "max": 0.0,
+                "last": 0.0
+              },
+              "field_post_ms": {
+                "n": 20,
+                "mean": 0.0,
+                "min": 0.0,
+                "max": 0.0,
+                "last": 0.0
+              }
+            },
+            "stream": {
+              "image_fps": {
+                "n": 20,
+                "mean": 95.2457336549425,
+                "min": 92.9721762168236,
+                "max": 97.00031593002899,
+                "last": 95.99488942407685
+              },
+              "compose_fps": {
+                "n": 20,
+                "mean": 82.6461322854255,
+                "min": 80.00038368184013,
+                "max": 87.00028605694055,
+                "last": 82.9955814812331
+              },
+              "compose_ms": {
+                "n": 20,
+                "mean": 10.454030256807247,
+                "min": 9.78957327607883,
+                "max": 11.251074049807661,
+                "last": 10.88762093905608
+              },
+              "stream_fps": {
+                "n": 20,
+                "mean": 85.16469594354217,
+                "min": 81.19865231651079,
+                "max": 91.04815014097214,
+                "last": 84.84825946779364
+              },
+              "viewers": {
+                "n": 20,
+                "mean": 2.35,
+                "min": 2,
+                "max": 3,
+                "last": 2
+              },
+              "instances": {
+                "n": 20,
+                "mean": 1.95,
+                "min": 1,
+                "max": 2,
+                "last": 2
+              }
+            },
+            "detect_counters": {
+              "inference_replaced": {
+                "delta": 384,
+                "observed_span_s": 20.00173549400006,
+                "first": 576,
+                "last": 960,
+                "reset_detected": false
+              },
+              "raw_replaced": {
+                "delta": 0,
+                "observed_span_s": 20.00173549400006,
+                "first": 0,
+                "last": 0,
+                "reset_detected": false
+              },
+              "camera_reopens": {
+                "delta": 0,
+                "observed_span_s": 20.00173549400006,
+                "first": 0,
+                "last": 0,
+                "reset_detected": false
+              },
+              "seg_skipped": {
+                "delta": 0,
+                "observed_span_s": 20.00173549400006,
+                "first": 0,
+                "last": 0,
+                "reset_detected": false
+              },
+              "field_skipped": {
+                "delta": 0,
+                "observed_span_s": 20.00173549400006,
+                "first": 0,
+                "last": 0,
+                "reset_detected": false
+              }
+            },
+            "stream_counters": {
+              "replaced_frames": {
+                "delta": 90,
+                "observed_span_s": 20.000936550000006,
+                "first": 67,
+                "last": 157,
+                "reset_detected": false
+              }
+            },
+            "max_receive_gap_s": {
+              "detect": 1.00366057500014,
+              "stream": 1.0017307109992544,
+              "field": 20.0
+            },
+            "mode_mismatch_status_count": 0,
+            "field": {
+              "received": 0,
+              "unique_source_stamps": 0,
+              "duplicate_source_stamps": 0,
+              "received_messages_per_s": 0.0,
+              "valid": 0,
+              "valid_and_committed": 0,
+              "invalid": 0,
+              "states": {},
+              "qualities": {},
+              "reasons": {}
+            }
+          }
+        },
+        "local": {
+          "evidence": "Jetson/outputs/preflight_20261116/seg_local_mjpeg_final.json",
+          "started_utc": "2026-11-16T10:43:51.721535+00:00",
+          "requested_duration_s": 20.0,
+          "elapsed_total_window_s": 20.00030975899972,
+          "status": "ok",
+          "exit_reason": "duration_elapsed",
+          "error": null,
+          "frame_timeout_s": 3.0,
+          "http_status": 200,
+          "complete_frames": 1652,
+          "fps_total_window": 82.59872071514465,
+          "fps_first_to_last": 82.61683548323245,
+          "receive_interval_ms": {
+            "count": 1651,
+            "min": 1.5650589994038455,
+            "mean": 12.104070485766252,
+            "p50": 11.814079999567184,
+            "p95": 16.035015000397834,
+            "max": 28.690011000435334
+          },
+          "sequence": {
+            "valid_frames": 1652,
+            "missing_or_invalid_header_frames": 0,
+            "forward_gap_events": 0,
+            "forward_gap_sequence_slots": 0,
+            "out_of_order_frames": 0,
+            "duplicate_frames": 0
+          },
+          "server_metric_ms": {
+            "X-Frame-Age-At-Encode-Ms": {
+              "count": 1652,
+              "min": 14.651163,
+              "mean": 34.82307803934625,
+              "p50": 33.49589949999999,
+              "p95": 52.8710356,
+              "max": 62.276331
+            },
+            "X-Frame-Age-At-Publish-Ms": {
+              "count": 1652,
+              "min": 22.97722,
+              "mean": 43.9358905877724,
+              "p50": 43.187664,
+              "p95": 62.02470305,
+              "max": 72.311326
+            },
+            "X-Jpeg-Encode-Ms": {
+              "count": 1652,
+              "min": 7.866644,
+              "mean": 9.045583241525424,
+              "p50": 8.648791,
+              "p95": 11.130491599999997,
+              "max": 16.410023
+            }
+          }
+        },
+        "pc": {
+          "evidence": "Jetson/outputs/preflight_20261116/seg_pc_mjpeg_final.json",
+          "started_utc": "2026-11-16T10:44:05.386369+00:00",
+          "requested_duration_s": 20.0,
+          "elapsed_total_window_s": 20.0,
+          "status": "ok",
+          "exit_reason": "duration_elapsed",
+          "error": null,
+          "frame_timeout_s": 3.0,
+          "http_status": 200,
+          "complete_frames": 1639,
+          "fps_total_window": 81.95,
+          "fps_first_to_last": 82.41509433962264,
+          "receive_interval_ms": {
+            "count": 1638,
+            "min": 0.0,
+            "mean": 12.133699633699633,
+            "p50": 15.000000013969839,
+            "p95": 32.00000000651926,
+            "max": 421.0000000020955
+          },
+          "sequence": {
+            "valid_frames": 1639,
+            "missing_or_invalid_header_frames": 0,
+            "forward_gap_events": 15,
+            "forward_gap_sequence_slots": 19,
+            "out_of_order_frames": 0,
+            "duplicate_frames": 0
+          },
+          "server_metric_ms": {
+            "X-Frame-Age-At-Encode-Ms": {
+              "count": 1639,
+              "min": 14.651163,
+              "mean": 28.139335255033558,
+              "p50": 25.825824,
+              "p95": 46.57256939999999,
+              "max": 62.276331
+            },
+            "X-Frame-Age-At-Publish-Ms": {
+              "count": 1639,
+              "min": 22.97722,
+              "mean": 37.38325444051251,
+              "p50": 35.200504,
+              "p95": 55.776696099999995,
+              "max": 72.311326
+            },
+            "X-Jpeg-Encode-Ms": {
+              "count": 1639,
+              "min": 7.891511,
+              "mean": 9.13334014032947,
+              "p50": 8.77174,
+              "p95": 11.1867708,
+              "max": 16.410023
+            }
+          }
+        }
+      },
+      "field_20s": {
+        "ros": {
+          "evidence": "Jetson/outputs/preflight_20261116/field_ros_final.json",
+          "mode": "field",
+          "started_utc": "2026-11-16T10:45:05.665444+00:00",
+          "requested_duration_s": 20.0,
+          "warmup_s": 3.0,
+          "ok": true,
+          "errors": [],
+          "service_response": {
+            "success": true,
+            "message": "active_task=field"
+          },
+          "summary": {
+            "sample_duration_s": 20.0,
+            "sample_counts": {
+              "detect": 20,
+              "stream": 20,
+              "field": 1029
+            },
+            "detect": {
+              "capture_fps": {
+                "n": 20,
+                "mean": 115.14522289261954,
+                "min": 109.99513799491035,
+                "max": 120.99334839067221,
+                "last": 118.02529742422462
+              },
+              "seg_fps": {
+                "n": 20,
+                "mean": 0.0,
+                "min": 0.0,
+                "max": 0.0,
+                "last": 0.0
+              },
+              "field_fps": {
+                "n": 20,
+                "mean": 51.4978099748486,
+                "min": 49.992336124879714,
+                "max": 54.99942146108565,
+                "last": 51.010930367104415
+              },
+              "raw_fps": {
+                "n": 20,
+                "mean": 0.0,
+                "min": 0.0,
+                "max": 0.0,
+                "last": 0.0
+              },
+              "seg_inference_ms": {
+                "n": 20,
+                "mean": 10.74999772927234,
+                "min": 10.74999772927234,
+                "max": 10.74999772927234,
+                "last": 10.74999772927234
+              },
+              "field_inference_ms": {
+                "n": 20,
+                "mean": 19.601929934572077,
+                "min": 18.590711335761835,
+                "max": 20.687428996848414,
+                "last": 19.35291072406975
+              },
+              "seg_gpu_ms": {
+                "n": 20,
+                "mean": 10.492297,
+                "min": 10.492297,
+                "max": 10.492297,
+                "last": 10.492297
+              },
+              "seg_post_ms": {
+                "n": 20,
+                "mean": 0.012993,
+                "min": 0.012993,
+                "max": 0.012993,
+                "last": 0.012993
+              },
+              "field_gpu_ms": {
+                "n": 20,
+                "mean": 0.0,
+                "min": 0.0,
+                "max": 0.0,
+                "last": 0.0
+              },
+              "field_post_ms": {
+                "n": 20,
+                "mean": 0.001547350000000236,
+                "min": 0.0009599999999991837,
+                "max": 0.002753000000002004,
+                "last": 0.0015359999999979834
+              }
+            },
+            "stream": {
+              "image_fps": {
+                "n": 20,
+                "mean": 51.545827613506574,
+                "min": 49.97255042785783,
+                "max": 54.996869523189865,
+                "last": 51.95651561773193
+              },
+              "compose_fps": {
+                "n": 20,
+                "mean": 51.54582063072654,
+                "min": 48.99815007484393,
+                "max": 54.99686776339027,
+                "last": 50.95735348512418
+              },
+              "compose_ms": {
+                "n": 20,
+                "mean": 10.645913114917754,
+                "min": 9.592374336921791,
+                "max": 11.568845132684801,
+                "last": 11.234705681859367
+              },
+              "stream_fps": {
+                "n": 20,
+                "mean": 52.32206491920772,
+                "min": 49.35292852222213,
+                "max": 55.02261649222462,
+                "last": 54.05026652445633
+              },
+              "viewers": {
+                "n": 20,
+                "mean": 2.45,
+                "min": 1,
+                "max": 3,
+                "last": 3
+              },
+              "instances": {
+                "n": 20,
+                "mean": 0.0,
+                "min": 0,
+                "max": 0,
+                "last": 0
+              }
+            },
+            "detect_counters": {
+              "inference_replaced": {
+                "delta": 1272,
+                "observed_span_s": 20.00112601699948,
+                "first": 2175,
+                "last": 3447,
+                "reset_detected": false
+              },
+              "raw_replaced": {
+                "delta": 0,
+                "observed_span_s": 20.00112601699948,
+                "first": 0,
+                "last": 0,
+                "reset_detected": false
+              },
+              "camera_reopens": {
+                "delta": 0,
+                "observed_span_s": 20.00112601699948,
+                "first": 0,
+                "last": 0,
+                "reset_detected": false
+              },
+              "seg_skipped": {
+                "delta": 0,
+                "observed_span_s": 20.00112601699948,
+                "first": 0,
+                "last": 0,
+                "reset_detected": false
+              },
+              "field_skipped": {
+                "delta": 0,
+                "observed_span_s": 20.00112601699948,
+                "first": 0,
+                "last": 0,
+                "reset_detected": false
+              }
+            },
+            "stream_counters": {
+              "replaced_frames": {
+                "delta": 0,
+                "observed_span_s": 20.003737109000213,
+                "first": 207,
+                "last": 207,
+                "reset_detected": false
+              }
+            },
+            "max_receive_gap_s": {
+              "detect": 1.0030468300001303,
+              "stream": 1.0027924800006076,
+              "field": 0.030079039999691304
+            },
+            "mode_mismatch_status_count": 0,
+            "field": {
+              "received": 1029,
+              "unique_source_stamps": 1029,
+              "duplicate_source_stamps": 0,
+              "received_messages_per_s": 51.45,
+              "valid": 0,
+              "valid_and_committed": 0,
+              "invalid": 1029,
+              "states": {
+                "SEARCH": 1029
+              },
+              "qualities": {
+                "none": 1029
+              },
+              "reasons": {
+                "没有通过过滤的紫色候选": 1029
+              }
+            }
+          }
+        },
+        "local": {
+          "evidence": "Jetson/outputs/preflight_20261116/field_local_mjpeg_final.json",
+          "started_utc": "2026-11-16T10:45:14.960604+00:00",
+          "requested_duration_s": 20.0,
+          "elapsed_total_window_s": 20.000746685000195,
+          "status": "ok",
+          "exit_reason": "duration_elapsed",
+          "error": null,
+          "frame_timeout_s": 3.0,
+          "http_status": 200,
+          "complete_frames": 1024,
+          "fps_total_window": 51.198088557761764,
+          "fps_first_to_last": 51.16900844746519,
+          "receive_interval_ms": {
+            "count": 1023,
+            "min": 0.4990940005882294,
+            "mean": 19.54307949951174,
+            "p50": 19.25492100053816,
+            "p95": 25.9562622996782,
+            "max": 35.35043800002313
+          },
+          "sequence": {
+            "valid_frames": 1024,
+            "missing_or_invalid_header_frames": 0,
+            "forward_gap_events": 0,
+            "forward_gap_sequence_slots": 0,
+            "out_of_order_frames": 0,
+            "duplicate_frames": 0
+          },
+          "server_metric_ms": {
+            "X-Frame-Age-At-Encode-Ms": {
+              "count": 1024,
+              "min": 22.589562,
+              "mean": 31.94155269921875,
+              "p50": 31.3531445,
+              "p95": 38.9649522,
+              "max": 50.362422
+            },
+            "X-Frame-Age-At-Publish-Ms": {
+              "count": 1024,
+              "min": 32.084856,
+              "mean": 41.045672052734375,
+              "p50": 40.510887,
+              "p95": 48.50985374999997,
+              "max": 59.380415
+            },
+            "X-Jpeg-Encode-Ms": {
+              "count": 1024,
+              "min": 7.937947,
+              "mean": 9.0354777734375,
+              "p50": 8.596135,
+              "p95": 11.292809649999997,
+              "max": 17.873452
+            }
+          }
+        },
+        "pc": {
+          "evidence": "Jetson/outputs/preflight_20261116/field_pc_mjpeg_final.json",
+          "started_utc": "2026-11-16T10:45:14.945642+00:00",
+          "requested_duration_s": 20.0,
+          "elapsed_total_window_s": 20.0,
+          "status": "ok",
+          "exit_reason": "duration_elapsed",
+          "error": null,
+          "frame_timeout_s": 3.0,
+          "http_status": 200,
+          "complete_frames": 1020,
+          "fps_total_window": 51.0,
+          "fps_first_to_last": 51.270440251572325,
+          "receive_interval_ms": {
+            "count": 1019,
+            "min": 0.0,
+            "mean": 19.50441609421001,
+            "p50": 16.00000000325963,
+            "p95": 47.0000000204891,
+            "max": 140.00000001396984
+          },
+          "sequence": {
+            "valid_frames": 1020,
+            "missing_or_invalid_header_frames": 0,
+            "forward_gap_events": 0,
+            "forward_gap_sequence_slots": 0,
+            "out_of_order_frames": 0,
+            "duplicate_frames": 0
+          },
+          "server_metric_ms": {
+            "X-Frame-Age-At-Encode-Ms": {
+              "count": 1020,
+              "min": 22.589562,
+              "mean": 31.9777886627451,
+              "p50": 31.4259955,
+              "p95": 39.156301799999994,
+              "max": 50.362422
+            },
+            "X-Frame-Age-At-Publish-Ms": {
+              "count": 1020,
+              "min": 32.084856,
+              "mean": 41.09849508529412,
+              "p50": 40.6480155,
+              "p95": 48.5682677,
+              "max": 59.380415
+            },
+            "X-Jpeg-Encode-Ms": {
+              "count": 1020,
+              "min": 7.937947,
+              "mean": 9.05172343627451,
+              "p50": 8.623287999999999,
+              "p95": 11.297006649999998,
+              "max": 17.873452
+            }
+          }
+        }
+      },
+      "seg_30s_repeat": {
+        "ros": {
+          "evidence": "Jetson/outputs/preflight_20261116/seg_ros_repeat.json",
+          "mode": "seg",
+          "started_utc": "2026-11-16T10:49:44.254960+00:00",
+          "requested_duration_s": 30.0,
+          "warmup_s": 3.0,
+          "ok": true,
+          "errors": [],
+          "service_response": {
+            "success": true,
+            "message": "active_task=seg"
+          },
+          "summary": {
+            "sample_duration_s": 30.0,
+            "sample_counts": {
+              "detect": 30,
+              "stream": 30,
+              "field": 0
+            },
+            "detect": {
+              "capture_fps": {
+                "n": 30,
+                "mean": 114.9951119635622,
+                "min": 110.00509785624484,
+                "max": 118.99370237729538,
+                "last": 115.98086176603826
+              },
+              "seg_fps": {
+                "n": 30,
+                "mean": 94.92940658567699,
+                "min": 92.9956309722613,
+                "max": 96.98402440356415,
+                "last": 96.98402440356415
+              },
+              "field_fps": {
+                "n": 30,
+                "mean": 0.0,
+                "min": 0.0,
+                "max": 0.0,
+                "last": 0.0
+              },
+              "raw_fps": {
+                "n": 30,
+                "mean": 0.0,
+                "min": 0.0,
+                "max": 0.0,
+                "last": 0.0
+              },
+              "seg_inference_ms": {
+                "n": 30,
+                "mean": 10.288899911604517,
+                "min": 10.128393372804032,
+                "max": 10.505338205578864,
+                "last": 10.456196559943155
+              },
+              "field_inference_ms": {
+                "n": 30,
+                "mean": 18.989761368278877,
+                "min": 18.989761368278877,
+                "max": 18.989761368278877,
+                "last": 18.989761368278877
+              },
+              "seg_gpu_ms": {
+                "n": 30,
+                "mean": 10.20348,
+                "min": 9.772146,
+                "max": 11.495486,
+                "last": 10.210597
+              },
+              "seg_post_ms": {
+                "n": 30,
+                "mean": 0.013451133333333334,
+                "min": 0.011041,
+                "max": 0.017088,
+                "last": 0.012833
+              },
+              "field_gpu_ms": {
+                "n": 30,
+                "mean": 0.0,
+                "min": 0.0,
+                "max": 0.0,
+                "last": 0.0
+              },
+              "field_post_ms": {
+                "n": 30,
+                "mean": 0.0014080000000014081,
+                "min": 0.0014080000000014081,
+                "max": 0.0014080000000014081,
+                "last": 0.0014080000000014081
+              }
+            },
+            "stream": {
+              "image_fps": {
+                "n": 30,
+                "mean": 94.96250913904416,
+                "min": 92.99029785727305,
+                "max": 97.12285769554485,
+                "last": 97.12285769554485
+              },
+              "compose_fps": {
+                "n": 30,
+                "mean": 84.02950450960978,
+                "min": 81.99146116326008,
+                "max": 86.99977649757417,
+                "last": 84.10639223119348
+              },
+              "compose_ms": {
+                "n": 30,
+                "mean": 10.532785518897226,
+                "min": 9.622541886002576,
+                "max": 11.403511839276907,
+                "last": 9.622541886002576
+              },
+              "stream_fps": {
+                "n": 30,
+                "mean": 88.44787881877188,
+                "min": 82.20128290542266,
+                "max": 93.8309164732851,
+                "last": 92.39710817483831
+              },
+              "viewers": {
+                "n": 30,
+                "mean": 2.8333333333333335,
+                "min": 2,
+                "max": 3,
+                "last": 2
+              },
+              "instances": {
+                "n": 30,
+                "mean": 2.0,
+                "min": 2,
+                "max": 2,
+                "last": 2
+              }
+            },
+            "detect_counters": {
+              "inference_replaced": {
+                "delta": 602,
+                "observed_span_s": 30.003969796000092,
+                "first": 10785,
+                "last": 11387,
+                "reset_detected": false
+              },
+              "raw_replaced": {
+                "delta": 0,
+                "observed_span_s": 30.003969796000092,
+                "first": 0,
+                "last": 0,
+                "reset_detected": false
+              },
+              "camera_reopens": {
+                "delta": 0,
+                "observed_span_s": 30.003969796000092,
+                "first": 0,
+                "last": 0,
+                "reset_detected": false
+              },
+              "seg_skipped": {
+                "delta": 0,
+                "observed_span_s": 30.003969796000092,
+                "first": 0,
+                "last": 0,
+                "reset_detected": false
+              },
+              "field_skipped": {
+                "delta": 0,
+                "observed_span_s": 30.003969796000092,
+                "first": 0,
+                "last": 0,
+                "reset_detected": false
+              }
+            },
+            "stream_counters": {
+              "replaced_frames": {
+                "delta": 25,
+                "observed_span_s": 30.00272001399935,
+                "first": 392,
+                "last": 417,
+                "reset_detected": false
+              }
+            },
+            "max_receive_gap_s": {
+              "detect": 1.0021838220000063,
+              "stream": 1.0018449899998814,
+              "field": 30.0
+            },
+            "mode_mismatch_status_count": 0,
+            "field": {
+              "received": 0,
+              "unique_source_stamps": 0,
+              "duplicate_source_stamps": 0,
+              "received_messages_per_s": 0.0,
+              "valid": 0,
+              "valid_and_committed": 0,
+              "invalid": 0,
+              "states": {},
+              "qualities": {},
+              "reasons": {}
+            }
+          }
+        },
+        "local": {
+          "evidence": "Jetson/outputs/preflight_20261116/seg_local_mjpeg_repeat.json",
+          "started_utc": "2026-11-16T10:49:48.227115+00:00",
+          "requested_duration_s": 30.0,
+          "elapsed_total_window_s": 30.00071113500053,
+          "status": "ok",
+          "exit_reason": "duration_elapsed",
+          "error": null,
+          "frame_timeout_s": 3.0,
+          "http_status": 200,
+          "complete_frames": 2519,
+          "fps_total_window": 83.96467632599521,
+          "fps_first_to_last": 84.00051486470754,
+          "receive_interval_ms": {
+            "count": 2518,
+            "min": 6.850288000350702,
+            "mean": 11.904688936854907,
+            "p50": 11.125565500151424,
+            "p95": 18.441791100030972,
+            "max": 26.818981999895186
+          },
+          "sequence": {
+            "valid_frames": 2519,
+            "missing_or_invalid_header_frames": 0,
+            "forward_gap_events": 0,
+            "forward_gap_sequence_slots": 0,
+            "out_of_order_frames": 0,
+            "duplicate_frames": 0
+          },
+          "server_metric_ms": {
+            "X-Frame-Age-At-Encode-Ms": {
+              "count": 2519,
+              "min": 14.229239,
+              "mean": 27.426522558951962,
+              "p50": 24.852975,
+              "p95": 47.6105239,
+              "max": 59.513007
+            },
+            "X-Frame-Age-At-Publish-Ms": {
+              "count": 2519,
+              "min": 23.140932,
+              "mean": 36.657733455736405,
+              "p50": 34.18238,
+              "p95": 56.93943049999999,
+              "max": 71.078736
+            },
+            "X-Jpeg-Encode-Ms": {
+              "count": 2519,
+              "min": 7.835484,
+              "mean": 9.152504143707821,
+              "p50": 8.769861,
+              "p95": 11.3465712,
+              "max": 17.189658
+            }
+          }
+        },
+        "pc": {
+          "evidence": "Jetson/outputs/preflight_20261116/seg_pc_mjpeg_repeat.json",
+          "started_utc": "2026-11-16T10:49:53.792672+00:00",
+          "requested_duration_s": 30.0,
+          "elapsed_total_window_s": 30.0,
+          "status": "ok",
+          "exit_reason": "duration_elapsed",
+          "error": null,
+          "frame_timeout_s": 3.0,
+          "http_status": 200,
+          "complete_frames": 2454,
+          "fps_total_window": 81.8,
+          "fps_first_to_last": 82.1527847550242,
+          "receive_interval_ms": {
+            "count": 2453,
+            "min": 0.0,
+            "mean": 12.172441907866588,
+            "p50": 15.000000013969839,
+            "p95": 32.00000000651926,
+            "max": 94.00000001187436
+          },
+          "sequence": {
+            "valid_frames": 2454,
+            "missing_or_invalid_header_frames": 0,
+            "forward_gap_events": 54,
+            "forward_gap_sequence_slots": 60,
+            "out_of_order_frames": 0,
+            "duplicate_frames": 0
+          },
+          "server_metric_ms": {
+            "X-Frame-Age-At-Encode-Ms": {
+              "count": 2454,
+              "min": 14.229239,
+              "mean": 25.515933109209453,
+              "p50": 23.9127415,
+              "p95": 40.6263364,
+              "max": 57.372241
+            },
+            "X-Frame-Age-At-Publish-Ms": {
+              "count": 2454,
+              "min": 23.140932,
+              "mean": 34.748093396903016,
+              "p50": 33.159903,
+              "p95": 49.974536650000005,
+              "max": 68.797197
+            },
+            "X-Jpeg-Encode-Ms": {
+              "count": 2454,
+              "min": 7.835484,
+              "mean": 9.155125442542786,
+              "p50": 8.7631885,
+              "p95": 11.3775946,
+              "max": 17.189658
+            }
+          }
+        }
+      },
+      "seg_real_scene_smoke": {
+        "received_frames": 573,
+        "frames_with_detections": 573,
+        "classes": {
+          "orange": 574,
+          "green": 573
+        },
+        "confidence_ranges": {
+          "orange": [
+            0.80712890625,
+            0.990234375
+          ],
+          "green": [
+            0.72119140625,
+            0.97900390625
+          ]
+        },
+        "last_frame": {
+          "stamp": [
+            1794826058,
+            200875109
+          ],
+          "detections": [
+            {
+              "class_id": 3,
+              "label": "orange",
+              "score": 0.98095703125,
+              "width": 199.0,
+              "height": 330.0
+            },
+            {
+              "class_id": 0,
+              "label": "green",
+              "score": 0.96142578125,
+              "width": 212.0,
+              "height": 226.0
+            }
+          ]
+        },
+        "scope": "Real scene smoke observation only; not labelled accuracy validation."
+      },
+      "seg_smoke_limit": "573/573 frames had at least one detection; aggregate counts do not prove each frame contained both classes or establish labelled accuracy.",
+      "first_seg_pc_421ms_gap": {
+        "consecutive_sequence_pair": [
+          3853,
+          3854
+        ],
+        "pc_elapsed_interval_s": [
+          3.672,
+          4.093
+        ],
+        "pc_gap_ms": 421,
+        "same_pair_jetson_local_gap_ms": 17.789732,
+        "interpretation": "PC delivery/receive-path stall supported; precise network/tunnel/scheduler cause unproved. Not an initial-connect gap or a 421ms encoder pause."
+      },
+      "limitations": [
+        "PC 30s repeat max gap 94ms, with 54 sequence-gap events/60 missing slots; earlier 421ms observation remains retained.",
+        "No fresh optimized-executable seg FPS measurement is claimed; final performance comparison specifically targets field."
+      ]
+    }
+  },
+  "excluded_from_final_pass": [
+    {
+      "evidence": [
+        "STM32/outputs/preflight_20261116/usb_timeout_summary.json",
+        "STM32/outputs/preflight_20261116/usb_sender_timeout.jsonl"
+      ],
+      "status": "inconclusive",
+      "reason": "inconclusive_wrong_or_uncovered_observation_window",
+      "details": "523 idle DISARMED samples, no qualified RUNNING or frozen sender interval; old motor sequence 852 is not new stop feedback."
+    },
+    {
+      "evidence": [
+        "Jetson/outputs/preflight_20261116/seg_pc_mjpeg.json",
+        "Jetson/outputs/preflight_20261116/field_pc_mjpeg.json"
+      ],
+      "status": "preliminary_observation",
+      "reason": "Before final vision fixes/rebuild; transport measurements alone do not establish detector FPS or field correctness."
+    },
+    {
+      "evidence": [
+        "Jetson/src/vision_pkg/test/field/README.md"
+      ],
+      "status": "historical_other_platform",
+      "reason": "Nov15 Windows/MinGW/OpenCV4.13 passes do not establish Jetson/OpenCV4.10 acceptance."
+    },
+    {
+      "evidence": [
+        "Jetson/outputs/preflight_20261116/colcon_test_result_before_fix.log"
+      ],
+      "status": "fail",
+      "reason": "Before-fix field matrix/split/geometry failures and skipped replay must not be counted as passes."
+    },
+    {
+      "evidence": [
+        "Jetson/outputs/preflight_20261116/field_vision_ctest_optimized.log"
+      ],
+      "status": "skipped_missing_data",
+      "reason": "Annotated real replay was skipped and is not counted as a pass; ground and autonomous tests were not performed."
+    }
+  ],
+  "evidence_files": {
+    "STM32/outputs/preflight_20261116/summary.json": {
+      "sha256": "e79a4fac2cfa5ea7e7b57287f3f4314da58d64e0de82b3d0e7f228ff3c5c28e1",
+      "bytes": 1621
+    },
+    "STM32/outputs/preflight_20261116/configuration.json": {
+      "sha256": "f5d755fd18c72750c457c47bd0845884a62ad9b3239c708a84410badd420c0a0",
+      "bytes": 463
+    },
+    "STM32/outputs/preflight_20261116/flash_preflight.json": {
+      "sha256": "6b54b4712eb5132a394afcbbea10d35c5f9733bbeb066880e5d7dd49ace35ae8",
+      "bytes": 497
+    },
+    "STM32/outputs/preflight_20261116/build.log": {
+      "sha256": "71aa391ec7d7e291b419a7f40fba91919e14ac2394ab4e8b66ed126e267d70f6",
+      "bytes": 23
+    },
+    "STM32/outputs/preflight_20261116/native.log": {
+      "sha256": "1c4de00dd409cdcd8416aa783a0c8309d122aab8c74f7440b2c75ce52710cba5",
+      "bytes": 6147
+    },
+    "STM32/outputs/preflight_20261116/codec.log": {
+      "sha256": "c89272a717f5790a283cacb3361079693534dfe8e464537d1044878681fcf568",
+      "bytes": 111
+    },
+    "STM32/outputs/preflight_20261116/gripper_budget.log": {
+      "sha256": "813284e7fdb644e16f9ef74462f1c9c06fd6341d56166dac95e1165a264afaf0",
+      "bytes": 54
+    },
+    "STM32/outputs/preflight_20261116/usb_motion_summary.json": {
+      "sha256": "93048b71286b650ef4ba5c495700c999ab6d37581fee7f2eb920daf5c7de93be",
+      "bytes": 15217
+    },
+    "STM32/outputs/preflight_20261116/usb_timeout_summary.json": {
+      "sha256": "2ef14288e60cbb3625a4056fd79a4c78b936634d50527237a8627d0849517559",
+      "bytes": 2696
+    },
+    "STM32/outputs/preflight_20261116/usb_timeout_v2_summary.json": {
+      "sha256": "a108b27fe94a270b16f50dc1772f6cd0f77cb2212ef73537e125319ed1d24d9f",
+      "bytes": 8439
+    },
+    "STM32/outputs/preflight_20261116/usb_zero_enable.jsonl": {
+      "sha256": "85e608bd3b83973d331598d349251d66caab58b8de756f9697f50f7831ea9f3c",
+      "bytes": 24334
+    },
+    "STM32/outputs/preflight_20261116/usb_six_directions.jsonl": {
+      "sha256": "eb80c26f1ef6ea3b171016b744881c94dc7202702864cb44bee10b75e81523e8",
+      "bytes": 109021
+    },
+    "STM32/outputs/preflight_20261116/usb_sender_timeout.jsonl": {
+      "sha256": "146b4a883db2911b27030045b3dca296455091779051f03ff951fe479c53f6be",
+      "bytes": 522630
+    },
+    "STM32/outputs/preflight_20261116/usb_sender_timeout_v2.jsonl": {
+      "sha256": "12f212d9f77cdd2e798c2dd3a97542d8a596e652cc2e6ef0eb0eafdb65f7f112",
+      "bytes": 122617
+    },
+    "Jetson/outputs/preflight_20261116/source_audit_before_vision_fix.json": {
+      "sha256": "3b5636d6d13ccfd0fd9032c22f60583c53dfd36d0f5cdeed301840b67026d47a",
+      "bytes": 1114
+    },
+    "Jetson/outputs/preflight_20261116/build_clean.log": {
+      "sha256": "b1701fd108b50f8f6e76428b91ef1ad4ed0c98058d7ac088a34b8acbcbf333a4",
+      "bytes": 330
+    },
+    "Jetson/outputs/preflight_20261116/build_vision.log": {
+      "sha256": "6d924b6d9ce305b5ae39e538fecf63764851cfc74c2f113af917e21beea61701",
+      "bytes": 4261
+    },
+    "Jetson/outputs/preflight_20261116/extra_tests_launcher.log": {
+      "sha256": "002c1dfe987e62b13f73c620cca6fad7199bf022d5bb61d22f0e9dcc8b50b527",
+      "bytes": 3482
+    },
+    "Jetson/outputs/preflight_20261116/colcon_test_result_before_fix.log": {
+      "sha256": "819a4a46b404db04166f8aec3b826a11f1859125642ebc6581ea81e105371989",
+      "bytes": 12647
+    },
+    "Jetson/outputs/preflight_20261116/seg_pc_mjpeg.json": {
+      "sha256": "c3604319b1106cddae4ab54766539ca0227f14445cab0379517596c034409c05",
+      "bytes": 631342
+    },
+    "Jetson/outputs/preflight_20261116/field_pc_mjpeg.json": {
+      "sha256": "f2aa529ee61944f53f56c1d3f634af4d0c5398a6452fe5b7bd6df7238bf1fc3b",
+      "bytes": 367851
+    },
+    "Jetson/outputs/preflight_20261116/geometry_probe.log": {
+      "sha256": "92e702b2ee9400cd6d526d56b76393fb4308343d95a74fd72ac458eb775ecd45",
+      "bytes": 11023
+    },
+    "Jetson/outputs/preflight_20261116/split_probe.log": {
+      "sha256": "02a667b1d0ba327ddb5c5626ecef0dd3ba4306d8d5f5a7c2adadf20d856b13d7",
+      "bytes": 39919
+    },
+    "Jetson/outputs/preflight_20261116/local_manifest_before_vision_fix.json": {
+      "sha256": "a1edf8cddbfa9ca33808735d22a50a5f7aedcec36dd89e81a3cc9e1cbefaefdf",
+      "bytes": 40483
+    },
+    "Jetson/outputs/preflight_20261116/local_manifest.json": {
+      "sha256": "672fa72d4affeed6473cea447b85745bc4d93137c4afb13543a1153f9722d123",
+      "bytes": 40936
+    },
+    "Jetson/outputs/preflight_20261116/seg_local_mjpeg_repeat.json": {
+      "sha256": "3cbdff9ee2f56895e4f300b6dc5360f965f34d3dedce5b37c286a341da538e49",
+      "bytes": 1461438
+    },
+    "Jetson/outputs/preflight_20261116/seg_pc_mjpeg_repeat.json": {
+      "sha256": "a54167cd969f608e6f24559428d6bd4d016726ef8a104ed01bc7e80237e09306",
+      "bytes": 1464214
+    },
+    "Jetson/outputs/preflight_20261116/field_colour_optimized.log": {
+      "sha256": "4715cf3d7fcd15effe5c820b87133d06431d040ce41f4dcb0fb62c8250bc87c7",
+      "bytes": 100
+    },
+    "Jetson/outputs/preflight_20261116/seg_ros_repeat.json": {
+      "sha256": "27c7fb687b739d23d8643e0e11a848bc357f39df3b51e28842dfd91ec281e009",
+      "bytes": 39882
+    },
+    "Jetson/outputs/preflight_20261116/field_live_baseline_ros.json": {
+      "sha256": "d850d2ca087af2468c9069ecfa807ff4637ae4ba2f9c9391ffb592a387f683df",
+      "bytes": 536091
+    },
+    "Jetson/outputs/preflight_20261116/field_live_optimized_local.json": {
+      "sha256": "f729f13aa78d2126a735d6448c4a4b0e79b41ecc3e7d571d142f3238201df63e",
+      "bytes": 1215977
+    },
+    "Jetson/outputs/preflight_20261116/field_artifacts.json": {
+      "sha256": "34b4466e252b43f65db538dde6aa6a0b1f4dc154940acf8f7de25b232043f8b0",
+      "bytes": 26737
+    },
+    "Jetson/outputs/preflight_20261116/field_live_baseline_local.json": {
+      "sha256": "df7a25a059d7a365e33d46a01b603f40456ad30aa78f102d00534f13f0b889d7",
+      "bytes": 878500
+    },
+    "STM32/outputs/preflight_20261116/usb_motion_observed_summary.json": {
+      "sha256": "85caabb7760a0990db95270198b8f5236bb2f1f74dc92600707f8cf33d120f68",
+      "bytes": 19311
+    },
+    "Jetson/outputs/preflight_20261116/field_legacy_optimized.log": {
+      "sha256": "7d1237a615c04143baadbf0f091ea6b57028a3f21e8c3b8f53f5732abe52e957",
+      "bytes": 127
+    },
+    "Jetson/outputs/preflight_20261116/seg_local_mjpeg_final.json": {
+      "sha256": "c67160aaa4f1c3924ef728cd2178c6ded58edea556a0785ce49add59bfd47732",
+      "bytes": 957161
+    },
+    "Jetson/outputs/preflight_20261116/field_pc_mjpeg_final.json": {
+      "sha256": "d34fa60fbbfa1bf833d80701eb1f9adc0591221b89904fcce15bad7753eb842c",
+      "bytes": 607978
+    },
+    "Jetson/outputs/preflight_20261116/profile_optimized_t6.json": {
+      "sha256": "278022746541253512e29d0964686bffbcadede4183d6225d8daa7ef8ba44dda",
+      "bytes": 2978
+    },
+    "Jetson/outputs/preflight_20261116/field_equivalence_comparison.json": {
+      "sha256": "086b8d85a88af6685cc37f5864bb5945dde82eda8d0c09de461ac64f56f9b262",
+      "bytes": 15991
+    },
+    "Jetson/outputs/preflight_20261116/field_live_optimized_ros.json": {
+      "sha256": "434dfc8bdee5e763a41f08e86a065ab9b830c496c2aa043f3c10af27291c92fe",
+      "bytes": 743597
+    },
+    "Jetson/outputs/preflight_20261116/field_live_baseline_pc.json": {
+      "sha256": "721e03a405da89720413b1ae9714810c5dce0070c2ce90410160c79404ccb0fd",
+      "bytes": 902240
+    },
+    "Jetson/outputs/preflight_20261116/local_manifest_before_field_perf.json": {
+      "sha256": "be4e9d3a7c724d9447f2e4ddc3ac603cceb4541ffb3e702bc97956181ffe06da",
+      "bytes": 40936
+    },
+    "Jetson/outputs/preflight_20261116/legacy_final.log": {
+      "sha256": "7360d6db997620ceb98fa7799f255a708e4ff16cf970532b256fd7ae653c074a",
+      "bytes": 126
+    },
+    "Jetson/outputs/preflight_20261116/runtime_final.json": {
+      "sha256": "b1df7d7a4b37f7b279bb3a8c7b789fe8b8856b8d12150718f5e6e8803138cf93",
+      "bytes": 20839
+    },
+    "Jetson/outputs/preflight_20261116/seg_pc_mjpeg_final.json": {
+      "sha256": "0f0f24ae273def9f3d05992394ba30e53e60932572c58716e07aa89f279b3e19",
+      "bytes": 976892
+    },
+    "Jetson/outputs/preflight_20261116/colcon_test_result_final.log": {
+      "sha256": "29f6f5b400835a66f800358e0c8f282527634c8d90ae6ed71d9c0dbd1d8b66f1",
+      "bytes": 3648
+    },
+    "Jetson/outputs/preflight_20261116/field_live_optimized_pc.json": {
+      "sha256": "8012386674cc1608bbecf129d36fca603720c72ebfd811755fae15ef2d3f546a",
+      "bytes": 1243677
+    },
+    "Jetson/outputs/preflight_20261116/seg_preview_final.jpg": {
+      "sha256": "4036814772b22e8631a624b94dc748deb94e38392973fb8f491d034b4f5c43b8",
+      "bytes": 201348
+    },
+    "Jetson/outputs/preflight_20261116/field_ros_final.json": {
+      "sha256": "d27653c23c4f531a3040456b3065e31ade8a9a5b06f83386355f93ba8b435a89",
+      "bytes": 366356
+    },
+    "Jetson/outputs/preflight_20261116/field_live_comparison.json": {
+      "sha256": "72b5fee2e7c3d9e5011af3156e4a6809e8a69e420b6caf166ec44db5ac0a7d1a",
+      "bytes": 39369
+    },
+    "Jetson/outputs/preflight_20261116/source_audit_before_field_perf.json": {
+      "sha256": "77c877bf884aead6671c2ffcf6a4dd8edffce1f6a12e3c857fe37b6ff492f7cf",
+      "bytes": 1159
+    },
+    "STM32/outputs/preflight_20261116/usb_six_directions_observed.jsonl": {
+      "sha256": "416e697304fe068a95d8a1c0dea68e765a0070b20e06d9cde56babb3dbe3270f",
+      "bytes": 1029774
+    },
+    "Jetson/outputs/preflight_20261116/runtime_before_field_perf.json": {
+      "sha256": "c5de1759d02e562efe3399b6901599e829469919e38f9b6ceb1ea6983739e75b",
+      "bytes": 20840
+    },
+    "Jetson/outputs/preflight_20261116/vision_ctest_details_final.log": {
+      "sha256": "ffe0783f4fe8ab06000820f7ce3873d03f8651312112251372d12db429c66b38",
+      "bytes": 16242
+    },
+    "Jetson/outputs/preflight_20261116/field_preview_final.jpg": {
+      "sha256": "efc908920d0c66774eed4987b83793ca0a318c54cad9351a4d3a7c42bba97787",
+      "bytes": 195095
+    },
+    "Jetson/outputs/preflight_20261116/field_vision_ctest_optimized.log": {
+      "sha256": "bb4ade016fe51798e99957554b119624e6d53185aaa00afb9683a6bc16ce5994",
+      "bytes": 16244
+    },
+    "Jetson/outputs/preflight_20261116/field_colcon_test_result_optimized.log": {
+      "sha256": "badb894f4e8f6e607001a96bac87db3ec757dd56d7c0fe5677cef01d91687f31",
+      "bytes": 3648
+    },
+    "Jetson/outputs/preflight_20261116/source_audit.json": {
+      "sha256": "121f9d2d0f28ecf9094755cffacbcbfde84b533594182732b4154f62eae40f87",
+      "bytes": 1159
+    },
+    "Jetson/outputs/preflight_20261116/build_image_adapter.log": {
+      "sha256": "bfc56637aa94567eb29eee714bd0a5359350c537b7f585aa35c0be6eb156f624",
+      "bytes": 798
+    },
+    "Jetson/outputs/preflight_20261116/build_final.log": {
+      "sha256": "67220698a2d5c80f394d36d005f969e484dad24407c64beeeafc1b1908431932",
+      "bytes": 93
+    },
+    "Jetson/outputs/preflight_20261116/profile_baseline_t6.json": {
+      "sha256": "2a847fe844c93d3c1d5d586beba53ec45f24208988a3f63dce1ab5010dadded4",
+      "bytes": 2977
+    },
+    "Jetson/outputs/preflight_20261116/seg_smoke_final.json": {
+      "sha256": "b38f8efbfe58b63d318536d054d24656918ec7ac8bcf9185e1c58e5b4c739f0e",
+      "bytes": 752
+    },
+    "Jetson/outputs/preflight_20261116/seg_ros_final.json": {
+      "sha256": "c85d5f581c500d8e2674183485224a047e0e5e533655f4d4a44728bcaca45744",
+      "bytes": 27915
+    },
+    "Jetson/outputs/preflight_20261116/field_build_optimized.log": {
+      "sha256": "2659204aef2e73b3969100df77de59d08590cd26c6177c2cfa631b88a3aea6d6",
+      "bytes": 2052
+    },
+    "Jetson/outputs/preflight_20261116/field_local_mjpeg_final.json": {
+      "sha256": "24145555b3d536a4d58c0e551dd40a6049c956b4a68dab1a132e915a4fec97dd",
+      "bytes": 593998
+    }
+  },
+  "update_instructions": [
+    "Preserve historical failures, inconclusive windows and earlier FPS runs.",
+    "Future changes require refreshed source/artifact/runtime hashes and relevant regressions.",
+    "Keep Jetson readiness, historical wheels-raised acceptance, current power/service state, ground trials and autonomous validation distinct.",
+    "Increment revision and timestamp; add evidence hashes when extending this summary."
+  ],
+  "history": [
+    {
+      "at_utc": "2026-11-16T10:19:13.607950+00:00",
+      "author": "verify_kt_protocol",
+      "event": "Created evidence-backed baseline summary; final vision and runtime checks remain pending."
+    },
+    {
+      "at_utc": "2026-11-16T11:26:45.631881+00:00",
+      "author": "verify_kt_protocol",
+      "event": "Completed scoped Jetson readiness and historical wheels-raised acceptance using final optimized tests, exact equivalence, fresh live comparison and source/runtime audit. User-disabled vehicle control and unperformed ground/autonomous validation remain explicit."
+    }
+  ],
+  "acceptance_scope": {
+    "jetson_readiness": "pass",
+    "historical_wheels_raised_manual_usb": "pass",
+    "current_live_vehicle_chain": "not_enabled_by_user_choice",
+    "ground_motion_trial": "not_performed",
+    "autonomous_transport": "not_performed",
+    "labelled_real_field_accuracy": "not_measured",
+    "annotated_replay": "skipped_missing_data",
+    "final_preflight_pass_meaning": "Pass applies only to Jetson readiness and recorded wheels-raised manual acceptance; it does not certify ground or autonomous operation."
+  },
+  "current_operation_state": {
+    "evidence": [
+      "Jetson/outputs/preflight_20261116/runtime_final.json"
+    ],
+    "observed_at_utc": "2026-11-16T11:21:50.735951+00:00",
+    "stm32_power": "off_by_user_report",
+    "stm32_power_evidence": "Explicit user instruction relayed in parent task",
+    "vision_service": "active",
+    "vision_mode": "field",
+    "manual_service": "inactive",
+    "all_action_services": "off_reported_by_root",
+    "action_services_evidence": "Root final handoff; runtime JSON directly verifies manual inactive only",
+    "current_field_scene": "Tabletop with green/orange objects, no real purple-bordered field; final field results SEARCH/none and invalid",
+    "user_disabled_control_is_software_failure": false
+  }
+}

@@ -1,5 +1,6 @@
 #pragma once
 #include "node/detect_node.hpp"
+#include "node/image_view.hpp"
 #include "stream/jpeg/jpeg.hpp"
 #include "stream/mjpeg/mjpeg.hpp"
 
@@ -15,12 +16,6 @@
 
 #include <opencv2/core.hpp>
 
-// 兼容 cv_bridge 在 Humble/Jazzy 中不同的头文件命名。
-#if __has_include("cv_bridge/cv_bridge.hpp")
-#include <cv_bridge/cv_bridge.hpp>
-#else
-#include <cv_bridge/cv_bridge.h>
-#endif
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/compressed_image.hpp>
 #include <sensor_msgs/msg/image.hpp>
@@ -52,7 +47,7 @@ private:
     rclcpp::Time stamp;
     std::string frame_id;
     // 保留源消息，供合成线程安全共享图像。
-    cv_bridge::CvImageConstPtr holder;
+    vision_ros::ImageViewConstPtr holder;
     // stamp 是源 ROS 时间；到达和过期时刻用单调时钟，排队及图层等待都消耗同一有效期。
     std::chrono::steady_clock::time_point received_at;
     std::chrono::steady_clock::time_point valid_until;
@@ -65,7 +60,7 @@ private:
     vision_msgs::msg::Detection2DArray::ConstSharedPtr seg;
     interface_pkg::msg::FieldObservation::ConstSharedPtr field;
     // 缓存淘汰后仍保留掩膜像素，供已取得快照的合成线程绘制。
-    cv_bridge::CvImageConstPtr mask;
+    vision_ros::ImageViewConstPtr mask;
   };
 
   // ---- 启动配置与接口装配 ----

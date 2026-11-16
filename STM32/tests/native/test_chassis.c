@@ -15,6 +15,8 @@ volatile dm_motor_t dm_motor[3];
 uint32_t test_tick;
 static uint32_t counter_us, free_mailboxes, controls, enables, disables, aborts, delays;
 static float motor_velocity[3], yaw_deg, yaw_rate;
+static float captured_torque[3], captured_kd[3];
+static uint8_t tuning_test;
 static uint32_t sample_age;
 static uint8_t imu_ready, read_advances_tick, fail_control_id, abort_pending;
 static uint8_t fail_enable_id, fail_disable_id, last_sent_id;
@@ -63,12 +65,17 @@ HAL_StatusTypeDef ctrl_motor(CAN_HandleTypeDef *can, uint16_t id, float position
 {
     const float expected_kd[3] = {0.2f, 0.25f, 0.2f};
     assert(can == &hcan1 && id >= 1U && id <= 3U && free_mailboxes > 0U);
-    assert(position == 0.0f && kp == 0.0f && torque == 0.0f && kd == expected_kd[id-1U]);
+    assert(position == 0.0f && kp == 0.0f);
+    if (!tuning_test)
+        assert(torque == 0.0f && kd == expected_kd[id-1U]);
+    assert(isfinite(torque) && fabsf(torque) <= 0.05f);
     assert(isfinite(velocity) && fabsf(velocity) <= 40.0f && !abort_pending);
     last_sent_id = 0U;
     if (id == fail_control_id) { fail_control_id = 0U; return HAL_ERROR; }
     last_sent_id = (uint8_t)id;
     motor_velocity[id-1U] = velocity;
+    captured_torque[id-1U] = torque;
+    captured_kd[id-1U] = kd;
     --free_mailboxes; ++controls;
     return HAL_OK;
 }
@@ -153,9 +160,13 @@ static void reset_case(uint32_t us, uint32_t ms)
     imu_ready = 1U; read_advances_tick = fail_control_id = abort_pending = 0U;
     fail_enable_id = fail_disable_id = last_sent_id = 0U;
     yaw_deg = yaw_rate = 0.0f;
+    tuning_test = 0U;
     memset(motor_velocity, 0, sizeof(motor_velocity));
     memset((void *)dm_motor, 0, sizeof(dm_motor));
     Chassis_Init();
+    /* 既有运动规划回归保留零前馈基线；默认实车配置另有独立用例。 */
+    const float legacy_kd[3] = {0.2f, 0.25f, 0.2f}, no_friction[3] = {0.0f, 0.0f, 0.0f};
+    assert(Chassis_Set_Tuning(legacy_kd, 0.0f, no_friction));
     assert(enables == 0U && controls == 0U && disables == 0U);
 }
 
@@ -1287,6 +1298,89 @@ static void test_failure_paths(void)
     step(10000U,1U); assert(disables == 3U);
 }
 
+/** @brief 1.8 kg 惯性前馈方向、限幅及停机清零；非法调参不部分生效。 */
+static void test_live_tuning(void)
+{
+    const float kd[3] = {0.15f, 0.18f, 0.15f};
+    const float zero[3] = {0.0f, 0.0f, 0.0f};
+    const float friction[3] = {0.03f, 0.03f, 0.03f};
+    for (int direction = -1; direction <= 1; direction += 2)
+    {
+        reset_case(0U, 0U);
+        tuning_test = 1U;
+        assert(!Chassis_Set_Tuning(NULL, 1.0f, zero));
+        assert(!Chassis_Set_Tuning(kd, NAN, zero));
+        assert(!Chassis_Set_Tuning(kd, 1.1f, zero));
+        const float invalid_kd[3] = {0.15f, 0.18f, NAN};
+        assert(!Chassis_Set_Tuning(invalid_kd, 1.0f, zero));
+        near(chassis_tuning_kd[0], 0.2f);
+        assert(Chassis_Set_Tuning(kd, 1.0f, zero));
+        assert(enable_ready());
+        for (unsigned i = 0; i < 3; ++i)
+        {
+            near(captured_torque[i], 0.0f);
+            near(captured_kd[i], kd[i]);
+        }
+        assert(Chassis_Set_Velocity(direction * 0.25f, 0.0f, 0.0f));
+        assert(!Chassis_Set_Tuning(kd, 0.0f, zero));
+        step(direction > 0 ? 25000U : 10000U, 1U);
+        near(captured_torque[0], 0.0f);
+        near(captured_torque[1], -direction * 1.8f * 0.45f * 0.035f / 1.7320508f);
+        near(captured_torque[2], -captured_torque[1]);
+        /* 100 ms 空白不会形成补偿尖峰。 */
+        step(100000U, 1U);
+        for (unsigned i = 0; i < 3; ++i) near(captured_torque[i], 0.0f);
+        Chassis_Stop();
+        step(10000U, 1U);
+        for (unsigned i = 0; i < 3; ++i) near(captured_torque[i], 0.0f);
+        confirm_stopped();
+        assert(Chassis_Set_Tuning(kd, 1.0f, friction));
+        assert(Chassis_Set_Velocity(direction * 0.25f, 0.0f, 0.0f));
+        step(10000U, 1U);
+        assert(captured_torque[1] * direction < -0.01637f);
+        assert(captured_torque[2] * direction > 0.01637f);
+        Chassis_Stop();
+        step(10000U, 1U);
+        confirm_stopped();
+        assert(Chassis_Set_Velocity(0.0f, 0.0f, direction * 0.5f));
+        step(10000U, 1U);
+        for (unsigned i = 0; i < 3; ++i)
+            near(captured_torque[i], 0.0f); /* 本轮摩擦补偿仅标定平移，不用于纯转。 */
+        /* 姿态失效的第一拍已经清零前馈，保留原速度阻尼制动。 */
+        imu_ready = 0U;
+        step(10000U, 1U);
+        for (unsigned i = 0; i < 3; ++i) near(captured_torque[i], 0.0f);
+        Chassis_Disable();
+        for (unsigned i = 0; i < 3; ++i) near(chassis_motor_ff[i], 0.0f);
+    }
+    reset_case(0U, 0U);
+}
+
+/** @brief 正式启动采用实车前馈配置；使能、停车、纯旋转仍无前馈。 */
+static void test_default_tuning_profile(void)
+{
+    reset_case(0U, 0U);
+    Chassis_Init();
+    tuning_test = 1U;
+    near(chassis_tuning_ff_gain, 1.0f);
+    near(chassis_tuning_friction[0], 0.0f);
+    near(chassis_tuning_friction[1], 0.015f);
+    near(chassis_tuning_friction[2], 0.015f);
+    assert(enable_ready());
+    for (unsigned i = 0; i < 3U; ++i) near(captured_torque[i], 0.0f);
+    assert(Chassis_Set_Velocity(0.25f, 0.0f, 0.0f));
+    step(10000U, 1U);
+    assert(captured_torque[1] < -0.01637f && captured_torque[2] > 0.01637f);
+    Chassis_Stop();
+    step(10000U, 1U);
+    for (unsigned i = 0; i < 3U; ++i) near(captured_torque[i], 0.0f);
+    confirm_stopped();
+    assert(Chassis_Set_Velocity(0.0f, 0.0f, 0.5f));
+    step(10000U, 1U);
+    for (unsigned i = 0; i < 3U; ++i) near(captured_torque[i], 0.0f);
+    reset_case(0U, 0U);
+}
+
 /** @brief 执行底盘真实源码回归。 @return 成功为0。 */
 int main(void)
 {
@@ -1314,6 +1408,8 @@ int main(void)
     test_turn_handoff_closed_loop();
     test_fault_stop_is_not_completion();
     test_failure_paths();
+    test_live_tuning();
+    test_default_tuning_profile();
     puts("PASS chassis: kinematics, measured dt/wrap, 8-way/vector/turn, distance and fresh three-wheel stop");
     return 0;
 }

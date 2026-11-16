@@ -1,0 +1,81 @@
+2026-11-16 field settings and one-delivery preparation
+
+Saved original Jetson workspace: /home/nvidia/WorkSpace/GC_Rescue/Jetson
+Local mirror: Jetson/outputs/field_trial_20261116
+
+field_rescue.yaml + field_advanced.yaml:
+  Outer field 660 x 640 mm; horizontal wall thickness 20 mm.
+  Height 20 mm is recorded as a physical measurement only; the field algorithm
+  has no independent wall-height parameter. Effective BEV is 248 x 240 pixels.
+
+camera_profile.json:
+  Current scene profile: brightness150, saturation90, contrast65, gain48,
+  manual exposure_time_absolute150, gamma128, hue200, sharpness2000, 50Hz,
+  backlight0, zoom100, dynamic frame rate disabled.
+  Autofocus and automatic white balance remain enabled. Manual focus403 and
+  temperature4650 are inactive nominal values when their auto modes are enabled.
+  Capture1920x1080 MJPG120, field processing1280x720, JPEG quality80 unchanged.
+
+Evidence:
+  camera_ab_01: eight 12-second candidates; camera_ab_02: reversed-order 30-second
+  saturation90 vs baseline comparison. Both long windows were 100% valid.
+  Saturation90: 67.87 received field FPS, BL corner median-distance P95=1.66px.
+  Baseline saturation76: 66.83 FPS, BL P95=5.05px. These are static-scene stability
+  measurements, not ground-truth accuracy or an all-colour/dynamic guarantee.
+  Rewriting all camera controls also changed overall brightness before this A/B;
+  that larger change must not be attributed to saturation alone.
+  Green segmentation after applying the profile ran about97.5 FPS. A subsequent
+  live snapshot showed the actual green item at93% confidence; this is not a
+  labelled segmentation accuracy test.
+  After the operator manually faced the safety area:1366/1368 valid in20s,
+  about68.4 field FPS. Known frozen-frame near-corner trim failures remain;
+  the unvalidated nearest-contour candidate was rejected by regression and
+  was NOT deployed.
+
+Reapply after restarting vision:
+  bash outputs/field_trial_20261116/start_services.sh --vision-only
+  This waits for the newly started camera to produce a JPEG, then applies and
+  verifies the camera profile. Pre-stream application was tested and failed to
+  preserve effective brightness despite nominally matching readback. A failed
+  control write/readback restores previous controls and stops the new service.
+  The script default is vision-only. Its --all option means vision plus the
+  bounded manual server, NOT the full autonomous ROS/STM32 transport workflow.
+  In-process USB-camera reconnection reapplies only the existing brightness
+  control in production camera code; use the profile helper/restart and verify
+  the other controls after unplugging or power-cycling the camera.
+
+Current delivery request is saved in single_delivery_plan.json. It is NOT an
+autostart program and is currently not ready for execution. User selected:
+current green item -> lateral alignment to LEFT at current forward distance ->
+0.25m/s forward1.5s -> stop -> relative gripper+60deg -> retreat -> stop once.
+Symmetric retreat0.25m/s for1.5s is the stated plan, not measured distance.
+
+Claw checks:
+  Requested-30deg with1s command window: actual-27.8926deg, Stop acknowledged.
+  Requested another-30deg: actual-17.7272deg, Stop acknowledged.
+  Both had zero error/warning. Operator said to keep this position.
+  Do not call this a calibrated-60deg close; total feedback change is about
+  -45.62deg. No release has been executed. Never reset the current position to
+  an invented absolute zero or run startup open_deg automatically.
+
+Chassis blocker:
+  Host API accepted/sent commands but continuous-turn images did not establish
+  motion. User manually rotated instead. No measured180deg turn is claimed.
+  A stale OpenOCD process was removed; CMD_INFO still failed until the operator
+  reconnected the probe USB. SWD then recovered and full Flash verification
+  passed. USB receive sequence and IMU samples updated with no USB overflow.
+  Fresh three-wheel feedback after enable and actual motion remain unverified.
+  Site manual startup arm-zero was saved as0.6s (previous0.1s); offline timing
+  was checked, but its zero-speed enable/READY sequence was not tested on-car.
+  Do not release cargo merely because a timed HTTP request completed.
+
+End of task:
+  Operator powered off and ended the task before the zero-speed enable test.
+  This delivery did not start and no release was executed. No automatic restart
+  is authorized. See COMMUNICATION_CHECK_END.txt for the latest final audit;
+  older verification JSON files describe their recorded historical snapshots.
+
+Vehicle control and full auto firmware were not changed by camera tuning.
+Known prior motor setup remains Kd0.20/0.25/0.20, inertial FF gain1,
+friction FF0/0.015/0.015Nm, vehicle mass1.8kg. Motor Kt registers read0
+previously and were not rewritten. See STM32/outputs/live_tuning_20261116.

@@ -1,0 +1,357 @@
+{
+  "schema": 1,
+  "analysis": "offline_usb_sender_timeout_v2",
+  "status": "observed_timeout_stop_pass",
+  "source": "usb_sender_timeout_v2.jsonl",
+  "source_sha256": "12f212d9f77cdd2e798c2dd3a97542d8a596e652cc2e6ef0eb0eafdb65f7f112",
+  "elf_sha256": "541c513b5f4a7a164de60875549ce6acbb3304c8c693f85b4097f1cbc9fdb94a",
+  "samples": 119,
+  "manual_state_counts": {
+    "0": 99,
+    "1": 4,
+    "3": 9,
+    "4": 2,
+    "2": 5
+  },
+  "swd_read_span_ms": {
+    "min": 14,
+    "mean": 18.672,
+    "max": 50
+  },
+  "running_qualification": {
+    "observed": true,
+    "samples": 9,
+    "command_milli": [
+      250,
+      0,
+      0
+    ],
+    "motor_feedback_sequence_first": [
+      975,
+      975,
+      975
+    ],
+    "motor_feedback_sequence_last": [
+      1027,
+      1027,
+      1027
+    ],
+    "each_motor_feedback_strictly_progressed": [
+      true,
+      true,
+      true
+    ],
+    "last_running": {
+      "sample_index": 18,
+      "read_tick_interval_ms": [
+        2949186,
+        2949201
+      ],
+      "age_from_frozen_rx_ms": [
+        218,
+        233
+      ],
+      "manual_state": 3,
+      "enabled": 1,
+      "pending_disable": 0,
+      "mode": 3,
+      "targets_rad_s": [
+        -5e-06,
+        -5.734299,
+        5.734288
+      ],
+      "feedforward_nm": [
+        -0.0,
+        -0.030165,
+        0.030165
+      ],
+      "motor_states": [
+        1,
+        1,
+        1
+      ],
+      "motor_sequence": [
+        1027,
+        1027,
+        1027
+      ],
+      "motor_feedback_ms": [
+        2949195,
+        2949196,
+        2949197
+      ],
+      "motor_velocity_rad_s": [
+        -0.029305,
+        -5.89011,
+        5.753357
+      ]
+    }
+  },
+  "frozen_sender": {
+    "sequence": 120051,
+    "rx_basis_ms": 2948968,
+    "sample_count": 30,
+    "command_snapshot_unchanged": true,
+    "command_snapshot": {
+      "valid": 1,
+      "vx": 250,
+      "vy": 0,
+      "wz": 0,
+      "received_ms": 2948968,
+      "sequence": 120051,
+      "invalid_sequence": 119089,
+      "zero_sequence": 415
+    },
+    "first_read_interval_from_rx_ms": [
+      10,
+      46
+    ],
+    "last_read_interval_from_rx_ms": [
+      1384,
+      1402
+    ],
+    "next_received_sequence": 120052,
+    "next_received_ms": 2950390,
+    "inter_command_rx_gap_ms": 1422,
+    "explanation": "Same valid nonzero command and unchanged invalid/zero event counters persist through braking and disarming; the next received command is the next sequence."
+  },
+  "braking_and_zero_targets": {
+    "firmware_freshness_threshold_ms": 250,
+    "last_running_read_interval_from_rx_ms": [
+      218,
+      233
+    ],
+    "first_braking_zero_target_read_interval_from_rx_ms": [
+      262,
+      289
+    ],
+    "conservative_transition_bound_from_rx_ms": [
+      218,
+      289
+    ],
+    "threshold_interpretation": "Observed transition bracket contains 250 ms; first observed BRAKING is not an exact trigger timestamp.",
+    "first_observation": {
+      "sample_index": 19,
+      "read_tick_interval_ms": [
+        2949230,
+        2949257
+      ],
+      "age_from_frozen_rx_ms": [
+        262,
+        289
+      ],
+      "manual_state": 4,
+      "enabled": 1,
+      "pending_disable": 0,
+      "mode": 0,
+      "targets_rad_s": [
+        -0.0,
+        -0.0,
+        -0.0
+      ],
+      "feedforward_nm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "motor_states": [
+        1,
+        1,
+        1
+      ],
+      "motor_sequence": [
+        1032,
+        1032,
+        1032
+      ],
+      "motor_feedback_ms": [
+        2949245,
+        2949246,
+        2949247
+      ],
+      "motor_velocity_rad_s": [
+        0.40049,
+        0.322346,
+        1.162392
+      ]
+    }
+  },
+  "software_disarm": {
+    "first_read_interval_from_rx_ms": [
+      358,
+      379
+    ],
+    "conservative_transition_bound_from_rx_ms": [
+      314,
+      379
+    ],
+    "first_observation": {
+      "sample_index": 21,
+      "read_tick_interval_ms": [
+        2949326,
+        2949347
+      ],
+      "age_from_frozen_rx_ms": [
+        358,
+        379
+      ],
+      "manual_state": 0,
+      "enabled": 0,
+      "pending_disable": 1,
+      "mode": 0,
+      "targets_rad_s": [
+        -0.0,
+        -0.0,
+        -0.0
+      ],
+      "feedforward_nm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "motor_states": [
+        0,
+        0,
+        0
+      ],
+      "motor_sequence": [
+        1041,
+        1041,
+        1041
+      ],
+      "motor_feedback_ms": [
+        2949335,
+        2949336,
+        2949337
+      ],
+      "motor_velocity_rad_s": [
+        -0.009769,
+        -0.04884,
+        -0.029305
+      ]
+    },
+    "pending_disable_in_first_observation": 1,
+    "all_software_and_motor_conditions_first_read_interval_from_rx_ms": [
+      403,
+      421
+    ],
+    "all_conditions_observed_by_ms": 421,
+    "within_750ms_plus_scheduling_bound": true,
+    "complete_observation": {
+      "sample_index": 22,
+      "read_tick_interval_ms": [
+        2949371,
+        2949389
+      ],
+      "age_from_frozen_rx_ms": [
+        403,
+        421
+      ],
+      "manual_state": 0,
+      "enabled": 0,
+      "pending_disable": 0,
+      "mode": 0,
+      "targets_rad_s": [
+        -0.0,
+        -0.0,
+        -0.0
+      ],
+      "feedforward_nm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "motor_states": [
+        0,
+        0,
+        0
+      ],
+      "motor_sequence": [
+        1041,
+        1041,
+        1041
+      ],
+      "motor_feedback_ms": [
+        2949335,
+        2949336,
+        2949337
+      ],
+      "motor_velocity_rad_s": [
+        -0.009769,
+        -0.04884,
+        -0.029305
+      ]
+    }
+  },
+  "new_motor_disabled_feedback": {
+    "first_read_interval_from_rx_ms": [
+      358,
+      379
+    ],
+    "new_sequence": [
+      1041,
+      1041,
+      1041
+    ],
+    "feedback_receive_times_from_rx_ms": [
+      367,
+      368,
+      369
+    ],
+    "maximum_absolute_velocity_rad_s": 0.04884,
+    "meaning": "These are CAN feedback receive timestamps for state=0 and quiet wheels, not exact physical stopping times."
+  },
+  "resume": {
+    "first_received_ms": 2950390,
+    "first_received_command": {
+      "valid": 1,
+      "vx": 0,
+      "vy": 0,
+      "wz": 0,
+      "received_ms": 2950390,
+      "sequence": 120052,
+      "invalid_sequence": 119089,
+      "zero_sequence": 416
+    },
+    "first_observation_interval_from_old_rx_ms": [
+      1430,
+      1444
+    ],
+    "observed_zero_speed_reenable": true,
+    "manual_state_counts": {
+      "1": 2,
+      "2": 5,
+      "0": 67
+    },
+    "nonzero_command_samples": 0,
+    "nonzero_target_samples": 0,
+    "running_or_velocity_mode_samples": 0,
+    "maximum_absolute_motor_velocity_rad_s": 0.087914,
+    "new_disabled_feedback_sequence": [
+      1072,
+      1072,
+      1072
+    ],
+    "first_final_disabled_read_interval_from_resumed_rx_ms": [
+      339,
+      358
+    ],
+    "final_feedback_receive_times_from_resumed_rx_ms": [
+      310,
+      311,
+      312
+    ],
+    "final_state_remained_disabled": true,
+    "no_nonzero_resume_observed": true
+  },
+  "observed_motor_fault_samples": 0,
+  "limitations": [
+    "All observation intervals use device xTickCount, with the frozen command received_ms as zero unless stated otherwise.",
+    "SWD field reads are sequential. Transition bounds use the previous contrary sample start through the first matching sample end, not an assumed atomic sampling time.",
+    "The first disarmed sample combines pending_disable=1 read earlier with new motor state=0 read later. The following sample confirms pending_disable=0; this is compatible with a transition during the read.",
+    "Inter-command receive gap is observable; exact SIGSTOP/SIGCONT times are not recorded here.",
+    "Resumed expired timed command produces valid zero-speed preparation/ready frames before invalid stop frames. Brief zero-speed re-enabling is expected.",
+    "Wheel feedback with wheels raised does not establish ground-motion stopping distance or chassis stability.",
+    "The earlier usb_timeout_summary.json is retained as an inconclusive observation window and is not overwritten."
+  ]
+}

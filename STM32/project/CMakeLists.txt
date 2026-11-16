@@ -93,6 +93,11 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add project symbols (macros)
 # 与 hal_conf.h 的空宏一致，避免重定义告警；Cube 重新生成注释掉它时仍启用 PCD。
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAL_PCD_MODULE_ENABLED=)
+option(CHASSIS_TUNING_ENABLED "Build explicit-command SWD chassis tuning firmware" OFF)
+if(CHASSIS_TUNING_ENABLED)
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE Core/Control/Chassis/live_tuning.c)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE CHASSIS_TUNING_ENABLED=1 JETSON_AUTO_ENABLED=0)
+endif()
 option(INS_USE_MAGNETOMETER "Use IST8310 for nine-axis Mahony heading" OFF)
 if(INS_USE_MAGNETOMETER)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE INS_USE_MAGNETOMETER=1)

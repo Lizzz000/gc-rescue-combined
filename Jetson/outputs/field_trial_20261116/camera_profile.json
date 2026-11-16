@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "name": "current_field_saturation90",
+  "date": "2026-11-16",
+  "scope": "Current stationary field scene and current USB camera setup",
+  "notes": [
+    "All controls retain the trial baseline except saturation, changed from 76 to 90.",
+    "Green segmentation must still be validated before treating this as a configuration for all vision modes.",
+    "No ground-truth boundary labels were used; reduced static pixel jitter does not establish absolute geometric or world-position accuracy.",
+    "Auto white balance and autofocus remain enabled. Their inactive manual values are restored while manual mode is enabled, then automatic modes resume and may subsequently adjust them."
+  ],
+  "observed_30s_comparison": {
+    "baseline": {"bottom_left_corner_p95_px": 5.05, "bottom_left_corner_max_px": 10.19, "field_fps": 66.83, "valid_fraction": 1.0},
+    "saturation90": {"bottom_left_corner_p95_px": 1.66, "bottom_left_corner_max_px": 5.69, "field_fps": 67.87, "valid_fraction": 1.0},
+    "pixel_metric": "Distance from each trial's coordinate-wise corner median"
+  },
+  "values": {
+    "brightness": 150,
+    "contrast": 65,
+    "saturation": 90,
+    "hue": 200,
+    "white_balance_automatic": 1,
+    "gamma": 128,
+    "gain": 48,
+    "power_line_frequency": 1,
+    "white_balance_temperature": 4650,
+    "sharpness": 2000,
+    "backlight": 0,
+    "auto_exposure": 1,
+    "exposure_time_absolute": 150,
+    "dynamic_framerate": 0,
+    "focus_auto": 1,
+    "focus_absolute": 403,
+    "zoom": 100
+  }
+}

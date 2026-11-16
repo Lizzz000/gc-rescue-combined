@@ -1,0 +1,143 @@
+One complete transport: read-only readiness review, 2026-11-16
+
+Scope: local Jetson mission/track/bridge/teleop/gripper, STM32 auto control,
+configuration and documentation. No hardware/network access or source changes.
+Current priority is camera/field reliability; this is not authorization to enable
+automatic vehicle motion or a claim that the mechanical parameters are calibrated.
+
+ACTUAL FIRST-CYCLE CONTRACT
+
+1. Shared class IDs are green=0, blue=1, black=2, orange=3. First trip selects and
+   accepts exactly one green item. Blue/unknown items in ROI reject the load.
+   Later trips permit green+black up to three, or exactly one orange alone.
+   Green/black destination is LEFT; orange destination is RIGHT. This is image
+   partition identity, not an independently surveyed world coordinate.
+   Sources: interface_pkg/app/core/cargo.hpp:25-29,44-62;
+   interface_pkg/app/core/recognition.hpp:99-105;
+   mission_pkg/control/controller.cpp:664-696.
+
+2. Full automatic STM32 sequence: verify startup-open completion -> fresh IMU and
+   chassis enable/settle -> approach selected target -> stop/verify -> request
+   close gripper -> wait matching accepted reply AND successful action result ->
+   calibrated backward distance -> stop -> raw-frame ROI check -> route-specific
+   180 degree outbound turn -> request field mode and wait confirmation -> visual
+   approach to calibrated safety point -> heading-locked calibrated straight
+   distance -> report safety arrival -> timed forward push -> stop -> open/release
+   -> timed reverse retreat -> record delivery -> inverse 180 degree return turn
+   -> request seg/start-search -> next cycle.
+   Sources: STM32/project/Core/Control/Jetson/jetson_auto.c:763-874;
+   Jetson/src/mission_pkg/control/controller.hpp CyclePhase/MissionCommand;
+   Jetson/src/bridge_pkg/node/bridge_session.cpp:414-456.
+
+3. ROI is a normalized image rectangle x=.25, y=.50, w=.50, h=.50. Any detection
+   box intersecting/touching it counts; it is not a cargo sensor. ROI uses a fresh
+   raw detection frame, not tracking predictions. A successful delivery command
+   records the protocol fact, not visual/force proof that the cargo stayed put.
+   Sources: bringup_pkg/config/rescue.yaml; mission_pkg/roi/roi.cpp:71-125;
+   mission_pkg/control/controller.cpp DeliveryCompleted branch.
+
+HARD BLOCKERS IN THE CURRENT SOURCE/CONFIGURATION
+
+- gripper.move_s is empty. The all/bridge configuration path rejects the missing
+  value; allowed calibrated action duration is 0.2..10 seconds.
+  Source: bringup_pkg/config/rescue_advanced.yaml:240-248;
+  bringup_pkg/runtime/validation/rules.py:_validate_gripper.
+- Current STM32 mode is JETSON_AUTO_ENABLED=0. Full automatic readiness also
+  requires positive SAFETY_STRAIGHT_M, ROI_BACK_M and RECOVERY_BACK_M, all currently
+  zero. Do not substitute guessed distances merely to pass readiness.
+  Sources: jetson_auto_config.h; jetson_auto.c:106-135.
+- Complete automatic mode loops after delivery; it does not stop after one
+  transport. Existing CHASSIS_TEST is single-run but deliberately skips gripper
+  and push/release, so it cannot prove a complete transport. A one-cycle test
+  needs an explicit bounded completion/stop boundary.
+- Teleop limits do not apply to STM32 automatic motion. Current auto approach,
+  distance and push limits are 0.50 m/s; target search is 2.0 rad/s. The existing
+  push is commanded for 1200 ms, followed by a matching timed retreat. Those are
+  not validated physical travel distances and must be reviewed for the trial.
+
+GRIPPER SEMANTICS THAT REQUIRE REAL VERIFICATION
+
+- Each new S288 Session captures its CURRENT feedback position as zero, then
+  bridge startup immediately requests open_deg. Defaults closed=-40/open=+40
+  degrees are relative to that per-session reference. Starting bridge after a
+  manual session already opened the claw can therefore request a further +40
+  degrees; a common initial mechanical pose/reference is required. This is not a
+  persisted cross-process zero.
+  Sources: bridge_pkg/gripper/s288_servo.cpp:330-360;
+  bridge_pkg/node/bridge_session.cpp:39-46; teleop_pkg/servo/s288.py:291-295.
+- run_to repeats the position command for move_s then confirms Stop mode.
+  Session marks Succeeded without a final position-error criterion or cargo/force
+  sensor. Stop does not actively maintain clamping torque. A protocol success is
+  not proof of a secure grasp; verify the loaded mechanism remains closed through
+  the actual travel, or address holding before an automatic carry.
+  Source: bridge_pkg/gripper/s288_servo.cpp:291-310,386-403.
+- Manual teleop and automatic bridge cannot simultaneously own the S288/STM32
+  serial resources. Test and switch ownership explicitly; do not keep both writers.
+
+CAMERA / POSITION ASSUMPTIONS
+
+- Target coordinates are image detection centers; safety coordinates are diagonal
+  intersections of validated left/right field quads, normalized by image width/
+  height. There is no calibrated image-to-world range or camera extrinsic model
+  in this navigation path. New field dimensions do not calibrate grasp range.
+  Source: mission_pkg/field/field_geometry.hpp; safety_node.cpp:makeSafetyTarget.
+- Both target and safety windows currently use (x=.5,y=.75), tolerances .01/.01:
+  at 1920x1080 this is (960,810) +/- (19.2,10.8) pixels. They are constants needing
+  real placement verification, not demonstrated grasp/release poses.
+  Camera mounting/tilt/focus/view changes require checking the pixel setpoints
+  again. Keep the vehicle/camera pose fixed when comparing camera settings.
+- Safety straight/recovery/ROI-back distances are executed by command-speed
+  integration, not measured wheel odometry. Slip/braking/load changes require a
+  physical distance check. Safety straight intentionally stops using field
+  centers after the visual alignment phase, retaining communication/chassis
+  protection. Source: chassis.h:144 and jetson_auto.c SAFETY_STRAIGHT.
+- Known valid field corner spikes are being investigated with same-source raw
+  images. A high valid percentage alone does not certify stable navigation
+  coordinates. Keep the camera/field work as a separate gate before motion.
+
+STOP / TIMEOUT BOUNDARIES
+
+- Full auto firmware compiles a different USB/chassis path; manual type-2 frames
+  and the teleop Space button are NOT an automatic-flow emergency-stop command.
+  Sources: STM32/project/Core/Task/Chassis/chassis_task.c:39-68;
+  STM32/project/Core/Communication/Jetson/usb_link.c:565-571.
+- Auto USB offline/session change causes fault braking; periodic type-3/4 stream
+  absent for 250 ms also faults. Braking requests disable after stopped or a
+  500 ms brake deadline; these are detection/control deadlines, not guaranteed
+  physical stop distances. Fault is latched until explicit reinitialization.
+- Target loss during full auto approach can rotate/search; safety approach loss
+  stops/waits. Sending valid=0 therefore does not globally stop target searching.
+- ROI 1 s < Mission request 2 s < Bridge request 3 s. STM32 ordinary transaction
+  budget is 3450 ms, retries reuse request IDs at 250 ms; gripper-action budget
+  is 12000 ms. Mission status loss uses 500 ms then stops the stream, so mission
+  failure-to-braking latency includes both watchdog layers.
+  Sources: rescue_advanced.yaml:200-230; jetson_auto_config.h; usb-protocol.md.
+
+CONSERVATIVE STAGES AVAILABLE BEFORE A FULL CYCLE
+
+1. No-motion perception: one green target, fresh selected target + raw ROI counts;
+   confirm correct left destination and valid field centers under fixed camera.
+2. Stationary mechanical check: common reference pose, small bounded claw trials,
+   actual open/close positions and action duration, loaded grip after Stop.
+3. Existing bounded low-speed manual chassis trials with actual payload can check
+   retention and stopping, but are not a full automatic mission result.
+4. Calibrate image grasp/safety setpoints and physical distances using observed
+   placements; then bounded chassis-only approach/turn/safety test without claw.
+5. Only after the above, run one bounded full transport and verify physical cargo
+   deposited in the correct partition plus matching delivery protocol receipt.
+
+MINIMUM REAL-WORLD INFORMATION / OPERATOR ACTION STILL NEEDED
+
+- Supply one green item and confirm the intended left partition; show the correct
+  item-in-claw grasp pose and intended deposit pose. The agent can record the
+  corresponding image coordinates rather than asking the user to invent pixels.
+- Confirm/reset the claw's initial reference pose and verify open/closed positions,
+  action time, and whether Stop-mode mechanics retain the actual payload.
+- Measure or empirically verify the ROI-check backoff, safety straight segment,
+  rejection recovery distance and final push/retreat clearance. Existing zero
+  placeholders and nominal timed motion cannot establish these.
+- Agree the single-cycle completion boundary and an automatic-mode stop mechanism
+  actually verified on the deployed firmware; manual Space does not provide it.
+
+Physical field dimensions already confirmed (outer660x640 mm, wall horizontal
+thickness20 mm and height20 mm) need not be asked again or silently reinterpreted.

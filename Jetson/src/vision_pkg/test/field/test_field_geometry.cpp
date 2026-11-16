@@ -10,6 +10,22 @@ namespace {
 using namespace field_scene;
 using namespace field_test;
 
+void groundPerspectiveDirection()
+{
+  Group group("ground perspective preserves near/far direction");
+  const auto cfg = productionConfig();
+  const cv::Size size(1280, 720);
+  std::string why;
+  CHECK(field_detail::checkQuad({{200, 200}, {800, 200}, {900, 500}, {100, 500}}, size, cfg, why));
+  CHECK(field_detail::checkQuad({{200, 200}, {800, 200}, {800, 500}, {200, 500}}, size, cfg, why));
+  // 等宽边允许少量像素拟合误差；明显的反向透视不能被无方向的 max/min 比值掩盖。
+  CHECK(field_detail::checkQuad({{199, 200}, {801, 200}, {800, 500}, {200, 500}}, size, cfg, why));
+  CHECK(!field_detail::checkQuad({{100, 200}, {900, 200}, {800, 500}, {200, 500}}, size, cfg, why));
+  // ARM 杂物负例 seed=496720：紫盒前叠红盒，颜色证据很强但近边向内收窄。
+  CHECK(!field_detail::checkQuad({{50.490940f, 347.154541f}, {184.729416f, 345.609711f},
+      {151.009018f, 411.819336f}, {62.000336f, 412.103973f}}, size, cfg, why));
+}
+
 void independentRows()
 {
   Group group("independent interior rows");
@@ -325,6 +341,7 @@ void purplePanelsAreNotGround()
 
 int main()
 {
+  groundPerspectiveDirection();
   independentRows();
   nearAnchors();
   scenes();

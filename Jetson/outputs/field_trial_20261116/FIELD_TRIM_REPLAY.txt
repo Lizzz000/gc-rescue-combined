@@ -1,0 +1,39 @@
+Offline only. Upload these four files beside this note:
+instrument_field_trim.py, field_trim_diag.hpp, field_trim_replay.cpp, build_field_trim.sh
+
+From the Jetson workspace:
+  bash outputs/field_trial_20261116/build_field_trim.sh /absolute/frozen/generated
+  outputs/field_trial_20261116/field_trim_replay --output trace.jsonl before.png anomaly.png after.png
+
+The builder copies the current production field directory into outputs/.../trim_diag_src,
+injects logging into that copy, and copies the supplied field_config_values.inc verbatim.
+instrument_manifest.json preserves original source SHA256 values and the config SHA256.
+It does not modify production sources, start ROS, or open any hardware.
+
+One tracker processes CLI images in the given order. For exact sequence reproduction,
+include all preceding frames needed for tracker history; three selected images alone do
+not reconstruct the original prediction or periodic full-refit phase. --repeat N repeats
+each image N times (default 1), useful for checking ROI/full-search sensitivity, not for
+pretending to replay the original timing. --threads defaults to 6.
+
+Optional --config override.json patches flat FieldConfig names, e.g.
+  {"field_w_m":0.66,"field_h_m":0.64,"wall_thickness_m":0.02}
+This is an offline comparison only; do not enable it before collecting the baseline.
+Every effective config value is included in the first JSONL record.
+
+Coordinates: all are processing-image pixels. fit_prior, outer_line, trim_near,
+outer_result, inner_line and inner_result use the current search ROI coordinates;
+add roi[0:2] to obtain global processing coordinates. result.outer_global and
+result.inner_global already include the ROI offset. Multiply each axis by source /
+processing size to compare with captured ROS source-image geometry.
+
+Read events by (frame, search, fit). trim_near contains the fitted line ax+by+c=0,
+the exact production band, before/after quads, lo/hi and clipping flags. Its diagnostic
+points_within_4x_band are NOT added to the fit; they expose nearby real contour points
+that the narrow production band excluded. outer_line reports point count and fitted
+inlier span. inner_line identifies anchored vs robust/prior fallback. candidate_score
+explains acceptance, and result shows the finally committed outer/inner geometry.
+
+Diagnostic IO invalidates performance measurements. Logging does not change predicates
+or geometry. Local trim_diag_smoke* files use an EMPTY marked config fixture solely to
+check insertion anchors; never deploy or use that fixture as production configuration.

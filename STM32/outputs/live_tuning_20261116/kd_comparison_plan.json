@@ -1,0 +1,124 @@
+[
+  {
+    "name": "lower_kd",
+    "arguments": [
+      "--command",
+      "3",
+      "--kd",
+      "0.15",
+      "0.20",
+      "0.15",
+      "--ff-gain",
+      "0",
+      "--friction",
+      "0",
+      "0",
+      "0"
+    ]
+  },
+  {
+    "name": "lower_kd_forward",
+    "arguments": [
+      "--command",
+      "4",
+      "--vx",
+      "0.25",
+      "--duration-ms",
+      "1200"
+    ]
+  },
+  {
+    "name": "lower_kd_backward",
+    "arguments": [
+      "--command",
+      "4",
+      "--vx",
+      "-0.25",
+      "--duration-ms",
+      "1200"
+    ]
+  },
+  {
+    "name": "lower_kd_ccw",
+    "arguments": [
+      "--command",
+      "4",
+      "--wz",
+      "0.5",
+      "--duration-ms",
+      "1000"
+    ]
+  },
+  {
+    "name": "lower_kd_cw",
+    "arguments": [
+      "--command",
+      "4",
+      "--wz",
+      "-0.5",
+      "--duration-ms",
+      "1000"
+    ]
+  },
+  {
+    "name": "higher_kd",
+    "arguments": [
+      "--command",
+      "3",
+      "--kd",
+      "0.25",
+      "0.30",
+      "0.25",
+      "--ff-gain",
+      "0",
+      "--friction",
+      "0",
+      "0",
+      "0"
+    ]
+  },
+  {
+    "name": "higher_kd_forward",
+    "arguments": [
+      "--command",
+      "4",
+      "--vx",
+      "0.25",
+      "--duration-ms",
+      "1200"
+    ]
+  },
+  {
+    "name": "higher_kd_backward",
+    "arguments": [
+      "--command",
+      "4",
+      "--vx",
+      "-0.25",
+      "--duration-ms",
+      "1200"
+    ]
+  },
+  {
+    "name": "higher_kd_ccw",
+    "arguments": [
+      "--command",
+      "4",
+      "--wz",
+      "0.5",
+      "--duration-ms",
+      "1000"
+    ]
+  },
+  {
+    "name": "higher_kd_cw",
+    "arguments": [
+      "--command",
+      "4",
+      "--wz",
+      "-0.5",
+      "--duration-ms",
+      "1000"
+    ]
+  }
+]

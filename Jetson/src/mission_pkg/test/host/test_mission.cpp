@@ -18,9 +18,15 @@ struct HostOut : MissionOut
   std::uint64_t switch_generation{0};
   bool roi_ready{true};
   bool detector_ready{true};
+  RoiRuleResult published_roi;
+  std::uint64_t published_roi_id{0};
 
   void publishStatus(const MissionState &) override {++status_count;}
-  void publishRoi(const RoiRuleResult &, std::uint64_t, bool) override {}
+  void publishRoi(const RoiRuleResult & result, std::uint64_t request_id, bool) override
+  {
+    published_roi = result;
+    published_roi_id = request_id;
+  }
   void forwardTask() override {}
   bool roiServiceReady() override {return roi_ready;}
   void sendRoiRequest(std::uint64_t generation) override
@@ -184,4 +190,95 @@ void testMissionErrors()
   CHECK(busy.controller.busy());
   CHECK(busy.controller.state().cycle_phase == Phase::CheckingRoi);
   CHECK(busy.controller.state().operation == MissionState::Operation::Checking);
+}
+
+void testMissionRoiIdentity()
+{
+  Group group("MissionController.roi_identity");
+  Session session;
+  session.controller.taskChanged(taskAt("seg", 1, 100), kNow);
+  std::uint64_t generation = 0;
+  CHECK(waitForRoi(session, generation));
+  session.controller.roiReply(generation, oneGreen(), 1);
+  session.controller.commitRoiAfterReply();
+  CHECK(session.controller.requestCommand(MissionCommand::TurnCompleted, 1).accepted);
+  CHECK(confirmSwitch(session, "field", 200, 2));
+  CHECK(session.controller.requestCommand(MissionCommand::SafetyArrived, 1).accepted);
+  CHECK(session.controller.requestCommand(MissionCommand::DeliveryCompleted, 1).accepted);
+  CHECK(session.controller.requestCommand(MissionCommand::StartSearch, 0).accepted);
+  CHECK(confirmSwitch(session, "seg", 300, 3));
+
+  // Target 单独重启后从 1 开始；旧送达编号不能成为下一趟路由。
+  CHECK(waitForRoi(session, generation));
+  const auto cycle = session.controller.state().cycle_generation;
+  session.controller.roiReply(generation, oneGreen(), 1);
+  CHECK(!session.out.published_roi.valid && !session.out.published_roi.passed);
+  CHECK(session.out.published_roi_id == 0);
+  session.controller.commitRoiAfterReply();
+  CHECK(session.controller.state().cycle_phase == Phase::RoiFailed);
+  CHECK(session.controller.state().roi_request_id == 0);
+  CHECK(session.controller.state().destination == MissionState::Destination::None);
+  CHECK(session.controller.state().operation == MissionState::Operation::Idle);
+  CHECK(session.controller.state().outcome == MissionState::Outcome::RoiInvalid);
+  CHECK(session.controller.state().reason.find("reused or moved backwards") != std::string::npos);
+  CHECK(session.controller.state().cycle_generation == cycle);
+  CHECK(session.controller.state().transport_phase == MissionState::Transport::Later);
+  CHECK(!session.controller.busy());
+
+  const int statuses = session.out.status_count;
+  CHECK(!session.controller.requestCommand(MissionCommand::TurnCompleted, 1).accepted);
+  CHECK(!session.controller.requestCommand(MissionCommand::SafetyArrived, 1).accepted);
+  // 旧送达收据仍可只读查询；不能因此恢复路由或发布状态。
+  const auto receipt = session.controller.requestCommand(MissionCommand::DeliveryCompleted, 1);
+  CHECK(receipt.accepted && !receipt.acted);
+  CHECK(session.out.status_count == statuses);
+  CHECK(session.controller.state().cycle_phase == Phase::RoiFailed);
+  CHECK(session.controller.state().roi_request_id == 0);
+
+  // 显式重找后严格递增编号仍按原协议完成下一趟。
+  CHECK(session.controller.requestCommand(MissionCommand::StartSearch, 0).accepted);
+  CHECK(confirmSwitch(session, "seg", 400, 4));
+  CHECK(waitForRoi(session, generation));
+  session.controller.roiReply(generation, oneGreen(), 2);
+  session.controller.commitRoiAfterReply();
+  CHECK(session.controller.state().cycle_phase == Phase::WaitingTurn);
+  CHECK(session.controller.state().roi_request_id == 2);
+  CHECK(session.controller.requestCommand(MissionCommand::TurnCompleted, 2).accepted);
+  CHECK(confirmSwitch(session, "field", 500, 5));
+  CHECK(session.controller.requestCommand(MissionCommand::SafetyArrived, 2).accepted);
+  CHECK(session.controller.requestCommand(MissionCommand::DeliveryCompleted, 2).accepted);
+  const auto second_receipt = session.controller.requestCommand(MissionCommand::DeliveryCompleted, 2);
+  CHECK(second_receipt.accepted && !second_receipt.acted);
+
+  // 有效代次的失败结论也消费编号；过期代次不得提高高水位。
+  Session failed;
+  failed.controller.taskChanged(taskAt("seg", 1, 100), kNow);
+  CHECK(waitForRoi(failed, generation));
+  RoiRuleResult invalid;
+  invalid.reason = "frame unavailable";
+  failed.controller.roiReply(generation, invalid, 10);
+  failed.controller.commitRoiAfterReply();
+  CHECK(failed.controller.state().cycle_phase == Phase::RoiFailed);
+  CHECK(failed.controller.requestCommand(MissionCommand::StartSearch, 0).accepted);
+  CHECK(confirmSwitch(failed, "seg", 200, 2));
+  CHECK(waitForRoi(failed, generation));
+  failed.controller.roiReply(generation, oneGreen(), 9);
+  failed.controller.commitRoiAfterReply();
+  CHECK(failed.controller.state().cycle_phase == Phase::RoiFailed);
+  CHECK(failed.controller.state().roi_request_id == 0);
+  CHECK(failed.controller.state().destination == MissionState::Destination::None);
+  CHECK(failed.controller.state().transport_phase == MissionState::Transport::First);
+  const auto stale_generation = generation;
+  CHECK(failed.controller.requestCommand(MissionCommand::StartSearch, 0).accepted);
+  CHECK(confirmSwitch(failed, "seg", 300, 3));
+  CHECK(waitForRoi(failed, generation));
+  const int before_stale = failed.out.status_count;
+  failed.controller.roiReply(stale_generation, oneGreen(), 1000);
+  failed.controller.commitRoiAfterReply();
+  CHECK(failed.out.status_count == before_stale);
+  CHECK(failed.controller.busy());
+  failed.controller.roiReply(generation, oneGreen(), 11);
+  failed.controller.commitRoiAfterReply();
+  CHECK(failed.controller.state().cycle_phase == Phase::WaitingTurn);
+  CHECK(failed.controller.state().roi_request_id == 11);
 }

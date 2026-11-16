@@ -27,43 +27,70 @@ class Phase(enum.Enum):
     STOPPING = 'stopping'  # 零速 valid=1，之后进入 IDLE
 
 
-def quantize(vx, vy, wz):
+def _finite_number(value, label):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f'{label}须为有限数值')
+    try:
+        value = float(value)
+    except OverflowError as error:
+        raise ValueError(f'{label}须为有限数值') from error
+    if not math.isfinite(value):
+        raise ValueError(f'{label}须为有限数值')
+    return value
+
+
+def _positive_limit(value, maximum, label):
+    value = _finite_number(value, label)
+    if not 0.0 < value <= maximum:
+        raise ValueError(f'{label}须在 (0, {maximum:g}] 内')
+    return value
+
+
+def quantize(vx, vy, wz, *, max_linear_mps=MAX_LINEAR_MPS, max_angular_radps=MAX_ANGULAR_RADPS):
     """限幅后向零截断到 ×1000 整数，保证量化值仍不超过 STM32 阈值。"""
-    for value in (vx, vy, wz):
-        if not math.isfinite(value):
-            raise ValueError('速度必须是有限数')
+    vx, vy, wz = (_finite_number(value, '速度') for value in (vx, vy, wz))
+    max_linear_mps = _positive_limit(max_linear_mps, MAX_LINEAR_MPS, '平移上限')
+    max_angular_radps = _positive_limit(max_angular_radps, MAX_ANGULAR_RADPS, '转向上限')
     linear = math.hypot(vx, vy)
-    if linear > MAX_LINEAR_MPS:
-        vx, vy = vx * MAX_LINEAR_MPS / linear, vy * MAX_LINEAR_MPS / linear
-    wz = max(-MAX_ANGULAR_RADPS, min(MAX_ANGULAR_RADPS, wz))
+    if linear > max_linear_mps:
+        vx, vy = vx * max_linear_mps / linear, vy * max_linear_mps / linear
+    wz = max(-max_angular_radps, min(max_angular_radps, wz))
     return tuple(math.trunc(value * _SCALE) for value in (vx, vy, wz))
 
 
 class ManualCommand:
     """线程安全的指令状态。hold 续租约；timed 定时；stop 或过期进入停车序列，之后起步重新使能。"""
 
-    def __init__(self, lease_s, arm_zero_s):
-        if not 0.0 < lease_s <= MAX_LEASE_S:
-            raise ValueError(f'lease_s 须在 (0, {MAX_LEASE_S}] 秒内')
-        if not 0.0 < arm_zero_s <= MAX_ARM_ZERO_S:
-            raise ValueError(f'arm_zero_s 须在 (0, {MAX_ARM_ZERO_S}] 秒内')
-        self._lease_s = lease_s
-        self._arm_zero_s = arm_zero_s
+    def __init__(self, lease_s, arm_zero_s, *, max_linear_mps=MAX_LINEAR_MPS,
+                 max_angular_radps=MAX_ANGULAR_RADPS, max_timed_s=MAX_TIMED_S):
+        self._lease_s = _positive_limit(lease_s, MAX_LEASE_S, 'lease_s')
+        self._arm_zero_s = _positive_limit(arm_zero_s, MAX_ARM_ZERO_S, 'arm_zero_s')
+        self._max_linear_mps = _positive_limit(max_linear_mps, MAX_LINEAR_MPS, '平移上限')
+        self._max_angular_radps = _positive_limit(max_angular_radps, MAX_ANGULAR_RADPS, '转向上限')
+        self._max_timed_s = _positive_limit(max_timed_s, MAX_TIMED_S, '定时上限')
         self._lock = threading.Lock()
         self._phase = Phase.IDLE
         self._phase_until = 0.0
         self._velocity = (0, 0, 0)
         self._deadline = 0.0
 
+    @property
+    def limits(self):
+        return {'linear_mps': self._max_linear_mps, 'angular_radps': self._max_angular_radps,
+                'timed_s': self._max_timed_s}
+
+    def _quantize(self, vx, vy, wz):
+        return quantize(vx, vy, wz, max_linear_mps=self._max_linear_mps,
+                        max_angular_radps=self._max_angular_radps)
+
     def hold(self, vx, vy, wz, now):
         """按住中的速度；租约 lease_s 内未续期即停车。"""
-        self._start(quantize(vx, vy, wz), self._lease_s, now)
+        self._start(self._quantize(vx, vy, wz), self._lease_s, now)
 
     def timed(self, vx, vy, wz, seconds, now):
         """定时动作：持续 seconds 秒，不需要续期。"""
-        if not 0.0 < seconds <= MAX_TIMED_S:
-            raise ValueError(f'seconds 须在 (0, {MAX_TIMED_S:g}] 秒内')
-        self._start(quantize(vx, vy, wz), seconds, now, timed=True)
+        seconds = _positive_limit(seconds, self._max_timed_s, 'seconds')
+        self._start(self._quantize(vx, vy, wz), seconds, now, timed=True)
 
     def stop(self, now):
         with self._lock:

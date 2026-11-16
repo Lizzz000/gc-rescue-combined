@@ -6,6 +6,29 @@ import subprocess
 import tempfile
 
 
+def check_control_modes(root, cc):
+    """预处理全部三开关组合，确保只有一个底盘控制器可被编入固件。"""
+    modes = ("CHASSIS_TUNING_ENABLED", "JETSON_AUTO_ENABLED", "JETSON_AUTO_CHASSIS_TEST")
+    cases = [None] + [tuple((bits >> i) & 1 for i in range(3)) for bits in range(8)]
+    for values in cases:
+        command = [cc, "-E", "-P", "-x", "c",
+                   "-I" + str(root / "project/Core/Control/Jetson")]
+        if values is not None:
+            command += [f"-D{name}={value}" for name, value in zip(modes, values)]
+        result = subprocess.run(command + ["-"], input='#include "jetson_auto_config.h"\n',
+                                capture_output=True, text=True)
+        valid = values is None or sum(values) <= 1
+        if valid:
+            if result.returncode != 0:
+                raise RuntimeError(f"合法控制模式 {values} 预处理失败:\n{result.stderr}")
+        else:
+            expected = ("Chassis tuning cannot share control" if values[0] else
+                        "Select either full transport or chassis-only test")
+            if result.returncode == 0 or expected not in result.stderr:
+                raise RuntimeError(f"冲突控制模式 {values} 未被正确拒绝:\n{result.stderr}")
+    print(f"PASS: {len(cases)} control-mode preprocessing cases (default + all combinations)")
+
+
 def main():
     """寻找主机 GCC 并依次编译、运行独立测试程序。"""
     root = Path(__file__).resolve().parents[1]
@@ -17,6 +40,7 @@ def main():
     cc = args.cc or shutil.which("gcc") or (str(fallback) if fallback.exists() else None)
     if not cc:
         parser.error("未找到主机 GCC，请通过 --cc 指定")
+    check_control_modes(root, cc)
     suites = {
         "adaptive_tracker": ["tests/native/test_kalman_tracking.c", "project/Core/Algorithm/Kalman/adaptive_kalman.c"],
         "adaptive_kalman": ["tests/native/test_adaptive_kalman.c",
@@ -44,6 +68,8 @@ def main():
                   "project/Core/Bsp/LED/bsp_led.c", "project/Core/Bsp/Buzzer/bsp_buzzer.c"],
         "chassis": ["tests/native/test_chassis.c", "project/Core/Algorithm/Chassis/motor_chassis.c",
                     "project/Core/Control/Chassis/chassis.c", "project/Core/Algorithm/PID/pid.c"],
+        "live_tuning": ["tests/native/test_live_tuning.c", "project/Core/Control/Chassis/live_tuning.c"],
+        "can_diag": ["tests/native/test_can_diag.c", "project/Core/Bsp/CAN/bsp_can.c"],
     }
     suites["sensors_nine_axis"] = suites["sensors"]
     suites["jetson_auto_configured"] = [
@@ -92,6 +118,8 @@ def main():
                 command.append("-DJETSON_AUTO_ENABLED=0")
             if name == "can_auto":
                 command.append("-DJETSON_AUTO_ENABLED=1")
+            if name == "can_diag":
+                command.append("-DCHASSIS_TUNING_ENABLED=1")
             if name.startswith("jetson_auto_"):
                 command += ["-include", str(root / "tests/native/jetson_auto_test_config.h")]
             if name == "jetson_auto_configured":

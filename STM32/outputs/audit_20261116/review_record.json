@@ -1,0 +1,45 @@
+{
+  "date": "2026-11-16",
+  "scope": "STM32 application Core, USB/CAN, manual/autonomous/tuning integration; local offline only",
+  "record_kind": "Summary transcribed from completed tool results; not a raw test log",
+  "raw_test_log": null,
+  "raw_test_log_note": "Test stdout was returned by the execution tool and was not redirected to a persistent log. Temporary test executables were removed by run_native.py on completion.",
+  "finding_fixed": {
+    "problem": "CHASSIS_TUNING_ENABLED and JETSON_AUTO_CHASSIS_TEST could both be enabled, scheduling two controllers for the same chassis.",
+    "reproduction": "Before the fix, preprocessing chassis_task.c with tuning=1, auto=0, chassis-test=1 succeeded and retained both Live_Tuning_Loop and Jetson_Auto_Loop.",
+    "fix": "Compile-time rejection of tuning combined with either autonomous mode.",
+    "files": [
+      "STM32/project/Core/Control/Jetson/jetson_auto_config.h",
+      "STM32/tests/run_native.py"
+    ],
+    "tuned_parameters_changed": false
+  },
+  "completed_validation": {
+    "native_command": "python -B STM32/tests/run_native.py --temp-dir STM32/outputs/audit_20261116",
+    "control_mode_preprocessing_cases": {"passed": 9, "failed": 0},
+    "native_test_suites": {"passed": 25, "failed": 0},
+    "native_exit_code": 0,
+    "arm_build_command": "cmake --build STM32/project/build/Debug --parallel 4",
+    "arm_build_exit_code": 0,
+    "diff_check": "passed",
+    "flashed_or_accessed_hardware": false
+  },
+  "normal_manual_firmware": {
+    "binary": "STM32/project/build/Debug/project.bin",
+    "binary_bytes": 83284,
+    "binary_sha256": "7f428489109fd9f972b23a67d51c2154a933d6617d82c8212d3d3a155258aa76",
+    "matches_previously_flashed_binary": true,
+    "elf_sha256_before": "541c513b5f4a7a164de60875549ce6acbb3304c8c693f85b4097f1cbc9fdb94a",
+    "elf_sha256_after": "6fe88d9749d0de5cc4e57e3e56bf04bc97c0d92a214fe88af7d59fdca3915032",
+    "note": "ELF debug information changed; the complete flash binary remained byte-identical. No reflash is required for this guard."
+  },
+  "review_conclusions": [
+    "Manual timeout/revocation requires a new zero-velocity authorization before motion can resume.",
+    "Autonomous link timeout enters FAULT; restored coordinates or heartbeat do not automatically resume motion.",
+    "No other confirmed material defect was found in the reviewed state-machine, feedback, USB/CAN, numeric and wraparound interactions."
+  ],
+  "remaining_boundaries": [
+    "Full autonomous mode remains unconfigured because the three physical travel distances are zero; the current default firmware is manual.",
+    "Offline HAL stubs and prior USB-disconnect tests do not establish motor autonomous stopping behavior after physical CAN disconnection or an MCU stall."
+  ]
+}

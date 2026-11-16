@@ -58,6 +58,17 @@ typedef enum
  */
 extern float chassis_speed[3];
 
+/* 现场调参观察量。只能由同一控制任务通过 Chassis_Set_Tuning 更新参数。
+ * MIT 力矩单位已经是 N·m，不在主控重复乘除电机 Kt。
+ * 默认启用1.8 kg车体平移惯性项，两后轮摩擦项0.015 N·m；纯旋转不加前馈。
+ * 2026-11-16以0.25 m/s完成实车前后及双向旋转对照，未推定旋转惯量。 */
+extern float chassis_tuning_kd[3];
+extern float chassis_tuning_ff_gain;
+extern float chassis_tuning_friction[3];
+extern float chassis_motor_target[3];
+extern float chassis_motor_ff[3];
+uint8_t Chassis_Set_Tuning(const float kd[3], float ff_gain, const float friction[3]);
+
 /* 以下接口及 Loop 由同一 test_task 调用；其他任务/中断不得并发修改目标。
  * 先 Init、显式 Enable，再调用动作；默认失能。返回成功表示软件请求接受，
  * 通常切换动作先 Stop，待 Is_Stopped 确认后起步；定距可接转向尾段，见其接口说明。

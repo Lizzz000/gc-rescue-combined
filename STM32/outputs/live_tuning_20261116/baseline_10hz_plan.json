@@ -1,0 +1,7 @@
+[
+  {"name":"original_kd_zero_ff","arguments":["--command","3","--kd","0.20","0.25","0.20","--ff-gain","0","--friction","0","0","0"]},
+  {"name":"baseline_forward","arguments":["--command","4","--vx","0.25","--duration-ms","1200"]},
+  {"name":"baseline_backward","arguments":["--command","4","--vx","-0.25","--duration-ms","1200"]},
+  {"name":"baseline_ccw","arguments":["--command","4","--wz","0.5","--duration-ms","1000"]},
+  {"name":"baseline_cw","arguments":["--command","4","--wz","-0.5","--duration-ms","1000"]}
+]

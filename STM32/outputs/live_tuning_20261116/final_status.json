@@ -1,0 +1,43 @@
+{
+  "firmware": "normal Debug, tuning OFF, six-axis manual",
+  "binary_sha256": "7f428489109fd9f972b23a67d51c2154a933d6617d82c8212d3d3a155258aa76",
+  "elf_sha256": "541c513b5f4a7a164de60875549ce6acbb3304c8c693f85b4097f1cbc9fdb94a",
+  "openocd_verified": true,
+  "cpu": "running",
+  "enabled": 0,
+  "manual_control_state": 0,
+  "kd": [
+    0.20000000298023224,
+    0.25,
+    0.20000000298023224
+  ],
+  "ff_gain": 1.0,
+  "translation_friction_nm": [
+    0.0,
+    0.014999999664723873,
+    0.014999999664723873
+  ],
+  "current_ff_nm": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "can_esr": 0,
+  "mass_kg": 1.8,
+  "tested_translation_mps": 0.25,
+  "tested_rotation_rad_s": 0.5,
+  "kt_readback": [
+    0,
+    0,
+    0
+  ],
+  "kt_written": false,
+  "native_test_suites": 25,
+  "host_tests": 17,
+  "completed_motion_segments": 28,
+  "all_segments_stopped_and_disabled": true,
+  "user_observation": "用户确认原参数及最终两组前后和旋转均平顺",
+  "telemetry_hz": 10,
+  "selected_kd_reason": "低高Kd对照未显示各方向一致改善，保留原Kd",
+  "feedforward_reason": "加入平移惯性与两后轮小幅摩擦补偿，纯旋转零前馈；最终两组复测确认"
+}

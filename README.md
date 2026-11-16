@@ -81,6 +81,8 @@ ros2 launch bringup_pkg rescue.launch.py run:=vision
 
 ## 当前验证状态与待标定项
 
+2026-11-16 已保存双端联调修改、1.8 kg 底盘参数和场地相机配置；断电前核验了板端固件、USB 收包、IMU 与夹爪通信。安全区识别约 68 FPS；单次搬运尚未启动，三轮零速使能后的反馈和松爪效果仍待现场验收。最新状态见 [现场链路检查记录](Jetson/outputs/field_trial_20261116/COMMUNICATION_CHECK_END.txt)，参数见 [场地参数说明](Jetson/outputs/field_trial_20261116/FIELD_PARAMETERS.txt)。`outputs` 中仅选定的参数、工具和记录纳入版本控制，原始图像、大型逐帧数据、临时实验及编译产物保留在本地。
+
 2026-11-15 已完成两端主机回归、协议互验、连续两趟运输模拟和四种 ARM 配置编译；安全区完整矩阵 **1162 项通过、0 项失败**。本轮没有执行真实机器人运输，实拍回放因缺少标注数据跳过。详细结果见 [验证记录](docs/validation-2026-11-15.md)。
 
 自动运行前仍需实车标定：

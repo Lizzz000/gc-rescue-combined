@@ -1,0 +1,27 @@
+Cloud-sync local validation — 2026-11-16
+
+Scope: current working-tree sources; local host compilation/execution only.
+No hardware, SSH/network, source edits or Git index changes were performed.
+
+PASS — STM32/tests/run_native.py
+  Host compiler: CLion 2026.2.3.1 MinGW gcc.exe, explicitly selected with --cc.
+  Exit code 0. All 25 native test suites passed, plus 9 control-mode preprocessing cases.
+  Covers manual link/control, chassis, live tuning, CAN, IMU/sensors, automatic
+  transport, fail-safe behavior, frame CRC/resynchronization, USB ring and sessions.
+
+PASS — STM32/tests/check_jetson_codec.py --jetson-root Jetson
+  Same explicit host GCC. Exit code 0.
+  STM32 codec: 155 downlink frames and 33 uplink frames passed.
+  Jetson/STM32 all-message-type interoperability passed.
+
+PASS — STM32/tests/check_gripper_budget.py
+  Host compiler: CLion MinGW g++.exe, explicitly selected with --cxx.
+  Exit code 0. S288 maximum action budget 11870 ms <= STM32 deadline 12000 ms.
+  First executable launch failed with Windows status 3221225781 (0xC0000135).
+  A single retry with the compiler's bin directory prepended to that process's
+  PATH passed. This was a host runtime/DLL search-path issue, not a failed assertion;
+  no source or persistent environment changes were required.
+
+Result: all three requested checks passed. These results establish local software
+regression/codec/budget checks only; they do not establish live hardware health,
+cloud upload completion, or physical transport success.

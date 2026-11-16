@@ -1,0 +1,202 @@
+shared:
+  classes:
+    green: 0
+    blue: 1
+    black: 2
+    orange: 3
+  candidate_ids:
+  - 0
+  - 2
+  - 3
+vision:
+  detect:
+    task: both
+    dla_core: -1
+    nms_threshold: 0.7
+    max_detections: 300
+    publish_masks: false
+    mask_scale: 2
+    mask_label_offset: 1
+    max_masks: 32
+    publish_field_results: true
+    publish_raw: true
+    publish_processed: true
+    raw_max_fps: 100.0
+    camera_brightness: 150
+    camera_buffer_size: 2
+    camera_pipeline: ''
+    publish_timing: true
+    seg_max_fps: 100.0
+    field_max_fps: 100.0
+    active_task: seg
+    publish_status: true
+    frame_id: camera
+  stream:
+    image_topic: /detect_node/image_processed
+    seg_detections_topic: /detect_node/seg/detections
+    seg_masks_topic: /detect_node/seg/masks
+    field_results_topic: /detect_node/field/results
+    draw_boxes: true
+    draw_labels: true
+    draw_masks: false
+    draw_field: true
+    overlay_wait_ms: 150.0
+    input_timeout_s: 1.0
+    active_task_topic: /detect_node/active_task
+    stream_enabled: true
+    stream_max_fps: 100.0
+    stream_scale: 1.0
+    jpeg_backend: nvjpeg
+    publish_annotated: false
+    publish_compressed: false
+    compressed_quality: 80
+    overlay_stats: false
+    publish_status: true
+    frame_id: ''
+  field:
+    proc_width: 1280
+    proc_height: 720
+    bev_px_per_m: 400.0
+    bev_width: 0
+    bev_height: 0
+    wall_thickness_m: 0.02
+    purple_hue_range_deg:
+    - -80.0
+    - -15.0
+    purple_chroma_ratio_min: 0.5
+    purple_L_range:
+    - 8.0
+    - 96.0
+    morph_close_ksize: 5
+    morph_close_iter: 2
+    morph_dilate_ksize: 3
+    morph_dilate_iter: 2
+    min_area_frac: 0.004
+    min_rect_ratio_range:
+    - 1.2
+    - 12.0
+    max_border_touch: 2
+    min_fill_ratio: 0.45
+    max_candidates_try: 4
+    corner_exclude_frac: 0.06
+    edge_bins: 32
+    edge_band_frac: 0.18
+    fit_outlier_px: 2.0
+    fit_iterations: 4
+    min_side_points: 8
+    min_side_inliers: 6
+    prior_corner_tol_frac: 0.12
+    quad_min_area_frac: 0.004
+    quad_side_ratio_range:
+    - 0.2
+    - 6.0
+    use_aspect_check: false
+    quad_max_aspect_err: 2.0
+    black_search_range:
+    - 0.14
+    - 0.86
+    black_row_range:
+    - 0.12
+    - 0.88
+    black_min_depth: 0.35
+    black_conf_depth: 0.7
+    black_score_frac: 0.6
+    black_max_width_frac: 0.06
+    black_max_lift: 0.25
+    black_max_offset_frac: 0.04
+    bev_border_margin_frac: 0.04
+    red_hue_range_deg:
+    - -12.0
+    - 46.0
+    red_chroma_ratio_min: 0.6
+    red_L_min: 15.0
+    use_blue_interior: false
+    blue_hue_range_deg:
+    - -140.0
+    - -80.0
+    blue_chroma_ratio_min: 0.6
+    blue_L_min: 12.0
+    interior_open_ksize: 3
+    locate_hits_needed: 2
+    lost_frames_to_search: 6
+    refit_every: 10
+    track_window_scale: 1.35
+    edge_samples: 40
+    edge_probe_radius: 3
+    edge_support_min: 0.25
+    edge_support_strong: 0.35
+    w_purple: 0.3
+    w_temporal: 0.3
+    w_red_inside: 0.2
+    w_red_outside: 0.15
+    w_geometry: 0.05
+    min_total_score: 0.45
+    min_purple_score: 0.28
+    red_inside_min: 0.15
+    red_outside_max: 0.25
+    purple_lost_threshold: 0.15
+    red_cells_min: 4
+    expand_frac: 0.08
+    red_grid_cols: 4
+    red_grid_rows: 2
+    red_cell_min: 0.1
+    pred_velocity_gain: 0.7
+    max_jump_frac: 0.35
+    jump_accept_frac: 0.35
+    switch_confirm_frames: 2
+    fast_switch_purple: 0.45
+    fast_switch_red_inside: 0.45
+    fast_switch_red_outside: 0.12
+    max_hold_frames: 5
+tracking:
+  track:
+    det_threshold: 0.25
+    detections_topic: /detect_node/seg/detections
+    active_task_topic: /detect_node/active_task
+    iou_threshold: 0.3
+    inertia: 0.2
+    max_age: 10
+    min_hits: 3
+    delta_t: 3
+    use_byte: false
+    reset_timeout_s: 1.0
+  select:
+    tracks_topic: /track_node/seg/tracks
+    active_task_topic: /detect_node/active_task
+    reset_timeout_s: 1.0
+    mission_status_topic: /mission_node/status
+mission:
+  controller:
+    request_timeout_s: 2.0
+    detector_service: /detect_node/set_field
+    detector_task_topic: /detect_node/active_task
+    target_roi_service: /target_node/check_roi
+  target:
+    roi_check_timeout_s: 1.0
+    input_topic: /select_node/target
+    control_topic: /mission_node/active_task
+    reset_timeout_s: 1.0
+    detections_topic: /detect_node/seg/detections
+  safety:
+    input_topic: /detect_node/field/results
+    control_topic: /mission_node/active_task
+    reset_timeout_s: 1.0
+    mission_status_topic: /mission_node/status
+bridge:
+  input_timeout_s: 0.25
+  safety_hold_s: 0.2
+  tx_queue_timeout_s: 0.1
+  request_timeout_s: 3.0
+  mission_watchdog_timeout_s: 0.5
+  target_topic: /target_node/target
+  safety_topic: /safety_node/target
+  task_topic: /mission_node/active_task
+  mission_status_topic: /mission_node/status
+  roi_service: /mission_node/arrived
+  command_service: /mission_node/command
+gripper:
+  kp: 1.0
+  kd: 0.05
+  closed_deg: -40
+  open_deg: 40
+  move_s: null
