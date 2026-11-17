@@ -15,6 +15,10 @@
 /* 反馈定距的初始控制参数；容差是软件到位判据，实际精度须实车标定。 */
 #define CHASSIS_DISTANCE_MIN_M 0.010f
 #define CHASSIS_DISTANCE_TOLERANCE_M 0.003f
+/* 在验收容差内侧请求停车，给轮速量化和停车小回退保留余量；验收仍为 3 mm。 */
+#define CHASSIS_DISTANCE_STOP_REMAINING_M 0.0015f
+/* 末段接近速度克服低速死区，仍不得超过用户限速和剩余距离制动上限。 */
+#define CHASSIS_DISTANCE_APPROACH_SPEED_MPS 0.010f
 #define CHASSIS_DISTANCE_POSITION_KP 2.0f
 #define CHASSIS_DISTANCE_TIMEOUT_FACTOR 3.0
 #define CHASSIS_DISTANCE_TIMEOUT_MARGIN_MS 2000U
@@ -163,7 +167,8 @@ uint8_t Chassis_Translation_Start(Chassis_Translation_Direction_t direction,
  *       转向剩余角不超过 5 度时也接受定距衔接，保留原转向终点航向，边走边修偏，
  *       不等待原地精修或停车确认；角速度按转向斜坡接入直行 PID。
  *       其他情况仍须从停车待命启动。进度取轮速里程计在锁定方向的有符号投影，
- *       位置容差内且三轮确认停稳才完成；断流、过冲、无进展或总超时制动后失能。
+ *       剩余 1.5 mm 时请求停车，最终仍须在 3 mm 容差内且三轮确认停稳才完成；
+ *       末段接近速度仍受请求限速与制动距离约束；断流、过冲、无进展或总超时制动后失能。
  *       轮速里程不能排除打滑，也不提供横向路径闭环，实际距离须实测标定。
  */
 uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction,

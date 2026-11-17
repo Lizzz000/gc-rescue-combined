@@ -7,6 +7,8 @@
 #include "dm_motor.h"
 #include "INS_task.h"
 #include "task.h"
+#include "tim.h"
+#include "vofa.h"
 
 uint32_t test_tick;
 volatile dm_motor_t dm_motor[3];
@@ -21,6 +23,48 @@ static uint32_t imu_age;
 static HAL_StatusTypeDef read_status;
 static uint16_t read_id;
 static uint8_t read_reg;
+TIM_HandleTypeDef htim2;
+static Chassis_Odometry_t odom;
+static unsigned reset_calls, distance_calls, serial_calls;
+static unsigned odom_reads, invalidate_read_number;
+static uint8_t reset_ok, distance_ok;
+static float serial_sample[TUNING_SAMPLE_COUNT];
+
+uint32_t test_timer_counter(TIM_HandleTypeDef *timer)
+{
+    assert(timer == &htim2);
+    return test_tick * 1000U;
+}
+void vofa_send_channels(const float *values, uint8_t count)
+{
+    assert(count == TUNING_SAMPLE_COUNT && !(tuning_sample_seq & 1U));
+    ++serial_calls;
+    memcpy(serial_sample, values, sizeof(serial_sample));
+}
+uint8_t Chassis_Get_Odometry(Chassis_Odometry_t *data)
+{
+    *data = odom;
+    data->valid = odom.valid && enabled && motors_ready && ++odom_reads != invalidate_read_number;
+    return data->valid;
+}
+uint8_t Chassis_Reset_Odometry(void)
+{
+    assert(enabled && stopped);
+    ++reset_calls;
+    if (reset_ok)
+        odom = (Chassis_Odometry_t){0};
+    return reset_ok;
+}
+uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction, float distance, float speed)
+{
+    assert(enabled && stopped && odom.valid);
+    assert(direction == CHASSIS_TRANSLATION_FORWARD || direction == CHASSIS_TRANSLATION_BACKWARD);
+    assert(distance >= 0.01f && distance <= 0.20f && speed >= 0.02f && speed <= 0.10f);
+    ++distance_calls;
+    if (distance_ok)
+        stopped = 0U;
+    return distance_ok;
+}
 
 void test_enter_critical(void) { ++critical_depth; }
 void test_exit_critical(void) { assert(critical_depth > 0U); --critical_depth; }
@@ -100,6 +144,11 @@ static void reset_case(void)
     read_status = HAL_OK;
     read_id = read_reg = 0U;
     battery_voltage = 16.0f;
+    odom = (Chassis_Odometry_t){0};
+    reset_calls = distance_calls = serial_calls = 0U;
+    odom_reads = invalidate_read_number = 0U;
+    reset_ok = distance_ok = 1U;
+    memset(serial_sample, 0, sizeof(serial_sample));
     memset((void *)dm_motor, 0, sizeof(dm_motor));
     memset((void *)dm_param_reply, 0, sizeof(dm_param_reply));
     memset(chassis_motor_target, 0, sizeof(chassis_motor_target));
@@ -381,6 +430,200 @@ static void test_read_with_missing_disable_reply(void)
     assert(!enable_calls && !move_calls); /* STOP仍要求全部新失能回复。 */
 }
 
+static void set_odometry(uint32_t command, float direction, float distance, float speed, float duration)
+{
+    for (unsigned i = 0U; i < 8U; ++i)
+        tuning_args[i] = 0.0f;
+    tuning_args[0] = direction;
+    tuning_args[1] = distance;
+    tuning_args[2] = speed;
+    tuning_args[3] = duration;
+    submit(command);
+}
+
+static void start_odometry(uint32_t command, float direction, float distance, float speed, float duration)
+{
+    set_odometry(command, direction, distance, speed, duration);
+    assert(tuning_phase == TUNING_PREPARING && reset_calls == 1U && !distance_calls && !move_calls);
+    loop(5U, 1U);
+    assert(tuning_phase == TUNING_PREPARING && !distance_calls); /* 无新基线不能启动。 */
+    odom.valid = 1U;
+    odom.yaw_rad = 12.5f * 0.01745329251994329577f;
+    odom.sample_time_us = test_tick * 1000U;
+    loop(5U, 1U);
+    assert(tuning_phase == TUNING_RUNNING && !move_calls);
+}
+
+static void set_progress(float distance)
+{
+    const float heading = 12.5f * 0.01745329251994329577f;
+    odom.x_m = distance * cosf(heading);
+    odom.y_m = distance * sinf(heading);
+    odom.sample_time_us = test_tick * 1000U;
+}
+
+static void test_odometry_argument_limits(void)
+{
+    const float invalid[][4] = {
+        {0, .10f, .05f, 1000}, {3, .10f, .05f, 1000}, {1.5f, .10f, .05f, 1000},
+        {1, .009f, .05f, 1000}, {1, .201f, .05f, 1000}, {1, .10f, .019f, 1000},
+        {1, .10f, .101f, 1000}, {1, .10f, .05f, 99}, {1, .10f, .05f, 10001},
+        {1, .10f, .05f, 100.5f}, {1, NAN, .05f, 1000}
+    };
+    for (unsigned i = 0U; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
+    {
+        reset_case();
+        set_odometry(TUNING_ODOM_DISTANCE, invalid[i][0], invalid[i][1], invalid[i][2], invalid[i][3]);
+        assert(tuning_error == 1U && !enable_calls && !reset_calls && !distance_calls);
+    }
+    reset_case();
+    set_odometry(TUNING_ODOM_STATIC, 1, 0, 0, 100);
+    assert(tuning_error == 1U && !enable_calls);
+    reset_case();
+    set_odometry(TUNING_ODOM_STATIC, 0, 0, 0, 1501);
+    assert(tuning_error == 1U && !enable_calls);
+    reset_case();
+    tuning_args[3] = 100.0f;
+    tuning_args[7] = NAN;
+    submit(TUNING_ODOM_STATIC);
+    assert(tuning_error == 1U && !enable_calls);
+}
+
+static void test_static_odometry_and_endpoint(void)
+{
+    reset_case();
+    start_odometry(TUNING_ODOM_STATIC, 0, 0, 0, 150U);
+    loop(100U, 1U);
+    assert(tuning_phase == TUNING_RUNNING && !distance_calls && !move_calls); /* 零目标合法。 */
+    set_progress(0.0005f);
+    loop(50U, 1U);
+    assert(tuning_phase == TUNING_BRAKING && tuning_error == 0U);
+    loop(5U, 1U);
+    disabled_replies();
+    assert(tuning_phase == TUNING_DONE && !enabled);
+    Live_Tuning_Snapshot();
+    assert(tuning_sample[46] == 0.0f && tuning_sample[51] == 1.0f && tuning_sample[52] == 1.0f);
+    assert(tuning_sample[53] == 150.0f && fabsf(tuning_sample[54] - .0005f) < .00001f);
+    assert(serial_calls == 1U && serial_sample[51] == 1.0f && serial_sample[55] == 0.0f);
+    const float end_x = tuning_sample[48];
+    submit(TUNING_STOP);
+    disabled_replies();
+    Live_Tuning_Snapshot();
+    assert(serial_calls == 2U && tuning_sample[48] == end_x && tuning_sample[51] == 1.0f);
+    assert(tuning_sample[1] == TUNING_DONE); /* Finish 立即发布，不等 100 ms。 */
+}
+
+static void test_distance_odometry_completion(void)
+{
+    for (unsigned backwards = 0U; backwards < 2U; ++backwards)
+    {
+        reset_case();
+        start_odometry(TUNING_ODOM_DISTANCE, backwards ? 2.0f : 1.0f, .10f, .05f, 5000U);
+        assert(distance_calls == 1U);
+        set_progress(backwards ? -.04f : .04f);
+        loop(100U, 1U);
+        assert(tuning_phase == TUNING_RUNNING);
+        set_progress(backwards ? -.10f : .10f);
+        loop(100U, 1U);
+        assert(tuning_phase == TUNING_RUNNING); /* 到距离但没停稳不算完成。 */
+        stopped = 1U;
+        loop(5U, 1U);
+        assert(tuning_phase == TUNING_BRAKING && tuning_error == 0U);
+        loop(5U, 1U);
+        disabled_replies();
+        assert(tuning_phase == TUNING_DONE && !enabled);
+        Live_Tuning_Snapshot();
+        assert(tuning_sample[46] == 0.0f && tuning_sample[51] == 1.0f && tuning_sample[52] == 1.0f);
+        assert(fabsf(tuning_sample[54] - .10f) < .00001f && tuning_sample[55] == .10f);
+        loop(1000U, 1U);
+        assert(distance_calls == 1U && reset_calls == 1U);
+    }
+}
+
+static void test_odometry_faults_and_deadline(void)
+{
+    for (unsigned fault = 0U; fault < 7U; ++fault)
+    {
+        reset_case();
+        start_odometry(TUNING_ODOM_DISTANCE, 1, .10f, .05f, 1000U);
+        if (fault == 0U) stopped = 1U; /* 提前停稳，不得冒充到位。 */
+        if (fault == 1U) odom.valid = 0U;
+        if (fault == 2U) set_progress(.11f);
+        if (fault == 3U) enabled = 0U;
+        if (fault == 4U) imu_age = 21U;
+        if (fault == 5U) motors_ready = 0U;
+        if (fault == 6U) odom.x_m = NAN;
+        loop(5U, 1U);
+        assert(tuning_phase == TUNING_BRAKING && tuning_error != 0U);
+        loop(500U, 1U);
+        disabled_replies();
+        assert(tuning_phase == TUNING_FAULT && distance_calls == 1U);
+    }
+    reset_case();
+    start_odometry(TUNING_ODOM_DISTANCE, 1, .20f, .02f, 100U);
+    loop(99U, 1U);
+    assert(tuning_phase == TUNING_RUNNING);
+    loop(1U, 1U);
+    assert(tuning_phase == TUNING_BRAKING && tuning_error == TUNING_ERROR_ACTION_TIMEOUT);
+
+    reset_case();
+    start_odometry(TUNING_ODOM_DISTANCE, 1, .01f, .10f, 100U);
+    set_progress(.01f);
+    stopped = 1U;
+    loop(100U, 1U);
+    assert(tuning_error == TUNING_ERROR_ACTION_TIMEOUT); /* 过硬截止后到达也不能成功。 */
+
+    reset_case();
+    start_odometry(TUNING_ODOM_DISTANCE, 1, .01f, .10f, 1000U);
+    set_progress(.01f);
+    stopped = 1U;
+    invalidate_read_number = odom_reads + 2U; /* 初判有效，但捕获终点时反馈失效。 */
+    loop(5U, 1U);
+    assert(tuning_error == TUNING_ERROR_ODOMETRY && tuning_phase == TUNING_BRAKING);
+
+    for (unsigned static_mode = 0U; static_mode < 2U; ++static_mode)
+    {
+        reset_case();
+        if (static_mode)
+            start_odometry(TUNING_ODOM_STATIC, 0, 0, 0, 1500U);
+        else
+            start_odometry(TUNING_ODOM_DISTANCE, 1, .20f, .02f, 10000U);
+        loop(300U, 0U);
+        assert(tuning_phase == TUNING_BRAKING && tuning_error == 5U);
+    }
+    reset_case();
+    reset_ok = 0U;
+    set_odometry(TUNING_ODOM_STATIC, 0, 0, 0, 100U);
+    assert(tuning_phase == TUNING_BRAKING && tuning_error == 3U && !distance_calls);
+    reset_case();
+    distance_ok = 0U;
+    set_odometry(TUNING_ODOM_DISTANCE, 1, .01f, .10f, 100U);
+    odom.valid = 1U;
+    loop(5U, 1U);
+    assert(tuning_phase == TUNING_BRAKING && tuning_error == 3U && distance_calls == 1U);
+
+    reset_case();
+    start_odometry(TUNING_ODOM_DISTANCE, 1, .01f, .10f, 1000U);
+    set_progress(.01f);
+    stopped = 1U;
+    loop(5U, 1U);
+    loop(5U, 1U);
+    loop(500U, 1U); /* 缺失失能回执，即使到位也不成功。 */
+    assert(tuning_phase == TUNING_FAULT && tuning_error == 8U);
+}
+
+static void test_odometry_time_wrap_and_age(void)
+{
+    reset_case();
+    test_tick = UINT32_MAX - 40U;
+    start_odometry(TUNING_ODOM_DISTANCE, 1, .10f, .05f, 100U);
+    loop(100U, 1U);
+    assert(tuning_error == TUNING_ERROR_ACTION_TIMEOUT);
+    odom.sample_time_us = test_tick * 1000U - 2500U;
+    Live_Tuning_Snapshot();
+    assert(fabsf(tuning_sample[47] - 2.5f) < .00001f);
+}
+
 int main(void)
 {
     test_init_and_config();
@@ -392,6 +635,11 @@ int main(void)
     test_parameter_reads();
     test_read_with_missing_disable_reply();
     test_snapshot_and_tick_wrap();
-    puts("PASS live tuning: bounded moves, fresh disable ACK, heartbeat/fault stop, read-only params, snapshots");
+    test_odometry_argument_limits();
+    test_static_odometry_and_endpoint();
+    test_distance_odometry_completion();
+    test_odometry_faults_and_deadline();
+    test_odometry_time_wrap_and_age();
+    puts("PASS live tuning: bounded moves/odometry, fresh disable ACK, heartbeat/fault stop, 56-channel snapshots");
     return 0;
 }

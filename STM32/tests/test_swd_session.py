@@ -8,6 +8,7 @@ import struct
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "tools/live_tuning/swd_session.py"
@@ -158,20 +159,22 @@ class LiveTuningTests(unittest.TestCase):
     def test_snapshot_rejects_torn_sample_then_accepts_even_sequence(self):
         client = MemoryClient()
         client.parse_words = swd.TclClient.parse_words
-        values = [0, 0, 4, 0, 7, 4, 2] + [swd.float_word(float(i)) for i in range(40)] + [2]
+        values = [0, 0, 4, 0, 7, 4, 2] + [swd.float_word(float(i)) for i in range(len(swd.SAMPLE_NAMES))] + [2]
         torn = list(values)
         torn[-1] = 4
         client.evaluate = unittest.mock.Mock(side_effect=[" ".join(map(str, torn)), " ".join(map(str, values))])
         state = swd.Session(client, SYMBOLS, Log()).snapshot()
         self.assertEqual(state["sample_seq"], 2)
         self.assertEqual(state["sample"]["motion_elapsed_ms"], 39.0)
+        self.assertEqual(state["sample"]["odom_x_m"], 40.0)
+        self.assertEqual(state["sample"]["end_target_distance_m"], 55.0)
         self.assertEqual(client.evaluate.call_count, 2)
 
     def test_contiguous_mailbox_uses_two_reads_and_retries_renew_heartbeat(self):
         client = MemoryClient()
         client.parse_words = swd.TclClient.parse_words
         raw = [11, 4, 17, 11, 2, 0, 8] + [0] * 8
-        raw += [swd.float_word(float(i)) for i in range(40)] + [8]
+        raw += [swd.float_word(float(i)) for i in range(len(swd.SAMPLE_NAMES))] + [8]
         torn = list(raw)
         torn[-1] = 10
         client.evaluate = unittest.mock.Mock(side_effect=[" ".join(map(str, torn)), " ".join(map(str, raw))])
@@ -185,15 +188,17 @@ class LiveTuningTests(unittest.TestCase):
         self.assertEqual(state["phase"], 2)
         self.assertEqual(state["sample_seq"], 8)
         self.assertEqual(state["sample"]["motion_elapsed_ms"], 39.0)
+        self.assertEqual(state["sample"]["odom_age_ms"], 47.0)
+        self.assertEqual(state["sample"]["end_progress_m"], 54.0)
         for call in client.evaluate.call_args_list:
             self.assertEqual(call.args[0].count("read_memory"), 2)
-            self.assertIn("read_memory 0x200074d4 32 55", call.args[0])
+            self.assertIn(f"read_memory 0x200074d4 32 {len(swd.SAMPLE_NAMES) + 15}", call.args[0])
             self.assertIn("read_memory 0x200074ec 32 1", call.args[0])
 
     def test_read_only_burst_retry_never_starts_heartbeat(self):
         client = MemoryClient()
         client.parse_words = swd.TclClient.parse_words
-        raw = [0] * 56
+        raw = [0] * (len(swd.SAMPLE_NAMES) + 16)
         raw[6] = 2
         raw[-1] = 2
         torn = list(raw)
@@ -242,7 +247,10 @@ class LiveTuningTests(unittest.TestCase):
         session._firmware_verified = session._initial_validated = True
         with patch.object(swd.time, "monotonic", side_effect=lambda: clock[0]), \
              patch.object(swd.time, "sleep", side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)), \
-             patch.object(session, "snapshot", side_effect=lambda: {"ack_seq": 7, "phase": 4 if clock[0] >= .25 else 2, "error": 0}):
+             patch.object(session, "snapshot", side_effect=lambda: {
+                 "ack_seq": 7, "phase": 4 if clock[0] >= .21 else 2, "error": 0,
+                 "sample_seq": round(clock[0] * 100),
+                 "sample": {"phase": 4 if clock[0] >= .21 else 2, "error": 0, "enabled": 0}}):
             session.wait_complete(7, 0.4)
         self.assertEqual(len(beats), 3)
         for actual, expected in zip(beats, (0.0, 0.1, 0.2)):
@@ -304,7 +312,7 @@ class LiveTuningTests(unittest.TestCase):
                 snapshot.assert_not_called()
 
     def test_invalid_initial_mailbox_never_publishes_or_stops(self):
-        for field, value in (("phase", 3593822552), ("error", 9),
+        for field, value in (("phase", 3593822552), ("error", 11),
                              ("sample.phase", 6), ("sample.error", -1),
                              ("sample.enabled", 2), ("sample.enabled", None)):
             client = MemoryClient()
@@ -340,6 +348,126 @@ class LiveTuningTests(unittest.TestCase):
                 swd.verify_flash(client, image)
         self.assertEqual(client.reads, [])
         self.assertEqual(client.writes, [])
+
+    def test_odometry_commands_encode_bounded_explicit_parameters(self):
+        static = self.parse("--command", "5", "--duration-ms", "1500")
+        self.assertEqual(swd.command_values(static), [0, 0, 0, 1500, 0, 0, 0, 0])
+        for direction in (1, 2):
+            distance = self.parse("--command", "6", "--direction", str(direction),
+                                  "--distance-m", "0.05", "--speed-mps", "0.05",
+                                  "--duration-ms", "5000", "--timeout", "8")
+            self.assertEqual(swd.command_values(distance), [direction, .05, .05, 5000, 0, 0, 0, 0])
+        base = ("--command", "6", "--direction", "1", "--distance-m", "0.05", "--speed-mps", "0.05")
+        for extra in (("--distance-m", "0.009"), ("--distance-m", "0.201"),
+                      ("--distance-m", "nan"), ("--speed-mps", "0.019"),
+                      ("--speed-mps", "0.101"), ("--speed-mps", "inf"),
+                      ("--direction", "3"), ("--duration-ms", "10001"),
+                      ("--duration-ms", "4000", "--timeout", "6"), ("--vx", "0.1")):
+            with self.subTest(extra=extra), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                self.parse(*base, *extra)
+        for command in (("--command", "6"), ("--command", "5", "--duration-ms", "1501"),
+                        ("--command", "5", "--direction", "1"), ("--command", "5", "--vx", "0.1")):
+            with self.subTest(command=command), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                self.parse(*command)
+
+    def test_odometry_failures_stop_without_replaying_the_action(self):
+        for command, args in ((5, [0, 0, 0, 800, 0, 0, 0, 0]),
+                              (6, [1, .05, .05, 1000, 0, 0, 0, 0])):
+            session = swd.Session(MemoryClient(), SYMBOLS, Log())
+            session._firmware_verified = True
+            with self.subTest(command=command), \
+                 patch.object(session, "snapshot", return_value=valid_state()), \
+                 patch.object(session, "publish", side_effect=[10, 11]) as publish, \
+                 patch.object(session, "wait_complete", side_effect=[swd.SessionError("deadline"), {}]), \
+                 self.assertRaisesRegex(swd.SessionError, "deadline"):
+                session.execute(command, args, 5)
+            self.assertEqual([call.args[0] for call in publish.call_args_list], [command, 1])
+
+    def test_distance_timeout_rejected_before_ram_write(self):
+        session = swd.Session(MemoryClient(), SYMBOLS, Log())
+        session._firmware_verified = True
+        with patch.object(session, "snapshot", return_value=valid_state()), \
+             self.assertRaisesRegex(swd.SessionError, "duration plus 2 seconds"):
+            session.execute(6, [1, .05, .05, 1000, 0, 0, 0, 0], 3)
+        self.assertEqual(session.client.writes, [])
+
+    def test_symbol_sizes_reject_stale_abi_duplicates_and_out_of_bounds(self):
+        rows = [f"{address:08x} {swd.SYMBOL_SIZES[name]:08x} B {name}" for name, address in SYMBOLS.items()]
+        with patch.object(swd.subprocess, "run", return_value=SimpleNamespace(stdout="\n".join(rows))) as run:
+            self.assertEqual(swd.load_symbols("test.elf", "nm"), SYMBOLS)
+        self.assertIn("-S", run.call_args.args[0])
+        old_sample = rows[:-1] + [f"{SYMBOLS['tuning_sample']:08x} 000000a0 B tuning_sample"]
+        corruptions = (old_sample, rows + [rows[0]],
+                       rows[:-1] + ["2001fff0 000000e0 B tuning_sample"], rows[:-1])
+        for corrupted in corruptions:
+            with self.subTest(rows=corrupted), \
+                 patch.object(swd.subprocess, "run", return_value=SimpleNamespace(stdout="\n".join(corrupted))), \
+                 self.assertRaises(swd.SessionError):
+                swd.load_symbols("test.elf", "nm")
+
+    def test_new_fault_codes_are_valid_mailbox_values(self):
+        for code in (9, 10):
+            state = valid_state()
+            state["phase"] = state["sample"]["phase"] = 5
+            state["error"] = state["sample"]["error"] = code
+            swd.Session.validate_snapshot(state)
+
+    def test_completion_waits_for_fresh_terminal_endpoint_sample(self):
+        session = swd.Session(MemoryClient(), SYMBOLS, Log())
+        states = [
+            {"ack_seq": 7, "phase": 4, "error": 0, "sample_seq": 12,
+             "sample": {"phase": 4, "error": 0, "enabled": 0, "end_progress_m": .01}},
+            {"ack_seq": 7, "phase": 4, "error": 0, "sample_seq": 12,
+             "sample": {"phase": 4, "error": 0, "enabled": 0, "end_progress_m": .01}},
+            {"ack_seq": 7, "phase": 4, "error": 0, "sample_seq": 14,
+             "sample": {"phase": 4, "error": 0, "enabled": 0, "end_progress_m": .05}},
+        ]
+        with patch.object(session, "beat"), patch.object(session, "snapshot", side_effect=states):
+            result = session.wait_complete(7, 1)
+        self.assertEqual(result["sample"]["end_progress_m"], .05)
+
+    def test_odometry_done_requires_complete_endpoint_evidence_and_still_stops(self):
+        good = {"end_x_m": .05, "end_y_m": 0, "end_yaw_rad": 0,
+                "end_elapsed_ms": 800, "end_progress_m": .05,
+                "end_target_distance_m": .05, "end_valid": 1, "end_stopped": 1}
+        cases = [(5, "end_valid", 0), (5, "end_stopped", 0),
+                 (5, "end_x_m", None), (5, "end_y_m", float("nan")),
+                 (5, "end_yaw_rad", float("inf")), (5, "end_elapsed_ms", -1),
+                 (6, "end_valid", 0), (6, "end_stopped", 0),
+                 (6, "end_progress_m", .0469), (6, "end_progress_m", .0531),
+                 (6, "end_target_distance_m", .06)]
+        for command, field, value in cases:
+            session = swd.Session(MemoryClient(), SYMBOLS, Log())
+            session._firmware_verified = True
+            args = [0, 0, 0, 800, 0, 0, 0, 0] if command == 5 else [1, .05, .05, 1000, 0, 0, 0, 0]
+            invalid = {**good, field: value}
+            with self.subTest(command=command, field=field, value=value), \
+                 patch.object(session, "snapshot", return_value=valid_state()), \
+                 patch.object(session, "publish", side_effect=[10, 11]) as publish, \
+                 patch.object(session, "wait_complete", side_effect=[{"sample": invalid}, {}]), \
+                 self.assertRaisesRegex(swd.SessionError, "Odometry endpoint"):
+                session.execute(command, args, 5)
+            self.assertEqual([call.args[0] for call in publish.call_args_list], [command, 1])
+            self.assertIn("final_stop_confirmed", [event for event, _ in session.log.records])
+
+    def test_odometry_endpoint_accepts_float32_target_and_arrival_tolerance(self):
+        target = swd.word_float(swd.float_word(.05))
+        for command, progress in ((5, 0), (6, target - .003), (6, target), (6, target + .003)):
+            session = swd.Session(MemoryClient(), SYMBOLS, Log())
+            session._firmware_verified = True
+            args = [0, 0, 0, 800, 0, 0, 0, 0] if command == 5 else [1, .05, .05, 1000, 0, 0, 0, 0]
+            result = {"command": command, "sample": {"end_x_m": progress, "end_y_m": 0, "end_yaw_rad": 0,
+                                 "end_elapsed_ms": 800, "end_progress_m": progress,
+                                 "end_target_distance_m": target, "end_valid": 1, "end_stopped": 1}}
+            with self.subTest(command=command, progress=progress), \
+                 patch.object(session, "snapshot", return_value=valid_state()), \
+                 patch.object(session, "publish", side_effect=[10, 11]), \
+                 patch.object(session, "wait_complete", side_effect=[result, {}]):
+                self.assertEqual(session.execute(command, args, 5), result)
+            self.assertIn("endpoint_verified", [event for event, _ in session.log.records])
+            verified = next(data for event, data in session.log.records if event == "endpoint_verified")
+            self.assertEqual(verified["command"], command)
+            self.assertEqual(verified["sample"], result["sample"])
 
 
 if __name__ == "__main__":

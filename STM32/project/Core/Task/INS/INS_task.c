@@ -337,10 +337,13 @@ void INS_task(void const *argument)
             INS_control_data = next;
             INS_control_ready = ready;
             taskEXIT_CRITICAL();
+#if !CHASSIS_TUNING_ENABLED
+            /* 正常构建由 INS 独占 USART6；现场测试由底盘任务发送完整快照。 */
             /* VOFA 通道顺序为 roll、pitch、yaw，单位由 rad 转换为度。 */
             vofa_send(INS_angle[INS_ROLL_ADDRESS_OFFSET] * 57.295779513f,
                       INS_angle[INS_PITCH_ADDRESS_OFFSET] * 57.295779513f,
                       INS_angle[INS_YAW_ADDRESS_OFFSET] * 57.295779513f);
+#endif
         }
         bmi088_read_flag = !bmi088_read_flag;
     }

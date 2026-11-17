@@ -49,3 +49,22 @@ python STM32/tools/live_tuning/swd_session.py --elf STM32/project/build/Live-Tun
 JSONL 包含请求、参数回执、轮位置/速度/估计力矩、IMU、温度、目标、前馈和结果。轮速与力矩是驱动反馈，不是独立地面测速或测力。板端遥测每100 ms发布（10 Hz），主机轮询上限25 Hz；分析去重快照并使用实际采样间隔，不能用此数据判断高频振动。
 
 验证入口：`python STM32/tests/run_native.py` 及 `python -m unittest discover -s STM32/tests -p test_swd_session.py`。实车测试后应将经过对照确认的参数写入正式源码，重新构建并校验正常手动固件；不得将未完成测试写成已标定。
+
+## 单独里程计测试
+
+同一专用构建增加命令 5（有限时静态采样）与 6（前后短距离闭环）。两者均先使能、确认停车、清平移原点，再等待新的有效里程计基线。命令 6 调用正式 `Chassis_Distance_Start`，按反馈位移完成；到期、反馈失效和提前停车均报错。动作之后仍须确认停车及三台新失能回执。不要并行运行多个控制脚本。
+
+```sh
+# 静态采样 1 秒；保持零速，自动失能。
+python STM32/tools/live_tuning/swd_session.py --elf STM32/project/build/Odometry-Live-Test/project.elf --command 5 --duration-ms 1000
+# 前进 5 cm，限速 0.05 m/s，独立硬时限 5 秒。
+python STM32/tools/live_tuning/swd_session.py --elf STM32/project/build/Odometry-Live-Test/project.elf --command 6 --direction 1 --distance-m 0.05 --speed-mps 0.05 --duration-ms 5000 --timeout 8
+```
+
+方向 1 为前进、2 为后退。测试入口限制距离 0.01–0.20 m、速度 0.02–0.10 m/s、定距硬时限 100–10000 ms；静态保持 100–1500 ms。主机定距等待时限须大于硬时限加 2 秒。原命令 4 的 1500 ms 速度动作上限保持不变。
+
+USART6 为 PG14/TX、PG9/RX，115200、8N1。测试构建由底盘任务独占发送 56 通道 JustFloat，通常 10 Hz；正常构建继续发送原来的三姿态通道。DAP-Link 的电脑 COM 号由 Windows 分配，不能把 USART6 等同于 COM6。串口只输出遥测，命令与心跳仍走 DAP-Link SWD。
+
+通道 0–39 沿用原调参快照；40–47 为当前里程计 `x/y/yaw/vx/vy/wheel_wz/valid/age_ms`；48–55 为动作结束前保存的 `x/y/yaw/valid/stopped/elapsed_ms/progress_m/goal_m`。位移单位 m、航向 rad。结束后当前 `valid=0` 是失能语义，验收使用保留的终点证据和三台失能回执。主机按 ELF 符号长度核对 56 通道 ABI，旧的 40 通道 ELF 需要匹配旧版本工具。
+
+轮速里程计只能验证估计值闭环；实际地面距离、打滑与航向偏移需尺量和现场观察。完成测试后恢复正常手动固件，并记录板端结果、外部测量及未完成项目。

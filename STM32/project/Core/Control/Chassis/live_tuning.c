@@ -7,11 +7,13 @@
 #include "INS_task.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "tim.h"
+#include "vofa.h"
 #include <math.h>
 
 volatile uint32_t tuning_request_seq, tuning_command, tuning_heartbeat;
 volatile uint32_t tuning_ack_seq, tuning_phase, tuning_error, tuning_sample_seq;
-volatile float tuning_args[8], tuning_sample[40];
+volatile float tuning_args[8], tuning_sample[TUNING_SAMPLE_COUNT];
 extern volatile float battery_voltage;
 
 typedef enum { INACTIVE, PREPARE, RUN, BRAKE, WAIT_DISABLED, READ_PARAMETER } Work_State;
@@ -23,6 +25,35 @@ static uint8_t enable_requested, motion_started, read_after_disable;
 static uint8_t parameter_reg, parameter_motor, parameter_waiting;
 static uint8_t sample_published;
 static float requested_vx, requested_wz;
+static uint32_t active_command;
+static uint8_t odometry_reset, endpoint_captured, endpoint_stopped;
+static Chassis_Translation_Direction_t requested_direction;
+static float requested_distance, requested_speed, distance_axis_x, distance_axis_y;
+static double origin_x, origin_y, endpoint_progress;
+static Chassis_Odometry_t endpoint;
+static uint32_t endpoint_elapsed_ms;
+
+static uint8_t Odometry_Command(void)
+{
+    return active_command == TUNING_ODOM_STATIC || active_command == TUNING_ODOM_DISTANCE;
+}
+
+static double Odometry_Progress(const Chassis_Odometry_t *data)
+{
+    return (data->x_m - origin_x) * distance_axis_x + (data->y_m - origin_y) * distance_axis_y;
+}
+
+/* 必须在 Stop 清除定距完成状态及 Disable 撤销 valid 之前保留终点证据。 */
+static void Capture_Endpoint(uint32_t now_ms)
+{
+    if (endpoint_captured || !Odometry_Command() || (work != PREPARE && work != RUN))
+        return;
+    Chassis_Get_Odometry(&endpoint);
+    endpoint_stopped = Chassis_Is_Stopped();
+    endpoint_elapsed_ms = motion_started ? now_ms - motion_ms : 0U;
+    endpoint_progress = Odometry_Progress(&endpoint);
+    endpoint_captured = 1U;
+}
 
 static void Finish(void)
 {
@@ -30,6 +61,7 @@ static void Finish(void)
         motion_elapsed_ms = (uint32_t)xTaskGetTickCount() - motion_ms;
     work = INACTIVE;
     tuning_phase = tuning_error ? TUNING_FAULT : TUNING_DONE;
+    sample_published = 0U; /* 同拍 Snapshot 发布完成结果，不让主机读到旧阶段。 */
 }
 
 static uint8_t Fresh_IMU(uint32_t now_ms, INS_control_data_t *imu)
@@ -58,12 +90,24 @@ static void Begin_Brake(uint32_t now_ms, uint32_t error)
         tuning_error = error;
     if (work == BRAKE || work == WAIT_DISABLED)
         return;
+    Capture_Endpoint(now_ms);
     Chassis_Stop();
     work = BRAKE;
     tuning_phase = TUNING_BRAKING;
     stage_ms = now_ms;
     if (!Chassis_Is_Enabled())
         Request_Disable(now_ms);
+}
+
+/* 完成判据与结束快照间仍可能更新反馈；重新核对保留证据才能宣告正常完成。 */
+static void Complete_Odometry(uint32_t now_ms)
+{
+    Capture_Endpoint(now_ms);
+    const uint8_t valid = endpoint.valid && endpoint_stopped &&
+        isfinite(endpoint.x_m) && isfinite(endpoint.y_m) && isfinite(endpoint.yaw_rad) &&
+        isfinite(endpoint_progress) && (active_command != TUNING_ODOM_DISTANCE ||
+        fabs(requested_distance - endpoint_progress) <= CHASSIS_DISTANCE_TOLERANCE_M);
+    Begin_Brake(now_ms, valid ? 0U : TUNING_ERROR_ODOMETRY);
 }
 
 static uint8_t Disabled_Feedback(uint32_t now_ms)
@@ -98,6 +142,21 @@ static uint8_t Valid_Move(const float args[8])
         args[3] >= 100.0f && args[3] <= 1500.0f && floorf(args[3]) == args[3];
 }
 
+static uint8_t Valid_Odometry(uint32_t command, const float args[8])
+{
+    for (unsigned i = 0U; i < 8U; ++i)
+        if (!isfinite(args[i]) || (i >= 4U && args[i] != 0.0f))
+            return 0U;
+    if (args[3] < 100.0f || floorf(args[3]) != args[3])
+        return 0U;
+    if (command == TUNING_ODOM_STATIC)
+        return args[0] == 0.0f && args[1] == 0.0f && args[2] == 0.0f && args[3] <= 1500.0f;
+    return command == TUNING_ODOM_DISTANCE &&
+        (args[0] == CHASSIS_TRANSLATION_FORWARD || args[0] == CHASSIS_TRANSLATION_BACKWARD) &&
+        args[1] >= 0.01f && args[1] <= 0.20f && args[2] >= 0.02f && args[2] <= 0.10f &&
+        args[3] <= 10000.0f;
+}
+
 static void Accept_Command(uint32_t command, const float args[8], uint32_t now_ms)
 {
     if (command == TUNING_STOP)
@@ -129,10 +188,20 @@ static void Accept_Command(uint32_t command, const float args[8], uint32_t now_m
         read_after_disable = 1U;
         Request_Disable(now_ms);
     }
-    else if (command == TUNING_MOVE && Valid_Move(args))
+    else if ((command == TUNING_MOVE && Valid_Move(args)) || Valid_Odometry(command, args))
     {
+        active_command = command;
         requested_vx = args[0];
         requested_wz = args[2];
+        requested_direction = command == TUNING_ODOM_DISTANCE ?
+            (Chassis_Translation_Direction_t)args[0] : CHASSIS_TRANSLATION_NONE;
+        requested_distance = command == TUNING_ODOM_DISTANCE ? args[1] : 0.0f;
+        requested_speed = command == TUNING_ODOM_DISTANCE ? args[2] : 0.0f;
+        odometry_reset = endpoint_captured = endpoint_stopped = 0U;
+        endpoint = (Chassis_Odometry_t){0};
+        origin_x = origin_y = endpoint_progress = 0.0;
+        distance_axis_x = distance_axis_y = 0.0f;
+        endpoint_elapsed_ms = 0U;
         motion_duration_ms = (uint32_t)args[3];
         last_heartbeat = tuning_heartbeat;
         heartbeat_ms = stage_ms = now_ms;
@@ -154,9 +223,15 @@ void Live_Tuning_Init(void)
     parameter_motor = parameter_waiting = 0U;
     motion_ms = motion_duration_ms = motion_elapsed_ms = sample_ms = 0U;
     sample_published = 0U;
+    active_command = 0U;
+    odometry_reset = endpoint_captured = endpoint_stopped = 0U;
+    endpoint = (Chassis_Odometry_t){0};
+    requested_distance = requested_speed = distance_axis_x = distance_axis_y = 0.0f;
+    origin_x = origin_y = endpoint_progress = 0.0;
+    endpoint_elapsed_ms = 0U;
     for (unsigned i = 0U; i < 8U; ++i)
         tuning_args[i] = 0.0f;
-    for (unsigned i = 0U; i < 40U; ++i)
+    for (unsigned i = 0U; i < TUNING_SAMPLE_COUNT; ++i)
         tuning_sample[i] = 0.0f;
 }
 
@@ -197,13 +272,47 @@ void Live_Tuning_Loop(void)
                 enable_requested = Chassis_Enable();
             if (enable_requested && Chassis_Is_Stopped())
             {
-                if (!Chassis_Set_Velocity(requested_vx, 0.0f, requested_wz))
-                    Begin_Brake(now_ms, 3U);
+                if (Odometry_Command() && !odometry_reset)
+                {
+                    if (!Chassis_Reset_Odometry())
+                        Begin_Brake(now_ms, 3U);
+                    else
+                        odometry_reset = 1U;
+                    /* 重置撤销 valid；下次 Loop 再等控制层的新基线。 */
+                }
                 else
                 {
-                    work = RUN;
-                    tuning_phase = TUNING_RUNNING;
-                    stage_ms = now_ms;
+                    Chassis_Odometry_t data;
+                    if (Odometry_Command() && !Chassis_Get_Odometry(&data))
+                        return;
+                    uint8_t started = 1U;
+                    if (active_command == TUNING_MOVE)
+                        started = Chassis_Set_Velocity(requested_vx, 0.0f, requested_wz);
+                    else
+                    {
+                        origin_x = data.x_m;
+                        origin_y = data.y_m;
+                        const float heading = CHASSIS_STRAIGHT_YAW_SIGN * imu.yaw_deg *
+                                              0.01745329251994329577f;
+                        const float sign = requested_direction == CHASSIS_TRANSLATION_BACKWARD ? -1.0f : 1.0f;
+                        distance_axis_x = sign * cosf(heading);
+                        distance_axis_y = sign * sinf(heading);
+                        if (active_command == TUNING_ODOM_DISTANCE)
+                            started = Chassis_Distance_Start(requested_direction, requested_distance, requested_speed);
+                    }
+                    if (!started)
+                        Begin_Brake(now_ms, 3U);
+                    else
+                    {
+                        work = RUN;
+                        tuning_phase = TUNING_RUNNING;
+                        stage_ms = now_ms;
+                        if (Odometry_Command())
+                        {
+                            motion_started = 1U;
+                            motion_ms = now_ms;
+                        }
+                    }
                 }
             }
         }
@@ -213,6 +322,34 @@ void Live_Tuning_Loop(void)
         INS_control_data_t imu;
         if (!Chassis_Is_Enabled() || !Chassis_Motors_Ready() || !Fresh_IMU(now_ms, &imu))
             Begin_Brake(now_ms, 4U);
+        else if (Odometry_Command())
+        {
+            Chassis_Odometry_t data;
+            if (!Chassis_Get_Odometry(&data))
+                Begin_Brake(now_ms, TUNING_ERROR_ODOMETRY);
+            else if (active_command == TUNING_ODOM_STATIC)
+            {
+                if (!Chassis_Is_Stopped())
+                    Begin_Brake(now_ms, TUNING_ERROR_ODOMETRY);
+                else if ((uint32_t)(now_ms - motion_ms) >= motion_duration_ms)
+                    Complete_Odometry(now_ms);
+            }
+            else
+            {
+                const double progress = Odometry_Progress(&data);
+                if (!isfinite(progress) || progress > requested_distance + CHASSIS_DISTANCE_TOLERANCE_M)
+                    Begin_Brake(now_ms, TUNING_ERROR_ODOMETRY);
+                else if ((uint32_t)(now_ms - motion_ms) >= motion_duration_ms)
+                    Begin_Brake(now_ms, TUNING_ERROR_ACTION_TIMEOUT);
+                else if (Chassis_Is_Stopped())
+                {
+                    if (fabs(requested_distance - progress) > CHASSIS_DISTANCE_TOLERANCE_M)
+                        Begin_Brake(now_ms, TUNING_ERROR_ODOMETRY);
+                    else
+                        Complete_Odometry(now_ms);
+                }
+            }
+        }
         else
         {
             if (!motion_started && (chassis_motor_target[0] != 0.0f ||
@@ -320,6 +457,8 @@ void Live_Tuning_Snapshot(void)
     sample_ms = now_ms;
     INS_control_data_t imu;
     const uint8_t imu_valid = INS_Get_Data(&imu);
+    Chassis_Odometry_t data;
+    Chassis_Get_Odometry(&data);
     ++tuning_sample_seq;
     tuning_sample[0] = (float)now_ms;
     tuning_sample[1] = (float)tuning_phase;
@@ -347,5 +486,25 @@ void Live_Tuning_Snapshot(void)
     tuning_sample[38] = imu_valid ? (float)(uint32_t)(now_ms - imu.sample_time_ms) : -1.0f;
     tuning_sample[39] = motion_started ? (float)(work == INACTIVE ? motion_elapsed_ms :
                                                 (uint32_t)(now_ms - motion_ms)) : 0.0f;
+    tuning_sample[40] = (float)data.x_m;
+    tuning_sample[41] = (float)data.y_m;
+    tuning_sample[42] = data.yaw_rad;
+    tuning_sample[43] = data.vx_mps;
+    tuning_sample[44] = data.vy_mps;
+    tuning_sample[45] = data.wheel_wz_rad_s;
+    tuning_sample[46] = (float)data.valid;
+    tuning_sample[47] = (float)(uint32_t)(__HAL_TIM_GET_COUNTER(&htim2) - data.sample_time_us) * 0.001f;
+    tuning_sample[48] = (float)endpoint.x_m;
+    tuning_sample[49] = (float)endpoint.y_m;
+    tuning_sample[50] = endpoint.yaw_rad;
+    tuning_sample[51] = (float)endpoint.valid;
+    tuning_sample[52] = (float)endpoint_stopped;
+    tuning_sample[53] = (float)endpoint_elapsed_ms;
+    tuning_sample[54] = (float)endpoint_progress;
+    tuning_sample[55] = requested_distance;
     ++tuning_sample_seq;
+    float channels[TUNING_SAMPLE_COUNT];
+    for (unsigned i = 0U; i < TUNING_SAMPLE_COUNT; ++i)
+        channels[i] = tuning_sample[i];
+    vofa_send_channels(channels, TUNING_SAMPLE_COUNT);
 }

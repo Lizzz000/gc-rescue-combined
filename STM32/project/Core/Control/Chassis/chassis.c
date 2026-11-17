@@ -487,7 +487,7 @@ static void Service_Distance(float dt, uint32_t now_ms)
         run_started = 1U;
     }
     const double remaining = distance_goal_m - Distance_Progress();
-    if (remaining <= CHASSIS_DISTANCE_TOLERANCE_M)
+    if (remaining <= CHASSIS_DISTANCE_STOP_REMAINING_M)
     {
         Chassis_Stop();
         distance_completion_pending = 1U;
@@ -495,8 +495,10 @@ static void Service_Distance(float dt, uint32_t now_ms)
         return;
     }
     const float braking_speed = sqrtf(2.0f * CHASSIS_DISTANCE_ACCELERATION_MPS2 * (float)remaining);
+    const float approach_speed = fmaxf(CHASSIS_DISTANCE_POSITION_KP * (float)remaining,
+                                      CHASSIS_DISTANCE_APPROACH_SPEED_MPS);
     const float desired_speed = fminf(target_speed,
-        fminf(braking_speed, CHASSIS_DISTANCE_POSITION_KP * (float)remaining));
+        fminf(braking_speed, approach_speed));
     const float step = CHASSIS_DISTANCE_ACCELERATION_MPS2 * dt;
     ramp_speed += fmaxf(-step, fminf(step, desired_speed - ramp_speed));
 }

@@ -40,11 +40,18 @@ SAMPLE_NAMES = (
     "target_1", "target_2", "target_3", "ff_1", "ff_2", "ff_3",
     "kd_1", "kd_2", "kd_3", "ff_gain", "friction_1", "friction_2",
     "friction_3", "battery", "imu_age_ms", "motion_elapsed_ms",
+    "odom_x_m", "odom_y_m", "odom_yaw_rad", "odom_vx_mps", "odom_vy_mps",
+    "odom_wheel_wz_rad_s", "odom_valid", "odom_age_ms",
+    "end_x_m", "end_y_m", "end_yaw_rad", "end_valid", "end_stopped",
+    "end_elapsed_ms", "end_progress_m", "end_target_distance_m",
 )
+SYMBOL_SIZES = {name: 4 for name in SYMBOLS}
+SYMBOL_SIZES.update(tuning_args=32, tuning_sample=4 * len(SAMPLE_NAMES), dm_param_reply=48)
 ERRORS = {
     1: "invalid command/argument", 2: "busy", 3: "prepare/IMU failure",
     4: "motion/controller failure", 5: "heartbeat expired", 6: "parameter timeout",
     7: "parameter transmit failure", 8: "stop timeout",
+    9: "odometry/endpoint mismatch", 10: "motion deadline expired",
 }
 
 
@@ -64,16 +71,19 @@ def load_symbols(elf, nm=None):
     nm = nm or shutil.which("arm-none-eabi-nm") or shutil.which("arm-none-eabi-nm.exe")
     if not nm:
         raise SessionError("arm-none-eabi-nm not found; pass --nm")
-    result = subprocess.run([nm, "--defined-only", "--numeric-sort", str(elf)],
+    result = subprocess.run([nm, "-S", "--defined-only", "--numeric-sort", str(elf)],
                             check=True, capture_output=True, text=True, timeout=15)
     symbols = {}
     for line in result.stdout.splitlines():
         fields = line.split()
-        if len(fields) == 3 and fields[2] in (*SYMBOLS, *OPTIONAL_SYMBOLS):
+        if len(fields) == 4 and fields[3] in (*SYMBOLS, *OPTIONAL_SYMBOLS):
+            name, size = fields[3], int(fields[1], 16)
             address = int(fields[0], 16)
-            if not 0x20000000 <= address < 0x20020000 or address % 4:
-                raise SessionError(f"{fields[2]} is not aligned F407 SRAM: {address:#x}")
-            symbols[fields[2]] = address
+            if name in symbols or size != SYMBOL_SIZES[name]:
+                raise SessionError(f"ELF tuning ABI size/uniqueness mismatch: {name}, size={size}")
+            if not 0x20000000 <= address < address + size <= 0x20020000 or address % 4:
+                raise SessionError(f"{name} is not aligned F407 SRAM: {address:#x}")
+            symbols[name] = address
     missing = set(SYMBOLS) - symbols.keys()
     if missing:
         raise SessionError("ELF missing tuning symbols: " + ", ".join(sorted(missing)))
@@ -287,9 +297,9 @@ class Session:
     def validate_snapshot(state):
         sample = state.get("sample", {})
         checks = (("phase", state.get("phase"), range(6)),
-                  ("error", state.get("error"), range(9)),
+                  ("error", state.get("error"), range(11)),
                   ("sample.phase", sample.get("phase"), range(6)),
-                  ("sample.error", sample.get("error"), range(9)),
+                  ("sample.error", sample.get("error"), range(11)),
                   ("sample.enabled", sample.get("enabled"), (0, 1)))
         for name, value, allowed in checks:
             if not isinstance(value, (int, float)) or not math.isfinite(value) or value not in allowed:
@@ -322,10 +332,11 @@ class Session:
 
     def snapshot(self):
         names = (*SCALARS, "sample_seq", "sample", "sample_seq")
-        # The firmware's 55-word mailbox is contiguous in the live ELF. A
+        sample_count = len(SAMPLE_NAMES)
+        # When the firmware's mailbox is contiguous in the live ELF, a
         # single burst lets OpenOCD batch DAP reads, instead of setting up nine
         # separate reads. Its embedded sequence must precede the sample array.
-        ranges = sorted((self.symbols[name], 40 if name == "tuning_sample" else
+        ranges = sorted((self.symbols[name], sample_count if name == "tuning_sample" else
                          8 if name == "tuning_args" else 1) for name in SYMBOLS)
         contiguous = all(address + count * 4 == next_address
                          for (address, count), (next_address, _) in zip(ranges, ranges[1:]))
@@ -339,23 +350,23 @@ class Session:
                        f"[read_memory {self.symbols['tuning_sample_seq']:#x} 32 1]")
         else:
             commands = [f"[read_memory {self.symbols['tuning_' + name]:#x} 32 "
-                        f"{40 if name == 'sample' else 1}]" for name in names]
+                        f"{sample_count if name == 'sample' else 1}]" for name in names]
             command = "concat " + " ".join(commands)
         for _ in range(5):
             # Retrying a torn sample must not starve a moving session's lease.
             # A read-only session never starts a heartbeat and never writes RAM.
             if self.heartbeat is not None:
                 self.beat()
-            raw = self.client.parse_words(self.client.evaluate(command), count + 1 if burst else 48)
+            raw = self.client.parse_words(self.client.evaluate(command), count + 1 if burst else sample_count + 8)
             if burst:
                 sample_offset = offsets["tuning_sample"]
                 words = [raw[offsets["tuning_" + name]] for name in SCALARS]
                 words += [raw[offsets["tuning_sample_seq"]]]
-                words += raw[sample_offset:sample_offset + 40] + [raw[-1]]
+                words += raw[sample_offset:sample_offset + sample_count] + [raw[-1]]
             else:
                 words = raw
             if words[6] == words[-1] and words[6] % 2 == 0:
-                sample = [word_float(value) for value in words[7:47]]
+                sample = [word_float(value) for value in words[7:7 + sample_count]]
                 invalid = [SAMPLE_NAMES[i] for i, value in enumerate(sample) if not math.isfinite(value)]
                 result = dict(zip(SCALARS, words[:6]))
                 result.update(sample_seq=words[6], sample=dict(zip(SAMPLE_NAMES,
@@ -377,6 +388,7 @@ class Session:
         deadline = time.monotonic() + timeout
         acknowledged = False
         next_sample = 0.0
+        terminal_sample_seq = None
         while time.monotonic() < deadline:
             self.beat()
             if time.monotonic() >= next_sample:
@@ -391,8 +403,17 @@ class Session:
                     if state["phase"] == 4 or (stop and state["phase"] == 0):
                         if state["error"]:
                             raise SessionError(f"Firmware completed with error {state['error']}")
-                        self.log.emit("complete", sequence=sequence, **state)
-                        return state
+                        # Scalars can change between 10 Hz publications. Wait
+                        # for a new terminal sample, including endpoint evidence,
+                        # rather than returning a previous command's DONE frame.
+                        if terminal_sample_seq is None:
+                            terminal_sample_seq = state["sample_seq"]
+                        sample = state["sample"]
+                        if (state["sample_seq"] != terminal_sample_seq and
+                            sample.get("phase") == state["phase"] and
+                            sample.get("error") == 0 and sample.get("enabled") == 0):
+                            self.log.emit("complete", sequence=sequence, **state)
+                            return state
             wake = min(deadline, next_sample, self.next_heartbeat)
             time.sleep(max(0.0, wake - time.monotonic()))
         raise SessionError("Command timeout after " + ("acknowledgement" if acknowledged else "no acknowledgement"))
@@ -417,6 +438,8 @@ class Session:
         # mailbox must never receive even a speculative STOP or heartbeat.
         state = self.validate_initial()
         validate_request(command, args)
+        if command == 6 and not timeout > args[3] / 1000.0 + 2.0:
+            raise SessionError("Distance timeout must exceed firmware duration plus 2 seconds")
         self.log.emit("initial", **state)
         if command != 1 and state["phase"] in (1, 2, 3):
             raise SessionError("Firmware is already preparing/moving/braking")
@@ -425,6 +448,9 @@ class Session:
             # Only a validated, actually attempted publish enables final STOP.
             sequence = self.publish(command, args)
             result = self.wait_complete(sequence, timeout, stop=command == 1)
+            if command in (5, 6):
+                validate_endpoint(command, args, result)
+                self.log.emit("endpoint_verified", **{**result, "command": command})
             if command == 2:
                 result["parameter_replies"] = self.parameter_replies()
                 self.log.emit("parameter_replies", replies=result["parameter_replies"])
@@ -450,6 +476,25 @@ class Session:
                     raise SessionError("Final STOP not confirmed: " + str(exc)) from exc
 
 
+def validate_endpoint(command, args, result):
+    """DONE alone is insufficient evidence for an odometry acceptance test."""
+    sample = result.get("sample", {})
+    names = ("end_x_m", "end_y_m", "end_yaw_rad", "end_elapsed_ms",
+             "end_progress_m", "end_target_distance_m")
+    if sample.get("end_valid") != 1 or sample.get("end_stopped") != 1:
+        raise SessionError("Odometry endpoint lacks valid pose/stopped evidence")
+    if any(not isinstance(sample.get(name), (int, float)) or not math.isfinite(sample[name])
+           for name in names) or sample["end_elapsed_ms"] < 0:
+        raise SessionError("Odometry endpoint contains invalid numeric evidence")
+    if command == 6:
+        target = args[1]
+        # The mailbox contains float32 metres; 1 um is sufficient numerical
+        # margin here, separate from the controller's 3 mm arrival tolerance.
+        if (not math.isclose(sample["end_target_distance_m"], target, rel_tol=1e-6, abs_tol=1e-6) or
+            abs(sample["end_progress_m"] - target) > 0.003 + 1e-6):
+            raise SessionError("Odometry endpoint does not match requested distance")
+
+
 def validate_request(command, args):
     if len(args) != 8 or not all(math.isfinite(value) for value in args):
         raise SessionError("Command requires eight finite arguments")
@@ -463,6 +508,13 @@ def validate_request(command, args):
         valid = (abs(args[0]) <= 0.25 and args[1] == 0 and abs(args[2]) <= 0.5 and
                  ((args[0] != 0) != (args[2] != 0)) and
                  100 <= args[3] <= 1500 and args[3] == int(args[3]))
+    elif command == 5:
+        valid = (all(value == 0 for value in (*args[:3], *args[4:])) and
+                 100 <= args[3] <= 1500 and args[3] == int(args[3]))
+    elif command == 6:
+        valid = (args[0] in (1, 2) and 0.01 <= args[1] <= 0.20 and
+                 0.02 <= args[2] <= 0.10 and 100 <= args[3] <= 10000 and
+                 args[3] == int(args[3]) and all(value == 0 for value in args[4:]))
     if not valid:
         raise SessionError("Command/arguments are outside the firmware tuning limits")
 
@@ -477,7 +529,8 @@ def arguments(argv=None):
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--describe", action="store_true", help="Resolve symbols offline")
     action.add_argument("--read", action="store_true", help="Read RAM only; never writes STOP/heartbeat")
-    action.add_argument("--command", type=int, choices=(1, 2, 3, 4), help="1 stop, 2 read parameters, 3 configure, 4 move")
+    action.add_argument("--command", type=int, choices=(1, 2, 3, 4, 5, 6),
+                        help="1 stop, 2 read parameters, 3 configure, 4 timed move, 5 static odometry, 6 distance")
     parser.add_argument("--read-seconds", type=float, default=0.0)
     parser.add_argument("--rate", type=float, default=25.0)
     parser.add_argument("--timeout", type=float, default=6.0)
@@ -489,10 +542,14 @@ def arguments(argv=None):
     parser.add_argument("--vy", type=float, default=0.0)
     parser.add_argument("--wz", type=float, default=0.0)
     parser.add_argument("--duration-ms", type=int, default=800)
+    parser.add_argument("--direction", type=int, choices=(1, 2), help="Distance direction: 1 forward, 2 backward")
+    parser.add_argument("--distance-m", type=float, help="Distance target in metres (0.01..0.20)")
+    parser.add_argument("--speed-mps", type=float, help="Distance speed limit in m/s (0.02..0.10)")
     parser.add_argument("--log", type=Path)
     args = parser.parse_args(argv)
     numeric = [args.rate, args.timeout, args.read_seconds, args.vx, args.vy, args.wz,
                args.ff_gain, *args.kd, *args.friction]
+    numeric += [value for value in (args.distance_m, args.speed_mps) if value is not None]
     if not all(math.isfinite(value) for value in numeric):
         parser.error("All numeric values must be finite")
     if not 20 <= args.rate <= 25 or not 0 < args.timeout <= 15 or not 0 <= args.read_seconds <= 300:
@@ -501,8 +558,9 @@ def arguments(argv=None):
         parser.error("Invalid OpenOCD target name")
     if not 1 <= args.port <= 65535 or not 1 <= args.reg <= 35:
         parser.error("Invalid port or parameter register")
-    if abs(args.vx) > 0.25 or args.vy != 0 or abs(args.wz) > 0.5 or not 100 <= args.duration_ms <= 1500:
-        parser.error("Motion requires |vx|<=0.25, vy=0, |wz|<=0.5, duration 100..1500 ms")
+    duration_limit = 10000 if args.command == 6 else 1500
+    if abs(args.vx) > 0.25 or args.vy != 0 or abs(args.wz) > 0.5 or not 100 <= args.duration_ms <= duration_limit:
+        parser.error(f"Motion requires |vx|<=0.25, vy=0, |wz|<=0.5, duration 100..{duration_limit} ms")
     if args.vx != 0 and args.wz != 0:
         parser.error("Use pure translation or pure rotation, not both in one test")
     if any(not 0.05 <= value <= 0.5 for value in args.kd) or not 0 <= args.ff_gain <= 1:
@@ -511,6 +569,20 @@ def arguments(argv=None):
         parser.error("Friction torque must be 0..0.03 N m per wheel")
     if args.command == 4 and args.vx == 0 and args.wz == 0:
         parser.error("Move requires a nonzero vx or wz; use command 1 to stop")
+    if args.command in (5, 6) and (args.vx != 0 or args.vy != 0 or args.wz != 0):
+        parser.error("Odometry commands do not accept vx/vy/wz")
+    if args.command == 6:
+        if args.direction is None or args.distance_m is None or args.speed_mps is None:
+            parser.error("Distance requires --direction, --distance-m and --speed-mps")
+        if not args.timeout > args.duration_ms / 1000.0 + 2.0:
+            parser.error("Distance --timeout must exceed --duration-ms / 1000 + 2 seconds")
+    elif any(value is not None for value in (args.direction, args.distance_m, args.speed_mps)):
+        parser.error("Direction/distance/speed options require command 6")
+    if args.command is not None:
+        try:
+            validate_request(args.command, command_values(args))
+        except SessionError as exc:
+            parser.error(str(exc))
     return args
 
 
@@ -521,6 +593,11 @@ def command_values(args):
         return [*args.kd, args.ff_gain, *args.friction, 0.0]
     if args.command == 4:
         return [args.vx, args.vy, args.wz, float(args.duration_ms), 0.0, 0.0, 0.0, 0.0]
+    if args.command == 5:
+        return [0.0, 0.0, 0.0, float(args.duration_ms), 0.0, 0.0, 0.0, 0.0]
+    if args.command == 6:
+        return [float(args.direction), args.distance_m, args.speed_mps, float(args.duration_ms),
+                0.0, 0.0, 0.0, 0.0]
     return [0.0] * 8
 
 

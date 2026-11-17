@@ -603,6 +603,65 @@ static void test_distance_profiles(void)
     check_distance_profile(CHASSIS_TRANSLATION_FORWARD_LEFT,c,c,1.91f,0.50f,0.80f,-179.0f);
     check_distance_profile(CHASSIS_TRANSLATION_LEFT,0,1,0.257f,0.21f,0.55f,0.0f);
     check_distance_profile(CHASSIS_TRANSLATION_FORWARD,1,0,CHASSIS_DISTANCE_MIN_M,0.50f,1.0f,0.0f);
+    /* 末段接近下限不能抬高用户请求的更小速度。 */
+    check_distance_profile(CHASSIS_TRANSLATION_FORWARD,1,0,0.015f,0.004f,1.0f,0.0f);
+    check_distance_profile(CHASSIS_TRANSLATION_BACKWARD,-1,0,0.015f,0.006f,1.0f,0.0f);
+}
+
+/** @brief 低速摩擦死区及零目标后小回退不能把停车点卡在验收外沿。
+ * @note 独立地面模型按目标减去 5 mm/s 死区、停车后短暂反向反馈，非实车精度证明。
+ */
+static void test_distance_deadband_and_rollback(void)
+{
+    for (int direction = -1; direction <= 1; direction += 2)
+    {
+        reset_case(0U,0U);
+        assert(enable_ready());
+        assert(Chassis_Distance_Start(direction > 0 ? CHASSIS_TRANSLATION_FORWARD :
+                                     CHASSIS_TRANSLATION_BACKWARD,0.05f,0.05f));
+        unsigned frame, zero_frames = 0U;
+        uint8_t was_moving = 0U;
+        double ground = 0.0;
+        for (frame = 0U; frame < 500U; ++frame)
+        {
+            float body[3], feedback[3];
+            body_target(body);
+            const float requested = direction * body[0];
+            assert(requested >= 0.0f && requested <= 0.05001f);
+            float actual = direction * fmaxf(0.0f, requested - 0.005f);
+            if (requested > 0.0f)
+                was_moving = 1U;
+            else if (was_moving)
+            {
+                if (zero_frames == 0U)
+                {
+                    Chassis_Odometry_t at_zero;
+                    assert(Chassis_Get_Odometry(&at_zero));
+                    assert(direction * at_zero.x_m >= 0.048); /* 至少留 1 mm 回退余量。 */
+                }
+                /* 模拟停车前两拍共 0.12 mm 的小回退，不把零目标当成真实静止。 */
+                if (++zero_frames <= 2U)
+                    actual = -direction * 0.006f;
+            }
+            ground += actual * 0.01;
+            Motor_Chassis_Inverse(actual,0.0f,0.0f,feedback);
+            for (unsigned i = 0U; i < 3U; ++i)
+                feedback[i] = -feedback[i];
+            feedback_step(10000U,feedback);
+            assert(Chassis_Is_Enabled() && disables == 0U && aborts == 0U);
+            if (Chassis_Is_Stopped())
+                break;
+        }
+        assert(frame < 500U && zero_frames >= 3U);
+        Chassis_Odometry_t end;
+        assert(Chassis_Get_Odometry(&end));
+        assert(fabs(0.05 - direction * end.x_m) < 0.002);
+        assert(fabs(0.05 - direction * ground) <= CHASSIS_DISTANCE_TOLERANCE_M);
+        assert(fabs(end.x_m - ground) < 0.00001);
+        printf("DISTANCE deadband/rollback %+d: %.3f s, measured %.6f m, error %.3f mm\n",
+               direction,(frame + 1U) * 0.01,direction * end.x_m,
+               (0.05 - direction * end.x_m) * 1000.0);
+    }
 }
 
 /** @brief 核对定距准入、变周期、抢占、复用和姿态故障停机。 */
@@ -1631,6 +1690,7 @@ int main(void)
     test_reenable_order();
     test_translation();
     test_distance_profiles();
+    test_distance_deadband_and_rollback();
     test_distance_lifecycle();
     test_distance_no_progress();
     test_distance_feedback_faults();
