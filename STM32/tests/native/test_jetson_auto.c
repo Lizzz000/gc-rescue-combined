@@ -390,13 +390,13 @@ static void Test_Approach_Brakes_And_Verifies(void)
     Begin_Target_Test();
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 6200, 7500);
     Steps(4U);
-    assert(fabsf(last_vy - 0.088f) < 1e-6f && last_vx == 0.0f);
+    assert(last_vy > 0.0f && last_vy <= 0.005f && last_vx == 0.0f);
     for (unsigned i = 0U; i < 3U; ++i)
     {
         /* 以 20 ms 重报验证旧速率兼容；5 ms 任务轮询不视为新测量。 */
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 6200, 7500);
         Steps(4U);
-        assert(stops == 0U && last_vy >= 0.088f && last_vy <= 0.10f);
+        assert(stops == 0U && last_vy > 0.0f && last_vy <= JETSON_AUTO_APPROACH_SPEED_MPS);
     }
     const unsigned before_slow = velocity_requests;
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5400, 7500);
@@ -415,13 +415,13 @@ static void Test_Approach_Brakes_And_Verifies(void)
     /* 停稳后漂到 5154 已超出 ±100，恢复连续跟随，不视为到位。 */
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5154, 7500);
     Step();
-    assert(last_vx == 0.0f && fabsf(last_vy - 0.005f) < 1e-6f && last_wz == 0.0f);
+    assert(last_vx == 0.0f && last_vy > 0.0f && last_vy <= 0.005f && last_wz == 0.0f);
     assert(stops == 1U && velocity_requests == moves + 1U && sent_count == 0U);
     Steps(20U);
-    assert(stops == 1U && fabsf(last_vy - 0.005f) < 1e-6f);
+    assert(stops == 1U && last_vy > 0.0f && last_vy <= 0.005f);
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5154, 7500);
     Step();
-    assert(last_vy >= 0.005f && stops == 1U && sent_count == 0U);
+    assert(last_vy > 0.0f && stops == 1U && sent_count == 0U);
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5100, 7400);
     Step();
     assert(stops == 2U && sent_count == 0U);
@@ -476,11 +476,14 @@ static void Test_Approach_Retreat_And_Limit(void)
     Steps(16U);
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 6200, 7500);
     Step();
-    assert(stops == 0U && last_vy > 0.064f && last_vy <= JETSON_AUTO_APPROACH_SPEED_MPS);
-    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 8500, 5000);
-    Step();
+    assert(stops == 0U && last_vy > 0.0f && last_vy <= JETSON_AUTO_APPROACH_SPEED_MPS);
+    for (unsigned i = 0; i < 4; ++i)
+    {
+        Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 8500, 5000);
+        Steps(4U);
+    }
     assert(last_vx > 0.0f && last_vy > 0.0f &&
-           fabsf(hypotf(last_vx, last_vy) - JETSON_AUTO_APPROACH_SPEED_MPS) < 1e-6f);
+           hypotf(last_vx, last_vy) <= JETSON_AUTO_APPROACH_SPEED_MPS + 1e-6f);
 }
 
 /** @brief 横向掠过到位窗边界时保持平滑，纵向仍持续靠近。 */
@@ -495,59 +498,58 @@ static void Test_Approach_Axis_Window_Continuity(void)
     assert(velocity_requests == updates);
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5099, 7000);
     Step();
-    assert(last_vx > 0.0f && last_vy == 0.0f && outside > 0.0f && outside <= JETSON_AUTO_APPROACH_MIN_SPEED_MPS);
+    assert(last_vx > 0.0f && last_vy == 0.0f && outside > 0.0f && outside <= 0.005f);
     assert(stops == 0U && velocity_requests == updates + 1U);
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5050, 7000);
     Step();
     assert(last_vx > 0.0f && last_vy == 0.0f && stops == 0U);
 }
 
-/** @brief 验证低速连续增力、按到达间隔积分、上限、反向和入窗清零。 */
-static void Test_Approach_Integral(void)
+/** @brief 固定窗外点不会无限累加速度；靠近与换向不携带旧积分。 */
+static void Test_Approach_No_Windup(void)
 {
     Begin_Target_Test();
-    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5300, 7500);
-    Step();
-    assert(fabsf(last_vy - 0.016f) < 1e-6f && stops == 0U);
-    Steps(7U);
-    assert(fabsf(last_vy - 0.016f) < 1e-6f);
-    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5300, 7500);
-    Step();
-    assert(fabsf(last_vy - 0.0176f) < 1e-6f);
-    for (unsigned i = 0U; i < 75U; ++i)
+    float steady = 0.0f;
+    for (unsigned i = 0; i < 200; ++i)
     {
-        Steps(3U);
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5300, 7500);
-        Step();
+        Steps(4U);
+        assert(last_vy > 0 && last_vy <= JETSON_AUTO_APPROACH_SPEED_MPS);
+        if (i == 150) steady = last_vy;
     }
-    assert(fabsf(last_vy - (0.016f + JETSON_AUTO_APPROACH_I_LIMIT_MPS)) < 1e-6f);
-    assert(stops == 0U && sent_count == 0U);
-
-    /* 只差一个定点单位时，即便历史积分已饱和，仍保留小幅同向修正。 */
-    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5101, 7500);
-    Step();
-    assert(last_vy == JETSON_AUTO_APPROACH_MIN_SPEED_MPS && stops == 0U);
-
-    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 3500, 7500);
-    Step();
-    assert(last_vy < 0.0f && stops == 0U);
+    assert(fabsf(last_vy - steady) < 1e-5f && last_vy > 0.04f);
+    for (unsigned i = 0; i < 6; ++i)
+    {
+        Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5101, 7500);
+        Steps(4U);
+    }
+    assert(last_vy > 0.0f && last_vy < steady && stops == 0U);
+    for (unsigned i = 0; i < 6; ++i)
+    {
+        if (last_vx == 0.0f && last_vy == 0.0f) stopped = 1U;
+        Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 3500, 7500);
+        Steps(4U);
+    }
+    assert(last_vy < 0.0f && fabsf(last_vy) <= JETSON_AUTO_APPROACH_SPEED_MPS && stops == 0U);
 }
 
-/** @brief 验证远段合速度饱和时不会累积靠近积分。 */
+/** @brief 合速饱和后靠近仍及时减速，不保留饱和补偿。 */
 static void Test_Approach_Anti_Windup(void)
 {
     Begin_Target_Test();
-    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 6500, 7500);
-    Steps(4U);
-    for (unsigned i = 0U; i < 39U; ++i)
+    for (unsigned i = 0U; i < 100U; ++i)
     {
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 6500, 7500);
         Steps(4U);
-        assert(fabsf(last_vy - JETSON_AUTO_APPROACH_SPEED_MPS) < 1e-6f);
+        assert(last_vy <= JETSON_AUTO_APPROACH_SPEED_MPS);
     }
-    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 6100, 7500);
-    Step();
-    assert(last_vy > 0.0f && last_vy < 0.099f && stops == 0U);
+    assert(fabsf(last_vy - JETSON_AUTO_APPROACH_SPEED_MPS) < 1e-6f);
+    for (unsigned i = 0U; i < 6U; ++i)
+    {
+        Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5150, 7500);
+        Steps(4U);
+    }
+    assert(last_vy > 0.0f && last_vy < 0.06f && stops == 0U);
 }
 
 /** @brief 轮速未达到停车确认条件时，按视觉停车期限失能，不额外延长故障制动。 */
@@ -569,8 +571,12 @@ static void Test_Approach_Brake_Timeout(void)
 static void Prepare_ROI_From_Target(uint8_t destination, uint32_t token)
 {
     /* 横向超出容差时继续修正；双轴同时入窗后等待停车反馈。 */
-    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5800, 7500);
-    Step();
+    for (unsigned i = 0; i < 12; ++i)
+    {
+        if (last_vx == 0.0f && last_vy == 0.0f) stopped = 1U;
+        Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5800, 7500);
+        Steps(4U);
+    }
     assert(last_vx == 0.0f && last_vy > 0.0f && last_wz == 0.0f);
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
     Steps(4U);
@@ -1385,7 +1391,7 @@ int main(void)
     Test_Approach_Lost_During_Brake();
     Test_Approach_Retreat_And_Limit();
     Test_Approach_Axis_Window_Continuity();
-    Test_Approach_Integral();
+    Test_Approach_No_Windup();
     Test_Approach_Anti_Windup();
     Test_Approach_Brake_Timeout();
     Test_Two_Consecutive_Transports();

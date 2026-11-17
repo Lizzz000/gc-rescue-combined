@@ -114,8 +114,8 @@ class ContinuousSession(swd.Session):
                     values = [sample.get(key) for key in ("odom_x_m", "odom_y_m", "odom_yaw_rad", "odom_age_ms")]
                     if not finite(values) or sample.get("odom_valid") != 1 or not 0 <= values[3] <= 50:
                         raise swd.SessionError("Continuous return odometry is invalid/stale")
-                    if self.start_pose and math.hypot(values[0] - self.start_pose[0], values[1] - self.start_pose[1]) > 1.3:
-                        raise swd.SessionError("Continuous return exceeded the 1.3 metre estimated fence")
+                    if self.start_pose and math.hypot(values[0] - self.start_pose[0], values[1] - self.start_pose[1]) > getattr(self, "fence_m", 1.3):
+                        raise swd.SessionError("Continuous return exceeded its estimated fence")
             return state
         except (OSError, swd.SessionError) as exc:
             self.guard_failure, self.stopping = str(exc), True

@@ -12,7 +12,7 @@
  * @param[out] quat 机体系到世界系的单位四元数，顺序 w、x、y、z。
  * @param[in] accel 完整静止标定窗口的平均加速度，m/s²，已统一为机体系，须有效且非零。
  * @param[in] mag 同一窗口有效磁样本的机体系均值，已校正，μT。
- * @return 1 已对准重力和磁航向。0 仅对准重力，yaw 置零，启动任务继续采样。
+ * @return 1 已对准重力和磁航向。0 无有效磁航向；重力无效时保持输出不变，否则仅对准重力、yaw置零。
  * @note 重力对准沿用 basic_framework（1a136eb）的 InitQuaternion 思路。
  *       磁航向按 NXP AN4248 的倾斜补偿方法适配本车坐标。
  */
@@ -21,7 +21,7 @@ uint8_t AHRS_init(float quat[4], const float accel[3], const float mag[3]);
 /**
  * @brief 使用教程 Mahony 算法更新姿态。
  * @param[in,out] quat 四元数，顺序 w、x、y、z。
- * @param[in] time 本次更新距上次更新的实测时间，秒，须为大于 0 的有限值。
+ * @param[in] time 本次更新距上次更新的实测时间，秒，须在 (0,0.05] 内；非法时保留上次姿态。
  * @param[in] gyro 统一坐标系的 x/y/z 角速度，rad/s。
  * @param[in] accel 统一坐标系的 x/y/z 加速度，m/s²。
  * @param[in] mag 统一坐标系的 x/y/z 磁场，μT。
@@ -39,7 +39,7 @@ void AHRS_update(float quat[4], float time, float gyro[3], float accel[3], float
  * @param[out] roll 横滚角，rad，范围 [-π, π]。
  * @return 无。
  * @note pitch 使用等价齐次 atan2 形式，避免俯仰极点的 asin 浮点越界；
- *       yaw/roll 保留教程公式，极点处二者不唯一。
+ *       yaw/roll 使用等价齐次公式；零/非法四元数输出NaN，极点处二者不唯一。
  */
 void get_angle(float q[4], float *yaw, float *pitch, float *roll);
 

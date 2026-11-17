@@ -92,8 +92,10 @@ def intervals(records):
     return {"device_ms": stats(device), "host_ms": stats(host)}
 
 
-def motor_targets(vx, vy, wz):
-    rotate = CENTER_M * wz
+def motor_targets(vx, vy, wz, rotation_radius=CENTER_M):
+    # Historical 108mm runs retain their original model; callers of calibrated
+    # firmware must explicitly pass its effective rotation radius (98.2mm).
+    rotate = rotation_radius * wz
     # Geometry: ID1 rear / ID2 right front / ID3 left front; motor directions -1.
     return [-(-vy + rotate) / RADIUS_M,
             -(0.8660254 * vx + 0.5 * vy + rotate) / RADIUS_M,

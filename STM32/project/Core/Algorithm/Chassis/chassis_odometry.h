@@ -2,6 +2,7 @@
 #define CHASSIS_ODOMETRY_H
 
 #include <stdint.h>
+#include "heading_eskf.h"
 
 /* 超过此间隔不外推缺失运动；控制层仍须先检查三轮与 IMU 的反馈时效。 */
 #define CHASSIS_ODOMETRY_MAX_INTERVAL_US 50000U
@@ -17,7 +18,7 @@
 typedef struct
 {
     double x_m, y_m;
-    float yaw_rad;             /* IMU 航向，[-pi,pi]，rad。 */
+    float yaw_rad;             /* 正式入口为 YAW 主导的 ESKF 航向，[-pi,pi]，rad。 */
     float vx_mps, vy_mps;       /* 当前车体坐标中的反馈平移速度，m/s。 */
     float wheel_wz_rad_s;       /* 三轮正解角速度，仅诊断，不覆盖 IMU 航向。 */
     uint32_t sample_time_us;    /* 最近接受样本的微秒时刻，允许 uint32 回绕。 */
@@ -30,6 +31,7 @@ typedef struct
     Chassis_Odometry_t data;
     float previous_vx_mps, previous_vy_mps, previous_yaw_rad;
     float previous_position_rad[3];
+    Heading_ESKF_t heading;
     uint8_t initialized;
     uint8_t input_mode;        /* 内部输入基线类型；切换来源时不跨帧补积分。 */
 } Odometry_State_t;
@@ -55,7 +57,7 @@ void Odometry_Invalidate(Odometry_State_t *state);
 uint8_t Odometry_Update(Odometry_State_t *state, const float wheel_rad_s[3],
                         float yaw_rad, uint32_t now_us);
 
-/** @brief 用编码器位置增量和 IMU 航向作 SE(2) 积分；正式底盘使用本入口。
+/** @brief 原始 YAW 对照入口：编码器位置增量和 IMU 航向作 SE(2) 积分。
  * @param[in,out] state 同一控制任务拥有的状态，先调用 Odometry_Init。
  * @param[in] wheel_position_rad 后/右前/左前几何轮角，已去除安装方向，范围±12.5rad。
  * @param[in] wheel_rad_s 同组实际轮速，仅输出诊断速度，不用于平移位置积分。
@@ -68,5 +70,13 @@ uint8_t Odometry_Update(Odometry_State_t *state, const float wheel_rad_s[3],
  */
 uint8_t Odometry_Update_Position(Odometry_State_t *state, const float wheel_position_rad[3],
                                  const float wheel_rad_s[3], float yaw_rad, uint32_t now_us);
+
+/** @brief 正式底盘入口：位置增量 + SO(2) ESKF 航向。
+ * @note 陀螺预测、YAW主观测、编码器转角弱约束；gyro与yaw须同一IMU快照。
+ *       首帧/输入切换/失效后恢复重建基线；50ms间隔及轮位置检查同对照入口。
+ */
+uint8_t Odometry_Update_Position_ESKF(Odometry_State_t *state, const float wheel_position_rad[3],
+                                      const float wheel_rad_s[3], float yaw_rad,
+                                      float gyro_rad_s, uint32_t now_us);
 
 #endif

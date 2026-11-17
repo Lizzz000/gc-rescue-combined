@@ -63,7 +63,7 @@ float PID_calc(pid_type_def *pid, float ref, float set);
  * @note 来源：旧车 Core/Control/PID/pid.c 的 PID_Step。
  *       保留 I+=Ki*error*dt、D=-Kd*measurement_rate、积分限幅和同向饱和抗积分。
  *       Kp 单位为输出/误差，Ki 为输出/(误差*s)，Kd 为输出*s/误差。
- *       调用方保证输入有效；本接口与 PID_calc 使用独立实例，不混用积分历史。
+ *       非法参数/观测、非正dt或算术溢出返回零并清除历史；本接口与 PID_calc 使用独立实例。
  */
 float PID_Step(pid_type_def *pid, float error, float measurement_rate, float dt);
 

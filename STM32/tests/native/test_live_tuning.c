@@ -9,6 +9,7 @@
 #include "task.h"
 #include "tim.h"
 #include "vofa.h"
+#include "spin_observer.h"
 
 uint32_t test_tick;
 volatile dm_motor_t dm_motor[3];
@@ -20,6 +21,7 @@ static unsigned enable_calls, disable_calls, stop_calls, move_calls, read_calls,
 static unsigned critical_depth;
 static uint8_t enabled, stopped, motors_ready, imu_valid, enable_ok, move_ok, emit_target;
 static uint32_t imu_age;
+static float imu_yaw_deg, imu_rate;
 static HAL_StatusTypeDef read_status;
 static uint16_t read_id;
 static uint8_t read_reg;
@@ -39,7 +41,7 @@ uint32_t test_timer_counter(TIM_HandleTypeDef *timer)
 }
 void vofa_send_channels(const float *values, uint8_t count)
 {
-    assert(count == TUNING_SAMPLE_COUNT && !(tuning_sample_seq & 1U));
+    assert((count == TUNING_SAMPLE_COUNT || count == TUNING_SAMPLE_COUNT+8U) && !(tuning_sample_seq & 1U));
     ++serial_calls;
     memcpy(serial_sample, values, sizeof(serial_sample));
 }
@@ -119,6 +121,11 @@ uint8_t Chassis_Set_Velocity_Explicit_Yaw(float vx, float vy, float wz)
 {
     return Chassis_Set_Velocity(vx, vy, wz);
 }
+uint8_t Chassis_Set_Test_Rotation(float wz)
+{
+    assert(isfinite(wz) && fabsf(wz) <= 4.0f);
+    return Chassis_Set_Velocity(0, 0, wz);
+}
 uint8_t Chassis_Set_Tuning(const float kd[3], float ff_gain, const float friction[3])
 {
     ++config_calls;
@@ -133,8 +140,8 @@ uint8_t INS_Get_Data(INS_control_data_t *data)
 {
     if (!imu_valid)
         return 0U;
-    data->yaw_deg = 12.5f;
-    data->world_z_rad_s = 0.02f;
+    data->yaw_deg = imu_yaw_deg;
+    data->world_z_rad_s = imu_rate;
     data->sample_time_ms = test_tick - imu_age;
     return 1U;
 }
@@ -155,6 +162,7 @@ static void reset_case(void)
     enabled = 0U;
     stopped = motors_ready = imu_valid = enable_ok = move_ok = emit_target = 1U;
     imu_age = 0U;
+    imu_yaw_deg = 12.5f; imu_rate = .02f;
     read_status = HAL_OK;
     read_id = read_reg = 0U;
     battery_voltage = 16.0f;
@@ -821,13 +829,13 @@ static void test_return_arguments_and_fence(void)
         assert(tuning_error == 1U && !move_calls && !enable_calls);
     }
     reset_case();
-    start_return(1.001f, 0, 0, 20000);
+    start_return(1.501f, 0, 0, 20000);
     assert(tuning_error == 3U && !move_calls && !reset_calls);
     reset_case();
     start_return(1.0f, 0, 0, 20000);
     assert(tuning_phase == TUNING_RUNNING && !reset_calls);
     loop(5U, 1U);
-    odom.x_m = 1.301;
+    odom.x_m = 1.801;
     loop(5U, 1U);
     assert(tuning_error == TUNING_ERROR_ODOMETRY && tuning_phase == TUNING_BRAKING);
 }
@@ -875,11 +883,11 @@ static void test_return_yaw_limits_and_near_speed(void)
     odom.yaw_rad = 3.10f;
     start_return(.5f, 0, -3.0f, 20000);
     loop(5U, 1U);
-    assert(last_velocity[2] == .5f); /* 跨-pi/pi取最短角差，使用足额角限速。 */
+    assert(last_velocity[2] > 0.0f && last_velocity[2] <= .5f); /* 跨-pi/pi取最短角差，使用足额角限速。 */
     assert(fabsf(hypotf(last_velocity[0],last_velocity[1]) - .20f) < .00001f);
     odom.x_m = .46;
     loop(5U, 1U);
-    assert(fabsf(hypotf(last_velocity[0],last_velocity[1]) - .06f) < .00001f);
+    assert(hypotf(last_velocity[0],last_velocity[1]) > .02f && hypotf(last_velocity[0],last_velocity[1]) < .12f);
 
     reset_case();
     tuning_args[0] = .04f; tuning_args[3] = .02f; tuning_args[4] = .1f; tuning_args[5] = 20000;
@@ -915,7 +923,7 @@ static void test_return_coarse_yaw_terminal_tolerance(void)
     odom.yaw_rad = 4.5f * .01745329251994329577f;
     start_return(0,0,0,20000);
     loop(5U,1U);
-    assert(tuning_phase == TUNING_RUNNING && last_velocity[2] == -.5f);
+    assert(tuning_phase == TUNING_RUNNING && last_velocity[2] < 0.0f && last_velocity[2] >= -.5f);
     odom.yaw_rad = 3.9f * .01745329251994329577f;
     loop(5U,1U);
     assert(tuning_phase == TUNING_BRAKING); /* 内层仍为4deg，不能提前按10deg停车。 */
@@ -1034,8 +1042,113 @@ static void test_return_start_feedback_race(void)
     assert(tuning_error == 4U && !move_calls); /* 窗口有界，不能无限等待。 */
 }
 
+static void visual_frame(float x, float y, uint32_t source)
+{
+    tuning_visual_center[0] = x;
+    tuning_visual_center[1] = y;
+    tuning_visual_time_ms = source;
+    tuning_visual_valid = 1U;
+    ++tuning_visual_seq;
+    loop(20U, 1U);
+}
+
+static void start_visual(float x, float y)
+{
+    tuning_args[0] = x; tuning_args[1] = y; tuning_args[2] = 0.0f;
+    tuning_args[3] = 0.2f; tuning_args[4] = 0.5f; tuning_args[5] = 20000;
+    submit(TUNING_VISUAL_HOLD);
+    assert(tuning_phase == TUNING_RUNNING && enabled);
+}
+
+static void test_visual_input_and_return_handoff(void)
+{
+    /* 图像矩形窗口与里程计圆形容差不能混用；现场20.27mm不能误报。 */
+    for (unsigned outside = 0U; outside < 2U; ++outside)
+    {
+        reset_case();
+        start_visual(.5f, 0.0f);
+        odom.x_m = .5 - (outside ? .036 : .02027);
+        visual_frame(5000, 7500, 100);
+        stopped = 1U;
+        loop(5U, 1U);
+        if (outside)
+            assert(tuning_error == TUNING_ERROR_ODOMETRY);
+        else
+            assert(tuning_phase == TUNING_DONE && enabled && !tuning_error && !disable_calls);
+    }
+
+    reset_case();
+    start_visual(.6f,.1f);
+    visual_frame(6000,1500,100);
+    assert(last_velocity[0] > 0 && last_velocity[1] > 0 && !reset_calls);
+    visual_frame(5000,7500,120); /* 一帧突跳到位，不能作为到位证据。 */
+    assert(tuning_phase == TUNING_RUNNING && !stop_calls);
+    for (unsigned i = 0; i < 13; ++i)
+        visual_frame(6000,1500,120); /* 只变接收序号、源帧重复，不能续期。 */
+    assert(tuning_error == 5U && stop_calls);
+
+    reset_case();
+    start_visual(.005f,.005f);
+    visual_frame(5000,7500,100);
+    assert(tuning_phase == TUNING_BRAKING && !disable_calls);
+    odom.x_m = .005; odom.y_m = .005;
+    stopped = 1U;
+    loop(5U,1U);
+    assert(tuning_phase == TUNING_DONE && enabled && !tuning_error && !disable_calls);
+    start_return(0,0,0,20000);
+    loop(5U,1U);
+    assert(tuning_phase == TUNING_BRAKING && enabled && !reset_calls);
+    stopped = 1U;
+    loop(5U,1U);
+    assert(tuning_phase == TUNING_DONE && enabled && !disable_calls);
+}
+
+static void start_spin(void)
+{
+    const float args[8]={30,2,3,4,3,2,120000,0};
+    for(unsigned i=0;i<8;++i)tuning_args[i]=args[i];
+    submit(TUNING_SPIN_SWEEP);
+}
+
+static void test_spin_sweep(void)
+{
+    reset_case(); start_spin();
+    assert(tuning_phase==TUNING_RUNNING && enabled);
+    double angle=0, speed=0;
+    for(unsigned i=0;i<25000 && tuning_phase!=TUNING_DONE;++i)
+    {
+        speed+=fmax(-.008,fmin(.008,last_velocity[2]-speed));
+        angle+=speed*.005;
+        for(unsigned wheel=0;wheel<3;++wheel)
+            dm_motor[wheel].position=-remainder(angle*.0982/.035,25.0);
+        imu_yaw_deg = remainder(12.5 + angle*180.0/3.14159265358979323846, 360.0);
+        imu_rate = speed;
+        stopped=speed<.08;
+        loop(5U,1U);
+        assert(!tuning_error && !disable_calls);
+    }
+    assert(tuning_phase==TUNING_DONE && enabled && !disable_calls);
+    Live_Tuning_Snapshot();
+    assert(fabs(tuning_spin_sample[0]-SPIN_TEST_ANGLE_RAD)<.03);
+    assert(tuning_spin_sample[4]==4 && tuning_spin_sample[3]==0);
+    assert(fabs(tuning_spin_sample[1]-SPIN_TEST_ANGLE_RAD)<.03); /* 以实际YAW进度完成。 */
+
+    reset_case(); start_spin(); loop(5U,1U); loop(300U,0U);
+    assert(tuning_error==5U && stop_calls); /* 高速实验仍受原心跳保护。 */
+    reset_case(); start_spin(); odom.x_m=.36; loop(5U,1U);
+    assert(tuning_error==TUNING_ERROR_ACTION_TIMEOUT && stop_calls);
+    reset_case(); start_spin(); submit(TUNING_STOP); loop(5U,1U);
+    assert(!enabled && !tuning_error);
+    reset_case();
+    tuning_args[0]=30; tuning_args[1]=2; tuning_args[2]=3; tuning_args[3]=4.01f;
+    tuning_args[4]=3; tuning_args[5]=2; tuning_args[6]=120000;
+    submit(TUNING_SPIN_SWEEP); assert(tuning_error==1 && !enable_calls);
+}
+
 int main(void)
 {
+    test_spin_sweep();
+    test_visual_input_and_return_handoff();
     test_init_and_config();
     test_move_rejection();
     test_motion_and_disable_ack();

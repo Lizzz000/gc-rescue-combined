@@ -42,6 +42,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Algorithm/Kalman/adaptive_kalman.c
     Core/Algorithm/Chassis/motor_chassis.c
     Core/Algorithm/Chassis/chassis_odometry.c
+    Core/Algorithm/Chassis/heading_eskf.c
+    Core/Algorithm/Chassis/visual_servo.c
+    Core/Algorithm/Chassis/point_plan.c
     Core/Bsp/ADC/bsp_adc.c
     Core/Bsp/Buzzer/bsp_buzzer.c
     Core/Bsp/CAN/bsp_can.c
@@ -97,6 +100,7 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAL_PCD_MODULE_ENABLED=
 option(CHASSIS_TUNING_ENABLED "Build explicit-command SWD chassis tuning firmware" OFF)
 if(CHASSIS_TUNING_ENABLED)
     target_sources(${CMAKE_PROJECT_NAME} PRIVATE Core/Control/Chassis/live_tuning.c)
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE Core/Control/Chassis/spin_observer.c)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE CHASSIS_TUNING_ENABLED=1 JETSON_AUTO_ENABLED=0)
 endif()
 option(INS_USE_MAGNETOMETER "Use IST8310 for nine-axis Mahony heading" OFF)

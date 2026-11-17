@@ -71,10 +71,13 @@ def main():
         "chassis_odometry": ["tests/native/test_chassis_odometry.c",
                              "project/Core/Algorithm/Chassis/chassis_odometry.c",
                              "project/Core/Algorithm/Chassis/motor_chassis.c"],
-        "live_tuning": ["tests/native/test_live_tuning.c", "project/Core/Control/Chassis/live_tuning.c"],
+        "live_tuning": ["tests/native/test_live_tuning.c", "project/Core/Control/Chassis/live_tuning.c", "project/Core/Algorithm/Kalman/adaptive_kalman.c", "project/Core/Algorithm/Chassis/visual_servo.c"],
         "can_diag": ["tests/native/test_can_diag.c", "project/Core/Bsp/CAN/bsp_can.c"],
     }
     suites["sensors_nine_axis"] = suites["sensors"]
+    suites["chassis_tuning"] = list(suites["chassis"])
+    suites["vofa_tuning"] = list(suites["vofa"])
+    suites["spin_observer"] = ["tests/native/test_spin_observer.c", "project/Core/Control/Chassis/spin_observer.c", "project/Core/Algorithm/Chassis/motor_chassis.c"]
     suites["jetson_auto_configured"] = [
         "tests/native/test_jetson_auto.c", "project/Core/Communication/Jetson/jetson_link.c",
         "project/Core/Control/Jetson/jetson_auto.c", "project/Core/Algorithm/Kalman/adaptive_kalman.c",
@@ -103,9 +106,19 @@ def main():
         "tests/native/test_usb_link_state.c", "project/Core/Communication/Jetson/jetson_link.c",
         "project/Core/Communication/Jetson/link_frame.c",
     ]
+    suites["visual_servo"] = ["tests/native/test_visual_servo.c", "project/Core/Algorithm/Kalman/adaptive_kalman.c", "project/Core/Algorithm/Chassis/visual_servo.c"]
+    suites["point_plan"] = ["tests/native/test_point_plan.c", "project/Core/Algorithm/Chassis/point_plan.c"]
+    suites["heading_eskf"] = ["tests/native/test_heading_eskf.c", "project/Core/Algorithm/Chassis/heading_eskf.c", "project/Core/Algorithm/Chassis/chassis_odometry.c", "project/Core/Algorithm/Chassis/motor_chassis.c"]
     for sources in suites.values():
+        if "project/Core/Control/Chassis/live_tuning.c" in sources:
+            sources.append("project/Core/Algorithm/Chassis/point_plan.c")
+            sources += ["project/Core/Control/Chassis/spin_observer.c", "project/Core/Algorithm/Chassis/motor_chassis.c"]
+        if "project/Core/Control/Jetson/jetson_auto.c" in sources and "project/Core/Algorithm/Chassis/visual_servo.c" not in sources:
+            sources.append("project/Core/Algorithm/Chassis/visual_servo.c")
         if "project/Core/Control/Chassis/chassis.c" in sources:
             sources.append("project/Core/Algorithm/Chassis/chassis_odometry.c")
+        if "project/Core/Algorithm/Chassis/chassis_odometry.c" in sources and "project/Core/Algorithm/Chassis/heading_eskf.c" not in sources:
+            sources.append("project/Core/Algorithm/Chassis/heading_eskf.c")
     includes = ["tests/native/stubs", "tests/native/fixtures", "project/Core/Bsp/CAN",
                 "project/Core/Devices/BMI088", "project/Core/Devices/IST8310",
                 "project/Core/Devices/DM_Motor", "project/Core/Task/INS", "project/Core/Task/Chassis",
@@ -125,7 +138,7 @@ def main():
                 command.append("-DJETSON_AUTO_ENABLED=0")
             if name == "can_auto":
                 command.append("-DJETSON_AUTO_ENABLED=1")
-            if name == "can_diag":
+            if name in ("can_diag", "live_tuning", "chassis_tuning", "vofa_tuning"):
                 command.append("-DCHASSIS_TUNING_ENABLED=1")
             if name.startswith("jetson_auto_"):
                 command += ["-include", str(root / "tests/native/jetson_auto_test_config.h")]

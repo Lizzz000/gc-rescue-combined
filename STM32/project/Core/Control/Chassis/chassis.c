@@ -54,6 +54,11 @@ static float target_speed, ramp_speed, target_yaw_deg;
 static uint32_t run_duration_ms, run_started_ms;
 static uint8_t run_started;
 static Odometry_State_t odometry;
+#if CHASSIS_TUNING_ENABLED
+/* 只在显式测试固件中保留；停止后读取，运动中不增加 SWD 遥测。 */
+volatile uint32_t chassis_odometry_last_us, chassis_odometry_max_us;
+volatile float chassis_heading_debug[6];
+#endif
 static uint32_t odometry_seq[3];
 static double distance_origin_x, distance_origin_y, distance_goal_m, distance_progress_m;
 static float distance_axis_x, distance_axis_y;
@@ -231,8 +236,23 @@ static void Update_Odometry(uint32_t now_us,
         Odometry_Invalidate(&odometry);
     else if (!odometry.initialized || fresh_group)
     {
-        Odometry_Update_Position(&odometry, position, wheel,
-            CHASSIS_STRAIGHT_YAW_SIGN * imu->yaw_deg * DEG_TO_RAD, now_us);
+#if CHASSIS_TUNING_ENABLED
+        const uint32_t algorithm_start_us = __HAL_TIM_GET_COUNTER(&htim2);
+#endif
+        Odometry_Update_Position_ESKF(&odometry, position, wheel,
+            CHASSIS_STRAIGHT_YAW_SIGN * imu->yaw_deg * DEG_TO_RAD,
+            CHASSIS_STRAIGHT_YAW_SIGN * imu->world_z_rad_s, now_us);
+#if CHASSIS_TUNING_ENABLED
+        chassis_odometry_last_us = __HAL_TIM_GET_COUNTER(&htim2) - algorithm_start_us;
+        if (chassis_odometry_last_us > chassis_odometry_max_us)
+            chassis_odometry_max_us = chassis_odometry_last_us;
+        chassis_heading_debug[0] = odometry.heading.yaw_rad;
+        chassis_heading_debug[1] = odometry.heading.bias_rad_s;
+        chassis_heading_debug[2] = odometry.heading.p_yaw;
+        chassis_heading_debug[3] = odometry.heading.p_bias;
+        chassis_heading_debug[4] = odometry.heading.yaw_gain;
+        chassis_heading_debug[5] = odometry.heading.wheel_bias_gain;
+#endif
         for (unsigned i = 0U; i < 3U; ++i)
             odometry_seq[i] = feedback[i].feedback_seq;
     }
@@ -545,12 +565,12 @@ uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg)
  * @return 请求接受返回 1，否则 0；全零请求回零速待命。
  * @note 连续更新平移目标保留航向；显式转向结束后按当前姿态重新锁定，斜坡连续。
  */
-static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw)
+static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw, float wz_limit)
 {
     INS_control_data_t imu;
     if (!enabled || !isfinite(vx) || !isfinite(vy) || !isfinite(wz) ||
         hypotf(vx, vy) > CHASSIS_STRAIGHT_MAX_SPEED_MPS ||
-        fabsf(wz) > CHASSIS_VECTOR_MAX_WZ_RAD_S)
+        fabsf(wz) > wz_limit)
         return 0U;
     if (vx == 0.0f && vy == 0.0f && wz == 0.0f)
     {
@@ -576,13 +596,20 @@ static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw)
 
 uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
 {
-    return Set_Velocity(vx, vy, wz, 1U);
+    return Set_Velocity(vx, vy, wz, 1U, CHASSIS_VECTOR_MAX_WZ_RAD_S);
 }
 
 uint8_t Chassis_Set_Velocity_Explicit_Yaw(float vx, float vy, float wz)
 {
-    return Set_Velocity(vx, vy, wz, 0U);
+    return Set_Velocity(vx, vy, wz, 0U, CHASSIS_VECTOR_MAX_WZ_RAD_S);
 }
+
+#if CHASSIS_TUNING_ENABLED
+uint8_t Chassis_Set_Test_Rotation(float wz)
+{
+    return Set_Velocity(0.0f, 0.0f, wz, 0U, 4.0f);
+}
+#endif
 
 /** @brief 沿旧 Send_Chassis_Targets 整体限制轮速，加入方向/齿比后发三帧 MIT。
  * @param[in] vx 前向速度，m/s。

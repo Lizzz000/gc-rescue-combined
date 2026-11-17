@@ -90,7 +90,7 @@ PREPARING 在初次使能和运行中收到零速后保持零目标，最多等�
 | `JETSON_AUTO_TARGET_X`、`JETSON_AUTO_TARGET_Y`、`JETSON_AUTO_TARGET_TOL_X`、`JETSON_AUTO_TARGET_TOL_Y` | 把车和目标摆到可夹取位置，测类型 3 的归一化中心，按可夹取范围填写各轴允许误差。 |
 | `JETSON_AUTO_SAFETY_X`、`JETSON_AUTO_SAFETY_Y`、`JETSON_AUTO_SAFETY_TOL_X`、`JETSON_AUTO_SAFETY_TOL_Y` | 把车摆到仍能稳定识别安全区的直行前对准点，测类型 4 的中心和到位窗口。 |
 | `JETSON_AUTO_X_TO_LEFT`、`JETSON_AUTO_Y_TO_FORWARD` | 架空分别确认横移和前后方向。按相机实际方向填 `+1` 或 `-1`。 |
-| `JETSON_AUTO_APPROACH_GAIN`、`JETSON_AUTO_APPROACH_SPEED_MPS`、`JETSON_AUTO_SEARCH_WZ_RAD_S` | 标定视觉跟随增益、平移限速和丢目标时的车体转向角速度。 |
+| `JETSON_AUTO_RESPONSE_X_Q_PER_M/Y_Q_PER_M`、`JETSON_AUTO_APPROACH_SPEED_MPS`、`JETSON_AUTO_APPROACH_LATENCY_S` | 标定局部图像响应、平移限速和延迟；接近速度使用制动距离规划。 |
 | `JETSON_AUTO_SAFETY_STRAIGHT_M` | 从视觉对准并停稳的位置到安全区到达点的直行距离，单位米；之后实车标定，当前留零。进入此段后不再使用类型 4 的识别结果。 |
 | `JETSON_AUTO_DISTANCE_SPEED_MPS`、`JETSON_AUTO_ROI_BACK_M`、`JETSON_AUTO_RECOVERY_BACK_M` | 按场地测定定距限速、检查前退距和拒绝恢复退距。盲推及放货后退按限时速度执行。 |
 | `JETSON_AUTO_OUT_TURN_DEG`、`JETSON_AUTO_RETURN_TURN_DEG` | 当前均为 180°。去程按目的区左转或右转，回转取相反方向。 |

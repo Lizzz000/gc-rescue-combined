@@ -10,6 +10,20 @@
 #include "AHRS.h"
 #include "MahonyAHRS.h"
 #include <math.h>
+#include <stddef.h>
+
+static float Vector_Norm_Squared(const float vector[3])
+{
+    return vector == NULL ? NAN : vector[0]*vector[0] + vector[1]*vector[1] + vector[2]*vector[2];
+}
+
+static uint8_t Quaternion_Valid(const float q[4])
+{
+    if (q == NULL)
+        return 0U;
+    const float norm = q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3];
+    return isfinite(norm) && norm >= 0.25f && norm <= 4.0f;
+}
 
 /**
  * @brief 由静止平均重力、磁场求姿态初值，参数及返回值见 AHRS.h。
@@ -19,6 +33,12 @@
  */
 uint8_t AHRS_init(float quat[4], const float accel[3], const float mag[3])
 {
+    const float gravity_sq = Vector_Norm_Squared(accel);
+    if (quat == NULL || !isfinite(gravity_sq) || gravity_sq <= 1e-12f)
+        return 0U; /* 不把无效重力初始化为看似有效的姿态。 */
+    const float zero_mag[3] = {0};
+    if (!isfinite(Vector_Norm_Squared(mag)))
+        mag = zero_mag;
     const float roll = atan2f(accel[1], accel[2]);
     const float pitch = atan2f(-accel[0], sqrtf(accel[1] * accel[1] + accel[2] * accel[2]));
     const float sr = sinf(roll), cr = cosf(roll);
@@ -47,7 +67,15 @@ uint8_t AHRS_init(float quat[4], const float accel[3], const float mag[3])
  */
 void AHRS_update(float quat[4], float time, float gyro[3], float accel[3], float mag[3])
 {
-    MahonyAHRSupdate(quat, gyro[0], gyro[1], gyro[2], accel[0], accel[1], accel[2], mag[0], mag[1], mag[2], time);
+    if (!Quaternion_Valid(quat) || !isfinite(time) || time <= 0.0f || time > 0.05f ||
+        !isfinite(Vector_Norm_Squared(gyro)))
+        return;
+    const float zero[3] = {0};
+    const float acceleration_sq = Vector_Norm_Squared(accel);
+    const float magnetic_sq = Vector_Norm_Squared(mag);
+    const float *a = isfinite(acceleration_sq) && acceleration_sq > 1e-12f ? accel : zero;
+    const float *m = isfinite(magnetic_sq) && magnetic_sq > 1e-12f ? mag : zero;
+    MahonyAHRSupdate(quat, gyro[0], gyro[1], gyro[2], a[0], a[1], a[2], m[0], m[1], m[2], time);
 }
 
 /** @brief 将四元数转换为 yaw/pitch/roll；参数及返回值见 AHRS.h。
@@ -56,10 +84,19 @@ void AHRS_update(float quat[4], float time, float gyro[3], float accel[3], float
  */
 void get_angle(float q[4], float *yaw, float *pitch, float *roll)
 {
-    *yaw = atan2f(2.0f*(q[0]*q[3]+q[1]*q[2]), 2.0f*(q[0]*q[0]+q[1]*q[1])-1.0f);
+    if (yaw == NULL || pitch == NULL || roll == NULL)
+        return;
+    if (!Quaternion_Valid(q))
+    {
+        *yaw = *pitch = *roll = NAN;
+        return;
+    }
+    const float ww=q[0]*q[0], xx=q[1]*q[1], yy=q[2]*q[2], zz=q[3]*q[3];
+    /* 齐次公式消除有限归一化误差的尺度影响，并复用四个平方。 */
+    *yaw = atan2f(2.0f*(q[0]*q[3]+q[1]*q[2]), ww + xx - yy - zz);
     const float sin_pitch = 2.0f * (q[0]*q[2] - q[1]*q[3]);
     const float gravity_y = 2.0f * (q[0]*q[1] + q[2]*q[3]);
-    const float gravity_z = q[0]*q[0] - q[1]*q[1] - q[2]*q[2] + q[3]*q[3];
+    const float gravity_z = ww - xx - yy + zz;
     *pitch = atan2f(sin_pitch, sqrtf(gravity_y*gravity_y + gravity_z*gravity_z));
-    *roll = atan2f(2.0f*(q[0]*q[1]+q[2]*q[3]),2.0f*(q[0]*q[0]+q[3]*q[3])-1.0f);
+    *roll = atan2f(gravity_y, ww - xx - yy + zz);
 }

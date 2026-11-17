@@ -49,7 +49,7 @@ SYMBOL_SIZES = {name: 4 for name in SYMBOLS}
 SYMBOL_SIZES.update(tuning_args=32, tuning_sample=4 * len(SAMPLE_NAMES), dm_param_reply=48)
 ERRORS = {
     1: "invalid command/argument", 2: "busy", 3: "prepare/IMU failure",
-    4: "motion/controller failure", 5: "heartbeat expired", 6: "parameter timeout",
+    4: "motion/controller failure", 5: "heartbeat/visual source expired", 6: "parameter timeout",
     7: "parameter transmit failure", 8: "stop timeout",
     9: "odometry/endpoint mismatch", 10: "motion deadline expired",
 }
@@ -161,6 +161,7 @@ class TclClient:
         if self.sock:
             self.sock.close()
         self.sock = socket.create_connection(self.endpoint, self.timeout)
+        self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.sock.settimeout(self.timeout)
         self.buffer = b""
         self.usable = True
@@ -269,7 +270,7 @@ def writer_lock(host, port):
 
 
 class Session:
-    def __init__(self, client, symbols, log, rate=25.0):
+    def __init__(self, client, symbols, log, rate=25.0, snapshot_reader=None):
         self.client, self.symbols, self.log = client, symbols, log
         self.period = 1.0 / rate
         self.next_heartbeat = 0.0
@@ -277,6 +278,7 @@ class Session:
         self._firmware_verified = False
         self._initial_validated = False
         self.elf_path = None
+        self.snapshot_reader = snapshot_reader
 
     def verify_firmware(self, elf):
         self._firmware_verified = self._initial_validated = False
@@ -331,6 +333,8 @@ class Session:
             self.next_heartbeat = time.monotonic() + 0.1
 
     def snapshot(self):
+        if self.snapshot_reader is not None:
+            return self.snapshot_reader(self)
         names = (*SCALARS, "sample_seq", "sample", "sample_seq")
         sample_count = len(SAMPLE_NAMES)
         # When the firmware's mailbox is contiguous in the live ELF, a
@@ -408,10 +412,11 @@ class Session:
                         # Scalars can change between 10 Hz publications. Wait
                         # for a new terminal sample, including endpoint evidence,
                         # rather than returning a previous command's DONE frame.
+                        identity = state.get("telemetry_tick_ms", state["sample_seq"])
                         if terminal_sample_seq is None:
-                            terminal_sample_seq = state["sample_seq"]
+                            terminal_sample_seq = identity
                         sample = state["sample"]
-                        if (state["sample_seq"] != terminal_sample_seq and
+                        if (identity != terminal_sample_seq and
                             sample.get("phase") == state["phase"] and
                             sample.get("error") == 0 and sample.get("enabled") == (1 if expected_command == 7 else 0)):
                             self.log.emit("complete", sequence=sequence, **state)
@@ -509,13 +514,14 @@ def validate_endpoint(command, args, result):
         if (not math.isclose(sample["end_target_distance_m"], target, rel_tol=1e-6, abs_tol=1e-6) or
             abs(sample["end_progress_m"] - target) > 0.003 + 1e-6):
             raise SessionError("Odometry endpoint does not match requested distance")
-    elif command == 7:
-        if (result.get("command") != 7 or result.get("phase") != 4 or result.get("error") != 0 or
+    elif command in (7, 8):
+        if (result.get("command") != command or result.get("phase") != 4 or result.get("error") != 0 or
             sample.get("phase") != 4 or sample.get("error") != 0 or sample.get("enabled") != 1 or
             sample.get("odom_valid") != 1 or any(sample.get(f"state_{i}") != 1 for i in (1, 2, 3)) or
             any(sample.get(f"target_{i}") != 0 for i in (1, 2, 3))):
             raise SessionError("Continuous goal lacks enabled zero-target HOLD evidence")
-        if (math.hypot(sample["end_x_m"] - args[0], sample["end_y_m"] - args[1]) > .02 + 1e-6 or
+        tolerance = .035 if command == 8 else .02
+        if (math.hypot(sample["end_x_m"] - args[0], sample["end_y_m"] - args[1]) > tolerance + 1e-6 or
             abs(math.remainder(sample["end_yaw_rad"] - args[2], 2 * math.pi)) > math.radians(10) + 1e-6):
             raise SessionError("Continuous goal endpoint is outside position/heading tolerance")
 

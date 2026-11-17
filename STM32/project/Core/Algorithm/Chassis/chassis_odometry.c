@@ -11,6 +11,9 @@
 #include <math.h>
 #include <stddef.h>
 
+enum { ODOMETRY_INPUT_NONE, ODOMETRY_INPUT_VELOCITY, ODOMETRY_INPUT_POSITION,
+       ODOMETRY_INPUT_POSITION_ESKF };
+
 #define ODOMETRY_TWO_PI 6.28318530717958647692f
 
 /** @brief 初始化独立里程计；不触发传感器采样或电机动作。 */
@@ -26,6 +29,7 @@ void Odometry_Invalidate(Odometry_State_t *state)
     if (state == NULL)
         return;
     state->data.valid = state->initialized = state->input_mode = 0U;
+    state->heading.initialized = 0U;
     state->data.vx_mps = state->data.vy_mps = state->data.wheel_wz_rad_s = 0.0f;
     state->previous_vx_mps = state->previous_vy_mps = state->previous_yaw_rad = 0.0f;
 }
@@ -90,9 +94,9 @@ uint8_t Odometry_Update(Odometry_State_t *state, const float wheel_rad_s[3],
             return 0U;
         }
     yaw_rad = remainderf(yaw_rad, ODOMETRY_TWO_PI);
-    if (state->input_mode != 1U)
+    if (state->input_mode != ODOMETRY_INPUT_VELOCITY)
         Odometry_Invalidate(state);
-    state->input_mode = 1U;
+    state->input_mode = ODOMETRY_INPUT_VELOCITY;
     if (!state->initialized)
     {
         Accept_Sample(state, body, yaw_rad, now_us);
@@ -116,12 +120,14 @@ uint8_t Odometry_Update(Odometry_State_t *state, const float wheel_rad_s[3],
     return 1U;
 }
 
-uint8_t Odometry_Update_Position(Odometry_State_t *state, const float wheel_position_rad[3],
-                                 const float wheel_rad_s[3], float yaw_rad, uint32_t now_us)
+static uint8_t Update_Position(Odometry_State_t *state, const float wheel_position_rad[3],
+                               const float wheel_rad_s[3], float yaw_rad, float gyro_rad_s,
+                               uint32_t now_us, uint8_t use_eskf)
 {
     if (state == NULL)
         return 0U;
-    if (wheel_position_rad == NULL || wheel_rad_s == NULL || !isfinite(yaw_rad))
+    if (wheel_position_rad == NULL || wheel_rad_s == NULL || !isfinite(yaw_rad) ||
+        (use_eskf && (!isfinite(gyro_rad_s) || fabsf(gyro_rad_s) > 8.0f)))
     {
         Odometry_Invalidate(state);
         return 0U;
@@ -137,9 +143,10 @@ uint8_t Odometry_Update_Position(Odometry_State_t *state, const float wheel_posi
     float body[3];
     Motor_Chassis_Forward(wheel_rad_s, body);
     yaw_rad = remainderf(yaw_rad, ODOMETRY_TWO_PI);
-    if (state->input_mode != 2U)
+    const uint8_t input_mode = use_eskf ? ODOMETRY_INPUT_POSITION_ESKF : ODOMETRY_INPUT_POSITION;
+    if (state->input_mode != input_mode)
         Odometry_Invalidate(state);
-    state->input_mode = 2U;
+    state->input_mode = input_mode;
     if (state->initialized)
     {
         const uint32_t elapsed_us = now_us - state->data.sample_time_us;
@@ -167,11 +174,38 @@ uint8_t Odometry_Update_Position(Odometry_State_t *state, const float wheel_posi
         }
         /* 正解是线性映射：输入角增量rad时，输出dx/dy为m、转角为rad。 */
         Motor_Chassis_Forward(delta, displacement);
+        if (use_eskf)
+        {
+            if (!Heading_ESKF_Update(&state->heading, yaw_rad, gyro_rad_s, displacement[2],
+                                      elapsed_us * 0.000001f))
+            {
+                Odometry_Invalidate(state);
+                return 0U;
+            }
+            yaw_rad = state->heading.yaw_rad;
+        }
         if (!Integrate_Displacement(state, displacement[0], displacement[1], yaw_rad))
             return 0U;
+    }
+    else if (use_eskf && !Heading_ESKF_Init(&state->heading, yaw_rad, gyro_rad_s))
+    {
+        Odometry_Invalidate(state);
+        return 0U;
     }
     for (unsigned i = 0U; i < 3U; ++i)
         state->previous_position_rad[i] = wheel_position_rad[i];
     Accept_Sample(state, body, yaw_rad, now_us);
     return 1U;
+}
+
+uint8_t Odometry_Update_Position(Odometry_State_t *state, const float position[3],
+                                 const float wheel[3], float yaw, uint32_t now_us)
+{
+    return Update_Position(state, position, wheel, yaw, 0.0f, now_us, 0U);
+}
+
+uint8_t Odometry_Update_Position_ESKF(Odometry_State_t *state, const float position[3],
+                                      const float wheel[3], float yaw, float gyro, uint32_t now_us)
+{
+    return Update_Position(state, position, wheel, yaw, gyro, now_us, 1U);
 }

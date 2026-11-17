@@ -24,9 +24,10 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 ALGORITHM = ROOT / "project/Core/Algorithm/Chassis"
 SOURCES = (ALGORITHM / "chassis_odometry.c", ALGORITHM / "motor_chassis.c",
-           ALGORITHM / "chassis_odometry.h", ALGORITHM / "motor_chassis.h")
+           ALGORITHM / "chassis_odometry.h", ALGORITHM / "motor_chassis.h",
+           ALGORITHM / "heading_eskf.c", ALGORITHM / "heading_eskf.h")
 DT = 0.01
-RADIUS, OFFSET = 0.035, 0.108
+RADIUS, OFFSET = 0.035, 0.0982
 WRAPPER = r'''
 #include "chassis_odometry.h"
 #if defined(_WIN32)
@@ -101,7 +102,7 @@ class NativeOdometry:
         env = dict(os.environ, PATH=str(Path(cc).parent) + os.pathsep + os.environ.get("PATH", ""))
         command = [cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-O2", "-shared",
                    "-fPIC", "-static-libgcc", "-I" + str(ALGORITHM), str(wrapper),
-                   str(SOURCES[0]), str(SOURCES[1]), "-lm", "-o", str(library)]
+                   *[str(p) for p in SOURCES if p.suffix == ".c"], "-lm", "-o", str(library)]
         subprocess.run(command, check=True, capture_output=True, text=True, env=env, timeout=30)
         self.provenance["compiler_version"] = subprocess.check_output(
             [cc, "--version"], text=True, env=env, timeout=10).splitlines()[0]

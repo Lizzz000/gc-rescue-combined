@@ -9,12 +9,26 @@
 #include "task.h"
 #include "tim.h"
 #include "vofa.h"
+#include "visual_servo.h"
+#include "point_plan.h"
+#include "spin_observer.h"
+#include "jetson_auto_config.h"
 #include <math.h>
 
 volatile uint32_t tuning_request_seq, tuning_command, tuning_heartbeat;
 volatile uint32_t tuning_ack_seq, tuning_phase, tuning_error, tuning_sample_seq;
 volatile float tuning_args[8], tuning_sample[TUNING_SAMPLE_COUNT];
 extern volatile float battery_voltage;
+volatile float tuning_visual_center[2], tuning_visual_sample[10];
+volatile uint32_t tuning_visual_seq, tuning_visual_time_ms, tuning_visual_valid;
+static AdaptiveKalman visual_filter;
+static Visual_Servo_t visual_servo;
+static uint32_t visual_seq, visual_source_ms, visual_received_ms;
+static uint8_t visual_started;
+volatile float tuning_spin_sample[8];
+static Spin_Observer_t spin_observer;
+static float spin_requested_wz;
+static unsigned spin_stage;
 
 typedef enum { INACTIVE, PREPARE, RUN, STATIC_SETTLE, RETURN_SETTLE, HOLD,
                BRAKE, WAIT_DISABLED, READ_PARAMETER } Work_State;
@@ -35,11 +49,19 @@ static Chassis_Odometry_t endpoint;
 static uint32_t endpoint_elapsed_ms;
 static float return_goal[3], return_linear_limit, return_angular_limit;
 static uint8_t return_velocity_started;
+static Point_Plan_t return_plan;
+
+static uint8_t Hold_Command(void)
+{
+    return active_command == TUNING_RETURN_HOLD || active_command == TUNING_VISUAL_HOLD ||
+        active_command == TUNING_SPIN_SWEEP;
+}
+
 
 static uint8_t Odometry_Command(void)
 {
     return active_command == TUNING_ODOM_STATIC || active_command == TUNING_ODOM_DISTANCE ||
-        active_command == TUNING_RETURN_HOLD;
+        Hold_Command();
 }
 
 static double Return_Remaining(const Chassis_Odometry_t *data)
@@ -50,19 +72,24 @@ static double Return_Remaining(const Chassis_Odometry_t *data)
 static uint8_t Return_Fence(const Chassis_Odometry_t *data)
 {
     const double distance = hypot(data->x_m - origin_x, data->y_m - origin_y);
-    return isfinite(distance) && distance <= 1.3 && isfinite(data->yaw_rad);
+    return isfinite(distance) && distance <= TUNING_RETURN_FENCE_M && isfinite(data->yaw_rad);
 }
 
 static uint8_t Return_At_Goal(const Chassis_Odometry_t *data)
 {
-    return Return_Fence(data) && Return_Remaining(data) <= TUNING_RETURN_POSITION_TOLERANCE_M &&
+    if (active_command == TUNING_SPIN_SWEEP)
+        return Return_Fence(data) && hypot(data->x_m-origin_x, data->y_m-origin_y) <= .35 &&
+            fabs(spin_observer.yaw_rad - SPIN_TEST_ANGLE_RAD) <= .2;
+    const float tolerance = active_command == TUNING_VISUAL_HOLD ?
+        TUNING_VISUAL_POSITION_TOLERANCE_M : TUNING_RETURN_POSITION_TOLERANCE_M;
+    return Return_Fence(data) && Return_Remaining(data) <= tolerance &&
         fabsf(remainderf(return_goal[2] - data->yaw_rad, 6.2831853071795864769f)) <=
             TUNING_RETURN_YAW_TOLERANCE_RAD;
 }
 
 static double Odometry_Progress(const Chassis_Odometry_t *data)
 {
-    return active_command == TUNING_RETURN_HOLD ? requested_distance - Return_Remaining(data) :
+    return Hold_Command() ? requested_distance - Return_Remaining(data) :
         (data->x_m - origin_x) * distance_axis_x + (data->y_m - origin_y) * distance_axis_y;
 }
 
@@ -98,6 +125,17 @@ static uint8_t Fresh_IMU(uint32_t now_ms, INS_control_data_t *imu)
 {
     return INS_Get_Data(imu) && isfinite(imu->yaw_deg) && isfinite(imu->world_z_rad_s) &&
         (uint32_t)(now_ms - imu->sample_time_ms) <= 20U;
+}
+
+static uint8_t Observe_Spin(uint32_t now_ms, const INS_control_data_t *imu)
+{
+    float position[3];
+    taskENTER_CRITICAL();
+    for (unsigned i = 0; i < 3U; ++i)
+        position[i] = -dm_motor[i].position; /* 本车安装方向-1、齿比1；与正式里程计相同。 */
+    taskEXIT_CRITICAL();
+    return Spin_Observer_Update(&spin_observer, position,
+        imu->yaw_deg * .01745329251994329577f, imu->world_z_rad_s, now_ms);
 }
 
 static void Request_Disable(uint32_t now_ms)
@@ -137,7 +175,7 @@ static void Complete_Odometry(uint32_t now_ms)
     const uint8_t valid = endpoint.valid && endpoint_stopped &&
         isfinite(endpoint.x_m) && isfinite(endpoint.y_m) && isfinite(endpoint.yaw_rad) &&
         (active_command != TUNING_ODOM_STATIC || Static_Position_Valid(&endpoint)) &&
-        (active_command != TUNING_RETURN_HOLD || Return_At_Goal(&endpoint)) &&
+        (!Hold_Command() || Return_At_Goal(&endpoint)) &&
         isfinite(endpoint_progress) && (active_command != TUNING_ODOM_DISTANCE ||
         fabs(requested_distance - endpoint_progress) <= CHASSIS_DISTANCE_TOLERANCE_M);
     if (valid && work == RETURN_SETTLE)
@@ -185,6 +223,15 @@ static uint8_t Valid_Move(const float args[8])
         args[3] >= 100.0f && args[3] <= 1500.0f && floorf(args[3]) == args[3];
 }
 
+static uint8_t Valid_Spin(uint32_t command, const float args[8])
+{
+    static const float required[8] = {30, 2, 3, 4, 3, 2, 120000, 0};
+    if (command != TUNING_SPIN_SWEEP) return 0U;
+    for (unsigned i = 0; i < 8U; ++i)
+        if (args[i] != required[i]) return 0U;
+    return 1U;
+}
+
 static uint8_t Valid_Odometry(uint32_t command, const float args[8])
 {
     for (unsigned i = 0U; i < 8U; ++i)
@@ -202,7 +249,7 @@ static uint8_t Valid_Odometry(uint32_t command, const float args[8])
 
 static uint8_t Valid_Return(uint32_t command, const float args[8])
 {
-    if (command != TUNING_RETURN_HOLD)
+    if (command != TUNING_RETURN_HOLD && command != TUNING_VISUAL_HOLD)
         return 0U;
     for (unsigned i = 0U; i < 8U; ++i)
         if (!isfinite(args[i]))
@@ -226,9 +273,20 @@ static void Service_Return(uint32_t now_ms, const Chassis_Odometry_t *data)
         Begin_Brake(now_ms, TUNING_ERROR_ACTION_TIMEOUT);
         return;
     }
-    if (Return_Remaining(data) <= TUNING_RETURN_STOP_POSITION_M &&
-        fabsf(remainderf(return_goal[2] - data->yaw_rad, 6.2831853071795864769f)) <=
-            TUNING_RETURN_STOP_YAW_RAD)
+    const Point_Plan_Config_t config = {
+        .linear_limit_mps = return_linear_limit, .angular_limit_rad_s = return_angular_limit,
+        .linear_deceleration_mps2 = 0.30f, .angular_deceleration_rad_s2 = 0.8f,
+        .latency_s = 0.12f, .position_tolerance_m = TUNING_RETURN_STOP_POSITION_M,
+        .yaw_tolerance_rad = TUNING_RETURN_STOP_YAW_RAD,
+    };
+    const double pose[3] = {data->x_m, data->y_m, data->yaw_rad};
+    Point_Plan_Output_t output;
+    if (!Point_Plan_Step(&return_plan, &config, pose, &output))
+    {
+        Begin_Brake(now_ms, TUNING_ERROR_ODOMETRY);
+        return;
+    }
+    if (output.arrived)
     {
         Chassis_Stop();
         work = RETURN_SETTLE;
@@ -236,28 +294,102 @@ static void Service_Return(uint32_t now_ms, const Chassis_Odometry_t *data)
         stage_ms = now_ms;
         return;
     }
-    const double dx = (double)return_goal[0] - data->x_m;
-    const double dy = (double)return_goal[1] - data->y_m;
-    const double distance = hypot(dx, dy);
-    float vx = 0.0f, vy = 0.0f;
-    if (distance > TUNING_RETURN_STOP_POSITION_M)
-    {
-        const float speed = fminf(return_linear_limit, fmaxf(0.06f, (float)distance));
-        const float world_vx = (float)(dx / distance) * speed;
-        const float world_vy = (float)(dy / distance) * speed;
-        const float cosine = cosf(data->yaw_rad), sine = sinf(data->yaw_rad);
-        vx = cosine * world_vx + sine * world_vy;
-        vy = -sine * world_vx + cosine * world_vy;
-    }
-    const float yaw_error = remainderf(return_goal[2] - data->yaw_rad, 6.2831853071795864769f);
-    const float wz = fabsf(yaw_error) > TUNING_RETURN_STOP_YAW_RAD ?
-        copysignf(return_angular_limit, yaw_error) : 0.0f;
-    if (Chassis_Set_Velocity_Explicit_Yaw(vx, vy, wz))
+    if (Chassis_Set_Velocity_Explicit_Yaw(output.vx_mps, output.vy_mps, output.wz_rad_s))
         return_velocity_started = 1U;
     else if (return_velocity_started || (uint32_t)(now_ms - motion_ms) >= TUNING_RETURN_START_MS)
         Begin_Brake(now_ms, 4U);
     /* PREPARE与首个速度提交之间可能收到新的停车反馈；尚未动时允许有限等待。
      * RUN每拍仍先检查使能、三轮/IMU/里程计新鲜度、心跳与总时限。 */
+}
+
+/* 注入帧经过正式图像滤波和速度规划；里程计只做区域/终点检查。 */
+static void Service_Visual(uint32_t now_ms, const Chassis_Odometry_t *data)
+{
+    if (!Return_Fence(data) || (uint32_t)(now_ms - motion_ms) >= motion_duration_ms)
+    {
+        Begin_Brake(now_ms, TUNING_ERROR_ACTION_TIMEOUT);
+        return;
+    }
+    const uint32_t seq = tuning_visual_seq;
+    if (seq != visual_seq)
+    {
+        const float raw[2] = {tuning_visual_center[0], tuning_visual_center[1]};
+        const uint32_t stamp = tuning_visual_time_ms, valid = tuning_visual_valid;
+        if (seq != tuning_visual_seq)
+            return;
+        visual_seq = seq;
+        if (valid != 1U || !isfinite(raw[0]) || !isfinite(raw[1]) ||
+            fabsf(raw[0]) > 32767.0f || fabsf(raw[1]) > 32767.0f)
+        {
+            Begin_Brake(now_ms, 1U);
+            return;
+        }
+        const uint32_t elapsed = stamp - visual_source_ms;
+        if (!visual_started || (elapsed > 0U && elapsed <= INT32_MAX))
+        {
+            const float seconds = visual_started && elapsed < 250U ? elapsed * 0.001f : 0.0f;
+            visual_started = 1U;
+            visual_source_ms = stamp;
+            visual_received_ms = now_ms;
+            AdaptiveKalman_Update(&visual_filter, raw[0], raw[1], stamp);
+            const float goal[2] = {5000.0f, 7500.0f}, tolerance[2] = {100.0f, 100.0f};
+            const Visual_Servo_Config_t config = {
+                .max_speed_mps = return_linear_limit,
+                .acceleration_mps2 = JETSON_AUTO_APPROACH_ACCEL_MPS2,
+                .deceleration_mps2 = JETSON_AUTO_APPROACH_DECEL_MPS2,
+                .latency_s = JETSON_AUTO_APPROACH_LATENCY_S,
+                .response_q_per_m = {JETSON_AUTO_RESPONSE_X_Q_PER_M, JETSON_AUTO_RESPONSE_Y_Q_PER_M},
+            };
+            Visual_Servo_Update(&visual_servo, &config, &visual_filter, raw, goal, tolerance, seconds);
+            if (visual_filter.accepted_mask == 3U && fabsf(raw[0] - goal[0]) <= tolerance[0] &&
+                fabsf(raw[1] - goal[1]) <= tolerance[1])
+            {
+                Chassis_Stop();
+                work = RETURN_SETTLE;
+                tuning_phase = TUNING_BRAKING;
+                stage_ms = now_ms;
+                return;
+            }
+        }
+    }
+    if ((uint32_t)(now_ms - (visual_started ? visual_received_ms : motion_ms)) >= 250U)
+    {
+        Begin_Brake(now_ms, 5U);
+        return;
+    }
+    if (!visual_started)
+        return;
+    /* 视觉的两轴短暂归零后允许正常停车确认，再继续新帧；不拿尾速当故障。 */
+    if (!return_velocity_started && !Chassis_Is_Stopped())
+        return;
+    if (Chassis_Set_Velocity(visual_servo.speed[1] * JETSON_AUTO_Y_TO_FORWARD,
+                             visual_servo.speed[0] * JETSON_AUTO_X_TO_LEFT, 0.0f))
+        return_velocity_started = visual_servo.speed[0] != 0.0f || visual_servo.speed[1] != 0.0f;
+    else if (return_velocity_started || (uint32_t)(now_ms - motion_ms) >= TUNING_RETURN_START_MS)
+        Begin_Brake(now_ms, 4U);
+}
+
+static void Service_Spin(uint32_t now_ms, const Chassis_Odometry_t *data)
+{
+    if ((uint32_t)(now_ms-motion_ms) >= motion_duration_ms ||
+        hypot(data->x_m-origin_x, data->y_m-origin_y) > .35 ||
+        spin_observer.yaw_rad < -.2 || spin_observer.yaw_rad > SPIN_TEST_ANGLE_RAD+.2)
+    {
+        Begin_Brake(now_ms, TUNING_ERROR_ACTION_TIMEOUT);
+        return;
+    }
+    spin_requested_wz = Spin_Test_Speed(spin_observer.yaw_rad, &spin_stage);
+    if (spin_requested_wz == 0.0f)
+    {
+        Chassis_Stop();
+        work = RETURN_SETTLE;
+        tuning_phase = TUNING_BRAKING;
+        stage_ms = now_ms;
+    }
+    else if (Chassis_Set_Test_Rotation(spin_requested_wz))
+        return_velocity_started = 1U;
+    else if (return_velocity_started || (uint32_t)(now_ms-motion_ms) >= TUNING_RETURN_START_MS)
+        Begin_Brake(now_ms, 4U);
 }
 
 static void Accept_Command(uint32_t command, const float args[8], uint32_t now_ms)
@@ -269,7 +401,8 @@ static void Accept_Command(uint32_t command, const float args[8], uint32_t now_m
         Begin_Brake(now_ms, 0U);
         return;
     }
-    if (work != INACTIVE && !(work == HOLD && command == TUNING_RETURN_HOLD))
+    if (work != INACTIVE && !(work == HOLD && (command == TUNING_RETURN_HOLD ||
+        command == TUNING_VISUAL_HOLD || command == TUNING_SPIN_SWEEP)))
     {
         Begin_Brake(now_ms, 2U);
         return;
@@ -292,7 +425,7 @@ static void Accept_Command(uint32_t command, const float args[8], uint32_t now_m
         Request_Disable(now_ms);
     }
     else if ((command == TUNING_MOVE && Valid_Move(args)) || Valid_Odometry(command, args) ||
-             Valid_Return(command, args))
+             Valid_Return(command, args) || Valid_Spin(command, args))
     {
         active_command = command;
         requested_vx = args[0];
@@ -303,12 +436,21 @@ static void Accept_Command(uint32_t command, const float args[8], uint32_t now_m
         requested_speed = command == TUNING_ODOM_DISTANCE ? args[2] : 0.0f;
         odometry_reset = endpoint_captured = endpoint_stopped = 0U;
         return_velocity_started = 0U;
+        visual_started = 0U;
+        visual_seq = tuning_visual_seq;
+        visual_received_ms = now_ms;
+        visual_servo = (Visual_Servo_t){0};
+        spin_observer = (Spin_Observer_t){0};
+        spin_requested_wz = 0.0f;
+        spin_stage = 0U;
+        AdaptiveKalman_Init(&visual_filter, JETSON_AUTO_APPROACH_SIGMA_X_Q,
+                            JETSON_AUTO_APPROACH_SIGMA_Y_Q, JETSON_AUTO_APPROACH_SIGMA_ACCEL_Q_S2);
         endpoint = (Chassis_Odometry_t){0};
         origin_x = origin_y = endpoint_progress = 0.0;
         distance_axis_x = distance_axis_y = 0.0f;
         endpoint_elapsed_ms = 0U;
-        motion_duration_ms = (uint32_t)args[command == TUNING_RETURN_HOLD ? 5U : 3U];
-        if (command == TUNING_RETURN_HOLD)
+        motion_duration_ms = (uint32_t)args[active_command == TUNING_SPIN_SWEEP ? 6U : Hold_Command() ? 5U : 3U];
+        if (Hold_Command() && active_command != TUNING_SPIN_SWEEP)
         {
             for (unsigned i = 0U; i < 3U; ++i)
                 return_goal[i] = args[i];
@@ -327,7 +469,18 @@ static void Accept_Command(uint32_t command, const float args[8], uint32_t now_m
 
 void Live_Tuning_Init(void)
 {
+    spin_observer = (Spin_Observer_t){0};
+    spin_requested_wz = 0.0f;
+    spin_stage = 0U;
+    for (unsigned i = 0U; i < 8U; ++i) tuning_spin_sample[i] = 0.0f;
     tuning_request_seq = tuning_command = tuning_heartbeat = tuning_ack_seq = 0U;
+    tuning_visual_seq = tuning_visual_time_ms = tuning_visual_valid = 0U;
+    visual_seq = visual_source_ms = visual_received_ms = 0U;
+    visual_started = 0U;
+    visual_filter = (AdaptiveKalman){0};
+    visual_servo = (Visual_Servo_t){0};
+    for (unsigned i = 0U; i < 2U; ++i) tuning_visual_center[i] = 0.0f;
+    for (unsigned i = 0U; i < 10U; ++i) tuning_visual_sample[i] = 0.0f;
     tuning_phase = TUNING_IDLE;
     tuning_error = tuning_sample_seq = 0U;
     work = INACTIVE;
@@ -372,6 +525,14 @@ void Live_Tuning_Loop(void)
         (uint32_t)(now_ms - heartbeat_ms) >= 300U)
         Begin_Brake(now_ms, 5U);
 
+    if (active_command == TUNING_SPIN_SWEEP && motion_started &&
+        (work == RUN || work == RETURN_SETTLE || work == HOLD))
+    {
+        INS_control_data_t imu;
+        if (!Fresh_IMU(now_ms, &imu) || !Observe_Spin(now_ms, &imu))
+            Begin_Brake(now_ms, TUNING_ERROR_ODOMETRY);
+    }
+
     if (work == PREPARE)
     {
         INS_control_data_t imu;
@@ -385,7 +546,7 @@ void Live_Tuning_Loop(void)
                 enable_requested = Chassis_Enable();
             if (enable_requested && Chassis_Is_Stopped())
             {
-                if (Odometry_Command() && active_command != TUNING_RETURN_HOLD && !odometry_reset)
+                if (Odometry_Command() && !Hold_Command() && !odometry_reset)
                 {
                     if (!Chassis_Reset_Odometry())
                         Begin_Brake(now_ms, 3U);
@@ -412,10 +573,19 @@ void Live_Tuning_Loop(void)
                         distance_axis_y = sign * sinf(heading);
                         if (active_command == TUNING_ODOM_DISTANCE)
                             started = Chassis_Distance_Start(requested_direction, requested_distance, requested_speed);
-                        else if (active_command == TUNING_RETURN_HOLD)
+                        else if (active_command == TUNING_SPIN_SWEEP)
                         {
+                            return_goal[0] = data.x_m; return_goal[1] = data.y_m; return_goal[2] = data.yaw_rad;
+                            requested_distance = 0.0f;
+                            started = Observe_Spin(now_ms, &imu);
+                        }
+                        else if (Hold_Command())
+                        {
+                            const double start[3] = {data.x_m, data.y_m, data.yaw_rad};
+                            const double goal[3] = {return_goal[0], return_goal[1], return_goal[2]};
+                            started = Point_Plan_Init(&return_plan, start, goal);
                             requested_distance = (float)Return_Remaining(&data);
-                            if (!isfinite(requested_distance) || requested_distance > 1.0f)
+                            if (!isfinite(requested_distance) || requested_distance > TUNING_RETURN_MAX_DISTANCE_M)
                                 started = 0U;
                         }
                     }
@@ -446,6 +616,10 @@ void Live_Tuning_Loop(void)
             Chassis_Odometry_t data;
             if (!Chassis_Get_Odometry(&data))
                 Begin_Brake(now_ms, TUNING_ERROR_ODOMETRY);
+            else if (active_command == TUNING_SPIN_SWEEP)
+                Service_Spin(now_ms, &data);
+            else if (active_command == TUNING_VISUAL_HOLD)
+                Service_Visual(now_ms, &data);
             else if (active_command == TUNING_RETURN_HOLD)
                 Service_Return(now_ms, &data);
             else if (active_command == TUNING_ODOM_STATIC)
@@ -525,7 +699,8 @@ void Live_Tuning_Loop(void)
         }
         else if (!Chassis_Is_Enabled() || !Chassis_Motors_Ready() || !Fresh_IMU(now_ms, &imu))
             Begin_Brake(now_ms, 4U);
-        else if (!Chassis_Get_Odometry(&data) || !Return_Fence(&data))
+        else if (!Chassis_Get_Odometry(&data) || !Return_Fence(&data) ||
+                 (active_command == TUNING_SPIN_SWEEP && hypot(data.x_m-origin_x, data.y_m-origin_y) > .35))
             Begin_Brake(now_ms, TUNING_ERROR_ODOMETRY);
         else if (work == RETURN_SETTLE)
         {
@@ -623,7 +798,8 @@ void Live_Tuning_Loop(void)
 void Live_Tuning_Snapshot(void)
 {
     const uint32_t now_ms = (uint32_t)xTaskGetTickCount();
-    if (sample_published && (uint32_t)(now_ms - sample_ms) < 100U)
+    if (sample_published && (uint32_t)(now_ms - sample_ms) <
+        (active_command == TUNING_VISUAL_HOLD || active_command == TUNING_SPIN_SWEEP ? 40U : 100U))
         return;
     sample_published = 1U;
     sample_ms = now_ms;
@@ -674,9 +850,29 @@ void Live_Tuning_Snapshot(void)
     tuning_sample[53] = (float)endpoint_elapsed_ms;
     tuning_sample[54] = (float)endpoint_progress;
     tuning_sample[55] = requested_distance;
+    tuning_visual_sample[0] = tuning_visual_center[0];
+    tuning_visual_sample[1] = tuning_visual_center[1];
+    for (unsigned axis = 0; axis < 2U; ++axis)
+    {
+        tuning_visual_sample[2U + axis] = visual_filter.position[axis];
+        tuning_visual_sample[4U + axis] = visual_filter.velocity[axis];
+        tuning_visual_sample[6U + axis] = visual_servo.speed[axis];
+    }
+    tuning_visual_sample[8] = visual_filter.accepted_mask;
+    tuning_visual_sample[9] = visual_seq;
+    tuning_spin_sample[0] = (float)spin_observer.encoder_rad;
+    tuning_spin_sample[1] = (float)spin_observer.yaw_rad;
+    tuning_spin_sample[2] = (float)spin_observer.gyro_rad;
+    tuning_spin_sample[3] = spin_requested_wz;
+    tuning_spin_sample[4] = (float)spin_stage;
+    tuning_spin_sample[5] = (float)SPIN_TEST_ANGLE_RAD;
+    tuning_spin_sample[6] = (float)(spin_observer.yaw_rad - spin_observer.encoder_rad);
+    tuning_spin_sample[7] = data.wheel_wz_rad_s;
     ++tuning_sample_seq;
-    float channels[TUNING_SAMPLE_COUNT];
+    float channels[TUNING_SAMPLE_COUNT + 8U];
     for (unsigned i = 0U; i < TUNING_SAMPLE_COUNT; ++i)
         channels[i] = tuning_sample[i];
-    vofa_send_channels(channels, TUNING_SAMPLE_COUNT);
+    if (active_command == TUNING_SPIN_SWEEP)
+        for (unsigned i = 0; i < 8U; ++i) channels[TUNING_SAMPLE_COUNT+i] = tuning_spin_sample[i];
+    vofa_send_channels(channels, TUNING_SAMPLE_COUNT + (active_command == TUNING_SPIN_SWEEP ? 8U : 0U));
 }

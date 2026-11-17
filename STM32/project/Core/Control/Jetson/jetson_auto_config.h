@@ -34,22 +34,19 @@
 /* 符号乘 (设定点 - 实测点)，横向取本次相机安装的实测方向。 */
 #define JETSON_AUTO_X_TO_LEFT (-1)
 #define JETSON_AUTO_Y_TO_FORWARD 1
-/* 图像误差速度增益 m/s 每单位归一化误差、平移上限 m/s、搜索车体角速度 rad/s。 */
-#define JETSON_AUTO_APPROACH_GAIN 0.80f
+/* 视觉速度规划；图像响应是待相机实测的局部初值，不是米制坐标标定。 */
 #define JETSON_AUTO_APPROACH_SPEED_MPS 0.50f
-/* 离开窗口时用于克服静摩擦的最小轴速度，按实车标定。 */
-#define JETSON_AUTO_APPROACH_MIN_SPEED_MPS 0.005f
+#define JETSON_AUTO_APPROACH_ACCEL_MPS2 0.40f
+#define JETSON_AUTO_APPROACH_DECEL_MPS2 0.35f
+#define JETSON_AUTO_APPROACH_LATENCY_S 0.12f
+#define JETSON_AUTO_RESPONSE_X_Q_PER_M 10000.0f
+#define JETSON_AUTO_RESPONSE_Y_Q_PER_M 10000.0f
 #define JETSON_AUTO_SEARCH_WZ_RAD_S 2.0f
 
-/* 图像卡尔曼的坐标噪声和过程加速度标准差，单位为定点单位及定点单位/s²。 */
+/* 图像位置/加速度标准差，单位 q、q/s²；1 张图宽/高为 10000q。 */
 #define JETSON_AUTO_APPROACH_SIGMA_X_Q 15.0f
 #define JETSON_AUTO_APPROACH_SIGMA_Y_Q 25.0f
 #define JETSON_AUTO_APPROACH_SIGMA_ACCEL_Q_S2 4000.0f
-/* 0.18 s 为实测漂移推得的制动试调初值，锁航向后复标。 */
-#define JETSON_AUTO_APPROACH_BRAKE_S 0.18f
-/* 积分增益和单轴补偿上限为试调初值。单位分别为 m/s 每归一化误差秒和 m/s。 */
-#define JETSON_AUTO_APPROACH_I_GAIN 2.0f
-#define JETSON_AUTO_APPROACH_I_LIMIT_MPS 0.05f
 
 /* 现有类型 3/4 周期流的断流期限，ms；合法无目标帧也续期，不新增心跳报文。 */
 #define JETSON_AUTO_LINK_TIMEOUT_MS 250U

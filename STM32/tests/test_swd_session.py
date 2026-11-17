@@ -95,6 +95,9 @@ class FakeSocket:
     def settimeout(self, timeout):
         pass
 
+    def setsockopt(self, *args):
+        pass
+
     def sendall(self, data):
         self.sent.append(data)
 
@@ -170,6 +173,18 @@ class LiveTuningTests(unittest.TestCase):
             result["sample"]["end_yaw_rad"] = args[2] + math.radians(degrees)
             with self.subTest(degrees=degrees), self.assertRaises(swd.SessionError):
                 swd.validate_endpoint(7, args, result)
+
+    def test_visual_window_tolerance_does_not_relax_odometry_return(self):
+        args = [-.3, .02, .1, .2, .5, 20000, 0, 0]
+        result = self.hold_result()
+        result['sample']['end_x_m'] = args[0] + .02027
+        with self.assertRaises(swd.SessionError):
+            swd.validate_endpoint(7, args, result)
+        result['command'] = 8
+        swd.validate_endpoint(8, args, result)
+        result['sample']['end_x_m'] = args[0] + .036
+        with self.assertRaises(swd.SessionError):
+            swd.validate_endpoint(8, args, result)
 
     def test_continuous_goal_fault_stops_without_retry(self):
         session = swd.Session(MemoryClient(), SYMBOLS, Log())

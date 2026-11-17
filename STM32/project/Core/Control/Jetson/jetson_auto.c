@@ -3,6 +3,7 @@
 #if JETSON_AUTO_CAN_ENABLED
 #include "chassis.h"
 #include "adaptive_kalman.h"
+#include "visual_servo.h"
 #include "INS_task.h"
 #include "jetson_link.h"
 #include "usb_link.h"
@@ -40,7 +41,7 @@ typedef struct
     AdaptiveKalman tracker;      /**< 图像定点位置和速度估计。 */
     Jetson_CAN_Center_t previous;  /**< 上一帧积分或停车核验样本。 */
     Window_Evidence_t verify_outside[2]; /**< 停稳核验时 x、y 各自最近一次越界。 */
-    float integral_x, integral_y;  /**< 相机各轴的速度补偿，m/s。 */
+    Visual_Servo_t servo;        /**< 有限制动距离的图像速度规划。 */
     uint32_t phase_started_ms;    /**< 制动开始或已确认停稳的 RTOS 时刻。 */
 } Vision_Approach_t;
 
@@ -117,15 +118,15 @@ static uint8_t Configuration_Ready(void)
            Window_Configured(&target_window) && Window_Configured(&safety_window) &&
            (JETSON_AUTO_X_TO_LEFT == 1 || JETSON_AUTO_X_TO_LEFT == -1) &&
            (JETSON_AUTO_Y_TO_FORWARD == 1 || JETSON_AUTO_Y_TO_FORWARD == -1) &&
-           isfinite(JETSON_AUTO_APPROACH_GAIN) && JETSON_AUTO_APPROACH_GAIN > 0.0f &&
            Positive_Within(JETSON_AUTO_APPROACH_SPEED_MPS, CHASSIS_STRAIGHT_MAX_SPEED_MPS) &&
-           Positive_Within(JETSON_AUTO_APPROACH_MIN_SPEED_MPS, JETSON_AUTO_APPROACH_SPEED_MPS) &&
-           isfinite(JETSON_AUTO_APPROACH_I_GAIN) && JETSON_AUTO_APPROACH_I_GAIN >= 0.0f &&
-           Positive_Within(JETSON_AUTO_APPROACH_I_LIMIT_MPS, JETSON_AUTO_APPROACH_SPEED_MPS) &&
            isfinite(JETSON_AUTO_APPROACH_SIGMA_X_Q) && JETSON_AUTO_APPROACH_SIGMA_X_Q > 0.0f &&
            isfinite(JETSON_AUTO_APPROACH_SIGMA_Y_Q) && JETSON_AUTO_APPROACH_SIGMA_Y_Q > 0.0f &&
            isfinite(JETSON_AUTO_APPROACH_SIGMA_ACCEL_Q_S2) && JETSON_AUTO_APPROACH_SIGMA_ACCEL_Q_S2 > 0.0f &&
-           isfinite(JETSON_AUTO_APPROACH_BRAKE_S) && JETSON_AUTO_APPROACH_BRAKE_S >= 0.0f &&
+           Positive_Within(JETSON_AUTO_APPROACH_ACCEL_MPS2, CHASSIS_STRAIGHT_ACCELERATION_MPS2) &&
+           Positive_Within(JETSON_AUTO_APPROACH_DECEL_MPS2, CHASSIS_STRAIGHT_ACCELERATION_MPS2) &&
+           Positive_Within(JETSON_AUTO_APPROACH_LATENCY_S, 0.25f) &&
+           Positive_Within(JETSON_AUTO_RESPONSE_X_Q_PER_M, 1000000.0f) &&
+           Positive_Within(JETSON_AUTO_RESPONSE_Y_Q_PER_M, 1000000.0f) &&
            Positive_Within(JETSON_AUTO_OUT_TURN_DEG, 360.0f)
 #if !JETSON_AUTO_CHASSIS_TEST
            && Positive_Within(fabsf(JETSON_AUTO_SEARCH_WZ_RAD_S), CHASSIS_VECTOR_MAX_WZ_RAD_S) &&
@@ -235,28 +236,6 @@ static void Stop_Navigation(void)
     }
 }
 
-/** @brief 按原始误差限制跟随方向，用预测位移减速并平滑单轴入窗。
- * @param[in] raw_error,error 原始、滤波图像误差，单位为定点值。
- * @param[in] tolerance 到位容差，单位为定点值。
- * @param[in] rate 图像定点坐标每秒变化量。
- * @return 与原始误差同向的定点误差。入窗后输出为零，窗外按预测后的剩余误差减速。
- */
-static float Predicted_Error(float raw_error, float error, float tolerance, float rate)
-{
-    const float direction = copysignf(1.0f, raw_error);
-    const float raw_distance = fabsf(raw_error) - tolerance;
-    /* 进入允许窗口的轴不再驱动；窗外只对超出窗口的误差施加速度。 */
-    if (raw_distance <= 0.0f)
-        return 0.0f;
-    const float toward = fmaxf(0.0f, direction * rate);
-    const float predicted = direction * error - tolerance - JETSON_AUTO_APPROACH_BRAKE_S * toward;
-    const float width = fmaxf(1.0f, tolerance);
-    /* 预测过窗时保留有界正余量。实际进窗前保留原比例微动幅度，避免过小目标停在窗外。 */
-    const float floor = raw_distance * width / (raw_distance + width);
-    const float remaining = fminf(raw_distance, fmaxf(floor, predicted));
-    return direction * remaining;
-}
-
 /** @brief 退出导航，停稳前保持零目标并清除运动时的图像速度。
  * @param[in] now_ms 当前 RTOS 毫秒，作为本次制动起点。
  */
@@ -313,7 +292,7 @@ static float Update_Image(const Jetson_CAN_Center_t *center)
     {
         AdaptiveKalman_Init(&vision.tracker, JETSON_AUTO_APPROACH_SIGMA_X_Q,
                            JETSON_AUTO_APPROACH_SIGMA_Y_Q, JETSON_AUTO_APPROACH_SIGMA_ACCEL_Q_S2);
-        vision.integral_x = vision.integral_y = 0.0f;
+        vision.servo = (Visual_Servo_t){0};
         elapsed = 0U;
     }
     const uint32_t filter_time = vision.tracker.initialized ?
@@ -321,16 +300,6 @@ static float Update_Image(const Jetson_CAN_Center_t *center)
     AdaptiveKalman_Update(&vision.tracker, center->x, center->y, filter_time);
     vision.previous = *center;
     return elapsed * 0.001f;
-}
-
-/** @brief 随窗外余量衰减积分输出，即使没有估计到同向速度。
- * @param[in] raw_error,remaining,tolerance 原始误差、减速后的误差、容差，单位为图像定点值。
- * @return 0 到 1 的缩放量。
- */
-static float Integral_Scale(float raw_error, float remaining, float tolerance)
-{
-    return fabsf(remaining) /
-        fmaxf(1.0f, fmaxf(tolerance, fabsf(raw_error) - tolerance));
 }
 
 /** @brief 判断原始定点误差位于到位窗哪一侧。
@@ -357,19 +326,6 @@ static uint8_t Repeated_Outside(Window_Evidence_t *evidence, int8_t side,
         (uint32_t)(now_ms - evidence->received_ms) < JETSON_AUTO_CENTER_TIMEOUT_MS;
     *evidence = (Window_Evidence_t){.received_ms = received_ms, .side = side};
     return repeated;
-}
-
-/** @brief 计算单轴限幅积分候选。
- * @param[in] integral 之前的速度补偿，m/s。
- * @param[in] error 预测后的归一化误差。
- * @param[in] seconds 本次 CAN 样本间隔，秒。
- * @return 限幅后的速度补偿，m/s。
- */
-static float Integral_Candidate(float integral, float error, float seconds)
-{
-    const float limit = JETSON_AUTO_APPROACH_I_LIMIT_MPS;
-    const float next = integral + JETSON_AUTO_APPROACH_I_GAIN * error * seconds;
-    return fmaxf(-limit, fminf(limit, next));
 }
 
 /** @brief 按图像误差跟随，预测制动并在停稳后用新到达的 CAN 坐标核验。
@@ -430,9 +386,7 @@ static uint8_t Approach(const Jetson_CAN_Center_t *center, const Image_Window_t 
     const float raw_y_error = goal_y - center->y;
     const int8_t x_side = Window_Side(raw_x_error, x_tol);
     const int8_t y_side = Window_Side(raw_y_error, y_tol);
-    const uint8_t raw_x_in_window = x_side == 0;
-    const uint8_t raw_y_in_window = y_side == 0;
-    const uint8_t inside = raw_x_in_window && raw_y_in_window;
+    const uint8_t inside = x_side == 0 && y_side == 0;
 
     if (vision.phase == VISION_VERIFY)
     {
@@ -479,42 +433,18 @@ static uint8_t Approach(const Jetson_CAN_Center_t *center, const Image_Window_t 
     }
 
     const float seconds = Update_Image(center);
-    const float x_remaining = Predicted_Error(raw_x_error, goal_x - vision.tracker.position[0],
-                                             x_tol, vision.tracker.velocity[0]);
-    const float y_remaining = Predicted_Error(raw_y_error, goal_y - vision.tracker.position[1],
-                                             y_tol, vision.tracker.velocity[1]);
-
-    /* 入窗或误差反向时清除该轴积分，换向不用旧补偿。 */
-    if (raw_x_in_window || vision.integral_x * x_remaining <= 0.0f)
-        vision.integral_x = 0.0f;
-    if (raw_y_in_window || vision.integral_y * y_remaining <= 0.0f)
-        vision.integral_y = 0.0f;
-
-    const float ex = x_remaining / 10000.0f;
-    const float ey = y_remaining / 10000.0f;
-    const float px = JETSON_AUTO_APPROACH_GAIN * ex;
-    const float py = JETSON_AUTO_APPROACH_GAIN * ey;
-    const float ix_scale = Integral_Scale(raw_x_error, x_remaining, x_tol);
-    const float iy_scale = Integral_Scale(raw_y_error, y_remaining, y_tol);
-    const float limit = fminf(JETSON_AUTO_APPROACH_SPEED_MPS, CHASSIS_STRAIGHT_MAX_SPEED_MPS - 1e-6f);
-    const float next_ix = raw_x_in_window ? 0.0f : Integral_Candidate(vision.integral_x, ex, seconds);
-    const float next_iy = raw_y_in_window ? 0.0f : Integral_Candidate(vision.integral_y, ey, seconds);
-    /* 合速度限幅时不累积积分，预测接近窗时按剩余误差衰减积分输出。 */
-    if (hypotf(px + next_ix * ix_scale, py + next_iy * iy_scale) <= limit)
-    {
-        vision.integral_x = next_ix;
-        vision.integral_y = next_iy;
-    }
-    float vy = (px + vision.integral_x * ix_scale) * JETSON_AUTO_X_TO_LEFT;
-    float vx = (py + vision.integral_y * iy_scale) * JETSON_AUTO_Y_TO_FORWARD;
-    /* 窗外保留可调的低速克服静摩擦；入窗后该轴输出为零。 */
-    if (!raw_x_in_window && fabsf(vy) < JETSON_AUTO_APPROACH_MIN_SPEED_MPS)
-        vy = copysignf(JETSON_AUTO_APPROACH_MIN_SPEED_MPS, x_remaining * JETSON_AUTO_X_TO_LEFT);
-    if (!raw_y_in_window && fabsf(vx) < JETSON_AUTO_APPROACH_MIN_SPEED_MPS)
-        vx = copysignf(JETSON_AUTO_APPROACH_MIN_SPEED_MPS, y_remaining * JETSON_AUTO_Y_TO_FORWARD);
-    const float speed = hypotf(vx, vy);
-    const float scale = speed > limit ? limit / speed : 1.0f;
-    Navigate(vx * scale, vy * scale, 0.0f, now_ms);
+    const Visual_Servo_Config_t config = {
+        .max_speed_mps = JETSON_AUTO_APPROACH_SPEED_MPS,
+        .acceleration_mps2 = JETSON_AUTO_APPROACH_ACCEL_MPS2,
+        .deceleration_mps2 = JETSON_AUTO_APPROACH_DECEL_MPS2,
+        .latency_s = JETSON_AUTO_APPROACH_LATENCY_S,
+        .response_q_per_m = {JETSON_AUTO_RESPONSE_X_Q_PER_M, JETSON_AUTO_RESPONSE_Y_Q_PER_M},
+    };
+    const float raw[2] = {center->x, center->y};
+    const float goal[2] = {goal_x, goal_y}, tolerance[2] = {x_tol, y_tol};
+    Visual_Servo_Update(&vision.servo, &config, &vision.tracker, raw, goal, tolerance, seconds);
+    Navigate(vision.servo.speed[1] * JETSON_AUTO_Y_TO_FORWARD,
+             vision.servo.speed[0] * JETSON_AUTO_X_TO_LEFT, 0.0f, now_ms);
     return 0U;
 }
 

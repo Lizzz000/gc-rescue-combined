@@ -3,6 +3,13 @@
 
 #include <stdint.h>
 #include "chassis_odometry.h"
+#ifndef CHASSIS_TUNING_ENABLED
+#define CHASSIS_TUNING_ENABLED 0
+#endif
+#if CHASSIS_TUNING_ENABLED
+/* 仅专用构建允许纯旋转到4rad/s；普通向量/定角入口仍限2rad/s。 */
+uint8_t Chassis_Set_Test_Rotation(float wz);
+#endif
 
 /* 运动参数源自旧车 chassis_straight.h。 */
 #define CHASSIS_STRAIGHT_MAX_SPEED_MPS 0.50f

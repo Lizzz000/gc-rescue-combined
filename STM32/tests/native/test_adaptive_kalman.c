@@ -151,8 +151,35 @@ static void test_multirate(void)
     }
 }
 
+static void test_invalid_gap_and_outliers(void)
+{
+    AdaptiveKalman f;
+    AdaptiveKalman_Init(NULL,15,25,4000);
+    AdaptiveKalman_Update(NULL,0,0,0);
+    AdaptiveKalman_Init(&f,0,25,4000);
+    AdaptiveKalman_Update(&f,5000,7500,0);
+    assert(!f.initialized);
+    AdaptiveKalman_Init(&f,15,25,4000);
+    for (unsigned i=0; i<100; ++i) AdaptiveKalman_Update(&f,5000,7500,10*i);
+    const float variance=f.position_variance[0];
+    AdaptiveKalman_Update(&f,NAN,7500,1000);
+    AdaptiveKalman_Update(&f,5000,INFINITY,1000);
+    assert(f.timestamp_ms==990 && f.position[0]==5000 && f.position_variance[0]==variance);
+    AdaptiveKalman_Update(&f,8000,7500,1000);
+    assert(f.accepted_mask==2 && f.position[0]==5000 && f.velocity[0]==0);
+    AdaptiveKalman_Update(&f,5000,7500,1010);
+    assert(f.accepted_mask==3 && f.position[0]==5000);
+    AdaptiveKalman_Update(&f,8000,7500,1020);
+    AdaptiveKalman_Update(&f,8000,7500,1030);
+    AdaptiveKalman_Update(&f,8000,7500,1040);
+    assert(f.accepted_mask==3 && f.position[0]==8000 && f.velocity[0]==0);
+    AdaptiveKalman_Update(&f,6000,7400,1290);
+    assert(f.position[0]==6000 && f.velocity[0]==0 && f.measurement_scale[0]==1);
+}
+
 int main(void)
 {
+    test_invalid_gap_and_outliers();
     test_time_and_reset();
     test_multirate();
     test_persistent_change();

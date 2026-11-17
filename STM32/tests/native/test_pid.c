@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <math.h>
+#include <float.h>
 #include <stdio.h>
 #include "pid.h"
 
@@ -58,6 +59,28 @@ static void test_unidirectional_heater(void)
     assert(PID_calc(&heater, 44.5f, 45.0f) < 4500.0f);
 }
 
+static void test_invalid_recovery(void)
+{
+    pid_type_def pid;
+    const float gains[3]={2,.5f,.2f};
+    PID_init(&pid,PID_POSITION,gains,3,2);
+    assert(PID_Step(&pid,1,0,.01f)>0);
+    assert(PID_Step(&pid,NAN,0,.01f)==0 && pid.Iout==0);
+    assert(PID_Step(&pid,1,0,.01f)>0);
+    assert(PID_calc(&pid,INFINITY,1)==0 && pid.out==0);
+    assert(PID_calc(&pid,-FLT_MAX,FLT_MAX)==0 && pid.error[0]==0);
+    assert(PID_Step(&pid,1,0,0)==0);
+    assert(PID_Step(&pid,1,0,-.1f)==0);
+    assert(PID_Step(&pid,1,0,INFINITY)==0);
+    pid.Kp=NAN;
+    assert(PID_calc(&pid,0,1)==0);
+    PID_init(&pid,PID_POSITION,gains,0,2);
+    assert(PID_calc(&pid,0,1)==0);
+    PID_init(&pid,PID_POSITION,NULL,3,2);
+    assert(PID_Step(&pid,1,0,.01f)==0);
+    assert(PID_calc(NULL,0,1)==0 && PID_Step(NULL,1,0,.01f)==0);
+}
+
 /** @brief 检查真实温控PID的输出/积分约束与清零后的状态。 @return 成功为0。 */
 int main(void)
 {
@@ -86,6 +109,7 @@ int main(void)
     PID_init(&pid, PID_POSITION, discrete, 100.0f, 50.0f);
     assert(PID_calc(&pid, 0.0f, 1.0f) == 5.5f);
     assert(PID_calc(&pid, 0.5f, 1.0f) == 0.25f);
+    test_invalid_recovery();
     test_continuous_pid();
     test_unidirectional_heater();
     puts("PASS PID: discrete regression, continuous I, measurement D, symmetric antiwindup");

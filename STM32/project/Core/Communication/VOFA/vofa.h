@@ -12,7 +12,7 @@
 #define CHASSIS_TUNING_ENABLED 0
 #endif
 
-#define VOFA_MAX_CHANNELS 56U
+#define VOFA_MAX_CHANNELS (CHASSIS_TUNING_ENABLED ? 64U : 56U)
 
 /**
  * @brief 将有限数量的 float 通道复制到静态缓冲后通过 USART6 DMA 发送。

@@ -103,9 +103,9 @@ python STM32/tools/live_tuning/random_return_session.py --execute --profile acce
 
 ## 连续返航并保持使能
 
-命令 7 接受 `[世界目标x, y, yaw, 线限速, 角限速, 硬时限毫秒, 0, 0]`，单位为 m、rad、m/s、rad/s。起点到目标最多 1 m，线限速 0.02–0.20、角限速 0.10–0.50，硬时限 100–20000 ms。周期控制使用有效轮编码器里程计与 IMU，将世界目标转换为车体全向速度；保持累计坐标，途中不拆段失能。显式角速度接口使 `wz=0` 表示零角目标，避免进入旧接口的隐式锁航向 PID。
+命令 7 接受 `[世界目标x, y, yaw, 线限速, 角限速, 硬时限毫秒, 0, 0]`，单位为 m、rad、m/s、rad/s。起点到目标最多 1.5 m，线限速 0.02–0.20、角限速 0.10–0.50，硬时限 100–20000 ms。周期控制使用有效轮编码器里程计与 IMU，通过 `Point_Plan` 的无障碍最短直线、最短角差及制动距离生成车体全向速度；保持累计坐标，途中不拆段失能。显式角速度接口使 `wz=0` 表示零角目标，避免进入旧接口的隐式锁航向 PID。
 
-进入 1 cm / 4°内层范围后发零目标，最多 1500 ms 确认原三组停车反馈，最终按 2 cm / 10°验收。此窗口用于等待零速后的反馈尾迹收敛，不改变轮速门限；STOP 和故障仍沿用 500 ms 制动期限。成功进入 HOLD：三台保持使能、目标速度为零，不自动重新纠偏，正常脚本退出无需心跳。HOLD 继续检查反馈、IMU、里程计和距起步点 1.3 m 的估计范围；显式命令 1 或故障仍制动失能。运动与到点确认期间仍有 300 ms 心跳和硬时限。
+进入 1 cm / 4°内层范围后发零目标，最多 1500 ms 确认原三组停车反馈，最终按 2 cm / 10°验收。此窗口用于等待零速后的反馈尾迹收敛，不改变轮速门限；STOP 和故障仍沿用 500 ms 制动期限。成功进入 HOLD：三台保持使能、目标速度为零，不自动重新纠偏，正常脚本退出无需心跳。HOLD 继续检查反馈、IMU、里程计和距起步点 1.8 m 的固件估计范围；原连续返航主机默认另限1.3 m，扩大视觉实验显式使用1.8 m。显式命令 1 或故障仍制动失能。运动与到点确认期间仍有 300 ms 心跳和硬时限。
 
 PREPARE通过后，首次速度提交若因停车资格短暂撤销而拒绝，会保持零目标并等待最多1000ms；首次接受之后再被拒绝则立即中止。等待仍检查反馈、IMU、里程计、心跳及动作总期限，不延长总时限。
 
@@ -127,7 +127,7 @@ python STM32/tools/live_tuning/continuous_random_session.py --describe
 python STM32/tools/live_tuning/continuous_random_session.py --execute --elf path/to/exact.elf --log path/to/new-mission.jsonl --stop-file path/to/STOP
 ```
 
-默认 seed=20261117 为 10 个路点加原点，共 11 次命令 7，规划路程 5.948 m、最长单段 0.787 m、航向约 ±45°–60°，预计约 55 秒。线/角限速为 0.20 m/s、0.50 rad/s；全程最多 90 秒、12 个命令、累计请求距离 7 m、累计请求角度 6π。初始车体坐标中的估计围栏为 x∈[−0.10,1.30] m、|y|≤0.40 m 且半径≤1.35 m。每个计划段不超过 0.95 m，实时起点到目标须符合固件 1 m 上限。
+默认 seed=20261117 为 10 个路点加原点，共 11 次命令 7，规划路程 5.948 m、最长单段 0.787 m、航向约 ±45°–60°，预计约 55 秒。线/角限速为 0.20 m/s、0.50 rad/s；全程最多 90 秒、12 个命令、累计请求距离 7 m、累计请求角度 6π。初始车体坐标中的估计围栏为 x∈[−0.10,1.30] m、|y|≤0.40 m 且半径≤1.35 m。每个计划段不超过 0.95 m，该脚本实时起点到目标仍限1 m，小于当前固件1.5 m上限。
 
 成功返原点后只读观察零速使能状态，并以当前估计位姿检查 2 cm / 10°；失败仍停车失能，不自动重跑。规划路程、里程计估计及实际地面路程须分别记录。主机检查：`python -m unittest discover -s STM32/tests -p test_continuous_random_session.py`。
 
@@ -139,3 +139,43 @@ python STM32/tools/live_tuning/continuous_random_session.py --execute --profile 
 ```
 
 2026-11-17 编码器增量里程计版本连续完成两轮 `long`，各9段、约59.4/58.4秒，最终均保持使能和零目标。用户确认第二轮回到起点附近且动作平顺；估计毫米级偏差不是尺量精度。完整参数、前次失败与固件SHA256见 [里程计实测记录](../../docs/ODOMETRY.md)。
+
+## 模拟视觉坐标接近与最短路径返航
+
+`visual_return_session.py` 默认只输出计划，执行需额外安装`pyserial`并指定接在STM32 USART6上的电脑串口。命令8使用与正式视觉流程相同的Kalman和速度规划；图像坐标按真实编码器/IMU里程计经合成投影生成，加入60ms延迟、15/25q交替噪声和一次1800q异常。它验证控制代码和执行器，不验证真实相机或独立地面定位精度。
+
+```sh
+python STM32/tools/live_tuning/visual_return_session.py --forward 1.2 --left .6 --turn-deg 60
+# 在对应前方/左侧净空已确认后执行，路径必须全新。
+python STM32/tools/live_tuning/visual_return_session.py --execute --elf path/to/exact.elf --log path/to/mission.jsonl --stop-file path/to/STOP --serial-port COM7 --forward 1.2 --left .6 --turn-deg 60
+```
+
+执行路径为可选初始旋转→命令8视觉接近→命令7直线返航，成功保持使能。视觉段16s硬时限、19s主机期限；新坐标250ms失效、心跳300ms失效。只修改测试邮箱，禁止写滤波器、编码器或里程计状态。前方参数0.1–1.2m、侧向±0.6m、初始转角±60°；大距离投影6000q/m，小距离10000q/m，均为合成模型。
+
+命令8期间56通道USART6遥测每40ms发布，其他命令通常100ms。低吞吐DAP读取整包可能超过发布周期，因此本工具以完整串口帧生成坐标，只通过SWD读命令/发布时间与发送控制。串口只读、DTR/RTS关闭；与当前板端时间相差超过120ms的旧USB缓存不接受，坐标源时间不前进也不能续期。日志中的`sample_seq=null`明确表示串口没有固件seqlock序号，`telemetry_tick_ms`标识新帧，不能将其冒充SWD序号。原始串口字节保存为同名`.uart.bin`。
+
+最终版本实测、失败原因及主机/模型边界见 [本轮验证记录](../../docs/ALGORITHM_UPGRADE_20261117.md)。
+
+## 同向30圈YAW实验
+
+专用命令9只接受`[30,2,3,4,3,2,120000,0]`：逆时针连续30圈，每6圈依次2/3/4/3/2rad/s，沿原1.6rad/s²斜坡加减速，末段按制动距离停车。按用户指定，以展开后的AHRS YAW计圈；三轮编码器25rad解绕后的转角与gyro积分分别记录；编码器参考受轮径、中心距和打滑影响，也不是地面真值。
+
+仅调试构建的纯旋转入口接受4rad/s；普通向量、定角转向仍限2rad/s。全过程硬时限120s、平移漂移围栏0.35m、原300ms心跳和反馈检查有效。成功保持使能零目标，故障STOP。执行前必须已安排同向连续旋转的防缠线连接。
+
+```sh
+python STM32/tools/live_tuning/spin_session.py
+python STM32/tools/live_tuning/spin_session.py --execute --elf path/to/exact.elf --serial-port COM7 --log path/to/new-spin.jsonl --stop-file path/to/STOP
+```
+
+命令9的USART6以40ms周期发送64列：前56列不变，追加编码器累计rad、YAW累计rad、gyro累计rad、请求wz、阶段0–4、目标rad、YAW减编码器rad、轮速正解wz。未进入命令9时为56列；命令9后的STOP/HOLD仍为64列，复测CLI须加`--previous-spin`，复位后恢复56列。正常固件三姿态输出不变。运动循环只写DAP心跳，UART源时钟对照起步前已核验的板端时钟；不执行此前反复超时的整包/标量SWD诊断读取。终点后被动观察3秒，不继续发心跳。结果见 [YAW记录](../../docs/SPIN_YAW_20261117.md)。
+
+
+同一Horco探针的HID后端已完成30圈实验，启动示例：
+
+```powershell
+openocd -f STM32/project/openocd-daplink-hid.cfg -c "bindto 127.0.0.1" -c init
+```
+
+运动日志先写本地临时目录，结束后复制到`STM32/outputs`。bulk接口曾出现心跳/读取超时，移除诊断读取、改变日志位置未完全解决；成功记录使用HID，不能据此认定所有连接问题已被根治。主机仍有独立STOP文件和固件300ms心跳期限。
+
+测试固件的`chassis_odometry_last_us/max_us`用1MHz TIM2测量真实里程计入口（含ESKF）耗时；它包含中断抢占，最大值只是该次运行观测值，不是WCET证明。`chassis_heading_debug[6]`依次为yaw、bias、Pθθ、Pbb、YAW增益、轮偏置增益，仅在HOLD后用SWD读取。

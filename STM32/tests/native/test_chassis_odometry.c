@@ -18,13 +18,13 @@ static uint8_t feed(Odometry_State_t *state, float vx, float vy, float wheel_wz,
     float wheel[3];
     /* 按后/右前/左前接地点独立构造反馈，不调用被测逆解生成自洽输入。 */
     const float positions[3][2] = {
-        {-.108f,0}, {.054f,-.054f * sqrtf(3.0f)}, {.054f,.054f * sqrtf(3.0f)}
+        {-.0982f,0}, {.0491f,-.0491f * sqrtf(3.0f)}, {.0491f,.0491f * sqrtf(3.0f)}
     };
     for (unsigned i = 0; i < 3U; ++i)
     {
         const float x = positions[i][0], y = positions[i][1];
-        wheel[i] = ((-y / .108f) * (vx - wheel_wz * y) +
-                    (x / .108f) * (vy + wheel_wz * x)) / .035f;
+        wheel[i] = ((-y / .0982f) * (vx - wheel_wz * y) +
+                    (x / .0982f) * (vy + wheel_wz * x)) / .035f;
     }
     return Odometry_Update(state, wheel, yaw_rad, now_us);
 }
@@ -228,7 +228,7 @@ static void test_small_angle_and_invalidate(void)
 /** @brief 独立接地点生成编码器位置，覆盖八向、多次25rad回绕及微秒计数回绕。 */
 static void test_position_geometry_and_wrap(void)
 {
-    const double contacts[3][2] = {{-.108,0}, {.054,-.054*sqrt(3.)}, {.054,.054*sqrt(3.)}};
+    const double contacts[3][2] = {{-.0982,0}, {.0491,-.0491*sqrt(3.)}, {.0491,.0491*sqrt(3.)}};
     const double initial[3] = {12.49,-12.49,.3};
     for (unsigned direction = 0; direction < 8U; ++direction)
     {
@@ -240,7 +240,7 @@ static void test_position_geometry_and_wrap(void)
         double shaft[3];
         for (unsigned i = 0; i < 3U; ++i)
         {
-            shaft[i] = ((-contacts[i][1]/.108)*vx + (contacts[i][0]/.108)*vy)/.035;
+            shaft[i] = ((-contacts[i][1]/.0982)*vx + (contacts[i][0]/.0982)*vy)/.035;
             speeds[i] = (float)shaft[i] + .1f; /* 速度偏差不进入编码器位移。 */
         }
         for (unsigned n = 0; n <= 1000U; ++n)
@@ -262,7 +262,7 @@ static void test_position_geometry_and_wrap(void)
         for (unsigned i = 0; i < 3U; ++i)
         {
             const double x = contacts[i][0], y = contacts[i][1];
-            speeds[i] = (float)(((-y/.108)*(.2-.3*y)+(x/.108)*(-.1+.3*x))/.035);
+            speeds[i] = (float)(((-y/.0982)*(.2-.3*y)+(x/.0982)*(-.1+.3*x))/.035);
             positions[i] = (float)remainder(speeds[i] * n * .01,25.);
         }
         /* 轮估计角速度为0.3，实际IMU为0.5；积分必须使用IMU。 */

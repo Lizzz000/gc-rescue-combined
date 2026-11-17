@@ -8,10 +8,11 @@
 /** @brief 三轮逆解；输入/输出单位及轮序见头文件。 */
 void Motor_Chassis_Inverse(float vx, float vy, float wz, float wheel_speed[3])
 {
-    float rotate_speed = CHASSIS_CENTER_DISTANCE * wz;
-    wheel_speed[0] = (-vy + rotate_speed) / CHASSIS_WHEEL_RADIUS;
-    wheel_speed[1] = (0.8660254f * vx + 0.5f * vy + rotate_speed) / CHASSIS_WHEEL_RADIUS;
-    wheel_speed[2] = (-0.8660254f * vx + 0.5f * vy + rotate_speed) / CHASSIS_WHEEL_RADIUS;
+    const float inverse_radius = 1.0f / CHASSIS_WHEEL_RADIUS;
+    const float rotate_speed = CHASSIS_ROTATION_RADIUS * wz;
+    wheel_speed[0] = (-vy + rotate_speed) * inverse_radius;
+    wheel_speed[1] = (0.8660254f * vx + 0.5f * vy + rotate_speed) * inverse_radius;
+    wheel_speed[2] = (-0.8660254f * vx + 0.5f * vy + rotate_speed) * inverse_radius;
 }
 
 /** @brief 三轮正解；输入/输出单位及轮序见头文件。 */
@@ -20,7 +21,7 @@ void Motor_Chassis_Forward(const float wheel_speed[3], float body_speed[3])
     float rear = wheel_speed[0] * CHASSIS_WHEEL_RADIUS;
     float right_front = wheel_speed[1] * CHASSIS_WHEEL_RADIUS;
     float left_front = wheel_speed[2] * CHASSIS_WHEEL_RADIUS;
-    body_speed[0] = (right_front - left_front) / 1.7320508f;
-    body_speed[1] = (-2.0f * rear + right_front + left_front) / 3.0f;
-    body_speed[2] = (rear + right_front + left_front) / (3.0f * CHASSIS_CENTER_DISTANCE);
+    body_speed[0] = (right_front - left_front) * (1.0f / 1.7320508f);
+    body_speed[1] = (-2.0f * rear + right_front + left_front) * (1.0f / 3.0f);
+    body_speed[2] = (rear + right_front + left_front) * (1.0f / (3.0f * CHASSIS_ROTATION_RADIUS));
 }

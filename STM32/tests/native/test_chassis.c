@@ -224,8 +224,13 @@ static void plant_step(uint32_t elapsed_us, float gain, double *x, double *y)
 }
 
 /** @brief 比较物理量，浮点误差小于协议量化前的1e-5。 */
-static void near(float actual, float expected)
-{ assert(fabsf(actual - expected) < 0.00001f); }
+static void near_at(float actual, float expected, unsigned line)
+{
+    if (fabsf(actual-expected)>=.00001f)
+        fprintf(stderr,"line %u: actual %.9f, expected %.9f\n",line,actual,expected);
+    assert(fabsf(actual - expected) < 0.00001f);
+}
+#define near(actual, expected) near_at((actual), (expected), __LINE__)
 
 /** @brief 三组初始化严格分时：先零MIT、再FC、再零MIT，每组恰占3邮箱。 */
 static uint8_t enable_ready(void)
@@ -424,7 +429,7 @@ static void test_kinematics(void)
     };
     /* 用户确认的后/右前/左前接地点；以刚体接地点速度作独立判据。 */
     const float positions[3][2] = {
-        {-.108f,0}, {.054f,-.054f * sqrtf(3.0f)}, {.054f,.054f * sqrtf(3.0f)}
+        {-.0982f,0}, {.0491f,-.0491f * sqrtf(3.0f)}, {.0491f,.0491f * sqrtf(3.0f)}
     };
     float wheels[3], body[3];
     for (unsigned vector = 0; vector < sizeof(input) / sizeof(input[0]); ++vector)
@@ -434,7 +439,7 @@ static void test_kinematics(void)
         for (unsigned wheel = 0; wheel < 3U; ++wheel)
         {
             const float x = positions[wheel][0], y = positions[wheel][1];
-            const float tx = -y / .108f, ty = x / .108f;
+            const float tx = -y / .0982f, ty = x / .0982f;
             const float contact_vx = input[vector][0] - input[vector][2] * y;
             const float contact_vy = input[vector][1] + input[vector][2] * x;
             physical_wheels[wheel] = (tx * contact_vx + ty * contact_vy) / .035f;
@@ -448,7 +453,7 @@ static void test_kinematics(void)
     Motor_Chassis_Forward(rear_only, body);
     assert(fabsf(body[0]) < 0.000001f);
     assert(fabsf(body[1] + 0.023333333f) < 0.000001f);
-    assert(fabsf(body[2] - 0.10802469f) < 0.000001f);
+    assert(fabsf(body[2] - 0.11880516f) < 0.000001f);
     const float counter_rotating[3] = {0,-1,1};
     Motor_Chassis_Forward(counter_rotating, body);
     assert(fabsf(body[0] + 0.040414519f) < 0.000001f && body[1] == 0.0f && body[2] == 0.0f);
@@ -932,9 +937,9 @@ static void test_vector(void)
     step(10000U,1U);
     body_target(body); near(body[0],0.0027f); near(body[1],0.0036f); near(body[2],0.009f);
     /* 连续速度入口按已确认的后/右前/左前轮布局分解三个分量。 */
-    near(motor_velocity[0], 0.07508571f);
-    near(motor_velocity[1], -0.14600767f);
-    near(motor_velocity[2], -0.01239233f);
+    near(motor_velocity[0], 0.07760571f); /* 98.2mm旋转臂长，平移项不变。 */
+    near(motor_velocity[1], -0.14348767f);
+    near(motor_velocity[2], -0.00987233f);
     step(15000U,1U);
     body_target(body); near(body[0],0.00675f); near(body[1],0.009f); near(body[2],0.0225f);
     assert(Chassis_Set_Velocity(0.024f,0.032f,-0.8f));
@@ -1001,7 +1006,7 @@ static void test_tracking_wheel_cadence(void)
 {
     const uint16_t wake_us[] = {820U, 270U, 660U, 150U, 920U, 350U, 100U, 450U, 550U, 50U};
     const float wheel_acceleration_limit =
-        (CHASSIS_STRAIGHT_ACCELERATION_MPS2 + CHASSIS_CENTER_DISTANCE * CHASSIS_VECTOR_ACCEL_RAD_S2) /
+        (CHASSIS_STRAIGHT_ACCELERATION_MPS2 + CHASSIS_ROTATION_RADIUS * CHASSIS_VECTOR_ACCEL_RAD_S2) /
         CHASSIS_WHEEL_RADIUS;
     reset_case(UINT32_MAX - 90000U, UINT32_MAX - 85U);
     assert(enable_ready());
@@ -1780,6 +1785,18 @@ static void test_translation_feedforward_geometry(void)
 /** @brief 执行底盘真实源码回归。 @return 成功为0。 */
 int main(void)
 {
+#if CHASSIS_TUNING_ENABLED
+    reset_case(0U,0U);
+    assert(enable_ready());
+    assert(!Chassis_Set_Velocity(0,0,4));
+    assert(!Chassis_Set_Velocity_Explicit_Yaw(0,0,4));
+    assert(!Chassis_Set_Test_Rotation(4.01f));
+    assert(!Chassis_Set_Test_Rotation(NAN));
+    assert(Chassis_Set_Test_Rotation(4));
+    for(unsigned i=0;i<320;++i)plant_step(10000U,1.0f,NULL,NULL);
+    float spin_body[3];body_target(spin_body);
+    near(spin_body[0],0);near(spin_body[1],0);near(spin_body[2],4);
+#endif
     test_frame_spacing();
     test_stop_feedback();
     test_timed_brake();

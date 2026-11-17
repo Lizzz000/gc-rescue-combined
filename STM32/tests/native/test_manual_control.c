@@ -418,7 +418,7 @@ static void Test_Rotation(void)
         Prepare_Ready();
         Start_Moving(0, 0, (int16_t)(sign * 1000));
         Run_Target(0, 0, (int16_t)(sign * 1000), 70U);
-        float expected = -(float)sign * 0.108f / 0.035f;
+        float expected = -(float)sign * 0.0982f / 0.035f;
         for (unsigned wheel = 0U; wheel < 3U; ++wheel)
             assert(fabsf(motor_velocity[wheel] - expected) < 0.00001f);
     }

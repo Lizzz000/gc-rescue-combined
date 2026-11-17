@@ -16,12 +16,16 @@ typedef struct
     float acceleration_variance;
     uint32_t timestamp_ms;
     uint8_t initialized;
+    uint8_t accepted_mask;       /**< 本帧接受的轴：bit0=x，bit1=y；拒绝帧不驱动换向。 */
+    uint8_t rejected_run[2];
+    int8_t rejected_side[2];
 } AdaptiveKalman;
 
-/* 标准差单位分别为 q、q、q/s²；参数必须为有限正数。 */
+/* 标准差单位分别为 q、q、q/s²；非法参数使状态未配置，Update 不接受观测。 */
 void AdaptiveKalman_Init(AdaptiveKalman *filter, float sigma_x, float sigma_y, float sigma_acceleration);
 
-/* 使用源帧时间间隔；重复或回退时间忽略，长间隔由调用者先重新初始化。 */
+/* 使用源帧时间；重复/倒序忽略，间隔 >=250ms 自动重建基线，NaN/Inf 不污染状态。
+ * 连续三帧同侧大创新重新捕获；孤立异常只预测，不更新速度。 */
 void AdaptiveKalman_Update(AdaptiveKalman *filter, float x, float y, uint32_t timestamp_ms);
 
 #endif

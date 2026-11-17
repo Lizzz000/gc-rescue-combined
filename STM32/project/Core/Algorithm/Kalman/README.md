@@ -1,23 +1,27 @@
-# 自适应图像坐标卡尔曼滤波
+# 图像坐标自适应卡尔曼
 
-`adaptive_kalman.c/.h` 是独立的二维常速度滤波模块，不依赖 RTOS 或底盘控制；自动靠近流程从此目录调用它。它估计图像中心位置和图像速度，不估计车体世界位置或轮速。状态由调用者持有，不使用动态内存。
+`adaptive_kalman.c/.h` 对图像x/y分别估计位置和速度，使用源帧实际时间；不估计车体世界位置。宽/高为10000q，速度q/s，加速度标准差q/s²。正式入口是 `Control/Jetson/jetson_auto.c`，其速度规划调用 `Chassis/visual_servo.c`。
 
-## 调用方式
+## 本轮改进
 
-1. 创建 `AdaptiveKalman` 状态，调用 `AdaptiveKalman_Init(&filter, sigma_x, sigma_y, sigma_acceleration)`。参数必须为有限正数。
-2. 对每个按时间顺序到达的有效观测调用 `AdaptiveKalman_Update(&filter, x, y, timestamp_ms)`，从 `filter.position[0/1]` 和 `filter.velocity[0/1]` 读取估计。
-3. 第一帧初始化位置、速度为零；同毫秒和倒序帧被忽略，正常的 32 位毫秒计数回绕可处理。更换目标或观测长时间中断后，调用者必须重新初始化。
+- 保留原10ms正常观测的增益规律，把噪声记忆改为0.323333s时间常数，减小帧率变化的影响。
+- 采用Joseph协方差更新并约束半正定，去掉原来的融合乘加库调用；无动态矩阵分配。
+- NIS超过100的孤立异常只预测，不注入速度；连续三帧同侧大创新重新捕获，避免永远拒绝真实目标变化。9至100的创新仍使用原有限测量降权，避免把较强普通噪声全部判成失效。
+- 重复/倒序源时间忽略，uint32回绕正常处理；间隔达到250ms重建基线。NaN、Inf、非法初始化参数不污染已有状态。
+- `accepted_mask` 表示本帧接受的轴；速度规划对拒绝轴减速，不跟随跳点突然反向。
 
-坐标单位为 q，图像宽或高对应 10000 q；位置噪声标准差 `sigma_x`、`sigma_y` 的单位为 q，加速度噪声标准差 `sigma_acceleration` 的单位为 q/s²，速度输出单位为 q/s。输入坐标必须为有限数值。
+`AdaptiveKalman_Init()` 先初始化参数，`AdaptiveKalman_Update()` 每个新源帧调用一次。正式视觉层仍按原始窗口制动、停稳后用新原始帧核验，不把滤波坐标当外部真值。底盘不再使用视觉积分补偿：`Visual_Servo_Update()` 根据剩余图像误差、响应初值和执行延迟解制动速度上限，限制合速度与加速增量；入窗轴归零，反向先过零。物理逐拍斜坡仍在底盘层。
 
-自动靠近的参数在 `project/Core/Control/Jetson/jetson_auto_config.h`：`JETSON_AUTO_APPROACH_SIGMA_X_Q`、`JETSON_AUTO_APPROACH_SIGMA_Y_Q` 默认分别为 15、25 q，`JETSON_AUTO_APPROACH_SIGMA_ACCEL_Q_S2` 默认 4000 q/s²。它们是初值，修改后需要重新编译。源帧重复时控制层不重复更新；帧间隔达到 `JETSON_AUTO_LINK_TIMEOUT_MS`（默认 250 ms）时重新初始化；制动阶段清空视觉状态，重新对准时从新观测开始。到位核验仍使用原始观测。
+`JETSON_AUTO_RESPONSE_X/Y_Q_PER_M=10000` 是局部响应试调初值，尚未由真实相机标定。`JETSON_AUTO_APPROACH_LATENCY_S=0.12` 加上本帧间隔作为制动余量。需要实测相机安装、透视深度与端到端延迟后再调整，不能承诺所有工况绝对零过冲。
 
-## 算法与调试
+## 来源与选择
 
-两轴分别以位置、速度为状态；每帧按实际间隔预测，再使用观测更新。创新归一化平方用于调整后续测量方差，同时对较大的当前创新额外降权；缩放范围和记忆系数在 `adaptive_kalman.c` 中。噪声估计按帧更新，因此帧率变化会改变其响应时间。较大加速度或持续偏移也可能被当作噪声，不能单凭调大降权来解决过冲。
+- GitHub核对 [FilterPy固定版本](https://github.com/rlabbe/filterpy/blob/5df4e095fac07684a05c495bd72d3424f7c68c9c/filterpy/kalman/kalman_filter.py) 的Joseph形式。此处按二维位置/速度直接展开公式，未复制Python源码。
+- SciSpace检索 [Robust Extended Kalman Filtering for Systems With Measurement Outliers](https://scispace.com/papers/robust-extended-kalman-filtering-for-systems-with-9i1n40sg)。参考其限制异常创新影响的方向；本实现是线性CV滤波和门限重捕获，并非论文IS-EKF，也不继承其稳定性证明。
+- [全向底盘约束视觉MPC](https://scispace.com/papers/quasi-min-max-mpc-for-visual-servoing-stabilization-of-l5rvhctj)作为图像/物理约束的后续参考。当前只有图像中心，没有完整深度、标定模型和LMI求解器，因此使用可验证的标量制动上限，没有声称移植MPC。SciSpace此次返回的摘要/提取未列出完整作者局限，以上取舍是本工程判断。
 
-从 `STM32/` 运行 `python tests/run_native.py` 可执行全部主机回归；`tests/native/fixtures/image_tracker.c` 只供离线对照，不编入固件。固定种子仿真覆盖匀速、加速、噪声突增和孤立误检；还检查时间回绕、重复帧、重置、协方差及自动控制流程。现有仿真中，自适应滤波在噪声突增和孤立误检时误差下降，加速跟踪略有退化，不能据此断言实车改善。
+## 验证范围
 
-实车验证尚未完成。调试时应记录源帧时间、原始与滤波中心、速度估计、底盘指令和可验证的参考位置，比较靠近时的响应延迟、过冲、误检恢复和停车位置，再调整噪声参数。
+主机覆盖固定目标抖动、加减速、噪声突增、孤立误检、15/30/50/100fps及丢帧、时间回绕、非法输入、协方差、真实流程和执行器闭环模型。与修改前自适应版本同轨迹同种子比较，静止/加速/噪声突增的位置RMS比均约1.000，孤立误检约0.636。不能将这些比例当作真实相机精度。
 
-本实现参考 [FilterPy 的创新协方差](https://github.com/rlabbe/filterpy/blob/5df4e095fac07684a05c495bd72d3424f7c68c9c/filterpy/kalman/kalman_filter.py)和 [robot_localization 的创新异常检验](https://github.com/cra-ros-pkg/robot_localization/blob/b1e373177cc8190f2a424243a73a1023c882140f/src/filter_base.cpp)，未复制其源码。
+一次0.6m前进、0.1m侧移的坐标注入实测已完成，用户确认平顺返航；该次属于中间固件。最终版本1.2m/0.6m视觉去程已完成，完整返航因DAP读取超时未通过；不能宣称整轮成功。固件、去程误差、测试验收修复及失败日志见 [验证记录](../../../../docs/ALGORITHM_UPGRADE_20261117.md)。

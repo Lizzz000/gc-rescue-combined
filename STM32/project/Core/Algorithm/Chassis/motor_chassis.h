@@ -4,6 +4,10 @@
 /* 旧小车 motor_chassis.h：70 mm 轮径，中心到轮接地点 108 mm。 */
 #define CHASSIS_WHEEL_RADIUS 0.035f
 #define CHASSIS_CENTER_DISTANCE 0.108f
+/* 2026-11-17：同向30圈、2/3/4/3/2rad/s，按可信YAW相对标定旋转项。
+ * 108mm * 编码器29.998987圈 / YAW33.007299圈 = 98.1568mm，取98.2mm。
+ * 这是等效旋转臂长，不是实测安装尺寸；平移轮径/投影保持原值。 */
+#define CHASSIS_ROTATION_RADIUS 0.0982f
 
 /* 2026-11-17 用户确认的轮序：ID1后轮、ID2右前轮、ID3左前轮。
  * x前/y左，以 L 为中心距，接地点依次 (-L,0)、(L/2,-sqrt(3)L/2)、(L/2,sqrt(3)L/2)。

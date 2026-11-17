@@ -48,16 +48,16 @@ class ReturnSimulationTests(unittest.TestCase):
 
     def test_confirmed_wheel_layout_and_physical_lateral_feedback(self):
         # Rear, right front, left front contacts in the forward/left body frame.
-        contacts = ((-.108, 0.), (.054, -.054 * math.sqrt(3)), (.054, .054 * math.sqrt(3)))
+        contacts = ((-.0982, 0.), (.0491, -.0491 * math.sqrt(3)), (.0491, .0491 * math.sqrt(3)))
         for vx, vy, wz in ((.2, 0., 0.), (0., .2, 0.), (0., 0., .5), (.15, -.1, -.3)):
-            wheels = [((-y / .108) * (vx - wz * y) + (x / .108) * (vy + wz * x)) / .035
+            wheels = [((-y / .0982) * (vx - wz * y) + (x / .0982) * (vy + wz * x)) / .035
                       for x, y in contacts]
             with self.subTest(vx=vx, vy=vy, wz=wz):
                 for actual, expected in zip(sim.inverse(vx, vy, wz), wheels):
                     self.assertAlmostEqual(actual, expected, places=6)
                 for actual, expected in zip(sim.forward(wheels), (vx, vy, wz)):
                     self.assertAlmostEqual(actual, expected, places=6)
-                motor = analysis.motor_targets(vx, vy, wz)
+                motor = analysis.motor_targets(vx, vy, wz, rotation_radius=sim.OFFSET)
                 for actual, expected in zip(motor, wheels):
                     self.assertAlmostEqual(actual, -expected, places=6)
                 for actual, expected in zip(analysis.target_translation(motor), (vx, vy)):
