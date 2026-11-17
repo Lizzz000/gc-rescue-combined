@@ -27,6 +27,8 @@ static uint32_t imu_age_ms;
 static uint8_t imu_valid;
 static float last_wheels[3], last_command[3];
 static double commanded_forward_m;
+static double ground_forward_m;
+static float straight_heading_deg;
 static uint8_t measure_straight;
 static uint16_t last_uplink;
 static uint32_t last_argument;
@@ -107,7 +109,7 @@ int Jetson_Link_Send(uint8_t type, const uint8_t *payload, uint8_t length)
 }
 
 /* 与固件相同，先服务底盘，再运行自主层；反馈独立于已发送目标。 */
-static void Step(float feedback_speed)
+static void Step_Wheels(const float feedback[3])
 {
     test_tick += 5U;
     counter_us += 5000U;
@@ -121,13 +123,33 @@ static void Step(float feedback_speed)
     {
         dm_motor[i].id = (uint8_t)(i + 1U);
         dm_motor[i].state = 1U;
-        dm_motor[i].velocity = feedback_speed;
+        dm_motor[i].velocity = feedback[i];
         dm_motor[i].feedback_time_ms = test_tick;
         ++dm_motor[i].feedback_seq;
     }
     Chassis_Loop();
     Jetson_Auto_Loop();
     assert(critical_depth == 0U);
+}
+
+/** @brief 指定三轮同速供停车、故障用例使用，不冒充平移反馈。 */
+static void Step(float feedback_speed)
+{
+    const float feedback[3] = {feedback_speed,feedback_speed,feedback_speed};
+    Step_Wheels(feedback);
+}
+
+/** @brief 上一拍目标按给定比例实际跟随，独立累计启动航向上的地面位移。 */
+static void Step_Follow(float gain)
+{
+    float feedback[3];
+    const double relative = (imu_yaw - straight_heading_deg) * 0.017453292519943295;
+    if (measure_straight)
+        ground_forward_m += gain * (last_command[0] * cos(relative) -
+                                   last_command[1] * sin(relative)) * 0.005;
+    for (unsigned i = 0U; i < 3U; ++i)
+        feedback[i] = -gain * last_wheels[i];
+    Step_Wheels(feedback);
 }
 
 static void Receive_Center(uint16_t type, int16_t x, int16_t y)
@@ -150,10 +172,13 @@ static void Receive_Command_Ack(uint8_t command)
 
 static void Arrive(uint16_t center_type, uint16_t uplink_type)
 {
-    for (unsigned i = 0U; i < 600U && last_uplink != uplink_type; ++i)
+    for (unsigned i = 0U; i < 2000U && last_uplink != uplink_type; ++i)
     {
         Receive_Center(center_type, 5000, 7500);
-        Step(0.0f);
+        if (center_type == JETSON_CAN_SAFETY_CENTER_ID)
+            Step_Follow(0.8f);
+        else
+            Step(0.0f);
     }
     assert(last_uplink == uplink_type && Chassis_Is_Stopped());
 }
@@ -171,6 +196,8 @@ static void Start_Safety_Approach(void)
     memset(last_wheels, 0, sizeof(last_wheels));
     memset(last_command, 0, sizeof(last_command));
     commanded_forward_m = 0.0;
+    ground_forward_m = 0.0;
+    straight_heading_deg = 0.0f;
     measure_straight = 0U;
     last_uplink = 0U;
     last_argument = 0U;
@@ -272,38 +299,46 @@ static void Start_Safety_Straight(void)
     assert(Chassis_Is_Enabled() && !Chassis_Is_Stopped());
     assert(last_uplink == JETSON_CAN_TURN_COMPLETED_ID);
     commanded_forward_m = 0.0;
+    ground_forward_m = 0.0;
+    straight_heading_deg = imu_yaw;
     measure_straight = 1U;
 }
 
-/** @brief 真实限速轨迹、起步航向和三组停稳反馈共同决定到达，不消费后续视觉。 */
-static void Test_Safety_Straight_Completion(void)
+/** @brief 快慢跟随均由反馈位移和三组停稳决定到达，定距中不消费后续视觉。 */
+static void Test_Safety_Straight_Completion(float gain)
 {
     Start_Safety_Straight();
-    Step(1.0f);
-    Step(1.0f);
+    Step_Follow(gain);
+    Step_Follow(gain);
     assert(last_command[0] > 0.0f && fabsf(last_command[1]) < 1e-6f);
-    assert(fabsf(last_command[2]) < 1e-6f); /* 锁定 176 度而非旧转向的 180 度。 */
+    assert(fabsf(last_command[2]) < 1e-6f); /* 锁定176度而非旧转向的180度。 */
     imu_yaw = 181.0f;
-    Step(1.0f);
-    Step(1.0f);
-    assert(last_command[2] < 0.0f); /* 实际航向漂移由原直行 PID 修正。 */
+    Step_Follow(gain);
+    Step_Follow(gain);
+    assert(last_command[2] < 0.0f);
     imu_yaw = 176.0f;
-    for (unsigned i = 0U; i < 400U; ++i)
+    unsigned frame;
+    for (frame = 0U; frame < 2400U; ++frame)
     {
-        if (i < 20U)
-            Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, 1000, 1000);
-        else if (i == 20U)
+        if (frame < 20U)
+            Receive_Center(JETSON_CAN_SAFETY_CENTER_ID,1000,1000);
+        else if (frame == 20U)
         {
             const uint8_t invalid[8] = {0};
-            Jetson_CAN_Receive(JETSON_CAN_SAFETY_CENTER_ID, invalid, sizeof(invalid));
+            Jetson_CAN_Receive(JETSON_CAN_SAFETY_CENTER_ID,invalid,sizeof(invalid));
         }
-        Step(1.0f);
+        Step_Follow(gain);
         assert(last_uplink == JETSON_CAN_TURN_COMPLETED_ID);
+        assert(Chassis_Is_Enabled());
+        if (last_command[0] == 0.0f && last_command[1] == 0.0f && last_command[2] == 0.0f)
+            break;
     }
-    /* 检查指令速度积分，不把规划米数冒充真实轮/地面里程。 */
-    assert(fabs(commanded_forward_m - JETSON_AUTO_SAFETY_STRAIGHT_M) < 0.000002);
-    assert(Chassis_Is_Enabled() && !Chassis_Is_Stopped());
-    assert(last_command[0] == 0.0f && last_command[1] == 0.0f && last_command[2] == 0.0f);
+    assert(frame < 2400U);
+    assert(fabs(ground_forward_m - JETSON_AUTO_SAFETY_STRAIGHT_M) <=
+           CHASSIS_DISTANCE_TOLERANCE_M + 0.0003);
+    if (gain < 1.0f)
+        assert(commanded_forward_m > JETSON_AUTO_SAFETY_STRAIGHT_M);
+    assert(!Chassis_Is_Stopped());
     Step(0.0f);
     Step(0.0f);
     assert(last_uplink == JETSON_CAN_TURN_COMPLETED_ID);
@@ -316,6 +351,29 @@ static void Test_Safety_Straight_Completion(void)
     assert(!Chassis_Is_Enabled());
 }
 
+/** @brief 轮速停滞、反向或只有侧移不能触发安全区到达，上层最终进入故障失能。 */
+static void Test_Safety_Straight_No_Progress(void)
+{
+    for (unsigned scenario = 0U; scenario < 3U; ++scenario)
+    {
+        Start_Safety_Straight();
+        float feedback[3] = {0.0f,0.0f,0.0f};
+        if (scenario > 0U)
+        {
+            Motor_Chassis_Inverse(scenario == 1U ? -0.05f : 0.0f,
+                                  scenario == 2U ? 0.05f : 0.0f,0.0f,feedback);
+            for (unsigned i = 0U; i < 3U; ++i) feedback[i] = -feedback[i];
+        }
+        for (unsigned frame = 0U; frame < 520U; ++frame)
+        {
+            Step_Wheels(feedback);
+            assert(last_uplink == JETSON_CAN_TURN_COMPLETED_ID);
+            assert(!Chassis_Is_Stopped());
+        }
+        assert(!Chassis_Is_Enabled() && disable_frames == 3U);
+    }
+}
+
 /** @brief IMU 无效或超龄触发的是故障制动，不能在失能前一拍伪装为定距完成。 */
 static void Test_Safety_Straight_IMU_Fault(void)
 {
@@ -323,7 +381,7 @@ static void Test_Safety_Straight_IMU_Fault(void)
     {
         Start_Safety_Straight();
         for (unsigned i = 0U; i < 10U; ++i)
-            Step(1.0f);
+            Step_Follow(0.8f);
         assert(nonzero_controls > 0U);
         if (stale)
             imu_age_ms = 21U;
@@ -391,8 +449,10 @@ int main(void)
     Test_Safety_Edge_Recovery(0U);
     Test_Safety_Edge_Recovery(1U);
     Test_USB_Loss_Brakes_Real_Chassis();
-    Test_Safety_Straight_Completion();
+    Test_Safety_Straight_Completion(0.55f);
+    Test_Safety_Straight_Completion(0.8f);
+    Test_Safety_Straight_No_Progress();
     Test_Safety_Straight_IMU_Fault();
-    puts("PASS: real auto/chassis safety-edge recovery, straight profile/yaw, USB/IMU braking and stop feedback gate");
+    puts("PASS: real auto/chassis safety-edge recovery, wheel-odometry distance/yaw, stall rejection, USB/IMU braking and stop feedback gate");
     return 0;
 }

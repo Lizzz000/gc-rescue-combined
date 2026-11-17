@@ -108,11 +108,11 @@ static uint8_t Configuration_Ready(void)
 #if !JETSON_AUTO_CHASSIS_TEST
     const float distances[] = {JETSON_AUTO_ROI_BACK_M, JETSON_AUTO_RECOVERY_BACK_M};
     for (unsigned i = 0U; i < sizeof(distances) / sizeof(distances[0]); ++i)
-        if (!isfinite(distances[i]) || distances[i] <= 0.0f)
+        if (!isfinite(distances[i]) || distances[i] < CHASSIS_DISTANCE_MIN_M)
             return 0U;
 #endif
 
-    return isfinite(JETSON_AUTO_SAFETY_STRAIGHT_M) && JETSON_AUTO_SAFETY_STRAIGHT_M > 0.0f &&
+    return isfinite(JETSON_AUTO_SAFETY_STRAIGHT_M) && JETSON_AUTO_SAFETY_STRAIGHT_M >= CHASSIS_DISTANCE_MIN_M &&
            Positive_Within(JETSON_AUTO_DISTANCE_SPEED_MPS, CHASSIS_DISTANCE_MAX_SPEED_MPS) &&
            Window_Configured(&target_window) && Window_Configured(&safety_window) &&
            (JETSON_AUTO_X_TO_LEFT == 1 || JETSON_AUTO_X_TO_LEFT == -1) &&

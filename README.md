@@ -81,6 +81,8 @@ ros2 launch bringup_pkg rescue.launch.py run:=vision
 
 ## 当前验证状态与待标定项
 
+2026-11-17 增加 STM32 轮速反馈与 IMU 航向里程计，现有八向定距改为按实测位移投影闭环控制。接口、反馈有效期、超时处理和实车复核方法见 [里程计与定距控制](STM32/docs/ODOMETRY.md)。本轮未烧录或执行实车运动，自动模式和待标定配置保持原值。
+
 2026-11-17 更新了标准安全区尺寸、紫框局部缺失时的几何拟合，以及画面裁切和偏心暗带的误判。八方向裁切原型已完成离线模拟，Jetson 运行程序仍使用当前帧的几何证据。主机紫框缺色专项 74 项通过，围栏和黑带压力回归有 7 条断言未过，实拍验收待完成。[尺寸和运行判定](Jetson/docs/README.md#安全区识别验证状态) · [八方向结果与复现](Jetson/src/vision_pkg/test/field/README.md#八方向裁切模拟)
 
 2026-11-16 已保存双端联调修改、1.8 kg 底盘参数和场地相机配置；断电前核验了板端固件、USB 收包、IMU 与夹爪通信。安全区识别约 68 FPS；单次搬运尚未启动，三轮零速使能后的反馈和松爪效果仍待现场验收。最新状态见 [现场链路检查记录](Jetson/outputs/field_trial_20261116/COMMUNICATION_CHECK_END.txt)，参数见 [场地参数说明](Jetson/outputs/field_trial_20261116/FIELD_PARAMETERS.txt)。`outputs` 中仅选定的参数、工具和记录纳入版本控制，原始图像、大型逐帧数据、临时实验及编译产物保留在本地。
@@ -93,4 +95,4 @@ ros2 launch bringup_pkg rescue.launch.py run:=vision
 - STM32 `JETSON_AUTO_SAFETY_STRAIGHT_M`、`JETSON_AUTO_ROI_BACK_M`、`JETSON_AUTO_RECOVERY_BACK_M`：当前均为 0，按实际行程填写。
 - 相机、光照、夹爪位置与力矩、车辆速度和停车距离，以及真实 ROS/GPU/USB/S288 负载下的完整流程。
 
-定距采用**指令速度积分**，不是轮速里程计；实际行程必须测量。两端应使用同一主线版本配套部署。
+定距采用**轮速反馈与 IMU 航向里程计闭环**；最短请求距离为 10 mm，3 mm 的软件到位容差不代表真实地面精度。轮胎打滑、轮径误差和航向漂移仍需通过实际行程测量复核。两端应使用同一主线版本配套部署。

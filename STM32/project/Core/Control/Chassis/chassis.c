@@ -53,7 +53,12 @@ static Chassis_Translation_Direction_t translation_direction;
 static float target_speed, ramp_speed, target_yaw_deg;
 static uint32_t run_duration_ms, run_started_ms;
 static uint8_t run_started;
-static double profile_distance_m, profile_rise_s, profile_end_s;
+static Odometry_State_t odometry;
+static uint32_t odometry_seq[3];
+static double distance_origin_x, distance_origin_y, distance_goal_m, distance_progress_m;
+static float distance_axis_x, distance_axis_y;
+static uint32_t distance_timeout_ms, distance_progress_ms, distance_stop_ms;
+static uint8_t distance_completion_pending;
 static float vector_target[3], vector_ramp[3];
 static float turn_requested_deg, turn_accumulated_deg, turn_last_yaw_deg;
 static float turn_speed;
@@ -63,6 +68,8 @@ static uint32_t turn_started_ms, turn_settled_ms;
 static uint8_t turn_settling;
 
 static uint8_t Send_Chassis_Targets(float vx, float vy, float wz);
+static double Distance_Progress(void);
+static void Begin_Fault_Stop(uint32_t now_ms);
 
 /** @brief 初始化发帧与斜坡时基。RTOS tick 控制节拍，TIM2 微秒用于实际步长。
  * @return 无。
@@ -82,11 +89,11 @@ uint8_t Chassis_Is_Enabled(void)
 /** @brief 沿旧 Read_IMU 读取有效姿态，使用同源 RTOS 毫秒检查 20 ms 样本期限。
  * @param[out] imu 姿态快照，yaw 为度、世界 z 角速度为 rad/s。
  * @return 姿态有效且未超龄返回 1，否则 0。
- * @note 数值有效性由 INS 发布时检查，此处不重复检查。
+ * @note INS 发布时已检查数值，此处同时保证动作入口和里程计不接受非法快照。
  */
 static uint8_t Read_IMU(INS_control_data_t *imu)
 {
-    return INS_Get_Data(imu) &&
+    return INS_Get_Data(imu) && isfinite(imu->yaw_deg) && isfinite(imu->world_z_rad_s) &&
            (uint32_t)((uint32_t)xTaskGetTickCount() - imu->sample_time_ms) <= 20U;
 }
 
@@ -138,7 +145,17 @@ static uint8_t Stopped_Feedback(void)
 /** @brief 仅正常待命返回完成；故障或定时停机的反馈由 Loop 用于失能。 */
 uint8_t Chassis_Is_Stopped(void)
 {
-    return !disable_after_stop && Stopped_Feedback();
+    if (distance_completion_pending)
+    {
+        Chassis_Odometry_t data;
+        if (!Chassis_Get_Odometry(&data) ||
+            fabs(distance_goal_m - Distance_Progress()) > CHASSIS_DISTANCE_TOLERANCE_M)
+            return 0U;
+    }
+    const uint8_t stopped = !disable_after_stop && Stopped_Feedback();
+    if (stopped)
+        distance_completion_pending = 0U;
+    return stopped;
 }
 
 /** @brief 用与反馈 ISR 相同的时基核对三轮使能状态与反馈年龄；约束见头文件。 */
@@ -156,6 +173,73 @@ uint8_t Chassis_Motors_Ready(void)
     return ready;
 }
 
+/** @brief 从同一控制任务复制里程计；最近样本、三轮和姿态均须有效。 */
+uint8_t Chassis_Get_Odometry(Chassis_Odometry_t *data)
+{
+    if (data == NULL)
+        return 0U;
+    INS_control_data_t imu;
+    *data = odometry.data;
+    data->valid = data->valid &&
+        (uint32_t)(__HAL_TIM_GET_COUNTER(&htim2) - data->sample_time_us) <=
+            CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS * 1000U &&
+        Chassis_Motors_Ready() && Read_IMU(&imu) && isfinite(imu.yaw_deg);
+    return data->valid;
+}
+
+/** @brief 只在没有执行动作时重置平移原点，保持现有 INS 的航向参考。 */
+uint8_t Chassis_Reset_Odometry(void)
+{
+    if (pending_disable || (enabled && !Chassis_Is_Stopped()))
+        return 0U;
+    Odometry_Init(&odometry);
+    distance_completion_pending = 0U;
+    for (unsigned i = 0U; i < 3U; ++i)
+        chassis_speed[i] = 0.0f;
+    return 1U;
+}
+
+/** @brief 短临界区复制三轮一致快照；每轮都有新帧后才积分一次。
+ * @note 仅复制时屏蔽 CAN 中断；正解、三角函数与积分都在临界区外。
+ *       断流或长调度间隔撤销连续性，恢复首点不补算缺失路程。
+ */
+static void Update_Odometry(uint32_t now_us,
+                            const INS_control_data_t *imu, uint8_t imu_valid)
+{
+    dm_motor_t feedback[3];
+    taskENTER_CRITICAL();
+    const uint32_t now_ms = (uint32_t)xTaskGetTickCount();
+    for (unsigned i = 0U; i < 3U; ++i)
+        feedback[i] = dm_motor[i];
+    taskEXIT_CRITICAL();
+    uint8_t ready = imu_valid, fresh_group = 1U;
+    float wheel[3];
+    for (unsigned i = 0U; i < 3U; ++i)
+    {
+        if (feedback[i].id != motor_id[i] || feedback[i].state != 1U ||
+            !isfinite(feedback[i].velocity) || fabsf(feedback[i].velocity) > motor_vmax[i] ||
+            (uint32_t)(now_ms - feedback[i].feedback_time_ms) > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS)
+            ready = 0U;
+        if (feedback[i].feedback_seq == odometry_seq[i])
+            fresh_group = 0U;
+        wheel[i] = feedback[i].velocity * motor_direction[i] / motor_gear_ratio[i];
+    }
+    if (!ready)
+        Odometry_Invalidate(&odometry);
+    else if (!odometry.initialized || fresh_group)
+    {
+        Odometry_Update(&odometry, wheel, CHASSIS_STRAIGHT_YAW_SIGN * imu->yaw_deg * DEG_TO_RAD, now_us);
+        for (unsigned i = 0U; i < 3U; ++i)
+            odometry_seq[i] = feedback[i].feedback_seq;
+    }
+    else if ((uint32_t)(now_us - odometry.data.sample_time_us) >
+             CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS * 1000U)
+        Odometry_Invalidate(&odometry);
+    chassis_speed[0] = odometry.data.valid ? odometry.data.vx_mps : 0.0f;
+    chassis_speed[1] = odometry.data.valid ? odometry.data.vy_mps : 0.0f;
+    chassis_speed[2] = odometry.data.valid ? odometry.data.wheel_wz_rad_s : 0.0f;
+}
+
 /** @brief 沿旧 Drive_Enter_Zero 清除运动目标和 PID，保留电机使能状态。
  * @return 无；只更新本任务的软件状态。
  */
@@ -167,6 +251,7 @@ void Chassis_Stop(void)
     target_speed = ramp_speed = 0.0f;
     turn_speed = 0.0f;
     distance_turn_blend = 0U;
+    distance_completion_pending = 0U;
     run_duration_ms = 0U;
     run_started = turn_settling = 0U;
     for (unsigned i = 0U; i < 3U; ++i)
@@ -196,8 +281,10 @@ void Chassis_Init(void)
     enabled = pending_disable = pending_enable = 0U;
     monitoring_stop = stop_groups = disable_after_stop = 0U;
     Chassis_Stop();
+    Odometry_Init(&odometry);
     for (unsigned i = 0U; i < 3U; ++i)
     {
+        odometry_seq[i] = 0U;
         chassis_speed[i] = 0.0f;
         chassis_tuning_kd[i] = motor_kd_default[i];
         chassis_tuning_friction[i] = motor_friction_default[i];
@@ -205,6 +292,17 @@ void Chassis_Init(void)
     }
     chassis_tuning_ff_gain = 1.0f;
     Reset_Control_Time();
+}
+
+/** @brief 故障先用现有零 MIT 制动；停稳或 500 ms 后失能，不报告正常完成。 */
+static void Begin_Fault_Stop(uint32_t now_ms)
+{
+    Chassis_Stop();
+    if (!disable_after_stop)
+    {
+        disable_after_stop = 1U;
+        run_started_ms = now_ms;
+    }
 }
 
 /** @brief 在失能或已确认停稳时原子受理整组调参；非法输入不部分生效。 */
@@ -311,23 +409,25 @@ uint8_t Chassis_Translation_Start(Chassis_Translation_Direction_t direction,
     return 1U;
 }
 
-/** @brief 按指定距离求静止到静止的限速轨迹，参数及返回值见 chassis.h。
- * @note 参考 WPILib TrapezoidProfile 的速度、加速度约束。本车对称加减速，
- *       短段峰速为 sqrt(a*d)，长段在限速下巡航。规划仅在接收动作时做一次。
+/** @brief 以有效轮速里程计为起点接入定距，参数及返回值见 chassis.h。
+ * @note 理想梯形时长只用于故障总时限，不再按时间或指令积分报告到达。
  *       本车连续往返适配：转向剩余 5 度内允许接入定距，保留原转向终点航向，
  *       由原直行 PID 在行驶中修偏；角速度沿原斜坡接管，不经过停车状态。
  */
 uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction,
                                float distance_m, float speed_limit_mps)
 {
-    if (!isfinite(distance_m) || distance_m <= 0.0f || !isfinite(speed_limit_mps) ||
+    if (!isfinite(distance_m) || distance_m < CHASSIS_DISTANCE_MIN_M || !isfinite(speed_limit_mps) ||
         speed_limit_mps <= 0.0f || speed_limit_mps > CHASSIS_DISTANCE_MAX_SPEED_MPS)
         return 0U;
     const double accel = CHASSIS_DISTANCE_ACCELERATION_MPS2;
     const double peak = fmin(speed_limit_mps, sqrt(accel * distance_m));
     const double rise_s = peak / accel;
     const double end_s = distance_m / peak + rise_s;
-    if (end_s * 1000.0 > INT32_MAX)
+    const double timeout_ms = end_s * CHASSIS_DISTANCE_TIMEOUT_FACTOR * 1000.0 +
+                              CHASSIS_DISTANCE_TIMEOUT_MARGIN_MS;
+    Chassis_Odometry_t origin;
+    if (timeout_ms > INT32_MAX || !Chassis_Get_Odometry(&origin))
         return 0U;
     if (mode == TURN)
     {
@@ -353,27 +453,52 @@ uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction,
     }
     else if (!Prepare_Translation(direction))
         return 0U;
-    profile_distance_m = distance_m;
-    profile_rise_s = rise_s;
-    profile_end_s = end_s;
+    distance_goal_m = distance_m;
+    distance_origin_x = origin.x_m;
+    distance_origin_y = origin.y_m;
+    float ux, uy;
+    Chassis_Translation_Target(direction, 1.0f, &ux, &uy);
+    const float heading = target_yaw_deg * DEG_TO_RAD;
+    const float cosine = cosf(heading), sine = sinf(heading);
+    distance_axis_x = cosine * ux - sine * uy;
+    distance_axis_y = sine * ux + cosine * uy;
+    target_speed = speed_limit_mps;
+    distance_timeout_ms = (uint32_t)ceil(timeout_ms);
     mode = DISTANCE;
     return 1U;
 }
 
-/** @brief 求定距轨迹从起点到时刻 t 的指令路程。
- * @param[in] t 自首组运动帧起的秒数，大于等于零。
- * @return 路程，m，到终点后保持目标距离。
- * @note 为本车限速梯形的分段积分，制动段从终点按剩余时间反推。
- */
-static double Distance_Position(double t)
+/** @brief 返回实测位移在锁定方向的有符号投影；横移、绕圈不能冒充前进。 */
+static double Distance_Progress(void)
 {
-    const double accel = CHASSIS_DISTANCE_ACCELERATION_MPS2;
-    if (t < profile_rise_s)
-        return 0.5 * accel * t * t;
-    if (t <= profile_end_s - profile_rise_s)
-        return accel * profile_rise_s * (t - 0.5 * profile_rise_s);
-    const double remaining_s = fmax(0.0, profile_end_s - t);
-    return profile_distance_m - 0.5 * accel * remaining_s * remaining_s;
+    return (odometry.data.x_m - distance_origin_x) * distance_axis_x +
+           (odometry.data.y_m - distance_origin_y) * distance_axis_y;
+}
+
+/** @brief 剩余位移决定减速与末段修正，保持原线加速度限制。
+ * @note 位置到位后继续用新反馈核对三轮停车；故障期限由 Loop 在邮箱检查前处理。
+ */
+static void Service_Distance(float dt, uint32_t now_ms)
+{
+    if (!run_started)
+    {
+        run_started_ms = distance_progress_ms = now_ms;
+        distance_progress_m = 0.0;
+        run_started = 1U;
+    }
+    const double remaining = distance_goal_m - Distance_Progress();
+    if (remaining <= CHASSIS_DISTANCE_TOLERANCE_M)
+    {
+        Chassis_Stop();
+        distance_completion_pending = 1U;
+        distance_stop_ms = now_ms;
+        return;
+    }
+    const float braking_speed = sqrtf(2.0f * CHASSIS_DISTANCE_ACCELERATION_MPS2 * (float)remaining);
+    const float desired_speed = fminf(target_speed,
+        fminf(braking_speed, CHASSIS_DISTANCE_POSITION_KP * (float)remaining));
+    const float step = CHASSIS_DISTANCE_ACCELERATION_MPS2 * dt;
+    ramp_speed += fmaxf(-step, fminf(step, desired_speed - ramp_speed));
 }
 
 /** @brief 沿旧直行接口选择前向；参数和返回值同八向启动接口。 */
@@ -597,6 +722,12 @@ void Chassis_Loop(void)
 {
     const TickType_t now_tick = xTaskGetTickCount();
     const uint32_t now_ms = (uint32_t)now_tick;
+    if (distance_completion_pending &&
+        (uint32_t)(now_ms - distance_stop_ms) >= TIMED_BRAKE_LIMIT_MS && !Chassis_Is_Stopped())
+        Chassis_Disable();
+    if (mode == DISTANCE && run_started &&
+        (uint32_t)(now_ms - run_started_ms) >= distance_timeout_ms)
+        Begin_Fault_Stop(now_ms);
     if (mode == TRANSLATION && run_started && run_duration_ms != 0U &&
         (uint32_t)(now_ms - run_started_ms) >= run_duration_ms)
     {
@@ -619,11 +750,28 @@ void Chassis_Loop(void)
     last_control_tick = now_tick;
     last_control_us = step_start_us = now_us;
 
-    /* 沿旧 Fill_Planar_Telemetry 先还原几何轮速，再正解最近反馈的车体速度。 */
-    float wheel_feedback[3];
-    for (unsigned i = 0U; i < 3U; ++i)
-        wheel_feedback[i] = dm_motor[i].velocity * motor_direction[i] / motor_gear_ratio[i];
-    Motor_Chassis_Forward(wheel_feedback, chassis_speed);
+    INS_control_data_t imu;
+    const uint8_t imu_valid = Read_IMU(&imu);
+    Update_Odometry(now_us, &imu, imu_valid);
+    /* 里程计与故障判断先于邮箱检查：总线忙不能把过期反馈继续当作有效位置。
+     * 到位后的滑行也须留在容差内，不能仅因发送过零速就报告成功。 */
+    if ((mode == DISTANCE || distance_completion_pending) &&
+        (!odometry.data.valid || (distance_completion_pending &&
+         fabs(distance_goal_m - Distance_Progress()) > CHASSIS_DISTANCE_TOLERANCE_M) ||
+         (mode == DISTANCE && Distance_Progress() > distance_goal_m + CHASSIS_DISTANCE_TOLERANCE_M)))
+        Begin_Fault_Stop(now_ms);
+    if (mode == DISTANCE && run_started)
+    {
+        const double progress = Distance_Progress();
+        /* 低速限值也允许较小的进展量，不能把合法的慢行误判为堵转。 */
+        if (progress >= distance_progress_m + fmin(0.002, (double)target_speed * 0.1))
+        {
+            distance_progress_m = progress;
+            distance_progress_ms = now_ms;
+        }
+        if ((uint32_t)(now_ms - distance_progress_ms) >= CHASSIS_DISTANCE_STALL_TIMEOUT_MS)
+            Begin_Fault_Stop(now_ms);
+    }
 
     if (pending_disable)
     {
@@ -665,16 +813,10 @@ void Chassis_Loop(void)
         return;
     }
 
-    INS_control_data_t imu;
-    if (mode != IDLE && !Read_IMU(&imu))
+    if (mode != IDLE && !imu_valid)
     {
         /* 姿态暂时不可用时先零速制动，停稳或制动期限到了再由循环开头失能。 */
-        Chassis_Stop();
-        if (!disable_after_stop)
-        {
-            disable_after_stop = 1U;
-            run_started_ms = now_ms;
-        }
+        Begin_Fault_Stop(now_ms);
     }
     float dt = elapsed_us * 0.000001f;
     ff_control_interval_s = dt;
@@ -688,23 +830,7 @@ void Chassis_Loop(void)
                                 (double)ramp_speed + (double)CHASSIS_STRAIGHT_ACCELERATION_MPS2 * dt);
     }
     else if (mode == DISTANCE)
-    {
-        if (!run_started)
-        {
-            run_started_ms = now_ms;
-            run_started = 1U;
-        }
-        const double t = (uint32_t)(now_ms - run_started_ms) * 0.001;
-        if (t >= profile_end_s)
-            Chassis_Stop();
-        else
-        {
-            /* 轨迹进度用实时时刻，这一拍的指令速度仍取名义 10 ms 的平均值。
-             * 变周期测试靠这个切分，不把上一拍的空隙摊进本拍速度。 */
-            const double period_s = CONTROL_PERIOD_MS * 0.001;
-            ramp_speed = (float)((Distance_Position(t + period_s) - Distance_Position(t)) / period_s);
-        }
-    }
+        Service_Distance(dt, now_ms);
     if (mode == TRANSLATION || mode == DISTANCE)
     {
         Chassis_Translation_Target(translation_direction, ramp_speed, &vx, &vy);

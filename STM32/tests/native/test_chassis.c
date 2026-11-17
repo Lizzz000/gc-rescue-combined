@@ -19,6 +19,7 @@ static float captured_torque[3], captured_kd[3];
 static uint8_t tuning_test;
 static uint32_t sample_age;
 static uint8_t imu_ready, read_advances_tick, fail_control_id, abort_pending;
+static uint8_t read_injects_feedback;
 static uint8_t fail_enable_id, fail_disable_id, last_sent_id;
 static unsigned critical_depth;
 
@@ -49,6 +50,19 @@ uint8_t INS_Get_Data(INS_control_data_t *data)
     assert(data != NULL);
     if (!imu_ready) return 0U;
     if (read_advances_tick) { ++test_tick; read_advances_tick = 0U; }
+    if (read_injects_feedback)
+    {
+        ++test_tick;
+        for (unsigned i = 0U; i < 3U; ++i)
+        {
+            dm_motor[i].id = (uint8_t)(i + 1U);
+            dm_motor[i].state = 1U;
+            dm_motor[i].velocity = motor_velocity[i];
+            dm_motor[i].feedback_time_ms = test_tick;
+            ++dm_motor[i].feedback_seq;
+        }
+        read_injects_feedback = 0U;
+    }
     data->yaw_deg = yaw_deg;
     data->world_z_rad_s = yaw_rate;
     data->sample_time_ms = test_tick - sample_age;
@@ -158,6 +172,7 @@ static void reset_case(uint32_t us, uint32_t ms)
     counter_us = us; test_tick = ms; free_mailboxes = 3U;
     controls = enables = disables = aborts = sample_age = delays = 0U;
     imu_ready = 1U; read_advances_tick = fail_control_id = abort_pending = 0U;
+    read_injects_feedback = 0U;
     fail_enable_id = fail_disable_id = last_sent_id = 0U;
     yaw_deg = yaw_rate = 0.0f;
     tuning_test = 0U;
@@ -175,6 +190,34 @@ static void body_target(float body[3])
 {
     float wheels[3] = {-motor_velocity[0], -motor_velocity[1], -motor_velocity[2]};
     Motor_Chassis_Forward(wheels, body);
+}
+
+/** @brief 推进外部轮速采样，不把控制目标直接写入里程计状态。 */
+static void feedback_step(uint32_t elapsed_us, const float wheels[3])
+{
+    counter_us += elapsed_us;
+    test_tick += elapsed_us / 1000U;
+    for (unsigned i = 0U; i < 3U; ++i)
+        wheel_feedback(i, wheels[i], 1U);
+    step(0U,1U);
+}
+
+/** @brief 模拟上一拍目标的部分跟随，独立累计固定航向下的物理位移。
+ * @note 使用零阶保持积分模拟地面；不调用被测里程计积分函数。
+ */
+static void plant_step(uint32_t elapsed_us, float gain, double *x, double *y)
+{
+    float body[3], wheels[3];
+    body_target(body);
+    const double angle = yaw_deg * 0.017453292519943295;
+    const double dt = elapsed_us * 1e-6;
+    if (x != NULL)
+        *x += gain * (body[0] * cos(angle) - body[1] * sin(angle)) * dt;
+    if (y != NULL)
+        *y += gain * (body[0] * sin(angle) + body[1] * cos(angle)) * dt;
+    for (unsigned i = 0U; i < 3U; ++i)
+        wheels[i] = gain * motor_velocity[i];
+    feedback_step(elapsed_us, wheels);
 }
 
 /** @brief 比较物理量，浮点误差小于协议量化前的1e-5。 */
@@ -402,8 +445,8 @@ static void test_timing_and_parameters(void)
     reset_case(UINT32_MAX - 7000U, UINT32_MAX - 15U);
     for (unsigned i = 0; i < 20U; ++i) step(5000U, 1U);
     assert(controls == 0U && enables == 0U && disables == 0U);
-    dm_motor[1].velocity = 1.0f; dm_motor[2].velocity = -1.0f;
-    step(10000U, 1U);
+    const float feedback[3] = {0.0f,1.0f,-1.0f};
+    feedback_step(10000U,feedback);
     near(chassis_speed[0], -0.040414519f); near(chassis_speed[1], 0); near(chassis_speed[2], 0);
     assert(controls == 0U); /* 反馈正解可在失能时观察，不触发运动。 */
     assert(!Chassis_Straight_Start(0.4f, 0U));
@@ -497,116 +540,308 @@ static void test_translation(void)
     }
 }
 
-/** @brief 从三轮 MIT 指令积分八向定距的位移，检查方向、速度、加减速和到时停车。
- * @param[in] direction 八向平移枚举。
- * @param[in] ux,uy 该方向在车体前、左轴的单位分量。
- * @param[in] distance_m 请求的正距离，m。
- * @param[in] limit_mps 该次平移的速度上限，m/s。
- * @return 无。积分针对下发的速度指令，未模拟地面和电机。
- */
+/** @brief 独立轮速跟随模拟验证八向反馈定距，覆盖变周期、非零航向和时钟回绕。 */
 static void check_distance_profile(Chassis_Translation_Direction_t direction, float ux, float uy,
-                                   float distance_m, float limit_mps)
+                                   float distance_m, float limit_mps, float gain, float heading_deg)
 {
-    const double acceleration = 0.75;
-    const double peak = fmin(limit_mps, sqrt(acceleration * distance_m));
-    /* 加减速共占 peak²/a 的路程，其余路程以 peak 巡航。 */
-    const double duration_s = peak / acceleration + distance_m / peak;
-    unsigned moving_frames = (unsigned)ceil(duration_s * 100.0);
-    double commanded_distance = 0.0;
-    float body[3], previous = 0.0f, observed_peak = 0.0f;
-    uint8_t braking = 0U;
-
+    const uint32_t intervals[] = {10000U,15000U,25000U};
+    double x = 0.0, y = 0.0;
+    float body[3], previous = 0.0f, peak = 0.0f;
+    unsigned frame;
     reset_case(UINT32_MAX - 180000U, UINT32_MAX - 180U);
+    yaw_deg = heading_deg;
     assert(enable_ready());
     assert(Chassis_Distance_Start(direction, distance_m, limit_mps));
-    for (unsigned frame = 0; frame < moving_frames; ++frame)
+    assert(!Chassis_Reset_Odometry());
+    const double angle = heading_deg * 0.017453292519943295;
+    const double world_x = ux * cos(angle) - uy * sin(angle);
+    const double world_y = ux * sin(angle) + uy * cos(angle);
+    for (frame = 0U; frame < 1800U; ++frame)
     {
-        step(10000U,1U);
+        const uint32_t elapsed = intervals[frame % 3U];
+        plant_step(elapsed,gain,&x,&y);
         body_target(body);
         const float speed = ux * body[0] + uy * body[1];
-        near(ux * body[1] - uy * body[0], 0.0f);
-        near(body[2], 0.0f);
+        near(ux * body[1] - uy * body[0],0.0f);
+        near(body[2],0.0f);
         assert(speed >= 0.0f && speed <= limit_mps + 0.00001f);
-        assert(fabsf(speed - previous) <= 0.00755f);
-        if (speed < previous - 0.00001f)
-            braking = 1U;
-        if (braking)
-            assert(speed <= previous + 0.00001f);
-        observed_peak = fmaxf(observed_peak, speed);
-        commanded_distance += speed * 0.01;
+        /* 终点置零属于停车请求；其余运动拍仍受既有加减速度限制。 */
+        if (speed > 0.0f)
+            assert(fabsf(speed - previous) <= CHASSIS_DISTANCE_ACCELERATION_MPS2 * elapsed * 1e-6f + 0.00002f);
+        peak = fmaxf(peak,speed);
         previous = speed;
+        assert(Chassis_Is_Enabled() && disables == 0U && aborts == 0U);
+        if (Chassis_Is_Stopped())
+            break;
     }
-    assert(fabs(commanded_distance - distance_m) < fmin(0.000002, 0.0001 * distance_m));
-    assert(observed_peak > 0.0f && peak - observed_peak < 0.0038);
-    assert(!Chassis_Turn_Start(1,10.0f));
-    yaw_deg = 10.0f; /* 终点这一拍，平移和锁航向必须一起结束。 */
-    step(10000U,1U);
-    body_target(body);
-    near(body[0],0.0f); near(body[1],0.0f); near(body[2],0.0f);
-    assert(previous <= 0.00755f && disables == 0U && aborts == 0U);
-    assert(!Chassis_Distance_Start(direction, distance_m, limit_mps));
-    confirm_stopped();
-    assert(Chassis_Distance_Start(direction, distance_m, limit_mps));
+    assert(frame < 1800U && peak > 0.0f);
+    const double progress = world_x * x + world_y * y;
+    assert(fabs(progress - distance_m) <= CHASSIS_DISTANCE_TOLERANCE_M + 0.00025);
+    assert(fabs(world_x * y - world_y * x) < 0.00001);
+    Chassis_Odometry_t odom;
+    assert(Chassis_Get_Odometry(&odom));
+    assert(fabs(odom.x_m - x) < 0.00025 && fabs(odom.y_m - y) < 0.00025);
+    assert(Chassis_Reset_Odometry());
+    stopped_group();
+    stopped_group();
+    assert(Chassis_Distance_Start(direction,distance_m,limit_mps));
 }
 
-/** @brief 核对三角形、梯形、低限速及不足一个控制周期的定距请求。 @return 无。 */
+/** @brief 快慢跟随均按反馈到达；速度指令积分与固定运行时长不能替代距离。 */
 static void test_distance_profiles(void)
 {
     const float c = 0.7071067812f;
     const float units[8][2] = {{1,0},{-1,0},{0,1},{0,-1},{c,c},{c,-c},{-c,c},{-c,-c}};
-    for (unsigned i = 0; i < 8U; ++i)
+    for (unsigned i = 0U; i < 8U; ++i)
+    {
         check_distance_profile((Chassis_Translation_Direction_t)(i + 1U),
-                               units[i][0], units[i][1], 0.30f, 0.50f);
-    check_distance_profile(CHASSIS_TRANSLATION_FORWARD, 1, 0, 0.50f, 0.50f);
-    check_distance_profile(CHASSIS_TRANSLATION_BACKWARD, -1, 0, 0.50f * 0.50f / 0.75f, 0.50f);
-    check_distance_profile(CHASSIS_TRANSLATION_FORWARD_LEFT, c, c, 1.91f, 0.50f);
-    check_distance_profile(CHASSIS_TRANSLATION_FORWARD, 1, 0, 1.15f, 0.50f);
-    check_distance_profile(CHASSIS_TRANSLATION_LEFT, 0, 1, 0.257f, 0.21f);
-    check_distance_profile(CHASSIS_TRANSLATION_FORWARD, 1, 0, 0.000004f, 0.50f);
+                               units[i][0],units[i][1],0.30f,0.50f,0.55f,137.0f);
+        check_distance_profile((Chassis_Translation_Direction_t)(i + 1U),
+                               units[i][0],units[i][1],0.30f,0.50f,0.80f,0.0f);
+    }
+    check_distance_profile(CHASSIS_TRANSLATION_FORWARD,1,0,0.50f,0.50f,1.0f,0.0f);
+    check_distance_profile(CHASSIS_TRANSLATION_FORWARD_LEFT,c,c,1.91f,0.50f,0.80f,-179.0f);
+    check_distance_profile(CHASSIS_TRANSLATION_LEFT,0,1,0.257f,0.21f,0.55f,0.0f);
+    check_distance_profile(CHASSIS_TRANSLATION_FORWARD,1,0,CHASSIS_DISTANCE_MIN_M,0.50f,1.0f,0.0f);
 }
 
-/** @brief 核对定距的使能顺序、变周期、抢占、复用和故障停机。 @return 无。 */
+/** @brief 核对定距准入、变周期、抢占、复用和姿态故障停机。 */
 static void test_distance_lifecycle(void)
 {
     const Chassis_Translation_Direction_t forward = CHASSIS_TRANSLATION_FORWARD;
-    const float invalid[] = {0.0f, -1.0f, INFINITY, -INFINITY, NAN};
+    const float invalid[] = {0.0f,-1.0f,INFINITY,-INFINITY,NAN};
     float body[3];
     reset_case(0U,0U);
-    assert(!Chassis_Distance_Start(forward, 0.5f, 0.5f));
+    assert(!Chassis_Distance_Start(forward,0.5f,0.5f));
     assert(enable_ready());
     for (unsigned i = 0U; i < sizeof(invalid)/sizeof(invalid[0]); ++i)
     {
-        assert(!Chassis_Distance_Start(forward, invalid[i], 0.5f));
-        assert(!Chassis_Distance_Start(forward, 0.5f, invalid[i]));
+        assert(!Chassis_Distance_Start(forward,invalid[i],0.5f));
+        assert(!Chassis_Distance_Start(forward,0.5f,invalid[i]));
     }
-    assert(!Chassis_Distance_Start(forward, 0.5f, 0.501f));
-    assert(!Chassis_Distance_Start(forward, 1e30f, 0.5f));
-    assert(!Chassis_Distance_Start(forward, 0.5f, 1e-30f));
-    assert(!Chassis_Distance_Start(CHASSIS_TRANSLATION_NONE, 0.5f, 0.5f));
-    assert(!Chassis_Distance_Start((Chassis_Translation_Direction_t)9, 0.5f, 0.5f));
+    assert(!Chassis_Distance_Start(forward,CHASSIS_DISTANCE_MIN_M * 0.5f,0.5f));
+    assert(!Chassis_Distance_Start(forward,0.5f,0.501f));
+    assert(!Chassis_Distance_Start(forward,1e30f,0.5f));
+    assert(!Chassis_Distance_Start(forward,0.5f,1e-30f));
+    assert(!Chassis_Distance_Start(CHASSIS_TRANSLATION_NONE,0.5f,0.5f));
+    assert(!Chassis_Distance_Start((Chassis_Translation_Direction_t)9,0.5f,0.5f));
     sample_age = 21U;
-    assert(!Chassis_Distance_Start(forward, 0.5f, 0.5f));
+    assert(!Chassis_Distance_Start(forward,0.5f,0.5f));
     sample_age = 0U;
-    assert(Chassis_Distance_Start(forward, 0.5f, 0.5f));
-    step(10000U,1U); body_target(body); near(body[0],0.00375f);
-    assert(!Chassis_Distance_Start(forward, 0.3f, 0.5f));
+    assert(Chassis_Distance_Start(forward,0.5f,0.5f));
+    plant_step(10000U,1.0f,NULL,NULL); body_target(body);
+    near(body[0],0.0075f);
+    assert(!Chassis_Distance_Start(forward,0.3f,0.5f));
     yaw_deg = 2.0f;
-    step(37000U,1U); body_target(body); near(body[0],0.0315f);
-    near(body[2], -0.06981317f); /* 定距时沿原 PID 修正已偏离的航向。 */
+    plant_step(37000U,1.0f,NULL,NULL); body_target(body); near(body[0],0.03525f);
+    near(body[2],-0.06981317f);
     Chassis_Stop();
     step(10000U,1U); body_target(body);
     near(body[0],0.0f); near(body[1],0.0f); near(body[2],0.0f);
     assert(disables == 0U && aborts == 0U);
     confirm_stopped();
-    assert(Chassis_Distance_Start(forward, 0.3f, 0.3f));
-    step(10000U,1U); body_target(body); near(body[0],0.00375f);
+    assert(Chassis_Distance_Start(forward,0.3f,0.3f));
+    plant_step(10000U,1.0f,NULL,NULL); body_target(body); near(body[0],0.0075f);
     imu_ready = 0U;
     step(10000U,1U); assert(aborts == 0U && Chassis_Is_Enabled());
     for (unsigned i = 0U; i < 60U && Chassis_Is_Enabled(); ++i)
         step(10000U,1U);
-    assert(disables == 3U && !Chassis_Is_Enabled());
+    assert(disables == 3U && !Chassis_Is_Enabled() && !Chassis_Is_Stopped());
     imu_ready = 1U;
-    assert(!Chassis_Distance_Start(forward, 0.3f, 0.3f));
+    assert(!Chassis_Distance_Start(forward,0.3f,0.3f));
+}
+
+/** @brief 零轮速、反向和横移均不能伪造前向到达，超时只能进入故障失能。 */
+static void test_distance_no_progress(void)
+{
+    for (unsigned scenario = 0U; scenario < 3U; ++scenario)
+    {
+        float wheels[3] = {0.0f,0.0f,0.0f};
+        reset_case(0U,0U);
+        assert(enable_ready());
+        assert(Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD,0.03f,0.5f));
+        if (scenario > 0U)
+        {
+            Motor_Chassis_Inverse(scenario == 1U ? -0.05f : 0.0f,
+                                  scenario == 2U ? 0.05f : 0.0f,0.0f,wheels);
+            for (unsigned i = 0U; i < 3U; ++i) wheels[i] = -wheels[i];
+        }
+        for (unsigned frame = 0U; frame < 230U; ++frame)
+        {
+            feedback_step(10000U,wheels);
+            assert(!Chassis_Is_Stopped());
+        }
+        assert(!Chassis_Is_Enabled() && disables == 3U);
+    }
+}
+
+/** @brief 反馈断流、重复帧、非法数据和超长采样均不得继续定距或报告正常完成。 */
+static void test_distance_feedback_faults(void)
+{
+    for (unsigned fault = 0U; fault < 6U; ++fault)
+    {
+        reset_case(0U,0U);
+        assert(enable_ready());
+        assert(Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD,0.5f,0.5f));
+        for (unsigned frame = 0U; frame < 5U; ++frame)
+            plant_step(10000U,1.0f,NULL,NULL);
+        Chassis_Odometry_t before, after;
+        assert(Chassis_Get_Odometry(&before));
+        after = before;
+        if (fault == 5U)
+            plant_step(60000U,1.0f,NULL,NULL);
+        else
+        {
+            for (unsigned frame = 0U; frame < 8U; ++frame)
+            {
+                counter_us += 10000U; test_tick += 10U;
+                for (unsigned i = 0U; i < 3U; ++i)
+                {
+                    if (fault == 0U && i == 2U) continue; /* 单轮断流。 */
+                    if (fault == 1U) { dm_motor[i].feedback_time_ms = test_tick; continue; }
+                    wheel_feedback(i,motor_velocity[i],1U);
+                }
+                if (fault == 2U) dm_motor[1].velocity = NAN;
+                if (fault == 3U) dm_motor[1].state = 0U;
+                if (fault == 4U) dm_motor[1].id = 0U;
+                step(0U,1U);
+                assert(!Chassis_Is_Stopped());
+            }
+        }
+        if (fault <= 1U)
+        {
+            (void)Chassis_Get_Odometry(&after);
+            assert(fabs(after.x_m - before.x_m) < 1e-9);
+            assert(fabs(after.y_m - before.y_m) < 1e-9);
+        }
+        for (unsigned frame = 0U; frame < 60U && Chassis_Is_Enabled(); ++frame)
+            stopped_group();
+        assert(!Chassis_Is_Enabled() && !Chassis_Is_Stopped() && disables == 3U);
+    }
+}
+
+/** @brief IMU读取跨毫秒时收到的新CAN帧不得被当作超龄一整圈的旧反馈。 */
+static void test_distance_feedback_tick_race(void)
+{
+    reset_case(0U,UINT32_MAX - 100U);
+    assert(enable_ready());
+    assert(Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD,0.3f,0.5f));
+    read_injects_feedback = 1U;
+    step(10000U,1U);
+    Chassis_Odometry_t odom;
+    assert(Chassis_Get_Odometry(&odom));
+    assert(Chassis_Is_Enabled() && !Chassis_Is_Stopped());
+    float body[3]; body_target(body);
+    assert(body[0] > 0.0f && disables == 0U);
+    Chassis_Stop();
+    step(10000U,1U);
+    confirm_stopped();
+}
+
+/** @brief 定距零目标后仍有滑行，越出容差必须故障，随后静止反馈不能补成成功。 */
+static void test_distance_coast_after_zero(void)
+{
+    reset_case(0U,0U);
+    assert(enable_ready());
+    assert(Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD,0.05f,0.5f));
+    float body[3];
+    unsigned frame;
+    for (frame = 0U; frame < 1000U; ++frame)
+    {
+        plant_step(10000U,1.0f,NULL,NULL);
+        body_target(body);
+        if (frame > 0U && body[0] == 0.0f)
+            break;
+    }
+    assert(frame < 1000U && !Chassis_Is_Stopped());
+    float feedback[3];
+    Motor_Chassis_Inverse(0.4f,0.0f,0.0f,feedback);
+    for (unsigned i = 0U; i < 3U; ++i) feedback[i] = -feedback[i];
+    for (unsigned i = 0U; i < 8U; ++i)
+    {
+        feedback_step(10000U,feedback);
+        assert(!Chassis_Is_Stopped());
+    }
+    for (unsigned i = 0U; i < 10U; ++i)
+    {
+        stopped_group();
+        assert(!Chassis_Is_Stopped());
+    }
+    assert(!Chassis_Is_Enabled() && disables == 3U);
+}
+
+/** @brief 有持续小进展也不能无限延长动作，必须遵守独立的定距总期限。 */
+static void test_distance_total_timeout(void)
+{
+    reset_case(0U,0U);
+    assert(enable_ready());
+    assert(Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD,0.03f,0.5f));
+    float feedback[3];
+    Motor_Chassis_Inverse(0.004f,0.0f,0.0f,feedback);
+    for (unsigned i = 0U; i < 3U; ++i) feedback[i] = -feedback[i];
+    for (unsigned frame = 0U; frame < 400U; ++frame)
+    {
+        feedback_step(10000U,feedback);
+        assert(!Chassis_Is_Stopped());
+        /* 每0.5s有2mm进展，已经超过1.5s堵转期限但仍应继续。 */
+        if (frame == 249U) assert(Chassis_Is_Enabled());
+    }
+    assert(!Chassis_Is_Enabled() && disables == 3U);
+}
+
+/** @brief 沿轴到位后只有纯旋转，位置仍合格也必须在停车期限内失能。 */
+static void test_distance_stop_deadline(void)
+{
+    reset_case(0U,0U);
+    assert(enable_ready());
+    assert(Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD,0.05f,0.5f));
+    float body[3];
+    unsigned frame;
+    for (frame = 0U; frame < 1000U; ++frame)
+    {
+        plant_step(10000U,1.0f,NULL,NULL);
+        body_target(body);
+        if (frame > 0U && body[0] == 0.0f) break;
+    }
+    assert(frame < 1000U && !Chassis_Is_Stopped());
+    Chassis_Odometry_t at_zero, rotating;
+    assert(Chassis_Get_Odometry(&at_zero));
+    const float feedback[3] = {1.0f,1.0f,1.0f};
+    for (frame = 0U; frame < 70U; ++frame)
+    {
+        feedback_step(10000U,feedback);
+        assert(!Chassis_Is_Stopped());
+    }
+    assert(Chassis_Get_Odometry(&rotating));
+    assert(fabs(rotating.x_m - at_zero.x_m) < 0.0001);
+    assert(fabs(rotating.y_m - at_zero.y_m) < 0.0001);
+    assert(!Chassis_Is_Enabled() && disables == 3U);
+}
+
+/** @brief CAN拥塞不得推迟里程越界故障判断，释放邮箱后只能发失能。 */
+static void test_distance_overshoot_busy_can(void)
+{
+    reset_case(0U,0U);
+    assert(enable_ready());
+    assert(Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD,0.03f,0.5f));
+    plant_step(10000U,1.0f,NULL,NULL);
+    const uint32_t before = controls;
+    float feedback[3];
+    Motor_Chassis_Inverse(0.4f,0.0f,0.0f,feedback);
+    for (unsigned i = 0U; i < 3U; ++i) feedback[i] = -feedback[i];
+    free_mailboxes = 2U;
+    for (unsigned frame = 0U; frame < 75U; ++frame)
+    {
+        counter_us += 10000U; test_tick += 10U;
+        for (unsigned i = 0U; i < 3U; ++i)
+            wheel_feedback(i,feedback[i],1U);
+        step(0U,0U);
+        assert(controls == before && !Chassis_Is_Stopped());
+    }
+    /* 远早于3.2s总期限；总线仍忙，软件已失能，但FD尚未提交。 */
+    assert(!Chassis_Is_Enabled() && disables == 0U);
+    step(10000U,1U);
+    assert(disables == 3U && controls == before);
 }
 
 /** @brief 连续三轴用同一缩放率，既限制线加速度也限制角加速度，更新目标不清斜坡。 */
@@ -666,7 +901,7 @@ static void test_motion_start_cadence(void)
         body_target(body);
         const float dt = first_us * 0.000001f;
         const float vx = action == 2U ? 0.0f : action == 3U ?
-            0.00375f : CHASSIS_STRAIGHT_ACCELERATION_MPS2 * dt;
+            CHASSIS_DISTANCE_ACCELERATION_MPS2 * dt : CHASSIS_STRAIGHT_ACCELERATION_MPS2 * dt;
         near(body[0], vx);
         near(body[1], 0.0f);
         near(body[2], action == 2U ? CHASSIS_TURN_ACCEL_RAD_S2 * dt : 0.0f);
@@ -1079,20 +1314,20 @@ static void test_turn_distance_handoff(void)
         assert(enable_ready() && Chassis_Turn_Start((int8_t)direction, angle));
         /* 整圈起点与终点 yaw 相同，累计转角尚未完成时仍必须拒绝。 */
         assert(!Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD,1.0f,0.5f));
-        for (unsigned i = 0U; i < 20U; ++i) step(10000U,1U);
+        for (unsigned i = 0U; i < 20U; ++i) plant_step(10000U,1.0f,NULL,NULL);
         body_target(body); near(body[2], direction * 0.8f);
         for (unsigned i = 1U; i < half_turns * 2U; ++i)
         {
             yaw_deg = remainderf(start_yaw + direction * 90.0f * i, 360.0f);
             yaw_rate = direction * 0.2f;
-            step(10000U,1U);
+            plant_step(10000U,1.0f,NULL,NULL);
         }
         body_target(body); previous = body[2];
         for (unsigned i = 0U; i < 3U; ++i)
             wheel_feedback(i, motor_velocity[i], 1U); /* 反馈仍在转动，不能伪装停车。 */
         assert(!Chassis_Is_Stopped());
         uint32_t before = controls;
-        step(5000U,1U); assert(controls == before);
+        plant_step(5000U,1.0f,NULL,NULL); assert(controls == before);
 
         /* INS 已更新，但 Service_Turn 尚未消费这次跨圈后的末段角度。 */
         yaw_deg = remainderf(start_yaw + direction * angle - direction * 5.01f,360.0f);
@@ -1112,16 +1347,16 @@ static void test_turn_distance_handoff(void)
         assert(Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD,1.0f,0.5f));
         assert(!Chassis_Is_Stopped() && controls == before);
         assert(!Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD,0.5f,0.5f));
-        step(5000U,1U); /* 仍在原来 10 ms 时点发送，接受请求不重置控制时基。 */
+        plant_step(5000U,1.0f,NULL,NULL); /* 仍在原来 10 ms 时点发送，接受请求不重置控制时基。 */
         assert(controls == before + 3U);
-        body_target(body); near(body[0],0.00375f); near(body[1],0.0f);
+        body_target(body); near(body[0],0.0075f); near(body[1],0.0f);
         near(body[2],previous - direction * 0.04f);
         previous = body[2];
 
         for (unsigned i = 0U; i < 40U; ++i)
         {
             uint32_t interval = intervals_us[i % 3U];
-            step(interval,1U); body_target(body);
+            plant_step(interval,1.0f,NULL,NULL); body_target(body);
             assert(fabsf(body[2] - previous) <= interval * 0.000004f + 0.00001f);
             previous = body[2];
         }
@@ -1129,17 +1364,17 @@ static void test_turn_distance_handoff(void)
         const float expected = remaining * 0.03490658504f - direction * 0.05f;
         near(body[2],expected);
         yaw_rate = -direction * 0.6f;
-        step(10000U,1U); body_target(body);
+        plant_step(10000U,1.0f,NULL,NULL); body_target(body);
         near(body[2],expected + direction * 0.2f); /* 已追上后退出衔接，恢复原直行 PID。 */
         assert(disables == 0U && aborts == 0U);
 
-        Chassis_Stop(); step(10000U,1U); body_target(body);
+        Chassis_Stop(); plant_step(10000U,1.0f,NULL,NULL); body_target(body);
         near(body[0],0.0f); near(body[2],0.0f);
         confirm_stopped();
         yaw_rate = 0.0f;
         assert(Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD,0.5f,0.5f));
         yaw_deg = remainderf(yaw_deg + 2.0f,360.0f);
-        step(10000U,1U); body_target(body);
+        plant_step(10000U,1.0f,NULL,NULL); body_target(body);
         near(body[2],-0.06981317f); /* 普通待命启动不残留转向衔接斜坡。 */
     }
 }
@@ -1155,34 +1390,35 @@ static void test_turn_handoff_half_circle_delta(void)
         float body[3];
         reset_case(0U,0U);
         assert(enable_ready() && Chassis_Turn_Start((int8_t)direction,180.0f));
-        step(10000U,1U);
+        plant_step(10000U,1.0f,NULL,NULL);
         yaw_deg = -direction * 180.0f; /* 包角表示刻意选与实际旋向相反的半圈符号。 */
         yaw_rate = direction * (moving ? 0.2f : 0.0f);
         assert(!Chassis_Is_Stopped());
         assert(Chassis_Distance_Start(CHASSIS_TRANSLATION_LEFT,0.5f,0.5f));
-        for (unsigned i = 0U; i < 5U; ++i) step(10000U,1U);
+        for (unsigned i = 0U; i < 5U; ++i) plant_step(10000U,1.0f,NULL,NULL);
         body_target(body); near(body[0],0.0f); assert(body[1] > 0.0f);
         near(body[2],moving ? -direction * 0.05f : 0.0f);
     }
 }
 
-/** @brief 极短定距仍按原到时 Stop 结束，未完成的转向衔接不延长动作或污染下一次启动。
- * @return 无；显式 Stop 与正常结束的清零语义一致。
- */
+/** @brief 小于可测范围的请求不抢占转向，最短有效定距按反馈完成并清除衔接。 */
 static void test_turn_handoff_short_distance(void)
 {
     float body[3];
     reset_case(0U,0U);
     assert(enable_ready() && Chassis_Turn_Start(1,180.0f));
-    for (unsigned i = 0U; i < 20U; ++i) step(10000U,1U);
+    for (unsigned i = 0U; i < 20U; ++i) plant_step(10000U,1.0f,NULL,NULL);
     yaw_deg = 177.0f;
-    assert(Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD,0.000004f,0.5f));
-    step(10000U,1U); body_target(body);
-    near(body[0],0.0004f); near(body[2],0.76f);
+    assert(!Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD,0.000004f,0.5f));
+    assert(Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD,CHASSIS_DISTANCE_MIN_M,0.5f));
+    plant_step(10000U,1.0f,NULL,NULL); body_target(body);
+    assert(body[0] > 0.0f); near(body[2],0.76f);
     assert(!Chassis_Is_Stopped());
-    step(10000U,1U); body_target(body);
-    near(body[0],0.0f); near(body[2],0.0f);
-    confirm_stopped();
+    unsigned frame;
+    for (frame = 0U; frame < 500U && !Chassis_Is_Stopped(); ++frame)
+        plant_step(10000U,1.0f,NULL,NULL);
+    assert(frame < 500U && Chassis_Is_Stopped());
+    body_target(body); near(body[0],0.0f); near(body[2],0.0f);
     assert(Chassis_Straight_Start(0.1f,0U));
     yaw_deg = 179.0f;
     step(10000U,1U); body_target(body);
@@ -1198,7 +1434,7 @@ static void test_turn_handoff_closed_loop(void)
     for (int direction = -1; direction <= 1; direction += 2)
     {
         float body[3] = {0.0f,0.0f,0.0f}, travelled_deg = 0.0f;
-        double commanded_distance = 0.0;
+        double ground_x = 0.0, ground_y = 0.0;
         uint8_t handed_off = 0U, translated_while_turning = 0U;
         unsigned handoff_frame = 0U, frame;
         reset_case(UINT32_MAX - 120000U,UINT32_MAX - 120U);
@@ -1208,11 +1444,12 @@ static void test_turn_handoff_closed_loop(void)
         {
             yaw_rate = body[2];
             travelled_deg += yaw_rate * 0.01f * 57.295779513f;
-            commanded_distance += body[0] * 0.01;
+            const double midpoint = (direction * 170.0f + travelled_deg -
+                yaw_rate * 0.005f * 57.295779513f) * 0.017453292519943295;
+            ground_x += (body[0] * cos(midpoint) - body[1] * sin(midpoint)) * 0.01;
+            ground_y += (body[0] * sin(midpoint) + body[1] * cos(midpoint)) * 0.01;
             yaw_deg = remainderf(direction * 170.0f + travelled_deg,360.0f);
-            for (unsigned i = 0U; i < 3U; ++i)
-                wheel_feedback(i,motor_velocity[i],1U);
-            step(10000U,1U); body_target(body);
+            plant_step(10000U,1.0f,NULL,NULL); body_target(body);
             if (!handed_off)
             {
                 assert(!Chassis_Is_Stopped());
@@ -1230,7 +1467,9 @@ static void test_turn_handoff_closed_loop(void)
                 break;
         }
         assert(frame < 900U && handed_off && translated_while_turning);
-        assert(fabs(commanded_distance - 1.0) < 0.000002);
+        const double target_angle = direction * 350.0 * 0.017453292519943295;
+        const double travelled_m = ground_x * cos(target_angle) + ground_y * sin(target_angle);
+        assert(fabs(travelled_m - 1.0) <= CHASSIS_DISTANCE_TOLERANCE_M + 0.0005);
         assert(fabsf(travelled_deg - direction * 180.0f) < 2.0f);
         assert(disables == 0U && aborts == 0U && enables == 3U);
         printf("TURN+DISTANCE ideal %+d deg: handoff %.2f s, total %.2f s, final error %.3f deg\n",
@@ -1393,6 +1632,13 @@ int main(void)
     test_translation();
     test_distance_profiles();
     test_distance_lifecycle();
+    test_distance_no_progress();
+    test_distance_feedback_faults();
+    test_distance_feedback_tick_race();
+    test_distance_coast_after_zero();
+    test_distance_total_timeout();
+    test_distance_stop_deadline();
+    test_distance_overshoot_busy_can();
     test_vector();
     test_motion_start_cadence();
     test_tracking_wheel_cadence();

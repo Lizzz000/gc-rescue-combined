@@ -41,6 +41,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Algorithm/PID/pid.c
     Core/Algorithm/Kalman/adaptive_kalman.c
     Core/Algorithm/Chassis/motor_chassis.c
+    Core/Algorithm/Chassis/chassis_odometry.c
     Core/Bsp/ADC/bsp_adc.c
     Core/Bsp/Buzzer/bsp_buzzer.c
     Core/Bsp/CAN/bsp_can.c

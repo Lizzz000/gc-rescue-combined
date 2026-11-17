@@ -68,6 +68,9 @@ def main():
                   "project/Core/Bsp/LED/bsp_led.c", "project/Core/Bsp/Buzzer/bsp_buzzer.c"],
         "chassis": ["tests/native/test_chassis.c", "project/Core/Algorithm/Chassis/motor_chassis.c",
                     "project/Core/Control/Chassis/chassis.c", "project/Core/Algorithm/PID/pid.c"],
+        "chassis_odometry": ["tests/native/test_chassis_odometry.c",
+                             "project/Core/Algorithm/Chassis/chassis_odometry.c",
+                             "project/Core/Algorithm/Chassis/motor_chassis.c"],
         "live_tuning": ["tests/native/test_live_tuning.c", "project/Core/Control/Chassis/live_tuning.c"],
         "can_diag": ["tests/native/test_can_diag.c", "project/Core/Bsp/CAN/bsp_can.c"],
     }
@@ -78,6 +81,7 @@ def main():
     ]
     suites["jetson_auto_unconfigured"] = suites["jetson_auto_configured"]
     suites["jetson_auto_safety_unconfigured"] = suites["jetson_auto_configured"]
+    suites["jetson_auto_short_distance"] = suites["jetson_auto_configured"]
     suites["jetson_chassis_flow"] = [
         "tests/native/test_jetson_chassis_flow.c", "project/Core/Communication/Jetson/jetson_link.c",
         "project/Core/Control/Jetson/jetson_auto.c", "project/Core/Algorithm/Kalman/adaptive_kalman.c",
@@ -99,6 +103,9 @@ def main():
         "tests/native/test_usb_link_state.c", "project/Core/Communication/Jetson/jetson_link.c",
         "project/Core/Communication/Jetson/link_frame.c",
     ]
+    for sources in suites.values():
+        if "project/Core/Control/Chassis/chassis.c" in sources:
+            sources.append("project/Core/Algorithm/Chassis/chassis_odometry.c")
     includes = ["tests/native/stubs", "tests/native/fixtures", "project/Core/Bsp/CAN",
                 "project/Core/Devices/BMI088", "project/Core/Devices/IST8310",
                 "project/Core/Devices/DM_Motor", "project/Core/Task/INS", "project/Core/Task/Chassis",
@@ -126,6 +133,8 @@ def main():
                 command.append("-DTEST_JETSON_AUTO_CONFIGURED=1")
             if name == "jetson_auto_safety_unconfigured":
                 command.append("-DTEST_JETSON_AUTO_SAFETY_UNCONFIGURED=1")
+            if name == "jetson_auto_short_distance":
+                command += ["-DTEST_JETSON_AUTO_SAFETY_UNCONFIGURED=1", "-DTEST_JETSON_AUTO_SHORT_DISTANCE=1"]
             if name.startswith("jetson_chassis_"):
                 command += ["-DJETSON_AUTO_ENABLED=0", "-DJETSON_AUTO_CHASSIS_TEST=1",
                             "-DTEST_JETSON_AUTO_CONFIGURED=1", "-include",

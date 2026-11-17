@@ -2,6 +2,7 @@
 #define CHASSIS_H
 
 #include <stdint.h>
+#include "chassis_odometry.h"
 
 /* 运动参数源自旧车 chassis_straight.h。 */
 #define CHASSIS_STRAIGHT_MAX_SPEED_MPS 0.50f
@@ -11,6 +12,13 @@
  * 0.20 m 在约 1.08 s 确认停车，0.50 m 在约 1.74 s；其余方向与负载待复测。 */
 #define CHASSIS_DISTANCE_MAX_SPEED_MPS 0.50f
 #define CHASSIS_DISTANCE_ACCELERATION_MPS2 0.75f
+/* 反馈定距的初始控制参数；容差是软件到位判据，实际精度须实车标定。 */
+#define CHASSIS_DISTANCE_MIN_M 0.010f
+#define CHASSIS_DISTANCE_TOLERANCE_M 0.003f
+#define CHASSIS_DISTANCE_POSITION_KP 2.0f
+#define CHASSIS_DISTANCE_TIMEOUT_FACTOR 3.0
+#define CHASSIS_DISTANCE_TIMEOUT_MARGIN_MS 2000U
+#define CHASSIS_DISTANCE_STALL_TIMEOUT_MS 1500U
 #define CHASSIS_STRAIGHT_YAW_SIGN 1.0f
 #define CHASSIS_STRAIGHT_YAW_KP 2.0f
 #define CHASSIS_STRAIGHT_YAW_KI 0.0f
@@ -52,11 +60,24 @@ typedef enum
     CHASSIS_TRANSLATION_BACKWARD_RIGHT
 } Chassis_Translation_Direction_t;
 
-/* 最近三轮反馈正解：vx/vy(m/s)、wz(rad/s)，未收到反馈时初值为零。
- * 三轮反馈并非同时采样；须结合 dm_motor.id/state 判断是否有可用反馈。
- * 此量只供观察，不用于 PID，也不表示车体实际速度已经被独立测量。
+/* 有效三轮反馈正解：vx/vy(m/s)、wz(rad/s)，无有效里程计时为零。
+ * 三轮取一致快照但并非同时采样；轮速只能估计车体速度，无法排除打滑。
+ * 控制读取带有效性与时效的 Chassis_Get_Odometry，不单凭此诊断量判断里程。
  */
 extern float chassis_speed[3];
+
+/** @brief 复制轮速平移与 IMU 航向里程计，坐标 x 前、y 左、逆时针正。
+ * @param[out] data 非空输出；无效时仍复制最后位姿并将 valid 置零。
+ * @return 反馈、姿态与里程计均有效且新鲜返回 1，否则 0。
+ * @note 与 Loop 同任务调用。失效间隔不补积分，不代表地面绝对定位。
+ */
+uint8_t Chassis_Get_Odometry(Chassis_Odometry_t *data);
+
+/** @brief 失能或确认停稳时清平移原点与积分历史，运动中拒绝。
+ * @return 已清零返回 1，否则 0；首个有效样本仅建立基线。
+ * @note 坐标轴仍沿用 INS 航向零参考，不重置 IMU，也不发送电机命令。
+ */
+uint8_t Chassis_Reset_Odometry(void);
 
 /* 现场调参观察量。只能由同一控制任务通过 Chassis_Set_Tuning 更新参数。
  * MIT 力矩单位已经是 N·m，不在主控重复乘除电机 Kt。
@@ -133,16 +154,17 @@ uint8_t Chassis_Straight_Start(float speed, uint32_t duration_ms);
 uint8_t Chassis_Translation_Start(Chassis_Translation_Direction_t direction,
                                   float speed, uint32_t duration_ms);
 
-/** @brief 从待命或转向尾段接入八向定距，按给定距离加速、制动并回到零速待命。
+/** @brief 从待命或转向尾段接入八向反馈定距，按实测剩余距离加速、制动。
  * @param[in] direction 八个车体方向之一，沿用平移枚举。
- * @param[in] distance_m 本段规划距离，m，有限且大于 0。
+ * @param[in] distance_m 沿锁定方向的位移，m，有限且不小于 CHASSIS_DISTANCE_MIN_M。
  * @param[in] speed_limit_mps 本段合速度上限，m/s，范围 (0,0.50]。
  * @return 已接受返回 1，参数、姿态或底盘状态不满足时返回 0。
- * @note 待命起步须三轮确认停车，第一组定距运动帧开始计时。单段最长 INT32_MAX ms。
+ * @note 起步须有效里程计；待命起步还须三轮确认停车，首个定距控制拍开始计时。
  *       转向剩余角不超过 5 度时也接受定距衔接，保留原转向终点航向，边走边修偏，
  *       不等待原地精修或停车确认；角速度按转向斜坡接入直行 PID。
- *       其他情况仍须从停车待命启动。规划距离指速度指令的积分，
- *       实际停车距离受轮速跟随、打滑与地形影响。
+ *       其他情况仍须从停车待命启动。进度取轮速里程计在锁定方向的有符号投影，
+ *       位置容差内且三轮确认停稳才完成；断流、过冲、无进展或总超时制动后失能。
+ *       轮速里程不能排除打滑，也不提供横向路径闭环，实际距离须实测标定。
  */
 uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction,
                                float distance_m, float speed_limit_mps);
