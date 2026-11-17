@@ -5,7 +5,9 @@
 
 typedef struct
 {
-    float max_speed_mps, acceleration_mps2, deceleration_mps2;
+    float max_speed_mps;
+    float acceleration_mps2;
+    float deceleration_mps2;
     float latency_s;
     float response_q_per_m[2]; /**< 相机局部图像响应初值；不是相机坐标到世界坐标的变换。 */
 } Visual_Servo_Config_t;
@@ -21,7 +23,7 @@ typedef struct
  * 底盘仍须逐周期执行物理加减速斜坡，丢目标/通信故障由控制层停车。
  */
 void Visual_Servo_Update(Visual_Servo_t *state, const Visual_Servo_Config_t *config,
-                         const AdaptiveKalman *filter, const float raw[2],
-                         const float goal[2], const float tolerance[2], float seconds);
+                         const AdaptiveKalman *filter, const float raw[2], const float goal[2],
+                         const float tolerance[2], float seconds);
 
 #endif

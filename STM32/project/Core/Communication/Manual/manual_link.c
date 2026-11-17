@@ -30,9 +30,13 @@ void Manual_CAN_Receive(const uint8_t *data, uint8_t len)
         .zero_sequence = manual_velocity.zero_sequence,
     };
     if (!frame.valid)
+    {
         ++velocity.invalid_sequence;
+    }
     else if (frame.vx == 0 && frame.vy == 0 && frame.wz == 0)
+    {
         ++velocity.zero_sequence;
+    }
     manual_velocity = velocity;
 }
 

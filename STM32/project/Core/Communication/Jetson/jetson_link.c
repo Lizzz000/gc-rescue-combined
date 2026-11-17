@@ -46,7 +46,9 @@ void Jetson_CAN_Decode_Velocity(const uint8_t *data, uint8_t len, Jetson_CAN_Vel
 {
     *frame = (Jetson_CAN_Velocity_Frame_t){0};
     if (!Jetson_CAN_Is_Velocity_Frame(data, len) || data[0] != 1U)
+    {
         return;
+    }
     frame->valid = 1U;
     frame->vx = Read_Signed(data + 1U);
     frame->vy = Read_Signed(data + 3U);
@@ -102,9 +104,13 @@ void Jetson_CAN_Receive(uint16_t type, const uint8_t *data, uint8_t len)
                                   ((uint32_t)data[7] << 16U);
         }
         if (type == JETSON_CAN_TARGET_CENTER_ID)
+        {
             jetson_data.target = center;
+        }
         else
+        {
             jetson_data.safety = center;
+        }
         break;
     }
     case JETSON_CAN_ARRIVAL_REPLY_ID:
@@ -155,7 +161,9 @@ void Jetson_CAN_Receive(uint16_t type, const uint8_t *data, uint8_t len)
         if (expected_reply_command == 0U ||
             (!jetson_data.command_reply.accepted && reply.valid &&
              reply.command == expected_reply_command && reply.token == expected_reply_token))
+        {
             jetson_data.command_reply = reply;
+        }
         break;
     }
     case JETSON_CAN_TURN_REQUEST_ID:
@@ -188,7 +196,9 @@ void Jetson_CAN_Receive(uint16_t type, const uint8_t *data, uint8_t len)
         if (expected_action_id == 0U ||
             (!jetson_data.action_result.valid && result.valid &&
              result.kind == expected_action_kind && result.request_id == expected_action_id))
+        {
             jetson_data.action_result = result;
+        }
         break;
     }
     default:
@@ -201,14 +211,20 @@ void Jetson_CAN_Expect_Command_Reply(uint16_t request_type, uint32_t token)
 {
     uint8_t command = 0U;
     if (request_type == JETSON_CAN_POINT_REACHED_ID)
+    {
         command = JETSON_CAN_POINT_REPLY_COMMAND;
+    }
     else if (request_type >= JETSON_CAN_TURN_COMPLETED_ID && request_type <= JETSON_CAN_DELIVERY_COMPLETED_ID)
+    {
         command = (uint8_t)(request_type - JETSON_CAN_TURN_COMPLETED_ID + 1U);
+    }
     taskENTER_CRITICAL();
     expected_reply_command = command;
     expected_reply_token = token;
     if (command != 0U)
+    {
         jetson_data.command_reply = (Jetson_CAN_Command_Reply_t){0};
+    }
     taskEXIT_CRITICAL();
 }
 
@@ -218,7 +234,9 @@ void Jetson_CAN_Expect_Action_Result(uint8_t kind, uint32_t request_id)
     expected_action_kind = kind;
     expected_action_id = request_id;
     if (request_id != 0U)
+    {
         jetson_data.action_result = (Jetson_CAN_Action_Result_t){0};
+    }
     taskEXIT_CRITICAL();
 }
 
@@ -226,7 +244,9 @@ void Jetson_CAN_Expect_Action_Result(uint8_t kind, uint32_t request_id)
 void Jetson_CAN_Get_Data(Jetson_CAN_Data_t *out)
 {
     if (out == NULL)
+    {
         return;
+    }
     taskENTER_CRITICAL();
     *out = jetson_data;
     taskEXIT_CRITICAL();
@@ -236,7 +256,9 @@ void Jetson_CAN_Get_Data(Jetson_CAN_Data_t *out)
 uint8_t Jetson_CAN_Encode_Uplink(uint16_t type, uint32_t argument, uint8_t data[8])
 {
     if (data == NULL || (type == JETSON_CAN_START_SEARCH_ID && argument == 0U))
+    {
         return 0U;
+    }
 
     uint8_t length;
     switch (type)
@@ -269,10 +291,14 @@ uint8_t Jetson_CAN_Encode_Uplink(uint16_t type, uint32_t argument, uint8_t data[
 uint8_t Jetson_CAN_Encode_Action_Request(uint8_t kind, uint32_t request_id, uint8_t data[8])
 {
     if (data == NULL || kind > JETSON_CAN_POINT_REJECT_OPEN || request_id == 0U)
+    {
         return 0U;
+    }
     memset(data, 0, 8U);
     data[0] = kind;
     for (unsigned byte = 0U; byte < 4U; ++byte)
+    {
         data[byte + 1U] = (uint8_t)(request_id >> (byte * 8U));
+    }
     return 5U;
 }

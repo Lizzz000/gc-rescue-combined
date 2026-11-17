@@ -5,21 +5,30 @@
 
 typedef struct
 {
-    double start[2], goal[2], length_m;
-    float goal_yaw_rad, yaw_delta_rad;
+    double start[2];
+    double goal[2];
+    double length_m;
+    float goal_yaw_rad;
+    float yaw_delta_rad;
     uint8_t valid;
 } Point_Plan_t;
 
 typedef struct
 {
-    float linear_limit_mps, angular_limit_rad_s;
-    float linear_deceleration_mps2, angular_deceleration_rad_s2, latency_s;
-    float position_tolerance_m, yaw_tolerance_rad;
+    float linear_limit_mps;
+    float angular_limit_rad_s;
+    float linear_deceleration_mps2;
+    float angular_deceleration_rad_s2;
+    float latency_s;
+    float position_tolerance_m;
+    float yaw_tolerance_rad;
 } Point_Plan_Config_t;
 
 typedef struct
 {
-    float vx_mps, vy_mps, wz_rad_s;
+    float vx_mps;
+    float vy_mps;
+    float wz_rad_s;
     double remaining_m;
     float yaw_error_rad;
     uint8_t arrived;
@@ -30,7 +39,7 @@ typedef struct
  * 不做避障、地图搜索或盲目按时间推进。每拍用有效里程计重算到目标的最短剩余线段。
  */
 uint8_t Point_Plan_Init(Point_Plan_t *plan, const double start[3], const double goal[3]);
-uint8_t Point_Plan_Step(const Point_Plan_t *plan, const Point_Plan_Config_t *config,
-                        const double pose[3], Point_Plan_Output_t *output);
+uint8_t Point_Plan_Step(const Point_Plan_t *plan, const Point_Plan_Config_t *config, const double pose[3],
+                        Point_Plan_Output_t *output);
 
 #endif

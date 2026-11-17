@@ -3,11 +3,13 @@
 #include <stddef.h>
 
 void Visual_Servo_Update(Visual_Servo_t *state, const Visual_Servo_Config_t *config,
-                         const AdaptiveKalman *filter, const float raw[2],
-                         const float goal[2], const float tolerance[2], float seconds)
+                         const AdaptiveKalman *filter, const float raw[2], const float goal[2],
+                         const float tolerance[2], float seconds)
 {
     if (state == NULL)
+    {
         return;
+    }
     if (config == NULL || filter == NULL || raw == NULL || goal == NULL || tolerance == NULL ||
         !filter->initialized || !isfinite(seconds) || seconds < 0.0f || seconds >= 0.25f ||
         !isfinite(config->max_speed_mps) || config->max_speed_mps <= 0.0f ||
@@ -34,15 +36,20 @@ void Visual_Servo_Update(Visual_Servo_t *state, const Visual_Servo_Config_t *con
         const float previous = state->speed[axis];
         if (!(filter->accepted_mask & (1U << axis)))
         {
-            desired[axis] = copysignf(fmaxf(0.0f, fabsf(previous) - config->deceleration_mps2 * dt), previous);
+            desired[axis] =
+                copysignf(fmaxf(0.0f, fabsf(previous) - config->deceleration_mps2 * dt), previous);
             continue;
         }
         const float error = goal[axis] - raw[axis];
         if (fabsf(error) <= tolerance[axis])
+        {
             continue;
+        }
         const float direction = copysignf(1.0f, error);
         if (previous * direction < 0.0f)
+        {
             continue; /* 换向先归零，底盘逐拍斜坡负责真实制动。 */
+        }
         const float filtered = direction * (goal[axis] - filter->position[axis]);
         /* 目标取半窗内侧，避免以窗外余量为 P 输入时无限趋近窗沿。 */
         const float remaining = fmaxf(0.0f, fminf(fabsf(error), filtered) - 0.5f * tolerance[axis]);
@@ -63,14 +70,22 @@ void Visual_Servo_Update(Visual_Servo_t *state, const Visual_Servo_Config_t *con
     }
     const float speed = hypotf(desired[0], desired[1]);
     if (speed > config->max_speed_mps)
+    {
         for (unsigned axis = 0U; axis < 2U; ++axis)
+        {
             desired[axis] *= config->max_speed_mps / speed;
+        }
+    }
     /* 两轴共同限制加速量；减速立即降低目标，避免叠加两个减速滤波的迟滞。 */
     float increase[2];
     for (unsigned axis = 0U; axis < 2U; ++axis)
+    {
         increase[axis] = fmaxf(0.0f, fabsf(desired[axis]) - fabsf(state->speed[axis]));
+    }
     const float norm = hypotf(increase[0], increase[1]);
     const float scale = norm > config->acceleration_mps2 * dt ? config->acceleration_mps2 * dt / norm : 1.0f;
     for (unsigned axis = 0U; axis < 2U; ++axis)
+    {
         state->speed[axis] = copysignf(fabsf(desired[axis]) - increase[axis] * (1.0f - scale), desired[axis]);
+    }
 }

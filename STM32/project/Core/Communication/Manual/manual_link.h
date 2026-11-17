@@ -12,7 +12,9 @@
 typedef struct
 {
     uint8_t valid;
-    int16_t vx, vy, wz;        /**< 原始定点值：vx/vy 为 0.001 m/s，wz 为 0.001 rad/s。 */
+    int16_t vx; /**< 前向速度，单位 0.001 m/s。 */
+    int16_t vy; /**< 横向速度，单位 0.001 m/s。 */
+    int16_t wz; /**< 角速度，单位 0.001 rad/s。 */
     uint32_t received_ms;
     uint32_t sequence;         /**< 每条类型 2（含无效/畸形）递增，按 uint32_t 自然回绕。 */
     uint32_t invalid_sequence; /**< 仅无效/畸形帧递增；保留同一接收批次的撤权事件。 */

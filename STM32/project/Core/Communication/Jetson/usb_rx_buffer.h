@@ -26,7 +26,9 @@ static inline void UsbRxBuffer_Reset(UsbRxBuffer *buffer)
 static inline void UsbRxBuffer_Push(UsbRxBuffer *buffer, const uint8_t *data, uint32_t length)
 {
     if (length == 0U)
+    {
         return;
+    }
     const uint16_t head = buffer->head;
     const uint16_t used = (uint16_t)((head + USB_RX_RING_SIZE - buffer->tail) % USB_RX_RING_SIZE);
     if (length > USB_RX_RING_SIZE - 1U - used)
@@ -36,17 +38,22 @@ static inline void UsbRxBuffer_Push(UsbRxBuffer *buffer, const uint8_t *data, ui
         return;
     }
     /* 任务读取时屏蔽 USB 中断；整包复制后一次更新 head，避免逐字节访问 volatile。 */
-    const uint32_t first = length < USB_RX_RING_SIZE - head ? length : USB_RX_RING_SIZE - head;
-    memcpy(buffer->data + head, data, first);
-    if (length > first)
-        memcpy(buffer->data, data + first, length - first);
+    const uint32_t space_to_end = USB_RX_RING_SIZE - head;
+    const uint32_t first_chunk_size = length < space_to_end ? length : space_to_end;
+    memcpy(buffer->data + head, data, first_chunk_size);
+    if (length > first_chunk_size)
+    {
+        memcpy(buffer->data, data + first_chunk_size, length - first_chunk_size);
+    }
     buffer->head = (uint16_t)((head + length) % USB_RX_RING_SIZE);
 }
 
 static inline uint8_t UsbRxBuffer_Pop(UsbRxBuffer *buffer, uint8_t *byte)
 {
     if (buffer->head == buffer->tail)
+    {
         return 0U;
+    }
     *byte = buffer->data[buffer->tail];
     buffer->tail = (uint16_t)((buffer->tail + 1U) % USB_RX_RING_SIZE);
     return 1U;

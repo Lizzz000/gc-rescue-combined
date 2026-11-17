@@ -32,13 +32,17 @@
 typedef struct
 {
     uint8_t valid;       /**< 格式合法且有效字节为 1。 */
-    int16_t vx, vy, wz;  /**< 原始定点值：vx/vy 为 0.001 m/s，wz 为 0.001 rad/s；无效时为 0。 */
+    int16_t vx; /**< 前向速度，单位 0.001 m/s；无效时为 0。 */
+    int16_t vy; /**< 横向速度，单位 0.001 m/s；无效时为 0。 */
+    int16_t wz; /**< 角速度，单位 0.001 rad/s；无效时为 0。 */
 } Jetson_CAN_Velocity_Frame_t;
 
 typedef struct
 {
     uint8_t valid;
-    int16_t x, y;        /**< 图像归一化中心坐标乘 10000；不在协议层裁剪。 */
+    /* 图像归一化中心坐标乘 10000；不在协议层裁剪。 */
+    int16_t x;
+    int16_t y;
     uint32_t received_ms;
     uint32_t sequence;
     uint32_t source_frame; /**< 源帧时间的低 24 位毫秒，用于区分周期重发。 */
@@ -87,7 +91,8 @@ typedef struct
 
 typedef struct
 {
-    Jetson_CAN_Center_t target, safety;
+    Jetson_CAN_Center_t target;
+    Jetson_CAN_Center_t safety;
     Jetson_CAN_Arrival_Ack_t arrival_ack;
     Jetson_CAN_ROI_Reply_t roi_reply;
     Jetson_CAN_Command_Reply_t command_reply; /**< 等待时按请求匹配并保留首个受理回执。 */

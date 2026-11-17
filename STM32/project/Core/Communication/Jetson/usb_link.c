@@ -64,7 +64,9 @@ static void link_offline(void)
 void UsbLink_Get_State(UsbLink_State_t *out)
 {
     if (out == NULL)
+    {
         return;
+    }
     taskENTER_CRITICAL();
     *out = link_state;
     taskEXIT_CRITICAL();
@@ -102,9 +104,13 @@ static void open_data_endpoints(void)
 {
     /* 重新配置也不复用原会话的半帧或尚未处理的字节。 */
     if (configured)
+    {
         link_offline();
+    }
     else
+    {
         UsbRxBuffer_Reset(&rx_buffer);
+    }
     HAL_PCD_EP_Open(&hpcd, 0x82U, 8U, EP_TYPE_INTR);
     HAL_PCD_EP_Open(&hpcd, USB_EP_IN, 64U, EP_TYPE_BULK);
     HAL_PCD_EP_Open(&hpcd, USB_EP_OUT, 64U, EP_TYPE_BULK);
@@ -126,17 +132,25 @@ static uint8_t fill_string(uint8_t index)
         return 4U;
     }
     if (index == 1U)
+    {
         text = "GC Rescue";
+    }
     else if (index == 2U)
+    {
         text = "STM32 Link";
+    }
     else if (index == 3U)
+    {
         text = serial_text;
+    }
     if (text == NULL)
+    {
         return 0U;
-    const uint8_t chars = (uint8_t)strlen(text);
-    ep0_buffer[0] = (uint8_t)(2U + chars * 2U);
+    }
+    const uint8_t character_count = (uint8_t)strlen(text);
+    ep0_buffer[0] = (uint8_t)(2U + character_count * 2U);
     ep0_buffer[1] = 3U;
-    for (uint8_t i = 0U; i < chars; ++i)
+    for (uint8_t i = 0U; i < character_count; ++i)
     {
         ep0_buffer[2U + i * 2U] = (uint8_t)text[i];
         ep0_buffer[3U + i * 2U] = 0U;
@@ -147,11 +161,13 @@ static uint8_t fill_string(uint8_t index)
 /* EP0 一次最多 64 字节。配置描述符有 67 字节，主机按 255 来要，必须再发第二包。 */
 static void ep0_send_chunk(void)
 {
-    uint16_t left = (uint16_t)(ep0_in_total - ep0_in_sent);
-    uint16_t chunk = left;
+    uint16_t remaining = (uint16_t)(ep0_in_total - ep0_in_sent);
+    uint16_t chunk = remaining;
     if (chunk > 64U)
+    {
         chunk = 64U;
-    ep0_status_out = (chunk == left) ? 1U : 0U;
+    }
+    ep0_status_out = (chunk == remaining) ? 1U : 0U;
     HAL_PCD_EP_Transmit(&hpcd, 0x00U, &ep0_buffer[ep0_in_sent], chunk);
     ep0_in_sent = (uint16_t)(ep0_in_sent + chunk);
 }
@@ -159,7 +175,9 @@ static void ep0_send_chunk(void)
 static void ep0_send(const uint8_t *data, uint16_t size)
 {
     if (data != ep0_buffer)
+    {
         memcpy(ep0_buffer, data, size);
+    }
     ep0_in_sent = 0U;
     ep0_in_total = size;
     ep0_send_chunk();
@@ -200,7 +218,9 @@ static void send_descriptor(uint16_t value, uint16_t length)
         return;
     }
     if (length < size)
+    {
         size = length;
+    }
     ep0_send(data, size);
 }
 
@@ -250,7 +270,9 @@ static void handle_setup(void)
     if (request == 9U)
     {
         if (value != 0U)
+        {
             open_data_endpoints();
+        }
         else
         {
             configured = 0U;
@@ -324,7 +346,9 @@ void HAL_PCD_SetupStageCallback(PCD_HandleTypeDef *pcd)
     (void)pcd;
     const uint8_t *setup = (const uint8_t *)hpcd.Setup;
     for (uint8_t i = 0U; i < 8U; ++i)
+    {
         usb_dbg_last[i] = setup[i];
+    }
     usb_dbg_log[usb_dbg_log_i & 15U] = setup[1];
     usb_dbg_log_i++;
     usb_dbg_setup++;
@@ -351,7 +375,9 @@ void HAL_PCD_DataInStageCallback(PCD_HandleTypeDef *pcd, uint8_t epnum)
         return;
     }
     if (epnum == (USB_EP_IN & 0x7FU))
+    {
         tx_busy = 0U;
+    }
 }
 
 void HAL_PCD_DataOutStageCallback(PCD_HandleTypeDef *pcd, uint8_t epnum)
@@ -371,9 +397,13 @@ void HAL_PCD_DataOutStageCallback(PCD_HandleTypeDef *pcd, uint8_t epnum)
     {
         const uint32_t count = HAL_PCD_EP_GetRxCount(pcd, USB_EP_OUT);
         if (link_state.connected)
+        {
             UsbRxBuffer_Push(&rx_buffer, out_buffer, count);
+        }
         if (configured)
+        {
             HAL_PCD_EP_Receive(pcd, USB_EP_OUT, out_buffer, sizeof(out_buffer));
+        }
     }
 }
 
@@ -385,7 +415,9 @@ static void read_uid(void)
     {
         uint32_t value = uid[word];
         for (int nibble = 7; nibble >= 0; --nibble)
+        {
             serial_text[word * 8U + (uint8_t)(7 - nibble)] = hex[(value >> (nibble * 4)) & 0xFU];
+        }
     }
     serial_text[24] = '\0';
 }
@@ -396,11 +428,15 @@ static void read_uid(void)
 static uint32_t usb_clock_hz(void)
 {
     if (__HAL_RCC_GET_SYSCLK_SOURCE() != RCC_CFGR_SWS_PLL)
+    {
         return 0U;
+    }
     const uint32_t pllq = (RCC->PLLCFGR & RCC_PLLCFGR_PLLQ) >> RCC_PLLCFGR_PLLQ_Pos;
     const uint32_t pllp = (((RCC->PLLCFGR & RCC_PLLCFGR_PLLP) >> RCC_PLLCFGR_PLLP_Pos) + 1U) * 2U;
     if (pllq < 2U)
+    {
         return 0U;
+    }
     return (HAL_RCC_GetSysClockFreq() / pllq) * pllp;
 }
 
@@ -410,7 +446,9 @@ static uint8_t wait_pll(FlagStatus ready)
     while (__HAL_RCC_GET_FLAG(RCC_FLAG_PLLRDY) != ready)
     {
         if ((HAL_GetTick() - start) > 100U)
+        {
             return 0U;
+        }
     }
     return 1U;
 }
@@ -418,21 +456,27 @@ static uint8_t wait_pll(FlagStatus ready)
 static void usb_clock_48mhz(void)
 {
     if (usb_clock_hz() == 48000000U)
+    {
         return;
+    }
 
     __HAL_RCC_HSI_ENABLE();
     const uint32_t start = HAL_GetTick();
     while (__HAL_RCC_GET_FLAG(RCC_FLAG_HSIRDY) == RESET)
     {
         if ((HAL_GetTick() - start) > 100U)
+        {
             return;
+        }
     }
 
     RCC_ClkInitTypeDef clk = {0};
     clk.ClockType = RCC_CLOCKTYPE_SYSCLK;
     clk.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
     if (HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_5) != HAL_OK)
+    {
         return;
+    }
 
     __HAL_RCC_PLL_DISABLE();
     if (!wait_pll(RESET))
@@ -449,7 +493,9 @@ static void usb_clock_48mhz(void)
     MODIFY_REG(RCC->PLLCFGR, RCC_PLLCFGR_PLLQ, 7U << RCC_PLLCFGR_PLLQ_Pos);
     __HAL_RCC_PLL_ENABLE();
     if (!wait_pll(SET))
+    {
         return;
+    }
 
     clk.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
     HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_5);
@@ -458,7 +504,9 @@ static void usb_clock_48mhz(void)
 void HAL_PCD_MspInit(PCD_HandleTypeDef *pcd)
 {
     if (pcd->Instance != USB_OTG_FS)
+    {
         return;
+    }
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_USB_OTG_FS_CLK_ENABLE();
     GPIO_InitTypeDef pin = {0};
@@ -480,7 +528,9 @@ void UsbLink_Init(void)
 {
     usb_clock_48mhz();
     if (usb_clock_hz() != 48000000U)
+    {
         return;
+    }
     read_uid();
     hpcd.Instance = USB_OTG_FS;
     hpcd.Init = (PCD_InitTypeDef){0};
@@ -496,7 +546,9 @@ void UsbLink_Init(void)
     hpcd.Init.vbus_sensing_enable = DISABLE;
     hpcd.Init.use_dedicated_ep1 = DISABLE;
     if (HAL_PCD_Init(&hpcd) != HAL_OK)
+    {
         return;
+    }
     /* 复位后的 RX FIFO 是 512 字，起点已经超出 OTG FS 实际的 320 字，描述符写不进去。
      * C 板官方底盘例程把 RX 设为 128、EP0 设为 64。这里还要给批量 IN 和中断 IN 各留一份。 */
     HAL_PCDEx_SetRxFiFo(&hpcd, 0x80);
@@ -514,12 +566,16 @@ void OTG_FS_IRQHandler(void)
 int Jetson_Link_Send(uint8_t type, const uint8_t *data, uint8_t length)
 {
     if (!link_state.connected || tx_busy)
+    {
         return 1;
-    const uint8_t bytes = LinkFrame_Encode(type, data, length, tx_packet);
-    if (bytes == 0U)
+    }
+    const uint8_t frame_size = LinkFrame_Encode(type, data, length, tx_packet);
+    if (frame_size == 0U)
+    {
         return 2;
+    }
     tx_busy = 1U;
-    if (HAL_PCD_EP_Transmit(&hpcd, USB_EP_IN, tx_packet, bytes) != HAL_OK)
+    if (HAL_PCD_EP_Transmit(&hpcd, USB_EP_IN, tx_packet, frame_size) != HAL_OK)
     {
         tx_busy = 0U;
         return 1;
@@ -566,7 +622,9 @@ void UsbLink_Task(void const *argument)
             Jetson_CAN_Receive(frame.type, frame.data, frame.length);
 #else
             if (frame.type == MANUAL_CAN_VELOCITY_ID)
+            {
                 Manual_CAN_Receive(frame.data, frame.length);
+            }
 #endif
             taskEXIT_CRITICAL();
         }
