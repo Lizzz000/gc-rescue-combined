@@ -8,7 +8,7 @@
 #define CHASSIS_STRAIGHT_MAX_SPEED_MPS 0.50f
 /* 11 月 5 日试跑的速度指令在 1 s 内升至约 0.30 m/s，比赛试调将原斜率 0.30 提至 0.45 m/s²。 */
 #define CHASSIS_STRAIGHT_ACCELERATION_MPS2 0.45f
-/* 2026-11-08 前进实测选用中档，两个后轮加减速度约 18.56 rad/s²。
+/* 2026-11-08 前进实测选用中档，ID2/3两前轮加减速度约 18.56 rad/s²。
  * 0.20 m 在约 1.08 s 确认停车，0.50 m 在约 1.74 s；其余方向与负载待复测。 */
 #define CHASSIS_DISTANCE_MAX_SPEED_MPS 0.50f
 #define CHASSIS_DISTANCE_ACCELERATION_MPS2 0.75f
@@ -85,7 +85,7 @@ uint8_t Chassis_Reset_Odometry(void);
 
 /* 现场调参观察量。只能由同一控制任务通过 Chassis_Set_Tuning 更新参数。
  * MIT 力矩单位已经是 N·m，不在主控重复乘除电机 Kt。
- * 默认启用1.8 kg车体平移惯性项，两后轮摩擦项0.015 N·m；纯旋转不加前馈。
+ * 默认启用1.8 kg车体平移惯性项，ID2/3两前轮摩擦项0.015 N·m；纯旋转不加前馈。
  * 2026-11-16以0.25 m/s完成实车前后及双向旋转对照，未推定旋转惯量。 */
 extern float chassis_tuning_kd[3];
 extern float chassis_tuning_ff_gain;
@@ -166,7 +166,7 @@ uint8_t Chassis_Translation_Start(Chassis_Translation_Direction_t direction,
  * @note 起步须有效里程计；待命起步还须三轮确认停车，首个定距控制拍开始计时。
  *       转向剩余角不超过 5 度时也接受定距衔接，保留原转向终点航向，边走边修偏，
  *       不等待原地精修或停车确认；角速度按转向斜坡接入直行 PID。
- *       其他情况仍须从停车待命启动。进度取轮速里程计在锁定方向的有符号投影，
+ *       其他情况仍须从停车待命启动。进度取轮编码器里程计在锁定方向的有符号投影，
  *       剩余 1.5 mm 时请求停车，最终仍须在 3 mm 容差内且三轮确认停稳才完成；
  *       末段接近速度仍受请求限速与制动距离约束；断流、过冲、无进展或总超时制动后失能。
  *       轮速里程不能排除打滑，也不提供横向路径闭环，实际距离须实测标定。
@@ -199,6 +199,12 @@ uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg);
  *       按当时的姿态重新锁定。航向修正沿用原 PID 和连续速度的加速度限制。
  */
 uint8_t Chassis_Set_Velocity(float vx, float vy, float wz);
+
+/** @brief 显式三轴速度接口，校验、准入与斜坡同 Chassis_Set_Velocity。
+ * @note wz=0表示零角目标，不启用隐式锁航向PID；适用于自行闭环航向的调用方。
+ *       三项全零仍等价Stop；本接口不改变其他调用者的锁航向行为。
+ */
+uint8_t Chassis_Set_Velocity_Explicit_Yaw(float vx, float vy, float wz);
 
 /** @brief 在现有 5 ms 任务内服务底盘，每 10 ms 更新一次控制，TIM2 实测 dt。
  * @return 无。

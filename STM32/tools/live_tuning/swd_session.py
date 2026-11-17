@@ -384,7 +384,7 @@ class Session:
         self.log.emit("request", command=command, sequence=sequence, args=args)
         return sequence
 
-    def wait_complete(self, sequence, timeout, stop=False):
+    def wait_complete(self, sequence, timeout, stop=False, expected_command=None):
         deadline = time.monotonic() + timeout
         acknowledged = False
         next_sample = 0.0
@@ -397,6 +397,8 @@ class Session:
                 self.log.emit("sample", **state)
                 if state["ack_seq"] == sequence:
                     acknowledged = True
+                    if expected_command == 7 and state.get("command") != 7:
+                        raise SessionError("Continuous goal command was replaced")
                     if state["phase"] == 5:
                         code = state["error"]
                         raise SessionError(f"Firmware fault {code}: {ERRORS.get(code, 'unknown')}")
@@ -411,7 +413,7 @@ class Session:
                         sample = state["sample"]
                         if (state["sample_seq"] != terminal_sample_seq and
                             sample.get("phase") == state["phase"] and
-                            sample.get("error") == 0 and sample.get("enabled") == 0):
+                            sample.get("error") == 0 and sample.get("enabled") == (1 if expected_command == 7 else 0)):
                             self.log.emit("complete", sequence=sequence, **state)
                             return state
             wake = min(deadline, next_sample, self.next_heartbeat)
@@ -438,19 +440,29 @@ class Session:
         # mailbox must never receive even a speculative STOP or heartbeat.
         state = self.validate_initial()
         validate_request(command, args)
+        timeout_limit = 25 if command in (6, 7) else 15
+        if not math.isfinite(timeout) or not 0 < timeout <= timeout_limit:
+            raise SessionError(f"Command timeout must be finite and in (0,{timeout_limit}] seconds")
         if command == 6 and not timeout > args[3] / 1000.0 + 2.0:
             raise SessionError("Distance timeout must exceed firmware duration plus 2 seconds")
+        if command == 7 and not timeout > args[5] / 1000.0 + 2.0:
+            raise SessionError("Continuous goal timeout must exceed firmware duration plus 2 seconds")
         self.log.emit("initial", **state)
         if command != 1 and state["phase"] in (1, 2, 3):
             raise SessionError("Firmware is already preparing/moving/braking")
         failure = None
+        hold_success = False
         try:
             # Only a validated, actually attempted publish enables final STOP.
             sequence = self.publish(command, args)
-            result = self.wait_complete(sequence, timeout, stop=command == 1)
-            if command in (5, 6):
+            result = (self.wait_complete(sequence, timeout, expected_command=7) if command == 7 else
+                      self.wait_complete(sequence, timeout, stop=command == 1))
+            if command in (5, 6, 7):
                 validate_endpoint(command, args, result)
                 self.log.emit("endpoint_verified", **{**result, "command": command})
+                if command == 7:
+                    self.log.emit("enabled_hold_preserved")
+                hold_success = command == 7
             if command == 2:
                 result["parameter_replies"] = self.parameter_replies()
                 self.log.emit("parameter_replies", replies=result["parameter_replies"])
@@ -460,20 +472,24 @@ class Session:
             self.log.emit("failure", message=str(exc), kind=type(exc).__name__)
             raise
         finally:
-            try:
-                # A timeout leaves the old Tcl reply indeterminate. Reconnect
-                # only for STOP; never retry a motion command.
-                if not getattr(self.client, "usable", True):
-                    self.client.reconnect()
-                    self.verify_firmware(self.elf_path)
-                    self.validate_initial()
-                sequence = self.publish(1, [0.0] * 8)
-                self.wait_complete(sequence, 2.5, stop=True)
-                self.log.emit("final_stop_confirmed")
-            except BaseException as exc:
-                self.log.emit("final_stop_unconfirmed", message=str(exc))
-                if failure is None:
-                    raise SessionError("Final STOP not confirmed: " + str(exc)) from exc
+            if hold_success and failure is None:
+                # Command 7 has already confirmed zero target and stopped wheels.
+                # Its firmware HOLD keeps enable without further motion/heartbeat.
+                pass
+            else:
+                try:
+                    # Reconnect only for STOP; never retry a motion command.
+                    if not getattr(self.client, "usable", True):
+                        self.client.reconnect()
+                        self.verify_firmware(self.elf_path)
+                        self.validate_initial()
+                    sequence = self.publish(1, [0.0] * 8)
+                    self.wait_complete(sequence, 2.5, stop=True)
+                    self.log.emit("final_stop_confirmed")
+                except BaseException as exc:
+                    self.log.emit("final_stop_unconfirmed", message=str(exc))
+                    if failure is None:
+                        raise SessionError("Final STOP not confirmed: " + str(exc)) from exc
 
 
 def validate_endpoint(command, args, result):
@@ -493,6 +509,15 @@ def validate_endpoint(command, args, result):
         if (not math.isclose(sample["end_target_distance_m"], target, rel_tol=1e-6, abs_tol=1e-6) or
             abs(sample["end_progress_m"] - target) > 0.003 + 1e-6):
             raise SessionError("Odometry endpoint does not match requested distance")
+    elif command == 7:
+        if (result.get("command") != 7 or result.get("phase") != 4 or result.get("error") != 0 or
+            sample.get("phase") != 4 or sample.get("error") != 0 or sample.get("enabled") != 1 or
+            sample.get("odom_valid") != 1 or any(sample.get(f"state_{i}") != 1 for i in (1, 2, 3)) or
+            any(sample.get(f"target_{i}") != 0 for i in (1, 2, 3))):
+            raise SessionError("Continuous goal lacks enabled zero-target HOLD evidence")
+        if (math.hypot(sample["end_x_m"] - args[0], sample["end_y_m"] - args[1]) > .02 + 1e-6 or
+            abs(math.remainder(sample["end_yaw_rad"] - args[2], 2 * math.pi)) > math.radians(10) + 1e-6):
+            raise SessionError("Continuous goal endpoint is outside position/heading tolerance")
 
 
 def validate_request(command, args):
@@ -512,9 +537,13 @@ def validate_request(command, args):
         valid = (all(value == 0 for value in (*args[:3], *args[4:])) and
                  100 <= args[3] <= 1500 and args[3] == int(args[3]))
     elif command == 6:
-        valid = (args[0] in (1, 2) and 0.01 <= args[1] <= 0.20 and
-                 0.02 <= args[2] <= 0.10 and 100 <= args[3] <= 10000 and
+        valid = (args[0] in (1, 2) and 0.01 <= args[1] <= 1.0 and
+                 0.02 <= args[2] <= 0.10 and 100 <= args[3] <= 20000 and
                  args[3] == int(args[3]) and all(value == 0 for value in args[4:]))
+    elif command == 7:
+        valid = (-math.pi <= args[2] <= math.pi and .02 <= args[3] <= .20 and
+                 .10 <= args[4] <= .50 and 100 <= args[5] <= 20000 and
+                 args[5] == int(args[5]) and args[6] == 0 and args[7] == 0)
     if not valid:
         raise SessionError("Command/arguments are outside the firmware tuning limits")
 
@@ -529,8 +558,8 @@ def arguments(argv=None):
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--describe", action="store_true", help="Resolve symbols offline")
     action.add_argument("--read", action="store_true", help="Read RAM only; never writes STOP/heartbeat")
-    action.add_argument("--command", type=int, choices=(1, 2, 3, 4, 5, 6),
-                        help="1 stop, 2 read parameters, 3 configure, 4 timed move, 5 static odometry, 6 distance")
+    action.add_argument("--command", type=int, choices=(1, 2, 3, 4, 5, 6, 7),
+                        help="1 stop, 2 read parameters, 3 configure, 4 timed move, 5 static odometry, 6 distance, 7 world goal/hold enabled")
     parser.add_argument("--read-seconds", type=float, default=0.0)
     parser.add_argument("--rate", type=float, default=25.0)
     parser.add_argument("--timeout", type=float, default=6.0)
@@ -543,22 +572,29 @@ def arguments(argv=None):
     parser.add_argument("--wz", type=float, default=0.0)
     parser.add_argument("--duration-ms", type=int, default=800)
     parser.add_argument("--direction", type=int, choices=(1, 2), help="Distance direction: 1 forward, 2 backward")
-    parser.add_argument("--distance-m", type=float, help="Distance target in metres (0.01..0.20)")
+    parser.add_argument("--distance-m", type=float, help="Distance target in metres (0.01..1.0)")
     parser.add_argument("--speed-mps", type=float, help="Distance speed limit in m/s (0.02..0.10)")
+    parser.add_argument("--goal-x-m", type=float)
+    parser.add_argument("--goal-y-m", type=float)
+    parser.add_argument("--goal-yaw-rad", type=float)
+    parser.add_argument("--linear-limit", type=float, default=.20)
+    parser.add_argument("--angular-limit", type=float, default=.50)
     parser.add_argument("--log", type=Path)
     args = parser.parse_args(argv)
     numeric = [args.rate, args.timeout, args.read_seconds, args.vx, args.vy, args.wz,
                args.ff_gain, *args.kd, *args.friction]
-    numeric += [value for value in (args.distance_m, args.speed_mps) if value is not None]
+    numeric += [value for value in (args.distance_m, args.speed_mps, args.goal_x_m, args.goal_y_m,
+                                    args.goal_yaw_rad, args.linear_limit, args.angular_limit) if value is not None]
     if not all(math.isfinite(value) for value in numeric):
         parser.error("All numeric values must be finite")
-    if not 20 <= args.rate <= 25 or not 0 < args.timeout <= 15 or not 0 <= args.read_seconds <= 300:
-        parser.error("rate must be 20..25 Hz, timeout (0,15] s, read-seconds 0..300")
+    timeout_limit = 25 if args.command in (6, 7) else 15
+    if not 20 <= args.rate <= 25 or not 0 < args.timeout <= timeout_limit or not 0 <= args.read_seconds <= 300:
+        parser.error(f"rate must be 20..25 Hz, timeout (0,{timeout_limit}] s, read-seconds 0..300")
     if not re.fullmatch(r"[A-Za-z0-9_.:-]+", args.target):
         parser.error("Invalid OpenOCD target name")
     if not 1 <= args.port <= 65535 or not 1 <= args.reg <= 35:
         parser.error("Invalid port or parameter register")
-    duration_limit = 10000 if args.command == 6 else 1500
+    duration_limit = 20000 if args.command in (6, 7) else 1500
     if abs(args.vx) > 0.25 or args.vy != 0 or abs(args.wz) > 0.5 or not 100 <= args.duration_ms <= duration_limit:
         parser.error(f"Motion requires |vx|<=0.25, vy=0, |wz|<=0.5, duration 100..{duration_limit} ms")
     if args.vx != 0 and args.wz != 0:
@@ -569,7 +605,7 @@ def arguments(argv=None):
         parser.error("Friction torque must be 0..0.03 N m per wheel")
     if args.command == 4 and args.vx == 0 and args.wz == 0:
         parser.error("Move requires a nonzero vx or wz; use command 1 to stop")
-    if args.command in (5, 6) and (args.vx != 0 or args.vy != 0 or args.wz != 0):
+    if args.command in (5, 6, 7) and (args.vx != 0 or args.vy != 0 or args.wz != 0):
         parser.error("Odometry commands do not accept vx/vy/wz")
     if args.command == 6:
         if args.direction is None or args.distance_m is None or args.speed_mps is None:
@@ -578,6 +614,13 @@ def arguments(argv=None):
             parser.error("Distance --timeout must exceed --duration-ms / 1000 + 2 seconds")
     elif any(value is not None for value in (args.direction, args.distance_m, args.speed_mps)):
         parser.error("Direction/distance/speed options require command 6")
+    if args.command == 7:
+        if any(value is None for value in (args.goal_x_m, args.goal_y_m, args.goal_yaw_rad)):
+            parser.error("Continuous goal requires --goal-x-m, --goal-y-m and --goal-yaw-rad")
+        if not args.timeout > args.duration_ms / 1000.0 + 2.0:
+            parser.error("Continuous goal --timeout must exceed duration plus 2 seconds")
+    elif any(value is not None for value in (args.goal_x_m, args.goal_y_m, args.goal_yaw_rad)):
+        parser.error("World goal options require command 7")
     if args.command is not None:
         try:
             validate_request(args.command, command_values(args))
@@ -598,6 +641,9 @@ def command_values(args):
     if args.command == 6:
         return [float(args.direction), args.distance_m, args.speed_mps, float(args.duration_ms),
                 0.0, 0.0, 0.0, 0.0]
+    if args.command == 7:
+        return [args.goal_x_m, args.goal_y_m, args.goal_yaw_rad, args.linear_limit,
+                args.angular_limit, float(args.duration_ms), 0., 0.]
     return [0.0] * 8
 
 

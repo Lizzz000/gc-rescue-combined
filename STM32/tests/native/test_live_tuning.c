@@ -28,6 +28,8 @@ static Chassis_Odometry_t odom;
 static unsigned reset_calls, distance_calls, serial_calls;
 static unsigned odom_reads, invalidate_read_number;
 static uint8_t reset_ok, distance_ok;
+static uint8_t velocity_mode;
+static float last_velocity[3];
 static float serial_sample[TUNING_SAMPLE_COUNT];
 
 uint32_t test_timer_counter(TIM_HandleTypeDef *timer)
@@ -59,7 +61,7 @@ uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction, float 
 {
     assert(enabled && stopped && odom.valid);
     assert(direction == CHASSIS_TRANSLATION_FORWARD || direction == CHASSIS_TRANSLATION_BACKWARD);
-    assert(distance >= 0.01f && distance <= 0.20f && speed >= 0.02f && speed <= 0.10f);
+    assert(distance >= 0.01f && distance <= 1.0f && speed >= 0.02f && speed <= 0.10f);
     ++distance_calls;
     if (distance_ok)
         stopped = 0U;
@@ -81,6 +83,8 @@ uint8_t Chassis_Enable(void)
 void Chassis_Stop(void)
 {
     ++stop_calls;
+    velocity_mode = 0U;
+    memset(last_velocity, 0, sizeof(last_velocity));
     memset(chassis_motor_target, 0, sizeof(chassis_motor_target));
 }
 void Chassis_Disable(void)
@@ -91,11 +95,17 @@ void Chassis_Disable(void)
 }
 uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
 {
-    assert(enabled && stopped && vy == 0.0f);
+    assert(enabled);
+    if (!stopped && !velocity_mode)
+        return 0U;
     ++move_calls;
     if (move_ok)
     {
         stopped = 0U;
+        velocity_mode = 1U;
+        last_velocity[0] = vx;
+        last_velocity[1] = vy;
+        last_velocity[2] = wz;
         if (emit_target)
         {
             chassis_motor_target[0] = wz;
@@ -104,6 +114,10 @@ uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
         }
     }
     return move_ok;
+}
+uint8_t Chassis_Set_Velocity_Explicit_Yaw(float vx, float vy, float wz)
+{
+    return Chassis_Set_Velocity(vx, vy, wz);
 }
 uint8_t Chassis_Set_Tuning(const float kd[3], float ff_gain, const float friction[3])
 {
@@ -144,10 +158,12 @@ static void reset_case(void)
     read_status = HAL_OK;
     read_id = read_reg = 0U;
     battery_voltage = 16.0f;
-    odom = (Chassis_Odometry_t){0};
+    odom = (Chassis_Odometry_t){.valid = 1U};
     reset_calls = distance_calls = serial_calls = 0U;
     odom_reads = invalidate_read_number = 0U;
     reset_ok = distance_ok = 1U;
+    velocity_mode = 0U;
+    memset(last_velocity, 0, sizeof(last_velocity));
     memset(serial_sample, 0, sizeof(serial_sample));
     memset((void *)dm_motor, 0, sizeof(dm_motor));
     memset((void *)dm_param_reply, 0, sizeof(dm_param_reply));
@@ -466,8 +482,8 @@ static void test_odometry_argument_limits(void)
 {
     const float invalid[][4] = {
         {0, .10f, .05f, 1000}, {3, .10f, .05f, 1000}, {1.5f, .10f, .05f, 1000},
-        {1, .009f, .05f, 1000}, {1, .201f, .05f, 1000}, {1, .10f, .019f, 1000},
-        {1, .10f, .101f, 1000}, {1, .10f, .05f, 99}, {1, .10f, .05f, 10001},
+        {1, .009f, .05f, 1000}, {1, 1.001f, .05f, 1000}, {1, .10f, .019f, 1000},
+        {1, .10f, .101f, 1000}, {1, .10f, .05f, 99}, {1, .10f, .05f, 20001},
         {1, .10f, .05f, 100.5f}, {1, NAN, .05f, 1000}
     };
     for (unsigned i = 0U; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
@@ -503,7 +519,7 @@ static void test_static_odometry_and_endpoint(void)
     assert(tuning_phase == TUNING_DONE && !enabled);
     Live_Tuning_Snapshot();
     assert(tuning_sample[46] == 0.0f && tuning_sample[51] == 1.0f && tuning_sample[52] == 1.0f);
-    assert(tuning_sample[53] == 150.0f && fabsf(tuning_sample[54] - .0005f) < .00001f);
+    assert(tuning_sample[53] == 155.0f && fabsf(tuning_sample[54] - .0005f) < .00001f);
     assert(serial_calls == 1U && serial_sample[51] == 1.0f && serial_sample[55] == 0.0f);
     const float end_x = tuning_sample[48];
     submit(TUNING_STOP);
@@ -511,6 +527,119 @@ static void test_static_odometry_and_endpoint(void)
     Live_Tuning_Snapshot();
     assert(serial_calls == 2U && tuning_sample[48] == end_x && tuning_sample[51] == 1.0f);
     assert(tuning_sample[1] == TUNING_DONE); /* Finish 立即发布，不等 100 ms。 */
+}
+
+static void test_static_sampling_and_final_qualification(void)
+{
+    reset_case();
+    start_odometry(TUNING_ODOM_STATIC, 0, 0, 0, 300U);
+    stopped = 0U; /* 尚未累计三组新停车反馈，不代表发布过运动目标。 */
+    odom.x_m = odom.y_m = .006;
+    loop(100U, 1U);
+    loop(100U, 1U);
+    assert(tuning_phase == TUNING_RUNNING && tuning_error == 0U && !move_calls);
+    loop(100U, 1U);
+    assert(tuning_phase == TUNING_BRAKING && tuning_error == 0U && enabled);
+    loop(100U, 1U);
+    assert(tuning_phase == TUNING_BRAKING && enabled);
+    stopped = 1U; /* 由底盘原有三新组确认；本模块不自行降低门限。 */
+    loop(5U, 1U);
+    assert(!enabled && tuning_phase == TUNING_BRAKING);
+    disabled_replies();
+    assert(tuning_phase == TUNING_DONE && tuning_error == 0U);
+    Live_Tuning_Snapshot();
+    assert(tuning_sample[51] == 1.0f && tuning_sample[52] == 1.0f && tuning_sample[53] == 405.0f);
+    assert(!move_calls && !distance_calls);
+
+    reset_case();
+    start_odometry(TUNING_ODOM_STATIC, 0, 0, 0, 100U);
+    stopped = 0U;
+    loop(100U, 1U);
+    loop(499U, 1U);
+    assert(enabled && tuning_error == 0U);
+    loop(1U, 1U);
+    assert(!enabled && tuning_phase == TUNING_BRAKING && tuning_error == 8U);
+    disabled_replies();
+    assert(tuning_phase == TUNING_FAULT); /* 超过固定500ms，不能伪造静态成功。 */
+}
+
+static void test_static_sampling_faults(void)
+{
+    for (unsigned settling = 0U; settling < 2U; ++settling)
+    for (unsigned fault = 0U; fault < 4U; ++fault)
+    {
+        reset_case();
+        start_odometry(TUNING_ODOM_STATIC, 0, 0, 0, 100U);
+        if (settling)
+        {
+            stopped = 0U;
+            loop(100U, 1U);
+            assert(tuning_phase == TUNING_BRAKING && tuning_error == 0U);
+        }
+        if (fault == 0U) odom.valid = 0U;
+        if (fault == 1U) motors_ready = 0U;
+        if (fault == 2U) imu_age = 21U;
+        if (fault == 3U) odom.x_m = odom.y_m = .008; /* 单轴各不足10mm，欧氏距离已超。 */
+        loop(5U, 1U);
+        assert(tuning_phase == TUNING_BRAKING && tuning_error != 0U);
+        loop(500U, 1U);
+        disabled_replies();
+        assert(tuning_phase == TUNING_FAULT && !move_calls && !distance_calls);
+    }
+
+    reset_case();
+    start_odometry(TUNING_ODOM_STATIC, 0, 0, 0, 100U);
+    stopped = 0U;
+    loop(100U, 1U);
+    loop(299U, 0U);
+    assert(tuning_error == 0U && enabled);
+    loop(1U, 0U);
+    assert(tuning_error == 5U && enabled);
+    loop(200U, 1U);
+    assert(!enabled); /* 最终确认中断连仍300ms制动，且不重启500ms停车计时。 */
+    disabled_replies();
+    assert(tuning_phase == TUNING_FAULT && tuning_error == 5U);
+
+    reset_case();
+    start_odometry(TUNING_ODOM_STATIC, 0, 0, 0, 100U);
+    stopped = 0U;
+    loop(100U, 1U);
+    loop(200U, 1U);
+    loop(200U, 1U);
+    submit(TUNING_STOP);
+    loop(99U, 1U);
+    assert(enabled && tuning_error == 0U);
+    loop(1U, 1U);
+    assert(!enabled && tuning_error == 8U); /* STOP也不能重开静态确认的500ms期限。 */
+
+    reset_case();
+    start_odometry(TUNING_ODOM_STATIC, 0, 0, 0, 100U);
+    loop(100U, 1U);
+    invalidate_read_number = odom_reads + 2U; /* 最终初判有效，捕获终点时失效。 */
+    loop(5U, 1U);
+    assert(tuning_error == TUNING_ERROR_ODOMETRY && tuning_phase == TUNING_BRAKING);
+}
+
+static void test_velocity_waits_for_valid_odometry(void)
+{
+    reset_case();
+    odom.valid = 0U;
+    set_move(.10f, 0, 100U);
+    submit(TUNING_MOVE);
+    loop(100U, 1U);
+    assert(tuning_phase == TUNING_PREPARING && !move_calls && !reset_calls);
+    odom.valid = 1U;
+    odom.x_m = .25;
+    loop(5U, 1U);
+    assert(tuning_phase == TUNING_RUNNING && move_calls == 1U && !reset_calls && odom.x_m == .25);
+
+    reset_case();
+    odom.valid = 0U;
+    set_move(.10f, 0, 100U);
+    submit(TUNING_MOVE);
+    for (unsigned i = 0U; i < 10U; ++i)
+        loop(100U, 1U);
+    assert(tuning_phase == TUNING_BRAKING && tuning_error == 3U && !move_calls && !reset_calls);
 }
 
 static void test_distance_odometry_completion(void)
@@ -624,6 +753,287 @@ static void test_odometry_time_wrap_and_age(void)
     assert(fabsf(tuning_sample[47] - 2.5f) < .00001f);
 }
 
+/* 长距离只扩大单次距离/总时限，不放宽原心跳或停车失能确认。 */
+static void test_long_distance_limits_and_heartbeat(void)
+{
+    for (unsigned backwards = 0U; backwards < 2U; ++backwards)
+    {
+        reset_case();
+        start_odometry(TUNING_ODOM_DISTANCE, backwards ? 2.0f : 1.0f, 1.0f, .10f, 20000U);
+        assert(distance_calls == 1U && tuning_error == 0U);
+        for (unsigned i = 0U; i < 16U; ++i)
+        {
+            set_progress((backwards ? -1.0f : 1.0f) * .005f * (i + 1U));
+            loop(100U, 1U);
+            assert(tuning_phase == TUNING_RUNNING); /* 超过原1500ms仍须可持续。 */
+        }
+        loop(299U, 0U);
+        assert(tuning_phase == TUNING_RUNNING);
+        loop(1U, 0U);
+        assert(tuning_phase == TUNING_BRAKING && tuning_error == 5U);
+        loop(500U, 1U);
+        assert(!enabled && tuning_phase == TUNING_BRAKING);
+        disabled_replies();
+        assert(tuning_phase == TUNING_FAULT && tuning_error == 5U && distance_calls == 1U);
+    }
+
+    reset_case();
+    start_odometry(TUNING_ODOM_DISTANCE, 1, 1.0f, .10f, 20000U);
+    for (unsigned i = 0U; i < 199U; ++i)
+    {
+        set_progress(.004f * (i + 1U));
+        loop(100U, 1U);
+        assert(tuning_phase == TUNING_RUNNING);
+    }
+    loop(99U, 1U);
+    assert(tuning_phase == TUNING_RUNNING);
+    loop(1U, 1U);
+    assert(tuning_phase == TUNING_BRAKING && tuning_error == TUNING_ERROR_ACTION_TIMEOUT);
+    stopped = 1U;
+    loop(5U, 1U);
+    assert(!enabled && tuning_phase == TUNING_BRAKING); /* 仍要等三轮新失能回执。 */
+    disabled_replies();
+    assert(tuning_phase == TUNING_FAULT && tuning_error == TUNING_ERROR_ACTION_TIMEOUT);
+    Live_Tuning_Snapshot();
+    assert(tuning_sample[53] == 20000.0f && tuning_sample[55] == 1.0f);
+}
+
+static void start_return(float x, float y, float yaw, float duration)
+{
+    const float args[8] = {x, y, yaw, .20f, .50f, duration, 0, 0};
+    for (unsigned i = 0U; i < 8U; ++i)
+        tuning_args[i] = args[i];
+    submit(TUNING_RETURN_HOLD);
+}
+
+static void test_return_arguments_and_fence(void)
+{
+    const float invalid[][2] = {{0,NAN},{2,3.15f},{3,.019f},{3,.201f},
+        {4,.099f},{4,.501f},{5,99},{5,20001},{5,100.5f},{6,1},{7,1}};
+    for (unsigned n = 0U; n < sizeof(invalid) / sizeof(invalid[0]); ++n)
+    {
+        reset_case();
+        const float args[8] = {.5f, 0, 0, .2f, .5f, 20000, 0, 0};
+        for (unsigned i = 0U; i < 8U; ++i)
+            tuning_args[i] = args[i];
+        tuning_args[(unsigned)invalid[n][0]] = invalid[n][1];
+        submit(TUNING_RETURN_HOLD);
+        assert(tuning_error == 1U && !move_calls && !enable_calls);
+    }
+    reset_case();
+    start_return(1.001f, 0, 0, 20000);
+    assert(tuning_error == 3U && !move_calls && !reset_calls);
+    reset_case();
+    start_return(1.0f, 0, 0, 20000);
+    assert(tuning_phase == TUNING_RUNNING && !reset_calls);
+    loop(5U, 1U);
+    odom.x_m = 1.301;
+    loop(5U, 1U);
+    assert(tuning_error == TUNING_ERROR_ODOMETRY && tuning_phase == TUNING_BRAKING);
+}
+
+static void test_return_world_control_and_hold(void)
+{
+    reset_case();
+    odom.x_m = .25;
+    odom.y_m = .50;
+    odom.yaw_rad = 1.5707963267948966f;
+    start_return(.55f, .50f, odom.yaw_rad, 20000);
+    assert(tuning_phase == TUNING_RUNNING && !reset_calls && odom.x_m == .25);
+    loop(5U, 1U);
+    assert(fabsf(last_velocity[0]) < .00001f && fabsf(last_velocity[1] + .20f) < .00001f);
+    assert(last_velocity[2] == 0.0f && move_calls == 1U);
+    loop(5U, 1U); /* VELOCITY内连续更新，无停轮/失能分脉冲。 */
+    assert(move_calls == 2U && !disable_calls);
+    odom.x_m = .545;
+    loop(5U, 1U);
+    assert(tuning_phase == TUNING_BRAKING && enabled && !disable_calls);
+    assert(last_velocity[0] == 0 && last_velocity[1] == 0 && last_velocity[2] == 0);
+    stopped = 1U;
+    loop(5U, 1U);
+    assert(tuning_phase == TUNING_DONE && tuning_error == 0U && enabled && !disable_calls);
+    Live_Tuning_Snapshot();
+    assert(tuning_sample[51] == 1 && tuning_sample[52] == 1);
+    assert(fabsf(tuning_sample[54] - .295f) < .00001f && fabsf(tuning_sample[55] - .30f) < .00001f);
+    const unsigned moves = move_calls;
+    loop(5000U, 0U);
+    assert(tuning_phase == TUNING_DONE && enabled && move_calls == moves && !disable_calls);
+    start_return(.60f, .50f, odom.yaw_rad, 20000);
+    assert(tuning_phase == TUNING_RUNNING && !reset_calls); /* 显式新目标才重新启动。 */
+    loop(5U, 1U);
+    assert(move_calls > moves);
+    submit(TUNING_STOP);
+    stopped = 1U;
+    loop(5U, 1U);
+    disabled_replies();
+    assert(tuning_phase == TUNING_DONE && !enabled);
+}
+
+static void test_return_yaw_limits_and_near_speed(void)
+{
+    reset_case();
+    odom.yaw_rad = 3.10f;
+    start_return(.5f, 0, -3.0f, 20000);
+    loop(5U, 1U);
+    assert(last_velocity[2] == .5f); /* 跨-pi/pi取最短角差，使用足额角限速。 */
+    assert(fabsf(hypotf(last_velocity[0],last_velocity[1]) - .20f) < .00001f);
+    odom.x_m = .46;
+    loop(5U, 1U);
+    assert(fabsf(hypotf(last_velocity[0],last_velocity[1]) - .06f) < .00001f);
+
+    reset_case();
+    tuning_args[0] = .04f; tuning_args[3] = .02f; tuning_args[4] = .1f; tuning_args[5] = 20000;
+    submit(TUNING_RETURN_HOLD);
+    loop(5U, 1U);
+    assert(fabsf(last_velocity[0] - .02f) < .00001f); /* 近处下限不得超过用户限速。 */
+}
+
+static void test_return_coarse_yaw_terminal_tolerance(void)
+{
+    const float accepted[] = {5.005f * .01745329251994329577f,
+        TUNING_RETURN_YAW_TOLERANCE_RAD, -TUNING_RETURN_YAW_TOLERANCE_RAD};
+    for (unsigned i = 0U; i < sizeof(accepted) / sizeof(accepted[0]); ++i)
+    {
+        reset_case();
+        start_return(0,0,0,20000);
+        loop(5U,1U);
+        assert(tuning_phase == TUNING_BRAKING);
+        odom.yaw_rad = accepted[i];
+        loop(5U,1U);
+        assert(tuning_phase == TUNING_DONE && tuning_error == 0U && enabled);
+    }
+    for (int sign = -1; sign <= 1; sign += 2)
+    {
+        reset_case();
+        start_return(0,0,0,20000);
+        loop(5U,1U);
+        odom.yaw_rad = sign * (TUNING_RETURN_YAW_TOLERANCE_RAD + .00001f);
+        loop(5U,1U);
+        assert(tuning_phase == TUNING_BRAKING && tuning_error == TUNING_ERROR_ODOMETRY);
+    }
+    reset_case();
+    odom.yaw_rad = 4.5f * .01745329251994329577f;
+    start_return(0,0,0,20000);
+    loop(5U,1U);
+    assert(tuning_phase == TUNING_RUNNING && last_velocity[2] == -.5f);
+    odom.yaw_rad = 3.9f * .01745329251994329577f;
+    loop(5U,1U);
+    assert(tuning_phase == TUNING_BRAKING); /* 内层仍为4deg，不能提前按10deg停车。 */
+}
+
+static void test_return_failures_and_terminal_race(void)
+{
+    for (unsigned fault = 0U; fault < 5U; ++fault)
+    {
+        reset_case();
+        start_return(.5f, 0, 0, 20000);
+        loop(5U, 1U);
+        if (fault == 0U) odom.valid = 0U;
+        if (fault == 1U) motors_ready = 0U;
+        if (fault == 2U) imu_age = 21U;
+        if (fault == 3U) move_ok = 0U;
+        loop(fault == 4U ? 300U : 5U, fault != 4U);
+        assert(tuning_error != 0U && tuning_phase == TUNING_BRAKING);
+        loop(500U, 1U);
+        disabled_replies();
+        assert(tuning_phase == TUNING_FAULT && !enabled);
+    }
+    reset_case();
+    start_return(.5f, 0, 0, 100);
+    loop(100U, 1U);
+    assert(tuning_error == TUNING_ERROR_ACTION_TIMEOUT);
+
+    reset_case();
+    start_return(0, 0, 0, 20000);
+    loop(5U, 1U);
+    stopped = 0U;
+    loop(TUNING_RETURN_SETTLE_MS - 1U, 1U);
+    assert(enabled && tuning_error == 0U);
+    loop(1U, 1U);
+    assert(!enabled && tuning_error == 8U);
+
+    reset_case();
+    start_return(0, 0, 0, 20000);
+    loop(5U, 1U);
+    odom.x_m = .021;
+    loop(5U, 1U);
+    assert(tuning_error == TUNING_ERROR_ODOMETRY); /* 停车时越出到点容差不算成功。 */
+
+    reset_case();
+    start_return(0, 0, 0, 20000);
+    loop(5U, 1U);
+    invalidate_read_number = odom_reads + 2U;
+    loop(5U, 1U);
+    assert(tuning_error == TUNING_ERROR_ODOMETRY); /* 终点重读失效不进入HOLD。 */
+
+    reset_case();
+    start_return(0, 0, 0, 20000);
+    loop(5U, 1U);
+    loop(5U, 1U);
+    assert(tuning_phase == TUNING_DONE && enabled);
+    imu_age = 21U;
+    loop(5U, 0U);
+    assert(tuning_error == 4U && tuning_phase == TUNING_BRAKING);
+    loop(5U, 0U);
+    disabled_replies();
+    assert(tuning_phase == TUNING_FAULT && !enabled); /* HOLD仍监测真实故障。 */
+}
+
+static void test_return_feedback_tail_and_stop_override(void)
+{
+    reset_case();
+    start_return(0, 0, 0, 20000);
+    loop(5U, 1U);
+    stopped = 0U;
+    loop(700U, 1U); /* 超过旧500ms，仍以零目标等待真实三组停车资格。 */
+    assert(enabled && tuning_phase == TUNING_BRAKING && !tuning_error && !disable_calls);
+    stopped = 1U;
+    loop(5U, 1U);
+    assert(tuning_phase == TUNING_DONE && enabled && !disable_calls);
+    Live_Tuning_Snapshot();
+    assert(tuning_sample[51] == 1 && tuning_sample[52] == 1);
+
+    for (unsigned disconnect = 0U; disconnect < 2U; ++disconnect)
+    {
+        reset_case();
+        start_return(0, 0, 0, 20000);
+        loop(5U, 1U);
+        stopped = 0U;
+        loop(700U, 1U);
+        if (disconnect)
+            loop(300U, 0U);
+        else
+            submit(TUNING_STOP);
+        loop(5U, 1U);
+        assert(!enabled); /* STOP或失联不继承更长的正常到点等待窗口。 */
+        if (disconnect)
+            assert(tuning_error == 5U);
+    }
+}
+
+static void test_return_start_feedback_race(void)
+{
+    reset_case();
+    start_return(.5f,0,0,20000);
+    stopped = 0U; /* PREPARE刚通过，新反馈又暂时撤销三组停车资格。 */
+    loop(5U,1U);
+    assert(tuning_phase == TUNING_RUNNING && !tuning_error && !move_calls);
+    loop(700U,1U);
+    assert(enabled && !tuning_error && !move_calls && last_velocity[0] == 0);
+    stopped = 1U;
+    loop(5U,1U);
+    assert(tuning_phase == TUNING_RUNNING && move_calls == 1U && last_velocity[0] > 0);
+    move_ok = 0U;
+    loop(5U,1U);
+    assert(tuning_error == 4U); /* 已接受过速度后不重试运动。 */
+
+    reset_case();
+    start_return(.5f,0,0,20000);
+    stopped = 0U;
+    loop(TUNING_RETURN_START_MS,1U);
+    assert(tuning_error == 4U && !move_calls); /* 窗口有界，不能无限等待。 */
+}
+
 int main(void)
 {
     test_init_and_config();
@@ -637,9 +1047,20 @@ int main(void)
     test_snapshot_and_tick_wrap();
     test_odometry_argument_limits();
     test_static_odometry_and_endpoint();
+    test_static_sampling_and_final_qualification();
+    test_static_sampling_faults();
+    test_velocity_waits_for_valid_odometry();
     test_distance_odometry_completion();
     test_odometry_faults_and_deadline();
     test_odometry_time_wrap_and_age();
+    test_long_distance_limits_and_heartbeat();
+    test_return_arguments_and_fence();
+    test_return_world_control_and_hold();
+    test_return_yaw_limits_and_near_speed();
+    test_return_coarse_yaw_terminal_tolerance();
+    test_return_failures_and_terminal_race();
+    test_return_feedback_tail_and_stop_override();
+    test_return_start_feedback_race();
     puts("PASS live tuning: bounded moves/odometry, fresh disable ACK, heartbeat/fault stop, 56-channel snapshots");
     return 0;
 }

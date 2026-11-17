@@ -371,7 +371,7 @@ static void Test_Stop_Before_Reverse(uint8_t repeat, uint8_t batch)
     if (repeat)
     {
         Start_Moving(0, -500, 0);
-        assert(nonzero_controls > before_nonzero && motor_velocity[0] > 0.0f);
+        assert(nonzero_controls > before_nonzero && motor_velocity[0] < 0.0f);
     }
 }
 

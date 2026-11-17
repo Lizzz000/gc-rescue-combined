@@ -123,6 +123,7 @@ static void Step_Wheels(const float feedback[3])
     {
         dm_motor[i].id = (uint8_t)(i + 1U);
         dm_motor[i].state = 1U;
+        dm_motor[i].position = remainderf(dm_motor[i].position + feedback[i] * .005f, 25.0f);
         dm_motor[i].velocity = feedback[i];
         dm_motor[i].feedback_time_ms = test_tick;
         ++dm_motor[i].feedback_seq;

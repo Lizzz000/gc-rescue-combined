@@ -94,17 +94,17 @@ def intervals(records):
 
 def motor_targets(vx, vy, wz):
     rotate = CENTER_M * wz
-    # Geometry: front/left rear/right rear; all three motor directions are -1.
-    return [-(vy + rotate) / RADIUS_M,
-            -(0.8660254 * vx - 0.5 * vy + rotate) / RADIUS_M,
-            -(-0.8660254 * vx - 0.5 * vy + rotate) / RADIUS_M]
+    # Geometry: ID1 rear / ID2 right front / ID3 left front; motor directions -1.
+    return [-(-vy + rotate) / RADIUS_M,
+            -(0.8660254 * vx + 0.5 * vy + rotate) / RADIUS_M,
+            -(-0.8660254 * vx + 0.5 * vy + rotate) / RADIUS_M]
 
 
 def target_translation(targets):
     """Project motor targets to body vx/vy; a common yaw term cancels exactly."""
-    front, left, right = targets
-    return ((right - left) * RADIUS_M / SQRT3,
-            (-2 * front + left + right) * RADIUS_M / 3)
+    rear, right_front, left_front = targets
+    return ((left_front - right_front) * RADIUS_M / SQRT3,
+            (2 * rear - right_front - left_front) * RADIUS_M / 3)
 
 
 def steady_samples(run, expected, mode, dwell_ms, tolerance, step_tolerance):

@@ -16,7 +16,16 @@ static uint8_t feed(Odometry_State_t *state, float vx, float vy, float wheel_wz,
                     float yaw_rad, uint32_t now_us)
 {
     float wheel[3];
-    Motor_Chassis_Inverse(vx, vy, wheel_wz, wheel);
+    /* 按后/右前/左前接地点独立构造反馈，不调用被测逆解生成自洽输入。 */
+    const float positions[3][2] = {
+        {-.108f,0}, {.054f,-.054f * sqrtf(3.0f)}, {.054f,.054f * sqrtf(3.0f)}
+    };
+    for (unsigned i = 0; i < 3U; ++i)
+    {
+        const float x = positions[i][0], y = positions[i][1];
+        wheel[i] = ((-y / .108f) * (vx - wheel_wz * y) +
+                    (x / .108f) * (vy + wheel_wz * x)) / .035f;
+    }
     return Odometry_Update(state, wheel, yaw_rad, now_us);
 }
 
@@ -216,6 +225,93 @@ static void test_small_angle_and_invalidate(void)
     near(state.data.y_m, previous.y_m + 0.01, 0.00000002);
 }
 
+/** @brief 独立接地点生成编码器位置，覆盖八向、多次25rad回绕及微秒计数回绕。 */
+static void test_position_geometry_and_wrap(void)
+{
+    const double contacts[3][2] = {{-.108,0}, {.054,-.054*sqrt(3.)}, {.054,.054*sqrt(3.)}};
+    const double initial[3] = {12.49,-12.49,.3};
+    for (unsigned direction = 0; direction < 8U; ++direction)
+    {
+        Odometry_State_t state;
+        Odometry_Init(&state);
+        const double vx = .2 * cos(direction * TEST_PI / 4.);
+        const double vy = .2 * sin(direction * TEST_PI / 4.);
+        float speeds[3];
+        double shaft[3];
+        for (unsigned i = 0; i < 3U; ++i)
+        {
+            shaft[i] = ((-contacts[i][1]/.108)*vx + (contacts[i][0]/.108)*vy)/.035;
+            speeds[i] = (float)shaft[i] + .1f; /* 速度偏差不进入编码器位移。 */
+        }
+        for (unsigned n = 0; n <= 1000U; ++n)
+        {
+            float positions[3];
+            for (unsigned i = 0; i < 3U; ++i)
+                positions[i] = (float)remainder(initial[i] + shaft[i] * n * .01, 25.);
+            assert(Odometry_Update_Position(&state, positions, speeds, .7f,
+                                            UINT32_MAX - 5000U + n * 10000U));
+        }
+        near(state.data.x_m, 10.*(vx*cos(.7)-vy*sin(.7)), .000004);
+        near(state.data.y_m, 10.*(vx*sin(.7)+vy*cos(.7)), .000004);
+    }
+    Odometry_State_t state;
+    Odometry_Init(&state);
+    for (unsigned n = 0; n <= 200U; ++n)
+    {
+        float positions[3], speeds[3];
+        for (unsigned i = 0; i < 3U; ++i)
+        {
+            const double x = contacts[i][0], y = contacts[i][1];
+            speeds[i] = (float)(((-y/.108)*(.2-.3*y)+(x/.108)*(-.1+.3*x))/.035);
+            positions[i] = (float)remainder(speeds[i] * n * .01,25.);
+        }
+        /* 轮估计角速度为0.3，实际IMU为0.5；积分必须使用IMU。 */
+        assert(Odometry_Update_Position(&state,positions,speeds,n*.005f,n*10000U));
+    }
+    near(state.data.x_m, (.2*sin(1.)-.1*(cos(1.)-1.))/.5, .000002);
+    near(state.data.y_m, (.2*(1.-cos(1.))-.1*sin(1.))/.5, .000002);
+}
+
+static void test_position_invalid_gap_and_source_change(void)
+{
+    const float speed[3] = {.1f,-.2f,-.3f};
+    float position[3] = {12.49f,-12.49f,.3f};
+    Odometry_State_t state;
+    Odometry_Init(&state);
+    assert(Odometry_Update_Position(&state,position,speed,0,0));
+    for (unsigned n = 1; n <= 100U; ++n)
+        assert(Odometry_Update_Position(&state,position,speed,0,n*10000U));
+    assert(state.data.x_m == 0 && state.data.y_m == 0); /* 停车速度尾迹不产生虚假位移。 */
+    Chassis_Odometry_t before = state.data;
+    assert(!Odometry_Update_Position(&state,position,speed,1,1000000U));
+    assert(state.data.yaw_rad == before.yaw_rad && state.data.valid);
+    position[0] = 5.f;
+    assert(!Odometry_Update_Position(&state,position,speed,0,1010000U));
+    check_invalid(&state,&before); /* 超过可实现转量的跳变不得按回绕吸收。 */
+    assert(Odometry_Update_Position(&state,position,speed,0,1020000U));
+    before = state.data;
+    assert(!Odometry_Update_Position(&state,position,speed,0,1070001U));
+    check_invalid(&state,&before);
+    assert(Odometry_Update_Position(&state,position,speed,0,1080000U));
+    before = state.data;
+    position[1] = NAN;
+    assert(!Odometry_Update_Position(&state,position,speed,0,1090000U));
+    check_invalid(&state,&before);
+    position[1] = 12.51f;
+    assert(!Odometry_Update_Position(&state,position,speed,0,1100000U));
+    assert(!Odometry_Update_Position(NULL,position,speed,0,0));
+    assert(!Odometry_Update_Position(&state,NULL,speed,0,0));
+    position[1] = 0;
+    assert(Odometry_Update_Position(&state,position,speed,0,1110000U));
+    assert(!Odometry_Update_Position(&state,position,NULL,0,1120000U));
+    assert(Odometry_Update(&state,speed,0,1130000U));
+    before = state.data;
+    position[0] = -5.f;
+    assert(Odometry_Update_Position(&state,position,speed,0,1140000U));
+    near(state.data.x_m,before.x_m,0);
+    near(state.data.y_m,before.y_m,0); /* 输入源切换只建新基线。 */
+}
+
 int main(void)
 {
     test_eight_directions();
@@ -224,6 +320,8 @@ int main(void)
     test_timing_and_acceleration();
     test_invalid_and_recovery();
     test_small_angle_and_invalidate();
+    test_position_geometry_and_wrap();
+    test_position_invalid_gap_and_source_change();
     puts("PASS odometry: measured wheels, IMU heading, eight directions, arcs, timing, invalid data and recovery");
     return 0;
 }

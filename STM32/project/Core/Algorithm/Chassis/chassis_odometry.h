@@ -5,6 +5,10 @@
 
 /* 超过此间隔不外推缺失运动；控制层仍须先检查三轮与 IMU 的反馈时效。 */
 #define CHASSIS_ODOMETRY_MAX_INTERVAL_US 50000U
+/* 本车 MIT 反馈位置量程为 [-12.5,+12.5] rad，齿比均为1；回绕周期不是2*pi。 */
+#define CHASSIS_ODOMETRY_ENCODER_PERIOD_RAD 25.0f
+#define CHASSIS_ODOMETRY_MAX_WHEEL_RAD_S 40.0f
+#define CHASSIS_ODOMETRY_MAX_SAMPLE_SKEW_US 30000U
 
 /** @brief 三轮反馈平移与 IMU 航向形成的平面里程计快照。
  * @note 世界坐标的 x/y 轴由 IMU 零航向确定，x 前、y 左、航向逆时针为正。
@@ -25,7 +29,9 @@ typedef struct
 {
     Chassis_Odometry_t data;
     float previous_vx_mps, previous_vy_mps, previous_yaw_rad;
+    float previous_position_rad[3];
     uint8_t initialized;
+    uint8_t input_mode;        /* 内部输入基线类型；切换来源时不跨帧补积分。 */
 } Odometry_State_t;
 
 /** @brief 清零位姿与积分历史；空指针不执行操作。 */
@@ -38,7 +44,7 @@ void Odometry_Invalidate(Odometry_State_t *state);
 
 /** @brief 用一组三轮速度和同帧 IMU 航向更新平面位姿。
  * @param[in,out] state 本底盘非空状态；先调用 Odometry_Init。
- * @param[in] wheel_rad_s 前/左后/右后三个几何轮速，rad/s，已去除电机方向和齿比。
+ * @param[in] wheel_rad_s 后/右前/左前三个几何轮速，rad/s，已去除电机方向和齿比。
  * @param[in] yaw_rad IMU 航向，rad；有限值会规范到 [-pi,pi]。
  * @param[in] now_us 当前有效反馈组的微秒时刻。
  * @return 接受样本返回 1；重复时刻、超长间隔或非法数据返回 0。
@@ -48,5 +54,19 @@ void Odometry_Invalidate(Odometry_State_t *state);
  */
 uint8_t Odometry_Update(Odometry_State_t *state, const float wheel_rad_s[3],
                         float yaw_rad, uint32_t now_us);
+
+/** @brief 用编码器位置增量和 IMU 航向作 SE(2) 积分；正式底盘使用本入口。
+ * @param[in,out] state 同一控制任务拥有的状态，先调用 Odometry_Init。
+ * @param[in] wheel_position_rad 后/右前/左前几何轮角，已去除安装方向，范围±12.5rad。
+ * @param[in] wheel_rad_s 同组实际轮速，仅输出诊断速度，不用于平移位置积分。
+ * @param[in] yaw_rad 同组 IMU 航向，rad，向左转为正。
+ * @param[in] now_us 反馈组时间，us；不接受超过50ms的缺测区间。
+ * @return 接受返回1；非法、重复、超长间隔或不可实现的位置跳变返回0。
+ * @note 参考 WPILib Odometry::Update/Pose2d::Exp，见 README 与 LICENSE-WPILib.txt。
+ *       首点/恢复/输入来源切换只建立基线；25rad解绕，跳变界含30ms采样偏斜。
+ *       速度零偏不会形成位移，但轮滑、轮径误差和IMU漂移仍需外部观测校正。
+ */
+uint8_t Odometry_Update_Position(Odometry_State_t *state, const float wheel_position_rad[3],
+                                 const float wheel_rad_s[3], float yaw_rad, uint32_t now_us);
 
 #endif

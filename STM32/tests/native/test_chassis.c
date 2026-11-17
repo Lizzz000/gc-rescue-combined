@@ -198,7 +198,10 @@ static void feedback_step(uint32_t elapsed_us, const float wheels[3])
     counter_us += elapsed_us;
     test_tick += elapsed_us / 1000U;
     for (unsigned i = 0U; i < 3U; ++i)
+    {
+        dm_motor[i].position = remainderf(dm_motor[i].position + wheels[i] * elapsed_us * .000001f, 25.0f);
         wheel_feedback(i, wheels[i], 1U);
+    }
     step(0U,1U);
 }
 
@@ -415,23 +418,36 @@ static void test_frame_spacing(void)
 /** @brief 独立物理矢量核对120度三轮几何，不用正反解互相掩盖符号错误。 */
 static void test_kinematics(void)
 {
-    const float input[3][3] = {{1,0,0}, {0,1,0}, {0,0,1}};
-    const float expected[3][3] = {
-        {0.0f, 24.743583f, -24.743583f},
-        {28.571429f, -14.285714f, -14.285714f},
-        {3.0857143f, 3.0857143f, 3.0857143f}
+    const float input[][3] = {
+        {1,0,0}, {0,1,0}, {0,0,1}, {-1,0,0}, {0,-1,0}, {0,0,-1},
+        {.18f,-.07f,.3f}, {-.12f,.16f,-.4f}
+    };
+    /* 用户确认的后/右前/左前接地点；以刚体接地点速度作独立判据。 */
+    const float positions[3][2] = {
+        {-.108f,0}, {.054f,-.054f * sqrtf(3.0f)}, {.054f,.054f * sqrtf(3.0f)}
     };
     float wheels[3], body[3];
-    for (unsigned vector = 0; vector < 3U; ++vector)
+    for (unsigned vector = 0; vector < sizeof(input) / sizeof(input[0]); ++vector)
     {
+        float physical_wheels[3];
         Motor_Chassis_Inverse(input[vector][0], input[vector][1], input[vector][2], wheels);
         for (unsigned wheel = 0; wheel < 3U; ++wheel)
-            assert(fabsf(wheels[wheel] - expected[vector][wheel]) < 0.00001f);
+        {
+            const float x = positions[wheel][0], y = positions[wheel][1];
+            const float tx = -y / .108f, ty = x / .108f;
+            const float contact_vx = input[vector][0] - input[vector][2] * y;
+            const float contact_vy = input[vector][1] + input[vector][2] * x;
+            physical_wheels[wheel] = (tx * contact_vx + ty * contact_vy) / .035f;
+            assert(fabsf(wheels[wheel] - physical_wheels[wheel]) < 0.00001f);
+        }
+        Motor_Chassis_Forward(physical_wheels, body);
+        for (unsigned axis = 0; axis < 3U; ++axis)
+            assert(fabsf(body[axis] - input[vector][axis]) < .000001f);
     }
-    const float front_only[3] = {1,0,0};
-    Motor_Chassis_Forward(front_only, body);
+    const float rear_only[3] = {1,0,0};
+    Motor_Chassis_Forward(rear_only, body);
     assert(fabsf(body[0]) < 0.000001f);
-    assert(fabsf(body[1] - 0.023333333f) < 0.000001f);
+    assert(fabsf(body[1] + 0.023333333f) < 0.000001f);
     assert(fabsf(body[2] - 0.10802469f) < 0.000001f);
     const float counter_rotating[3] = {0,-1,1};
     Motor_Chassis_Forward(counter_rotating, body);
@@ -513,12 +529,12 @@ static void test_translation(void)
         {0.282842712f,0.282842712f},{0.282842712f,-0.282842712f},
         {-0.282842712f,0.282842712f},{-0.282842712f,-0.282842712f}
     };
-    /* 直接核对发给 ID1/2/3 的轮速，覆盖前后校正及斜向组合。 */
+    /* 直接核对后/右前/左前轮的 MIT 目标，覆盖前后、左右及斜向组合。 */
     const float expected_motor[8][3] = {
         {0, -9.89743314f, 9.89743314f}, {0, 9.89743314f, -9.89743314f},
-        {-11.42857143f, 5.71428571f, 5.71428571f}, {11.42857143f, -5.71428571f, -5.71428571f},
-        {-8.08122034f, -2.95793191f, 11.03915225f}, {8.08122034f, -11.03915225f, 2.95793191f},
-        {-8.08122034f, 11.03915225f, -2.95793191f}, {8.08122034f, 2.95793191f, -11.03915225f}
+        {11.42857143f, -5.71428571f, -5.71428571f}, {-11.42857143f, 5.71428571f, 5.71428571f},
+        {8.08122034f, -11.03915225f, 2.95793191f}, {-8.08122034f, -2.95793191f, 11.03915225f},
+        {8.08122034f, 2.95793191f, -11.03915225f}, {-8.08122034f, 11.03915225f, -2.95793191f}
     };
     for (unsigned direction = 1; direction <= 8U; ++direction)
     {
@@ -893,7 +909,10 @@ static void test_distance_overshoot_busy_can(void)
     {
         counter_us += 10000U; test_tick += 10U;
         for (unsigned i = 0U; i < 3U; ++i)
+        {
+            dm_motor[i].position = remainderf(dm_motor[i].position + feedback[i] * .01f,25.f);
             wheel_feedback(i,feedback[i],1U);
+        }
         step(0U,0U);
         assert(controls == before && !Chassis_Is_Stopped());
     }
@@ -912,10 +931,10 @@ static void test_vector(void)
     assert(Chassis_Set_Velocity(0.24f,0.32f,0.8f));
     step(10000U,1U);
     body_target(body); near(body[0],0.0027f); near(body[1],0.0036f); near(body[2],0.009f);
-    /* 连续速度入口的前向分量也必须采用实车校正后的电机方向。 */
-    near(motor_velocity[0], -0.13062857f);
-    near(motor_velocity[1], -0.04315053f);
-    near(motor_velocity[2], 0.09046482f);
+    /* 连续速度入口按已确认的后/右前/左前轮布局分解三个分量。 */
+    near(motor_velocity[0], 0.07508571f);
+    near(motor_velocity[1], -0.14600767f);
+    near(motor_velocity[2], -0.01239233f);
     step(15000U,1U);
     body_target(body); near(body[0],0.00675f); near(body[1],0.009f); near(body[2],0.0225f);
     assert(Chassis_Set_Velocity(0.024f,0.032f,-0.8f));
@@ -1086,6 +1105,48 @@ static void test_vector_yaw_hold(void)
     assert(Chassis_Set_Velocity(0.08f, 0.0f, 0.0f));
     step(10000U, 1U);
     body_target(body); near(body[0], 0.0045f); near(body[2], 0.0f);
+}
+
+/** @brief 显式零角目标不调用锁航向PID，切回旧接口仍按当前姿态重新锁定。 */
+static void test_vector_explicit_yaw(void)
+{
+    float body[3];
+    reset_case(0U,0U);
+    assert(enable_ready());
+    assert(!Chassis_Set_Velocity_Explicit_Yaw(.1f,0,2.01f));
+    assert(Chassis_Set_Velocity_Explicit_Yaw(.1f,0,.5f));
+    for (unsigned i = 0U; i < 60U; ++i)
+    {
+        yaw_deg = i * .5f;
+        yaw_rate = 1.0f;
+        step(10000U,1U);
+        body_target(body);
+        assert(body[2] >= 0.0f && body[2] <= .50001f);
+    }
+    near(body[2],.5f);
+    assert(Chassis_Set_Velocity_Explicit_Yaw(.1f,0,0));
+    for (unsigned i = 0U; i < 60U; ++i)
+    {
+        yaw_deg = 40.0f + i * .5f;
+        step(10000U,1U);
+        body_target(body);
+        assert(body[2] >= -.00001f && body[2] <= .50001f);
+    }
+    near(body[2],0); /* 大航向误差及角速反馈也不能使隐式PID越过目标角限幅。 */
+    yaw_rate = 0;
+    assert(Chassis_Set_Velocity(.1f,0,0));
+    step(10000U,1U);
+    body_target(body); near(body[2],0); /* 切回原API重新锁当前姿态。 */
+    yaw_deg += 2.0f;
+    step(10000U,1U);
+    body_target(body); near(body[2],-.016f);
+    assert(Chassis_Set_Velocity_Explicit_Yaw(.1f,0,0));
+    step(10000U,1U);
+    body_target(body); near(body[2],0);
+    imu_ready = 0U;
+    assert(Chassis_Set_Velocity_Explicit_Yaw(0,0,0));
+    step(10000U,1U);
+    body_target(body); near(body[0],0); near(body[1],0); near(body[2],0);
 }
 
 /** @brief 全零向量在平移和转向中都是零速STOP，保留使能且允许下一动作。 */
@@ -1679,6 +1740,43 @@ static void test_default_tuning_profile(void)
     reset_case(0U, 0U);
 }
 
+/** @brief 从实际轮位重建惯性前馈的合力和转矩，防止前馈与逆解共同镜像。 */
+static void test_translation_feedforward_geometry(void)
+{
+    const float axes[][2] = {{1,0}, {0,1}, {-1,0}, {0,-1}, {1,1}, {-1,1}};
+    const float positions[3][2] = {
+        {-.108f,0}, {.054f,-.054f * sqrtf(3.0f)}, {.054f,.054f * sqrtf(3.0f)}
+    };
+    const float kd[3] = {.2f,.25f,.2f}, no_friction[3] = {0,0,0};
+    for (unsigned axis = 0; axis < sizeof(axes) / sizeof(axes[0]); ++axis)
+    {
+        reset_case(0U, 0U);
+        tuning_test = 1U;
+        assert(Chassis_Set_Tuning(kd, 1.0f, no_friction) && enable_ready());
+        const float norm = hypotf(axes[axis][0], axes[axis][1]);
+        const float dx = axes[axis][0] / norm, dy = axes[axis][1] / norm;
+        assert(Chassis_Set_Velocity_Explicit_Yaw(.25f * dx, .25f * dy, 0));
+        step(10000U, 1U);
+        float fx = 0, fy = 0, moment = 0;
+        for (unsigned wheel = 0; wheel < 3U; ++wheel)
+        {
+            const float x = positions[wheel][0], y = positions[wheel][1];
+            const float tangential_speed = (-y / .108f) * (.0045f * dx) +
+                                           (x / .108f) * (.0045f * dy);
+            near(motor_velocity[wheel], -tangential_speed / .035f);
+            /* 电机方向为-1，原始MIT转矩须先转回几何切向力。 */
+            const float force = -captured_torque[wheel] / .035f;
+            const float wx = force * (-y / .108f), wy = force * (x / .108f);
+            fx += wx;
+            fy += wy;
+            moment += x * wy - y * wx;
+        }
+        near(fx, 1.8f * .45f * dx);
+        near(fy, 1.8f * .45f * dy);
+        near(moment, 0);
+    }
+}
+
 /** @brief 执行底盘真实源码回归。 @return 成功为0。 */
 int main(void)
 {
@@ -1703,6 +1801,7 @@ int main(void)
     test_motion_start_cadence();
     test_tracking_wheel_cadence();
     test_vector_yaw_hold();
+    test_vector_explicit_yaw();
     test_zero_vector_stops_actions();
     test_turn();
     test_turn_ramp();
@@ -1716,6 +1815,7 @@ int main(void)
     test_failure_paths();
     test_live_tuning();
     test_default_tuning_profile();
+    test_translation_feedforward_geometry();
     puts("PASS chassis: kinematics, measured dt/wrap, 8-way/vector/turn, distance and fresh three-wheel stop");
     return 0;
 }

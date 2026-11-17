@@ -2,6 +2,7 @@
 import contextlib
 import importlib.util
 import io
+import math
 from pathlib import Path
 import socket
 import struct
@@ -110,6 +111,86 @@ class FakeSocket:
 class LiveTuningTests(unittest.TestCase):
     def parse(self, *args):
         return swd.arguments(["--elf", "unused.elf", *args])
+
+    @staticmethod
+    def hold_result():
+        return {"command": 7, "phase": 4, "error": 0, "sample": {
+            "phase": 4, "error": 0, "enabled": 1, "state_1": 1, "state_2": 1, "state_3": 1,
+            "target_1": 0, "target_2": 0, "target_3": 0, "odom_valid": 1,
+            "end_x_m": -.3, "end_y_m": .02, "end_yaw_rad": .1, "end_valid": 1,
+            "end_stopped": 1, "end_elapsed_ms": 2000, "end_progress_m": .3,
+            "end_target_distance_m": .3}}
+
+    def test_continuous_goal_arguments_and_limits(self):
+        base = ("--command", "7", "--goal-x-m", "-.3", "--goal-y-m", ".02",
+                "--goal-yaw-rad", ".1", "--duration-ms", "20000", "--timeout", "23")
+        self.assertEqual(swd.command_values(self.parse(*base)), [-.3, .02, .1, .2, .5, 20000, 0, 0])
+        for extra in (("--linear-limit", ".201"), ("--angular-limit", ".501"),
+                      ("--linear-limit", ".019"), ("--angular-limit", ".099"),
+                      ("--goal-yaw-rad", "3.142"), ("--goal-x-m", "nan"),
+                      ("--duration-ms", "20001"), ("--timeout", "22")):
+            with self.subTest(extra=extra), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                self.parse(*base, *extra)
+
+    def test_successful_continuous_goal_keeps_enabled_without_publishing_stop(self):
+        session = swd.Session(MemoryClient(), SYMBOLS, Log())
+        session._firmware_verified = True
+        with patch.object(session, "snapshot", return_value=valid_state()), \
+             patch.object(session, "publish", return_value=10) as publish, \
+             patch.object(session, "wait_complete", return_value=self.hold_result()) as complete:
+            result = session.execute(7, [-.3, .02, .1, .2, .5, 20000, 0, 0], 23)
+        self.assertEqual(result["sample"]["enabled"], 1)
+        self.assertEqual([call.args[0] for call in publish.call_args_list], [7])
+        self.assertEqual(complete.call_args.kwargs, {"expected_command": 7})
+        self.assertIn("enabled_hold_preserved", [event for event, _ in session.log.records])
+
+    def test_continuous_goal_bad_hold_or_endpoint_still_publishes_stop(self):
+        for field, value in (("enabled", 0), ("state_2", 0), ("target_3", .1),
+                             ("end_valid", 0), ("end_stopped", 0), ("odom_valid", 0),
+                             ("end_x_m", -.25), ("end_yaw_rad", .3)):
+            session = swd.Session(MemoryClient(), SYMBOLS, Log())
+            session._firmware_verified = True
+            result = self.hold_result()
+            result["sample"][field] = value
+            with self.subTest(field=field), patch.object(session, "snapshot", return_value=valid_state()), \
+                 patch.object(session, "publish", side_effect=[10, 11]) as publish, \
+                 patch.object(session, "wait_complete", side_effect=[result, {}]), self.assertRaises(swd.SessionError):
+                session.execute(7, [-.3, .02, .1, .2, .5, 20000, 0, 0], 23)
+            self.assertEqual([call.args[0] for call in publish.call_args_list], [7, 1])
+
+    def test_continuous_goal_accepts_coarse_ten_degree_yaw_only(self):
+        args = [-.3, .02, .1, .2, .5, 20000, 0, 0]
+        for degrees in (-10, -5.005, 6, 10):
+            result = self.hold_result()
+            result["sample"]["end_yaw_rad"] = args[2] + math.radians(degrees)
+            with self.subTest(degrees=degrees):
+                swd.validate_endpoint(7, args, result)
+        for degrees in (-10.001, 10.001):
+            result = self.hold_result()
+            result["sample"]["end_yaw_rad"] = args[2] + math.radians(degrees)
+            with self.subTest(degrees=degrees), self.assertRaises(swd.SessionError):
+                swd.validate_endpoint(7, args, result)
+
+    def test_continuous_goal_fault_stops_without_retry(self):
+        session = swd.Session(MemoryClient(), SYMBOLS, Log())
+        session._firmware_verified = True
+        with patch.object(session, "snapshot", return_value=valid_state()), \
+             patch.object(session, "publish", side_effect=[10, 11]) as publish, \
+             patch.object(session, "wait_complete", side_effect=[swd.SessionError("firmware fault"), {}]), \
+             self.assertRaisesRegex(swd.SessionError, "firmware fault"):
+            session.execute(7, [-.3, .02, .1, .2, .5, 20000, 0, 0], 23)
+        self.assertEqual([call.args[0] for call in publish.call_args_list], [7, 1])
+
+    def test_terminal_enabled_one_only_accepted_for_expected_command_seven(self):
+        session = swd.Session(MemoryClient(), SYMBOLS, Log())
+        first = {**self.hold_result(), "ack_seq": 7, "sample_seq": 12}
+        second = {**self.hold_result(), "ack_seq": 7, "sample_seq": 14}
+        with patch.object(session, "beat"), patch.object(session, "snapshot", side_effect=[first, second]):
+            self.assertEqual(session.wait_complete(7, 1, expected_command=7)["sample"]["enabled"], 1)
+        wrong = {**first, "command": 4}
+        with patch.object(session, "beat"), patch.object(session, "snapshot", return_value=wrong), \
+             self.assertRaisesRegex(swd.SessionError, "replaced"):
+            session.wait_complete(7, 1, expected_command=7)
 
     def test_motion_limits_and_nonfinite_rejected(self):
         valid = self.parse("--command", "4", "--vx", "0.25")
@@ -358,10 +439,10 @@ class LiveTuningTests(unittest.TestCase):
                                   "--duration-ms", "5000", "--timeout", "8")
             self.assertEqual(swd.command_values(distance), [direction, .05, .05, 5000, 0, 0, 0, 0])
         base = ("--command", "6", "--direction", "1", "--distance-m", "0.05", "--speed-mps", "0.05")
-        for extra in (("--distance-m", "0.009"), ("--distance-m", "0.201"),
+        for extra in (("--distance-m", "0.009"), ("--distance-m", "1.001"),
                       ("--distance-m", "nan"), ("--speed-mps", "0.019"),
                       ("--speed-mps", "0.101"), ("--speed-mps", "inf"),
-                      ("--direction", "3"), ("--duration-ms", "10001"),
+                      ("--direction", "3"), ("--duration-ms", "20001"),
                       ("--duration-ms", "4000", "--timeout", "6"), ("--vx", "0.1")):
             with self.subTest(extra=extra), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 self.parse(*base, *extra)
@@ -382,6 +463,38 @@ class LiveTuningTests(unittest.TestCase):
                  self.assertRaisesRegex(swd.SessionError, "deadline"):
                 session.execute(command, args, 5)
             self.assertEqual([call.args[0] for call in publish.call_args_list], [command, 1])
+
+    def test_one_metre_distance_limits_do_not_extend_timed_motion(self):
+        base = ("--command", "6", "--direction", "1", "--distance-m", "1",
+                "--speed-mps", "0.1", "--duration-ms", "20000")
+        for timeout in (23, 25):
+            args = self.parse(*base, "--timeout", str(timeout))
+            self.assertEqual(swd.command_values(args), [1, 1, .1, 20000, 0, 0, 0, 0])
+            self.assertEqual(args.timeout, timeout)
+        for extra in (("--timeout", "22"), ("--timeout", "25.001"),
+                      ("--timeout", "23", "--duration-ms", "20001"),
+                      ("--timeout", "23", "--distance-m", "1.000001"),
+                      ("--timeout", "23", "--speed-mps", "0.100001")):
+            with self.subTest(extra=extra), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                self.parse(*base, *extra)
+        for command in (("--command", "4", "--vx", "0.1", "--duration-ms", "1501"),
+                        ("--command", "4", "--vx", "0.1", "--timeout", "15.001"),
+                        ("--command", "5", "--duration-ms", "1501"),
+                        ("--command", "5", "--timeout", "15.001")):
+            with self.subTest(command=command), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                self.parse(*command)
+
+    def test_direct_execute_rejects_excessive_timeout_without_writes(self):
+        for command, args, timeout in ((6, [1, 1, .1, 20000, 0, 0, 0, 0], 25.001),
+                                       (4, [.1, 0, 0, 800, 0, 0, 0, 0], 15.001),
+                                       (6, [1, 1, .1, 20000, 0, 0, 0, 0], float("inf"))):
+            session = swd.Session(MemoryClient(), SYMBOLS, Log())
+            session._firmware_verified = True
+            with self.subTest(command=command, timeout=timeout), \
+                 patch.object(session, "snapshot", return_value=valid_state()), \
+                 self.assertRaisesRegex(swd.SessionError, "Command timeout"):
+                session.execute(command, args, timeout)
+            self.assertEqual(session.client.writes, [])
 
     def test_distance_timeout_rejected_before_ram_write(self):
         session = swd.Session(MemoryClient(), SYMBOLS, Log())

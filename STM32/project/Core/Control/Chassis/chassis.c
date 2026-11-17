@@ -25,7 +25,7 @@
 
 typedef enum { IDLE, TRANSLATION, DISTANCE, VELOCITY, TURN } Chassis_Mode_t;
 
-/* 轮序、命令 ID、方向、反馈轴/轮轴齿比、MIT 速度阻尼均沿旧车配置。 */
+/* ID1后轮、ID2右前轮、ID3左前轮；方向、齿比与MIT速度阻尼沿实测配置。 */
 static const uint16_t motor_id[3] = {1U, 2U, 3U};
 static const float motor_direction[3] = {-1.0f, -1.0f, -1.0f};
 static const float motor_gear_ratio[3] = {1.0f, 1.0f, 1.0f};
@@ -60,6 +60,7 @@ static float distance_axis_x, distance_axis_y;
 static uint32_t distance_timeout_ms, distance_progress_ms, distance_stop_ms;
 static uint8_t distance_completion_pending;
 static float vector_target[3], vector_ramp[3];
+static uint8_t vector_hold_yaw;
 static float turn_requested_deg, turn_accumulated_deg, turn_last_yaw_deg;
 static float turn_speed;
 static uint8_t distance_turn_blend;
@@ -213,22 +214,25 @@ static void Update_Odometry(uint32_t now_us,
         feedback[i] = dm_motor[i];
     taskEXIT_CRITICAL();
     uint8_t ready = imu_valid, fresh_group = 1U;
-    float wheel[3];
+    float wheel[3], position[3];
     for (unsigned i = 0U; i < 3U; ++i)
     {
         if (feedback[i].id != motor_id[i] || feedback[i].state != 1U ||
-            !isfinite(feedback[i].velocity) || fabsf(feedback[i].velocity) > motor_vmax[i] ||
+            !isfinite(feedback[i].position) || !isfinite(feedback[i].velocity) ||
+            fabsf(feedback[i].velocity) > motor_vmax[i] ||
             (uint32_t)(now_ms - feedback[i].feedback_time_ms) > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS)
             ready = 0U;
         if (feedback[i].feedback_seq == odometry_seq[i])
             fresh_group = 0U;
         wheel[i] = feedback[i].velocity * motor_direction[i] / motor_gear_ratio[i];
+        position[i] = feedback[i].position * motor_direction[i] / motor_gear_ratio[i];
     }
     if (!ready)
         Odometry_Invalidate(&odometry);
     else if (!odometry.initialized || fresh_group)
     {
-        Odometry_Update(&odometry, wheel, CHASSIS_STRAIGHT_YAW_SIGN * imu->yaw_deg * DEG_TO_RAD, now_us);
+        Odometry_Update_Position(&odometry, position, wheel,
+            CHASSIS_STRAIGHT_YAW_SIGN * imu->yaw_deg * DEG_TO_RAD, now_us);
         for (unsigned i = 0U; i < 3U; ++i)
             odometry_seq[i] = feedback[i].feedback_seq;
     }
@@ -252,6 +256,7 @@ void Chassis_Stop(void)
     turn_speed = 0.0f;
     distance_turn_blend = 0U;
     distance_completion_pending = 0U;
+    vector_hold_yaw = 0U;
     run_duration_ms = 0U;
     run_started = turn_settling = 0U;
     for (unsigned i = 0U; i < 3U; ++i)
@@ -540,7 +545,7 @@ uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg)
  * @return 请求接受返回 1，否则 0；全零请求回零速待命。
  * @note 连续更新平移目标保留航向；显式转向结束后按当前姿态重新锁定，斜坡连续。
  */
-uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
+static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw)
 {
     INS_control_data_t imu;
     if (!enabled || !isfinite(vx) || !isfinite(vy) || !isfinite(wz) ||
@@ -556,7 +561,7 @@ uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
         return 0U;
     if (mode == IDLE)
         step_start_us = __HAL_TIM_GET_COUNTER(&htim2);
-    if (wz == 0.0f && (mode != VELOCITY || vector_target[2] != 0.0f))
+    if (hold_yaw && wz == 0.0f && (mode != VELOCITY || vector_target[2] != 0.0f || !vector_hold_yaw))
     {
         target_yaw_deg = CHASSIS_STRAIGHT_YAW_SIGN * imu.yaw_deg;
         PID_clear(&yaw_pid);
@@ -564,8 +569,19 @@ uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
     vector_target[0] = vx;
     vector_target[1] = vy;
     vector_target[2] = wz;
+    vector_hold_yaw = hold_yaw;
     mode = VELOCITY;
     return 1U;
+}
+
+uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
+{
+    return Set_Velocity(vx, vy, wz, 1U);
+}
+
+uint8_t Chassis_Set_Velocity_Explicit_Yaw(float vx, float vy, float wz)
+{
+    return Set_Velocity(vx, vy, wz, 0U);
 }
 
 /** @brief 沿旧 Send_Chassis_Targets 整体限制轮速，加入方向/齿比后发三帧 MIT。
@@ -604,10 +620,11 @@ static uint8_t Send_Chassis_Targets(float vx, float vy, float wz)
         fx = 1.8f * ax * chassis_tuning_ff_gain;
         fy = 1.8f * ay * chassis_tuning_ff_gain;
     }
+    /* 沿后/右前/左前切向分配平移力，三轮合力为 (fx,fy)，合转矩为零。 */
     const float wheel_torque[3] = {
-        CHASSIS_WHEEL_RADIUS * (2.0f * fy / 3.0f),
-        CHASSIS_WHEEL_RADIUS * (fx / 1.7320508f - fy / 3.0f),
-        CHASSIS_WHEEL_RADIUS * (-fx / 1.7320508f - fy / 3.0f)
+        CHASSIS_WHEEL_RADIUS * (-2.0f * fy / 3.0f),
+        CHASSIS_WHEEL_RADIUS * (fx / 1.7320508f + fy / 3.0f),
+        CHASSIS_WHEEL_RADIUS * (-fx / 1.7320508f + fy / 3.0f)
     };
     for (unsigned i = 0U; i < 3U; ++i)
     {
@@ -849,7 +866,8 @@ void Chassis_Loop(void)
     }
     else if (mode == VELOCITY)
     {
-        const float target_wz = vector_target[2] == 0.0f ? Hold_Yaw(&imu, dt) : vector_target[2];
+        const float target_wz = vector_hold_yaw && vector_target[2] == 0.0f ?
+            Hold_Yaw(&imu, dt) : vector_target[2];
         Service_Vector_Run(target_wz, dt);
         vx = vector_ramp[0];
         vy = vector_ramp[1];
