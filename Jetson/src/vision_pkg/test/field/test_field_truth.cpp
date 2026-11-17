@@ -28,7 +28,7 @@ int main()
     Scene s;
     s.cam_x = 0.25 + kSeedCamShiftX * shift;
     s.cam_d += kSeedCamShiftD * shift;
-    s.yaw_deg = 22;
+    s.yaw_deg = 23;
     const auto inner = innerTruth(s, size);
     CHECK(inner.corners[1].x >= size.width && inner.corners[2].x >= size.width);
     CHECK(!innerEdgesMeetImage(inner, size));

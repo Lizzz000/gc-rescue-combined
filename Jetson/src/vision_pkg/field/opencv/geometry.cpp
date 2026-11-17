@@ -313,7 +313,7 @@ std::vector<cv::Point2f> priorQuad(const std::vector<cv::Point2f> & pts)
 std::vector<std::vector<cv::Point2f>> edgePoints(
   const std::vector<cv::Point2f> & pts,
   const std::vector<cv::Point2f> & prior,
-  const FieldConfig & cfg)
+  const FieldConfig & cfg, int only_edge = -1)
 {
   const int edges[4][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}};
   cv::Point2f center(0, 0);
@@ -324,6 +324,7 @@ std::vector<std::vector<cv::Point2f>> edgePoints(
   const int nbins = std::max(4, cfg.edge_bins);
   std::vector<std::vector<cv::Point2f>> out(4);
   for (int i = 0; i < 4; ++i) {
+    if (only_edge >= 0 && i != only_edge) {continue;}
     const cv::Point2f a = prior[edges[i][0]], b = prior[edges[i][1]];
     const cv::Point2f ab = b - a;
     const double L = cv::norm(ab);
@@ -353,6 +354,38 @@ std::vector<std::vector<cv::Point2f>> edgePoints(
   return out;
 }
 
+// 近边大断口时，用左右两端的实际近墙底缘跨过缺口。两端都要有独立内点。
+bool fitBrokenNearEdge(
+  const QuadEvidence & evidence, const std::vector<cv::Point2f> & prior, const FieldConfig & cfg,
+  Line & line)
+{
+  FieldConfig dense = cfg;
+  dense.corner_exclude_frac = std::min(0.015, cfg.corner_exclude_frac);
+  dense.edge_bins = std::max(96, cfg.edge_bins);
+  const auto samples = edgePoints(evidence.pts, prior, dense, 2);
+  const auto & points = samples[2];
+  Line candidate;
+  int inliers = 0;
+  if (!fitLineRobust(points, cfg, candidate, inliers) || inliers < cfg.min_side_inliers) {
+    return false;
+  }
+  const auto edge = prior[3] - prior[2];
+  const double length_sq = edge.dot(edge);
+  if (length_sq < 16.0) {return false;}
+  int ends[2]{};
+  const double band = std::max(cfg.fit_outlier_px, kMinInlierBandPx);
+  for (const auto & p : points) {
+    if (pointLineDistance(candidate, p) > band) {continue;}
+    const double along = (p - prior[2]).dot(edge) / length_sq;
+    if (along < 0.25) {++ends[0];}
+    if (along > 0.75) {++ends[1];}
+  }
+  const int support_per_end = std::max(3, (cfg.min_side_inliers + 3) / 4);
+  if (ends[0] < support_per_end || ends[1] < support_per_end) {return false;}
+  line = candidate;
+  return true;
+}
+
 // 两个四边形的"跳变程度": 平均角点距离 / 对角线长度
 double quadJumpRatio(const std::vector<cv::Point2f> & a, const std::vector<cv::Point2f> & b)
 {
@@ -369,10 +402,11 @@ double quadJumpRatio(const std::vector<cv::Point2f> & a, const std::vector<cv::P
 
 // 近端角点：近边实测的是近墙前立面底边（z=0），两侧实测的是侧墙顶外沿（z=h），外轮廓在近角处是六边形，
 // 侧线与近边的交点总落在真实近角外侧。近边实测点在画内结束时，前立面底边的端点就是近角，取交点与端点中靠内者；
-// 近边支持延伸到画面边界（有贴边点落在近边带内）时端点不是角点，保留交点。
+// 拟合带之外只沿与近边相连的地面侧轮廓找端点，避免用墙顶或孤立紫点补角。
+// 近边支持延伸到画面边界时端点不是角点，保留直线的画外交点。
 void trimNearCorners(
   const Line & near_line, const QuadEvidence & evidence, const FieldConfig & cfg,
-  std::vector<cv::Point2f> & quad)
+  std::vector<cv::Point2f> & quad, bool near_rebuilt)
 {
   const double band = std::max(cfg.fit_outlier_px, kMinInlierBandPx);
   const cv::Point2f u(static_cast<float>(near_line.b), static_cast<float>(-near_line.a));
@@ -384,10 +418,51 @@ void trimNearCorners(
     lo = std::min(lo, along(p)); hi = std::max(hi, along(p));
   }
   if (lo > hi) {return;}
+  const double core_lo = lo, core_hi = hi;
+  auto signed_distance = [&](const cv::Point2f & p) {
+      return near_line.a * p.x + near_line.b * p.y + near_line.c;
+    };
+  const double ground_side = signed_distance((quad[0] + quad[1]) * 0.5f) < 0 ? 1.0 : -1.0;
+  const double continuation_band = 4.0 * band;
+  auto on_near_contour = [&](const cv::Point & p) {
+      const double ground_distance = ground_side * signed_distance(p);
+      return ground_distance >= -band && ground_distance <= continuation_band;
+    };
+  for (const auto & path : evidence.contours) {
+    if (path.empty()) {continue;}
+    // 从条带外开始绕一圈，跨轮廓起点的片段也能合并。
+    const auto cut = std::find_if_not(path.begin(), path.end(), on_near_contour);
+    const std::size_t first = std::size_t(cut - path.begin()) % path.size();
+    double segment_lo = 1e18, segment_hi = -1e18;
+    bool touches_lo = false, touches_hi = false;
+    auto finish_segment = [&] {
+        if (touches_lo) {lo = std::min(lo, segment_lo);}
+        if (touches_hi) {hi = std::max(hi, segment_hi);}
+        segment_lo = 1e18; segment_hi = -1e18;
+        touches_lo = false; touches_hi = false;
+      };
+    for (std::size_t index = 0; index < path.size(); ++index) {
+      const auto & p = path[(first + index) % path.size()];
+      if (!on_near_contour(p)) {
+        finish_segment();
+        continue;
+      }
+      const double s = along(p);
+      segment_lo = std::min(segment_lo, s);
+      segment_hi = std::max(segment_hi, s);
+      if (pointLineDistance(near_line, p) <= band) {
+        touches_lo |= std::abs(s - core_lo) <= band;
+        touches_hi |= std::abs(s - core_hi) <= band;
+      }
+    }
+    finish_segment();
+  }
   bool clipped_lo = false, clipped_hi = false;
   for (const auto & p : evidence.clipped) {
-    if (pointLineDistance(near_line, p) > band) {continue;}
-    (along(p) < 0.5 * (lo + hi) ? clipped_lo : clipped_hi) = true;
+    if (pointLineDistance(near_line, p) > continuation_band) {continue;}
+    const double s = along(p);
+    if (s <= core_lo + band) {clipped_lo = true;}
+    if (s >= core_hi - band) {clipped_hi = true;}
   }
   auto pointAt = [&](double s) {
     const double base = -near_line.c;   // 线上离原点最近点 = base·n
@@ -395,11 +470,13 @@ void trimNearCorners(
     return foot + u * static_cast<float>(s - double((foot - origin).dot(u)));
   };
   // quad 为 top∩left、top∩right、bottom∩right、bottom∩left；后两个在近边上；按沿线坐标分别夹到实测端点以内。
+  const double mid = 0.5 * (along(quad[2]) + along(quad[3]));
   for (int k : {2, 3}) {
     const double s = along(quad[k]);
-    const bool low_end = s < 0.5 * (along(quad[2]) + along(quad[3]));
-    if (low_end && !clipped_lo && s < lo) {quad[k] = pointAt(lo);}
-    if (!low_end && !clipped_hi && s > hi) {quad[k] = pointAt(hi);}
+    const bool low_end = s < mid;
+    // 断口较大时凸包侧线也可能内收，直接用两端独立支持的底边端点。
+    if (low_end && !clipped_lo && (near_rebuilt || s < lo)) {quad[k] = pointAt(lo);}
+    if (!low_end && !clipped_hi && (near_rebuilt || s > hi)) {quad[k] = pointAt(hi);}
   }
 }
 
@@ -422,10 +499,14 @@ FitOut fitQuad(const QuadEvidence & evidence, const FieldConfig & cfg)
 
   std::vector<Line> lines(4);
   std::vector<std::string> degraded;
+  bool near_rebuilt = false;
   for (int i = 0; i < 4; ++i) {
     Line l; int n = 0;
-    const bool fitted = fitLineRobust(sides[i], cfg, l, n);
-    if (!fitted || n < cfg.min_side_inliers) {
+    const bool fitted = fitLineRobust(sides[i], cfg, l, n) && n >= cfg.min_side_inliers;
+    const bool recovered_near = i == 2 && !fitted &&
+      fitBrokenNearEdge(evidence, prior, cfg, l);
+    if (recovered_near) {near_rebuilt = true;}
+    if (!fitted && !recovered_near) {
       if (static_cast<int>(clipped[i].size()) >= cfg.min_side_points) {
         out.out_of_frame = true;
         out.reason = std::string(names[i]) + " 边整侧出画, 几何不完整";
@@ -460,7 +541,9 @@ FitOut fitQuad(const QuadEvidence & evidence, const FieldConfig & cfg)
   if (!ok) {out.reason = "对边近似平行, 交点退化"; return out;}
 
   std::vector<cv::Point2f> corners{p1, p2, p3, p4};
-  if (out.edge_state[2] == EdgeState::MEASURED) {trimNearCorners(lines[2], evidence, cfg, corners);}
+  if (out.edge_state[2] == EdgeState::MEASURED) {
+    trimNearCorners(lines[2], evidence, cfg, corners, near_rebuilt);
+  }
   std::vector<cv::Point2f> quad = orderCorners(corners);
   // 角点一致性（单侧）：先验凸包来自实测点，真实外沿只会在缺证据或出画处越出凸包；
   // 角点落进先验内部且离最近先验角超过容差，才说明直线被带偏，此时退回先验框。画外角点必在凸包外，不受此约束。
@@ -530,6 +613,25 @@ cv::Size bevSize(const FieldConfig & cfg)
   const int w = cfg.bev_width > 0 ? cfg.bev_width : static_cast<int>(std::lround(inner_w * cfg.bev_px_per_m));
   const int h = cfg.bev_height > 0 ? cfg.bev_height : static_cast<int>(std::lround(inner_h * cfg.bev_px_per_m));
   return {std::max(16, w), std::max(16, h)};
+}
+
+double groundOutsideImage(
+  const std::vector<cv::Point2f> & ground, cv::Size image_size, cv::Size bev_size,
+  const cv::Mat & image_to_bev)
+{
+  const float right = image_size.width - 1.f, bottom = image_size.height - 1.f;
+  const auto in_frame = [&](const cv::Point2f & p) {
+      return p.x >= 0 && p.x <= right && p.y >= 0 && p.y <= bottom;
+    };
+  if (std::all_of(ground.begin(), ground.end(), in_frame)) {return 0.0;}
+
+  const std::vector<cv::Point2f> frame{{0, 0}, {right, 0}, {right, bottom}, {0, bottom}};
+  std::vector<cv::Point2f> visible;
+  if (cv::intersectConvexConvex(ground, frame, visible) <= 0 || visible.size() < 3) {return 1.0;}
+  cv::perspectiveTransform(visible, visible, image_to_bev);
+  const double full_area = double(bev_size.width - 1) * (bev_size.height - 1);
+  const double ratio = cv::contourArea(visible) / full_area;
+  return std::isfinite(ratio) ? 1.0 - std::clamp(ratio, 0.0, 1.0) : 1.0;
 }
 
 namespace {
@@ -612,7 +714,7 @@ bool fitAnchoredSide(const std::vector<cv::Point2f> & points, const cv::Point2f 
 
 InnerQuad fitInnerQuad(
   const cv::Mat & interior, const std::vector<cv::Point2f> & outer, const FieldConfig & cfg,
-  const cv::Mat & lab, const cv::Mat & purple)
+  const cv::Mat & lab, const cv::Mat & purple, int missing_purple_side)
 {
   // 扫描用外沿鸟瞰（外沿四边形到米制外沿矩形的单应，像素密度与输出 BEV 相同）；只是图像的射影重参数化，
   // 直线仍是直线。外沿近边是近墙前立面底边（z=0），其余外沿边在墙顶（z=h），因此只借用近边。
@@ -626,10 +728,19 @@ InnerQuad fitInnerQuad(
   const cv::Mat forward = cv::getPerspectiveTransform(outer, rect);
   const cv::Mat inverse = forward.inv();
   // 在处理图上保留独立像素证据，避免外框连着背景时，固定大小的鸟瞰把可见地面压成不足几行。
-  const cv::Rect bounds = cv::boundingRect(outer) & cv::Rect(0, 0, interior.cols, interior.rows);
+  auto scan_quad = outer;
+  if (missing_purple_side == 1 || missing_purple_side == 3) {
+    // 凸包的猜测边可能切进地面。仅在该侧放宽取证范围，仍要求真实的颜色终点。
+    const int top = missing_purple_side == 1 ? 1 : 0;
+    const int bottom = missing_purple_side == 1 ? 2 : 3;
+    const float margin = static_cast<float>(cfg.expand_frac);
+    scan_quad[top] += (outer[top] - outer[1 - top]) * margin;
+    scan_quad[bottom] += (outer[bottom] - outer[5 - bottom]) * margin;
+  }
+  const cv::Rect bounds = cv::boundingRect(scan_quad) & cv::Rect(0, 0, interior.cols, interior.rows);
   cv::Mat mask = cv::Mat::zeros(bounds.size(), CV_8U);
   std::vector<cv::Point> polygon;
-  for (const auto & p : outer) {polygon.emplace_back(cvRound(p.x) - bounds.x, cvRound(p.y) - bounds.y);}
+  for (const auto & p : scan_quad) {polygon.emplace_back(cvRound(p.x) - bounds.x, cvRound(p.y) - bounds.y);}
   cv::fillConvexPoly(mask, polygon, cv::Scalar(255));
   cv::bitwise_and(mask, interior(bounds), mask);
   const double purple_hue = (cfg.purple_hue_lo_deg + cfg.purple_hue_hi_deg) * CV_PI / 360;
@@ -676,6 +787,7 @@ InnerQuad fitInnerQuad(
   const cv::Rect2f frame(0.f, 0.f, float(interior.cols), float(interior.rows));
   const bool observed_near = frame.contains(outer[2]) && frame.contains(outer[3]);
   bool far_measured = false;
+  int recovered_side = -1;
   for (int i = 0; i < 3; ++i) {
     if (i > 0 && far_measured) {
       // 远内沿以上是远墙或凸起物块，不能把那里的内部颜色竖边当作地面侧内沿。
@@ -685,7 +797,8 @@ InnerQuad fitInnerQuad(
       }), points.end());
     }
     Line line; int inliers = 0;
-    const bool anchored = i > 0 && observed_near && !lab.empty() &&
+    const bool recover_side = i > 0 && (i == 1 ? 1 : 3) == missing_purple_side;
+    const bool anchored = i > 0 && observed_near && !lab.empty() && !recover_side &&
       fitAnchoredSide(sides[i].scan, {i == 1 ? w - tx : tx, h}, cfg, line);
     bool measured = anchored ||
       (fitLineRobust(sides[i].scan, cfg, line, inliers) && inliers >= cfg.min_side_inliers);
@@ -710,20 +823,34 @@ InnerQuad fitInnerQuad(
       std::vector<cv::Point2f> source;
       cv::perspectiveTransform(sides[i].scan, source, inverse);
       int supported = 0;
+      int ground_transitions = 0;
       const int radius = cfg.edge_probe_radius + cfg.interior_open_ksize;
       for (size_t k = 0; k < source.size(); ++k) {
         if (pointLineDistance(line, sides[i].scan[k]) > std::max(cfg.fit_outlier_px, kMinInlierBandPx)) {continue;}
         const int y = cvRound(source[k].y);
+        const int x_center = cvRound(source[k].x);
+        const int outward = i == 1 ? 1 : -1;
         for (int step = 1; step <= radius; ++step) {
-          const int x = cvRound(source[k].x + (i == 1 ? step : -step));
+          const int x = x_center + outward * step;
           if (x >= 0 && y >= 0 && x < purple.cols && y < purple.rows && purple.at<uchar>(y, x)) {++supported; break;}
         }
+        if (!recover_side || y < 0 || y >= interior.rows) {continue;}
+        const int in = x_center - outward * radius, out = x_center + outward * radius;
+        if (in >= 0 && in < interior.cols && out >= 0 && out < interior.cols &&
+          interior.at<uchar>(y, in) && !interior.at<uchar>(y, out) &&
+          !interior.at<uchar>(y, out - outward)) {++ground_transitions;}
       }
       measured = supported >= cfg.min_side_inliers;
+      // 仅在其余三条外边已有紫色和几何约束时，缺紫边的一侧才可用独立的地面颜色边界。
+      if (!measured && ground_transitions >= cfg.min_side_points) {
+        measured = true;
+        recovered_side = i;
+      }
     }
     if (measured) {
       lines[i] = line;
       ++out.measured_edges;
+      out.measured[i] = true;
     } else {
       lines[i] = lineThrough(sides[i].a, sides[i].b);
     }
@@ -745,13 +872,22 @@ InnerQuad fitInnerQuad(
     const Line near_outer = lineThrough(rect[3], rect[2]);
     if (ok) {image[2] = intersectLines(near_outer, lines[1], ok);}
     if (ok) {image[3] = intersectLines(near_outer, lines[2], ok);}
+  } else if (ok && recovered_side > 0) {
+    // 缺紫一侧的外框角不作近锚。用实测内色侧线与近墙底边的相交位置重建该侧。
+    image[recovered_side + 1] = intersectLines(lineThrough(rect[3], rect[2]), lines[recovered_side], ok);
   }
   bool inside = ok && isConvexQuad(image);
-  for (const auto & c : image) {inside = inside && c.x >= -1 && c.y >= -1 && c.x <= w + 1 && c.y <= h + 1;}
+  const double scan_margin = w * cfg.expand_frac;
+  const double min_x = recovered_side == 2 ? -scan_margin - 1 : -1;
+  const double max_x = recovered_side == 1 ? w + scan_margin + 1 : w + 1;
+  for (const auto & c : image) {
+    inside = inside && c.x >= min_x && c.y >= -1 && c.x <= max_x && c.y <= h + 1;
+  }
   // 交点退化或不再是包在外沿内的凸四边形时，本帧内沿不可信，整体用内缩先验。
   if (!inside) {
     image = {{tx, ty}, {w - tx, ty}, {w - tx, h}, {tx, h}};
     out.measured_edges = 0;
+    std::fill(std::begin(out.measured), std::end(out.measured), false);
   }
   const float iw = inner.width - 1.f, ih = inner.height - 1.f;
   const float near_y = static_cast<float>(ih *

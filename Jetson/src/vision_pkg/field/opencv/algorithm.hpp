@@ -88,6 +88,7 @@ cv::Mat morph(const cv::Mat & mask, const FieldConfig & cfg);
 struct QuadEvidence
 {
   std::vector<cv::Point2f> pts, clipped;
+  std::vector<std::vector<cv::Point>> contours;  // 有序原始轮廓，用于验证近边延伸是否连续
 };
 FitOut fitQuad(const QuadEvidence & evidence, const FieldConfig & cfg);
 bool checkQuad(
@@ -95,6 +96,10 @@ bool checkQuad(
   std::string & why);
 // 内沿 BEV 尺寸（内部地面），见 wall_thickness_m。
 cv::Size bevSize(const FieldConfig & cfg);
+// 裁剪完整内沿四边形，再把可见多边形投回 BEV，计算地面缺失比例。
+double groundOutsideImage(
+  const std::vector<cv::Point2f> & ground, cv::Size image_size, cv::Size bev_size,
+  const cv::Mat & image_to_bev);
 // 内沿四边形（内部地面，四角都在 z=0）：远端和两侧取紫色围边到内部颜色的过渡线，近端内沿被近墙挡住，
 // 由地面单应从外沿近边（前立面底边）内推 wall_thickness_m 得到。corners、鸟瞰、分区和区域都用它；
 // 外沿四边形只用于搜索、评分与跟踪。interior 与 outer 同属一张搜索图坐标；没测到的边沿用外沿内缩先验。
@@ -102,10 +107,11 @@ struct InnerQuad
 {
   std::vector<cv::Point2f> quad;   // TL/TR/BR/BL，与 outer 同坐标
   int measured_edges = 0;          // 远端与两侧内沿中本帧实测的条数（0..3）
+  bool measured[3] = {};           // 远、右、左内沿
 };
 InnerQuad fitInnerQuad(
   const cv::Mat & interior, const std::vector<cv::Point2f> & outer, const FieldConfig & cfg,
-  const cv::Mat & lab = cv::Mat(), const cv::Mat & purple = cv::Mat());
+  const cv::Mat & lab = cv::Mat(), const cv::Mat & purple = cv::Mat(), int missing_purple_side = -1);
 // 同序角点平均距离 / a 的对角线长度，是无量纲跳变比例；输入应保持 TL/TR/BR/BL 顺序。
 double quadJumpRatio(const std::vector<cv::Point2f> & a, const std::vector<cv::Point2f> & b);
 
@@ -137,6 +143,7 @@ struct SplitMeasurement
 {
   bool valid = false;
   double top_x = 0.0, bottom_x = 0.0, confidence = 0.0;
+  bool suspect = false;
 };
 SplitMeasurement detectSplitBlack(const cv::Mat & bev, const FieldConfig & cfg);
 

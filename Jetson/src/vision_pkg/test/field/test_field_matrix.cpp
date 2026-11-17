@@ -106,7 +106,7 @@ void addViewpoint(MatrixBuilder & m, const Scene & base)
   {Scene s = base; s.cam_d = 0.3; s.cam_h = 0.18; m.add("视角", "近", s, Kind::SINGLE, kEdgeLineTolNearPx);}
   {Scene s = base; s.yaw_deg = 12; m.add("视角", "偏航12°", s);}
   {Scene s = base; s.cam_h = 0.12; m.add("视角", "低机位", s);}
-  {Scene s = base; s.cam_x = 0.25; s.yaw_deg = 22; m.add("视角", "整侧出画", s, Kind::NEGATIVE_GEOMETRY);}
+  {Scene s = base; s.cam_x = 0.25; s.yaw_deg = 23; m.add("视角", "整侧出画", s, Kind::NEGATIVE_GEOMETRY);}
 }
 
 void addImaging(MatrixBuilder & m, const Scene & base)

@@ -129,8 +129,12 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
   });
   std::vector<cv::Point> joined;
   int joined_count = 0;
+  const double min_area = cfg_.min_area_frac * img_area;
+  const double min_fragment_length = std::sqrt(min_area);
   for (size_t index : component_order) {
-    if (joined_count >= 4 || component_areas[index] < cfg_.min_area_frac * img_area) {break;}
+    if (joined_count >= 4) {break;}
+    const auto bounds = cv::boundingRect(contours[index]);
+    if (std::max(bounds.width, bounds.height) < min_fragment_length) {continue;}
     joined.insert(joined.end(), contours[index].begin(), contours[index].end());
     ++joined_count;
   }
@@ -150,14 +154,13 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
   std::vector<Cand> cands;
   for (size_t contour_index = 0; contour_index < contours.size(); ++contour_index) {
     const auto & c = contours[contour_index];
-    const double area = component_areas[contour_index];
-    if (area < cfg_.min_area_frac * img_area) {continue;}
+    const auto bb = cv::boundingRect(c);
+    if (bb.area() < min_area) {continue;}
     cv::RotatedRect rr = cv::minAreaRect(c);
     const double rw = rr.size.width, rh = rr.size.height;
     if (rw < 2 || rh < 2) {continue;}
     const double ratio = std::max(rw, rh) / std::max(std::min(rw, rh), 1e-6);
     if (ratio < cfg_.min_rect_ratio_lo || ratio > cfg_.min_rect_ratio_hi) {continue;}
-    const cv::Rect bb = cv::boundingRect(c);
     // 人工 ROI 裁剪边不是场地实测边；候选被裁断时放弃 ROI 假设，退回全图搜索。
     if ((bb.x <= kBorderPx && offset.x > 0) || (bb.y <= kBorderPx && offset.y > 0) ||
       (bb.x + bb.width >= img.cols - kBorderPx && offset.x + img.cols < small.cols) ||
@@ -169,9 +172,12 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
         // 凸包仍然包住整个场地, 所以用凸包。
     std::vector<cv::Point> hull;
     cv::convexHull(c, hull);
-    const double fill = cv::contourArea(hull) / std::max(rw * rh, 1e-6);
+    const double hull_area = cv::contourArea(hull);
+    // 开口和断开的紫框本身占色面积很少，但可围住足够大的场地。拟合仍只读实际紫色像素。
+    if (hull_area < min_area) {continue;}
+    const double fill = hull_area / std::max(rw * rh, 1e-6);
     if (fill < cfg_.min_fill_ratio) {continue;}
-    Cand candidate; candidate.area = area;
+    Cand candidate; candidate.area = component_areas[contour_index];
     // 形态学只负责连通胶带；拟合回到连通域内原始紫色证据，不能把膨胀边当实测边。
     cv::Mat component = cv::Mat::zeros(bb.size(), CV_8U);
     std::vector<std::vector<cv::Point>> one{c};
@@ -180,13 +186,15 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
     cv::bitwise_and(component, geometry_purple(bb), component);
     std::vector<std::vector<cv::Point>> raw_contours;
     cv::findContours(component, raw_contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
-    for (const auto & raw : raw_contours) {
-      for (const auto & p : raw) {
-        const cv::Point q = p + bb.tl();
-        (clippedPoint(q) ? candidate.evidence.clipped : candidate.evidence.pts).emplace_back(float(q.x), float(q.y));
+    for (auto & raw : raw_contours) {
+      for (auto & point : raw) {
+        point += bb.tl();
+        (clippedPoint(point) ? candidate.evidence.clipped : candidate.evidence.pts).emplace_back(
+          point);
       }
     }
     if (candidate.evidence.pts.size() < 4) {continue;}
+    candidate.evidence.contours = std::move(raw_contours);
     cands.push_back(std::move(candidate));
   }
   std::sort(cands.begin(), cands.end(), [](const Cand & u, const Cand & v) {
@@ -247,7 +255,19 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
     if (geometry_interior.empty()) {
       geometry_interior = shadowGeometryMask(lab, interior_mask, HueSector::interior(cfg_));
     }
-    const InnerQuad inner = fitInnerQuad(geometry_interior, fit_result.quad, cfg_, lab, geometry_purple);
+    InnerQuad inner = fitInnerQuad(
+      geometry_interior, fit_result.quad, cfg_, lab, geometry_purple);
+    // 缺紫色的一侧可能误跟到了相邻墙面。只在远端和另一条内侧线都测到时，用地面色差重新拟合。
+    if (inner.measured_edges == 2 && inner.measured[0] &&
+      fit_result.edge_state[2] == EdgeState::MEASURED) {
+      const int side = inner.measured[1] ? 3 : 1;
+      const int opposite = side == 1 ? 3 : 1;
+      if (score.edge_support[side] < 0.85 && score.edge_support[0] > 0.60 &&
+        score.edge_support[2] > 0.60 && score.edge_support[opposite] > 0.60) {
+        auto recovered = fitInnerQuad(geometry_interior, fit_result.quad, cfg_, lab, geometry_purple, side);
+        if (recovered.measured_edges == 3) {inner = std::move(recovered);}
+      }
+    }
     if (inner.measured_edges == 0) {
       if (!reasons.empty()) {reasons += "; ";}
       reasons += "没有可测的内沿";
@@ -395,6 +415,43 @@ bool FieldLocator::prepareFrame(
   return true;
 }
 
+bool FieldLocator::frameCutsGroundEdge(
+  FrameEvidence & evidence, const std::vector<cv::Point2f> & outline) const
+{
+  const auto size = evidence.small.size();
+  constexpr int kSamples = 16;
+  for (int edge = 0; edge < 4; ++edge) {
+    const bool horizontal = edge % 2 == 0;
+    const bool far_border = edge == 1 || edge == 2;
+    const int limit = horizontal ? size.height - 1 : size.width - 1;
+    const int border = far_border ? limit : 0;
+    const auto & a = outline[edge];
+    const auto & b = outline[(edge + 1) % 4];
+    const double normal_a = horizontal ? a.y : a.x;
+    const double normal_b = horizontal ? b.y : b.x;
+    // 单角出画仍可由相邻两条实测边相交。只有整条候选边贴住图像边缘才查裁断证据。
+    if (std::abs(normal_a - border) > 2 * kBorderPx ||
+      std::abs(normal_b - border) > 2 * kBorderPx) {continue;}
+    evidence.fullPurple(cfg_);
+    const int along_limit = horizontal ? size.width : size.height;
+    const int inside = far_border ? limit - 2 : 2;
+    const double along_a = horizontal ? a.x : a.y;
+    const double along_b = horizontal ? b.x : b.y;
+    int sampled = 0, floor_hits = 0;
+    for (int i = 0; i < kSamples; ++i) {
+      const int along = cvRound(along_a + (along_b - along_a) * (i + 0.5) / kSamples);
+      if (along < 0 || along >= along_limit) {continue;}
+      const cv::Point at = horizontal ? cv::Point(along, border) : cv::Point(border, along);
+      const cv::Point behind = horizontal ? cv::Point(along, inside) : cv::Point(inside, along);
+      ++sampled;
+      if (evidence.full_interior.at<uchar>(at) && evidence.full_interior.at<uchar>(behind)) {++floor_hits;}
+    }
+    // 内色直接穿过画面边缘，当前检测到的是裁切边而不是围边的物理边。
+    if (sampled >= kSamples / 2 && floor_hits * 2 >= sampled) {return true;}
+  }
+  return false;
+}
+
 void FieldLocator::buildOutput(
   FrameEvidence & evidence, SearchResult & candidate, FieldResult & res,
   bool ok, const std::string & quality, const std::string & why)
@@ -423,6 +480,19 @@ void FieldLocator::buildOutput(
     std::vector<cv::Point2f> dst{cv::Point2f(0, 0), cv::Point2f(bs.width - 1.f, 0),
       cv::Point2f(bs.width - 1.f, bs.height - 1.f), cv::Point2f(0, bs.height - 1.f)};
     res.homography = cv::getPerspectiveTransform(inner_, dst);
+    if (ok && res.committed) {
+      const double outside = groundOutsideImage(inner_, small.size(), bs, res.homography);
+      res.ground_outside_image_m2 = outside *
+        (cfg_.field_w_m - 2 * cfg_.wall_thickness_m) *
+        (cfg_.field_h_m - 2 * cfg_.wall_thickness_m);
+      if (outside > 0) {
+        char completion[96];
+        std::snprintf(completion, sizeof(completion), "projected outside frame: %.1f cm2 (%.1f%%)",
+          res.ground_outside_image_m2 * 10000.0, outside * 100.0);
+        if (!res.reason.empty()) {res.reason += "; ";}
+        res.reason += completion;
+      }
+    }
     cv::warpPerspective(small, res.bev, res.homography, bs);
     cv::invert(res.homography, res.homography_inv);
     res.ms_warp = (cv::getTickCount() - t0) * 1000.0 / cv::getTickFrequency() - ms_resize -
@@ -431,10 +501,9 @@ void FieldLocator::buildOutput(
     const auto split = detectSplitBlack(res.bev, cfg_);
     res.split_valid = split.valid;
     res.split_conf = split.confidence;
+    res.split_suspect = split.suspect;
     if (split.valid) {
       res.split_measured = (split.top_x + split.bottom_x) * 0.5;
-      res.split_suspect = std::abs(res.split_measured - res.bev.cols / 2.0) >
-        cfg_.black_max_offset_frac * res.bev.cols;
       // 逐帧实测，不做跨帧平滑：跨帧保持在桥接层按时间处理。
       res.split_top_x = split.top_x; res.split_bottom_x = split.bottom_x;
       res.split_x = (split.top_x + split.bottom_x) * 0.5;
@@ -489,7 +558,9 @@ void FieldLocator::updateTracking(
   if (tracking) {res.jump_ratio = quadJumpRatio(quad, predicted);}
 
     // (a) 大跳变: 不立刻切换, 先挂起, 连续 N 帧确认再切 (误检通常只持续一帧)
-  const std::string fail = rejectCandidate(best_score, best_measured, cfg_, tracking);
+  const std::string fail = frameCutsGroundEdge(evidence, quad) ?
+    "地面被画面边缘裁断，缺少完整分区的几何证据" :
+    rejectCandidate(best_score, best_measured, cfg_, tracking);
   if (fail.empty() && tracking && res.jump_ratio > cfg_.max_jump_frac) {
         // 例外: 当前跟踪的几何已经没有紫框证据 (说明跟丢了), 而新候选非常干净
         // -> 允许立即切换, 否则会一直抱着一个假四边形不放。

@@ -57,7 +57,7 @@ void nearAnchors()
   const std::vector<cv::Point2f> rectangle{{0, 0}, {263, 0}, {263, 143}, {0, 143}};
   int observed = 0;
   for (double yaw : {-22., 0., 22.}) {
-    for (double distance : {0.3, 0.75, 1.5}) {
+    for (double distance : {0.3, 0.55, 0.75, 1.5}) {
       for (double height : {0.12, 0.22, 0.35}) {
         for (double lateral : {-0.2, 0., 0.2}) {
           Scene s;
@@ -97,6 +97,82 @@ void nearAnchors()
     }
   }
   CHECK(observed >= 27);
+}
+
+void croppedGroundArea()
+{
+  Group group("missing area is measured on the ground plane");
+  const auto cfg = productionConfig();
+  const auto bev = field_detail::bevSize(cfg);
+  CHECK(bev == cv::Size(240, 120));
+  // 左侧同为物理宽度的 10%，近侧的图像宽度却是远侧的两倍。
+  const std::vector<cv::Point2f> ground{{-10, 10}, {90, 10}, {180, 80}, {-20, 80}};
+  const std::vector<cv::Point2f> rectangle{{0, 0}, {float(bev.width - 1), 0},
+    {float(bev.width - 1), float(bev.height - 1)}, {0, float(bev.height - 1)}};
+  const auto transform = cv::getPerspectiveTransform(ground, rectangle);
+  const double outside = field_detail::groundOutsideImage(ground, {201, 100}, bev, transform);
+  CHECK(std::abs(outside - 0.1) < 1e-5);
+  CHECK(std::abs(outside * 0.60 * 0.30 - 0.018) < 1e-6);
+}
+
+void brokenPurpleBorder()
+{
+  Group group("purple border gaps preserve safety geometry in the first frame");
+  const auto cfg = productionConfig();
+  const cv::Size size(cfg.proc_width, cfg.proc_height);
+  for (double distance : {0.55, 0.75}) {
+    Scene scene;
+    scene.cam_d = distance;
+    scene.cam_x = 0.05;
+    scene.yaw_deg = 5;
+    scene.jpeg = 100;
+    Truth truth;
+    const auto image = render(scene, size, truth);
+    const auto expected = innerTruth(scene, size);
+    const auto purple = FieldLocator::purpleMask(image, cfg);
+    const Camera camera(scene, size);
+    for (int missing = 0; missing < 8; ++missing) {
+      const int edge = missing % 4;
+      const bool whole_edge = missing >= 4;
+      const double half_extent = whole_edge ? 0.50 : 0.40;
+      // 只擦除围边的紫色，保留地面与黑带。分别覆盖中段大断口及整边缺色。
+      double x0 = -half_extent * kW, x1 = half_extent * kW;
+      double y0 = edge == 0 ? kH - kWall : 0, y1 = y0 + kWall;
+      if (edge == 1 || edge == 3) {
+        x0 = edge == 1 ? kW / 2 - kWall : -kW / 2;
+        x1 = x0 + kWall;
+        y0 = (0.5 - half_extent) * kH;
+        y1 = (0.5 + half_extent) * kH;
+      }
+      const auto projected = camera.poly({{x0, y0, 0}, {x1, y0, 0}, {x1, y1, 0}, {x0, y1, 0},
+        {x0, y0, kWallH}, {x1, y0, kWallH}, {x1, y1, kWallH}, {x0, y1, kWallH}});
+      std::vector<cv::Point> hull;
+      cv::convexHull(projected, hull);
+      cv::Mat occluded = cv::Mat::zeros(size, CV_8U);
+      cv::fillConvexPoly(occluded, hull, cv::Scalar(255), cv::LINE_8, 3);
+      cv::dilate(occluded, occluded, cv::Mat());
+      cv::bitwise_and(occluded, purple, occluded);
+      CHECK(cv::countNonZero(occluded) > 0);
+      auto broken = image.clone();
+      broken.setTo(cv::Scalar(222, 224, 226), occluded);
+      const auto result = FieldLocator(cfg).update(broken);
+      if (whole_edge && edge == 2) {
+        // 近边底缘完全缺失时，剩余证据不能定位地面近端。
+        CHECK(!splitValid(result));
+        continue;
+      }
+      CHECK(splitValid(result));
+      if (!splitValid(result)) {continue;}
+      const auto error = inFrameCornerError(result.corners, expected.corners, size);
+      CHECK(error && *error <= kCornerTolPx);
+      const auto center = halfCenters(result);
+      CHECK(center.has_value());
+      if (center) {
+        CHECK(0.5 * (cv::norm((*center)[0] - expected.left_center) +
+          cv::norm((*center)[1] - expected.right_center)) <= kCenterTolPx);
+      }
+    }
+  }
 }
 
 void checkScene(const Scene & scene, cv::Size source, bool expect_split = true)
@@ -344,6 +420,8 @@ int main()
   groundPerspectiveDirection();
   independentRows();
   nearAnchors();
+  croppedGroundArea();
+  brokenPurpleBorder();
   scenes();
   negatives();
   shadowSupport();

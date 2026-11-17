@@ -23,6 +23,28 @@ int main()
 {
   const auto config = field_test::productionConfig();
   {
+    Group group("Only a divider near the calibrated center and width is accepted");
+    const auto size = field_detail::bevSize(config);
+    const int band = cvRound(config.black_width_m * (size.width - 1) /
+      (config.field_w_m - 2 * config.wall_thickness_m));
+    const int center = (size.width - band) / 2;
+    const int decoy = size.width / 4;
+    cv::Mat bev(size, CV_8UC3, field_test::kRed);
+    cv::rectangle(bev, {decoy, 0, band, size.height}, field_test::kBlack, cv::FILLED);
+    const auto off_center = field_detail::detectSplitBlack(bev, config);
+    CHECK(!off_center.valid && off_center.suspect);
+    cv::rectangle(bev, {center, 0, band, size.height}, field_test::kBlack, cv::FILLED);
+    const auto actual = field_detail::detectSplitBlack(bev, config);
+    CHECK(actual.valid && !actual.suspect);
+    CHECK(std::abs(actual.top_x - 0.5 * (size.width - 1)) < 1.5);
+    for (const int false_width : {2, band + 5}) {
+      bev.setTo(field_test::kRed);
+      cv::rectangle(bev, {(size.width - false_width) / 2, 0, false_width, size.height},
+        field_test::kBlack, cv::FILLED);
+      CHECK(!field_detail::detectSplitBlack(bev, config).valid);
+    }
+  }
+  {
     Group group("Split accumulates the measured weak edge beside tall black blocks");
     const double heights[] = {0.03, 0.05, 0.05};
     const double positions[] = {0.18, 0.08, 0.18};

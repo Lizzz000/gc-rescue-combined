@@ -344,7 +344,7 @@ struct SplitRun {
 struct SplitEdge {int y; float x, depth; int side;};
 
 /** @brief 候选直线 x = top + slope * y（搜索窗内坐标）的验收结果。 */
-struct SplitLine {bool valid = false; double top = 0, slope = 0, confidence = 0;};
+struct SplitLine {bool valid = false; double top = 0, slope = 0, confidence = 0, width = 0;};
 
 /** @brief 搜索窗与带参照余量的上下文窗（BEV 坐标），half 是带宽上限的一半。 */
 struct SplitWindow {cv::Rect window, context; int half = 0, pad_lo = 0;};
@@ -805,7 +805,7 @@ SplitLine acceptLine(
     centers.emplace_back(run.x, float(y)); widths.push_back(run.width); depth_sum += run.depth;
   }
   const double coverage = double(centers.size()) / eligible_rows.size();
-  if (coverage < cfg.black_score_frac) {return result;}
+  if (centers.empty() || coverage < cfg.black_score_frac) {return result;}
   // 支持行的首末跨度也须达到内部行的同一比例：物块盖住一端时，剩下的短暗条与场内暗物体无法区分。
   const double support_span = centers.back().y - centers.front().y + 1;
   if (support_span < cfg.black_score_frac * interior_rows.count) {return result;}
@@ -832,6 +832,7 @@ SplitLine acceptLine(
   if (*tail > std::max(kResidualFloorPx, upperMedian(widths) * kResidualWidthShare)) {return result;}
   const double depth = depth_sum / centers.size();
   result.valid = true;
+  result.width = measured_width;
   // 置信度 = 下陷强度 × 资格行覆盖率 × 资格行占内部行比例：被遮挡越多、证据越短，置信度越低，
   // 选优时完整分界线优先于只在物块高度内成立的短暗边。
   result.confidence = std::min(1.0, depth / cfg.black_conf_depth) * coverage *
@@ -938,10 +939,26 @@ SplitMeasurement detectSplitBlack(const cv::Mat & bev, const FieldConfig & cfg)
   auto lines = candidateLines(runs, eligible, cfg, min_rows,
     interiorRows(evidence.reference, window), edges, calibrated_width);
   if (lines.empty()) {return {};}
+  // 中线应位于场地中部。过滤偏心暗条后，再在仍可能是真的分界之间判断歧义。
+  const double bev_center = 0.5 * (bev.cols - 1);
+  const double search_middle_y = 0.5 * (bev.rows - 1) - window.window.y;
+  const double max_offset = cfg.black_max_offset_frac * bev.cols;
+  lines.erase(std::remove_if(lines.begin(), lines.end(), [&](const SplitLine & line) {
+      const double center = window.window.x + line.top + line.slope * search_middle_y;
+      return std::abs(center - bev_center) > max_offset;
+    }), lines.end());
+  if (lines.empty()) {
+    SplitMeasurement result;
+    result.suspect = true;
+    return result;
+  }
   std::sort(lines.begin(), lines.end(),
     [](const SplitLine & a, const SplitLine & b) {return a.confidence > b.confidence;});
   if (lines.size() > 1 && lines[1].confidence >= kAmbiguityRatio * lines[0].confidence) {return {};}
   const auto & line = lines.front();
+  // 先识别歧义，再用物理带宽排除细缝和宽暗条。计数包含两端像素，故标定宽度加一。
+  const double width_tolerance = std::max(2.0, 0.35 * calibrated_width);
+  if (std::abs(line.width - (calibrated_width + 1.0)) > width_tolerance) {return {};}
   // 窗内直线外推到 BEV 顶/底边，端点须落在鸟瞰图内。
   const int x0 = window.window.x, y0 = window.window.y;
   SplitMeasurement measurement;

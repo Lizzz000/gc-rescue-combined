@@ -46,7 +46,7 @@ struct FieldConfig
   double bev_px_per_m = 400.0;
   int bev_width = 0;                     // >0 直接指定；有效尺寸须在 16..4096
   int bev_height = 0;                    // >0 直接指定；同上
-  // 围边厚度（米）：BEV 对应内沿四边形（内部地面），默认尺寸为 (field - 2·wall_thickness_m)·px/m；
+  // 围边平面内缩（米）：BEV 对应内沿四边形，默认尺寸为 (field - 2·wall_thickness_m)·px/m；
   // 内沿某条边本帧没测到时，用外沿内缩该厚度作先验边。须 ≥0 且小于短边的 1/4。
   double wall_thickness_m = 0.015;
 
@@ -112,7 +112,7 @@ struct FieldConfig
   double black_score_frac = 0.60;        // 沿线支持比例下限；三分段各须达到其一半，支持跨度须达到内部行的该比例
   double black_max_width_frac = 0.06;    // 黑带最大宽度/BEV 宽度；其一半也是两侧参照段偏移与长度
   double black_max_lift = 0.25;          // 黑带亮度最多高出两侧较亮参照的比例，更亮视为高光条带
-  double black_max_offset_frac = 0.04;     // 黑带中点偏离几何中心超过该比例时标记 suspect，仍使用可靠实测
+  double black_max_offset_frac = 0.04;     // 黑带中点离鸟瞰中心的最大比例
 
   // ---- [分组] 内部颜色证据：默认红色，blue 模式使用下方独立扇区 ----
   // 内部颜色与紫色扇区独立判定，并不显式减去紫色掩膜；扇区应避免与紫框重叠。
@@ -280,12 +280,13 @@ struct FieldResult
   cv::Mat homography_inv;
   double split_x = 0.0;                // 本帧实测黑带线在 BEV 中间行的 x；斜线的上下端点可不同
   double split_measured = 0.0;         // 原始黑带线中点；无测量时为 0，须同时检查 split_valid/conf
-  bool split_suspect = false;          // 黑带偏离几何中线的诊断，不再据此用中线替代实测
+  bool split_suspect = false;          // 有暗带通过线形检查，但未找到符合中心位置的分界
   double split_conf = 0.0;
   bool split_valid = false;            // 本帧具有完整且唯一的黑带证据；外框 ok 不等于分区有效
   double split_top_x = 0.0, split_bottom_x = 0.0; // 本帧实测 BEV 顶/底边交点，正式几何共用这两个端点
   double red_ratio = 0.0;
   double quad_area = 0.0;
+  double ground_outside_image_m2 = 0.0; // 投影到画面之外的内框地面面积，仅对本帧提交的几何计算
   double approx_field_h_px = 0.0;
 
   // ---- 边状态 / 评分 / 提交信息 ----
@@ -340,6 +341,7 @@ private:
   void updateTracking(FrameEvidence &, SearchResult &, FieldResult &);
   // 提交本帧候选：外沿角点与同一搜索图上拟合的内沿四边形一起写入。
   void commitGeometry(const SearchResult &);
+  bool frameCutsGroundEdge(FrameEvidence &, const std::vector<cv::Point2f> & outline) const;
   // 生成鸟瞰与本帧黑带实测；即使本帧未提交角点，也可能输出历史 BEV 诊断。
   void buildOutput(FrameEvidence &, SearchResult &, FieldResult &,
     bool ok, const std::string & quality, const std::string & why);

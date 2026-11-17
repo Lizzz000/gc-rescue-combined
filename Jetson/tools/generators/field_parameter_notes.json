@@ -60,7 +60,7 @@
       "group": "geometry",
       "level": "高级",
       "unit": "米",
-      "purpose": "围边厚度：BEV、分区和区域对应内沿四边形（内部地面），默认 BEV 尺寸按 field−2×厚度；内沿某边未测到时外沿内缩该厚度作先验。须实测。"
+      "purpose": "围边的平面内缩量。默认鸟瞰尺寸按外宽、外深各减两倍内缩量。标准外框 660×360 mm、内框 600×300 mm，对应平面内缩 30 mm。"
     },
     "purple_hue_range_deg": {
       "group": "color",
@@ -486,7 +486,7 @@
       "group": "split",
       "level": "高级",
       "unit": "无量纲比例",
-      "purpose": "黑带测量中点偏离鸟瞰几何中心超过此比例时标记split_suspect；可靠测量仍用于分区。"
+      "purpose": "黑带中点偏离鸟瞰中心的最大比例。只有偏心暗带时标记 split_suspect 并撤销正式分区。"
     },
     "bev_border_margin_frac": {
       "group": "split",
