@@ -4,7 +4,81 @@
 
 #include "usb_rx_buffer.h"
 
-int main(void)
+static void test_all_positions(void)
+{
+    static const uint32_t lengths[] = {0U, 1U, 2U, 14U, 63U, 64U, 65U, 255U, 512U, 1022U, 1023U};
+    uint8_t input[USB_RX_RING_SIZE];
+    for (uint32_t i = 0U; i < sizeof(input); ++i)
+        input[i] = (uint8_t)(i * 37U + i / 256U);
+
+    /* 每个环起点均验证 USB 包长、环尾和最大容量，不依赖实现的分段方式。 */
+    for (uint16_t start = 0U; start < USB_RX_RING_SIZE; ++start)
+    {
+        for (uint32_t sample = 0U; sample < sizeof(lengths) / sizeof(lengths[0]); ++sample)
+        {
+            UsbRxBuffer buffer = {0};
+            buffer.head = buffer.tail = start;
+            const uint32_t length = lengths[sample];
+            UsbRxBuffer_Push(&buffer, input, length);
+            assert(buffer.generation == 0U && buffer.overflow_count == 0U);
+            uint8_t byte = 0U;
+            for (uint32_t i = 0U; i < length; ++i)
+            {
+                assert(UsbRxBuffer_Pop(&buffer, &byte));
+                assert(byte == input[i]);
+            }
+            assert(!UsbRxBuffer_Pop(&buffer, &byte));
+        }
+    }
+}
+
+static void test_capacity_and_empty_input(void)
+{
+    UsbRxBuffer buffer = {0};
+    uint8_t input[USB_RX_RING_SIZE];
+    uint8_t byte = 0U;
+    for (uint32_t i = 0U; i < sizeof(input); ++i)
+        input[i] = (uint8_t)i;
+
+    /* NULL/0 不复制、不改变空环或已满环，也不能误触发溢出。 */
+    UsbRxBuffer_Push(&buffer, NULL, 0U);
+    assert(buffer.head == 0U && buffer.tail == 0U);
+    assert(buffer.generation == 0U && buffer.overflow_count == 0U);
+    buffer.head = buffer.tail = USB_RX_RING_SIZE - 20U;
+    UsbRxBuffer_Push(&buffer, input, 64U);
+    UsbRxBuffer_Push(&buffer, input + 64U, USB_RX_RING_SIZE - 65U);
+    const uint16_t full_head = buffer.head, full_tail = buffer.tail;
+    UsbRxBuffer_Push(&buffer, NULL, 0U);
+    assert(buffer.head == full_head && buffer.tail == full_tail);
+    assert(buffer.generation == 0U && buffer.overflow_count == 0U);
+    for (uint32_t i = 0U; i < USB_RX_RING_SIZE - 1U; ++i)
+    {
+        assert(UsbRxBuffer_Pop(&buffer, &byte));
+        assert(byte == input[i]);
+    }
+    assert(!UsbRxBuffer_Pop(&buffer, &byte));
+
+    /* 满环追加一字节，以及单包超过容量，均丢弃整批并推进代数。 */
+    UsbRxBuffer_Push(&buffer, input, USB_RX_RING_SIZE - 1U);
+    UsbRxBuffer_Push(&buffer, input, 1U);
+    assert(buffer.generation == 1U && buffer.overflow_count == 1U);
+    assert(!UsbRxBuffer_Pop(&buffer, &byte));
+    UsbRxBuffer_Push(&buffer, input, USB_RX_RING_SIZE);
+    assert(buffer.generation == 2U && buffer.overflow_count == 2U);
+    assert(!UsbRxBuffer_Pop(&buffer, &byte));
+    UsbRxBuffer_Push(&buffer, input, UINT32_MAX);
+    assert(buffer.generation == 3U && buffer.overflow_count == 3U);
+    assert(!UsbRxBuffer_Pop(&buffer, &byte));
+    UsbRxBuffer_Push(&buffer, input, 64U);
+    for (uint32_t i = 0U; i < 64U; ++i)
+    {
+        assert(UsbRxBuffer_Pop(&buffer, &byte));
+        assert(byte == input[i]);
+    }
+    assert(!UsbRxBuffer_Pop(&buffer, &byte));
+}
+
+static void test_wrap_and_reset(void)
 {
     UsbRxBuffer buffer = {0};
     uint8_t input[USB_RX_RING_SIZE] = {0};
@@ -33,6 +107,13 @@ int main(void)
     assert(buffer.generation == 2U && !UsbRxBuffer_Pop(&buffer, &byte));
     UsbRxBuffer_Push(&buffer, input, 1U);
     assert(UsbRxBuffer_Pop(&buffer, &byte) && byte == input[0]);
-    puts("PASS: USB ring wrap, overflow and reset");
+}
+
+int main(void)
+{
+    test_all_positions();
+    test_capacity_and_empty_input();
+    test_wrap_and_reset();
+    puts("PASS: USB ring all positions, capacity, empty input, overflow recovery and reset");
     return 0;
 }

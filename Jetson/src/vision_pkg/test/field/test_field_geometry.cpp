@@ -49,6 +49,39 @@ void independentRows()
   }
 }
 
+void interiorScanBounds()
+{
+  Group group("interior scans preserve empty support and half-frame boundaries");
+  const auto cfg = productionConfig();
+  for (int width : {263, 264}) {
+    const std::vector<cv::Point2f> outer{
+      {0, 0}, {float(width - 1), 0}, {float(width - 1), 143}, {0, 143}};
+    cv::Mat mask = cv::Mat::zeros(144, width, CV_8U);
+    CHECK(field_detail::fitInnerQuad(mask, outer, cfg).measured_edges == 0);
+    // 支持范围扩到画面边缘，但孤立像素仍不构成连续两像素的内部颜色过渡。
+    for (const auto & point : outer) {mask.at<uchar>(cv::Point(point)) = 255;}
+    CHECK(field_detail::fitInnerQuad(mask, outer, cfg).measured_edges == 0);
+
+    mask.setTo(0);
+    mask(cv::Rect(10, 90, width - 20, 16)).setTo(255);
+    const auto full = field_detail::fitInnerQuad(mask, outer, cfg);
+    CHECK(full.measured_edges == 3);
+    // 偶数宽度中线两侧相接，奇数宽度中间一列不属于任一侧的扫描范围。
+    // 仅对侧有地面时，跳过零前缀也不能越过原半区深度去补出本侧内沿。
+    for (bool floor_on_right : {false, true}) {
+      for (int extra : {0, 1}) {
+        mask.setTo(0);
+        const int half = width / 2;
+        const int left = floor_on_right ? width - half - extra : 10;
+        const int right = floor_on_right ? width - 10 : half + extra;
+        mask(cv::Rect(left, 90, right - left, 16)).setTo(255);
+        const auto one_side = field_detail::fitInnerQuad(mask, outer, cfg);
+        CHECK(!one_side.measured[floor_on_right ? 2 : 1]);
+      }
+    }
+  }
+}
+
 void nearAnchors()
 {
   Group group("physical near-edge anchors");
@@ -419,6 +452,7 @@ int main()
 {
   groundPerspectiveDirection();
   independentRows();
+  interiorScanBounds();
   nearAnchors();
   croppedGroundArea();
   brokenPurpleBorder();

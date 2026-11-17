@@ -643,21 +643,26 @@ constexpr double kInnerScanDepth = 0.5;
 // 候选范围内沿一条边向内扫描：每个独立行/列取第一个连续内部像素。
 // along=true 时按列扫描（上/下边），from_end=true 从底/右端开始。
 std::vector<cv::Point2f> innerTransitions(
-  const cv::Mat & mask, bool along, bool from_end, const FieldConfig & cfg)
+  const cv::Mat & mask, const cv::Rect & support,
+  bool along, bool from_end, const FieldConfig & cfg)
 {
   // 候选包含围边立面和近墙遮挡；采样槽分配到实际出现内部颜色过渡的行/列。
   // 否则低机位只露出一条地面时，大部分槽落在墙面，侧边会因点数不足退回先验。
-  const cv::Rect support = cv::boundingRect(mask);
   const int start = along ? support.x : support.y;
   const int length = along ? support.width : support.height;
   // 远边上方可能连着同色背景；内部地面并不保证在外框高度的前半。
   // 两侧仍限制到各自半区，避免把对侧内部当成本侧边界。
   const int depth = along ? support.y + support.height :
     static_cast<int>(mask.cols * kInnerScanDepth);
+  // 支持范围外必定全零，跳过扫描前缀；终点仍保持原半区限制，不能越过中线取对侧地面。
+  const int extent = along ? mask.rows : mask.cols;
+  const int support_start = along ? support.y : support.x;
+  const int support_depth = along ? support.height : support.width;
+  const int first_step = from_end ? extent - support_start - support_depth : support_start;
   std::vector<cv::Point2f> candidates;
   for (int pos = start; pos < start + length; ++pos) {
     int run = 0;
-    for (int step = 0; step < depth; ++step) {
+    for (int step = first_step; step < depth; ++step) {
       const int inward = from_end ? (along ? mask.rows : mask.cols) - 1 - step : step;
       const bool hit = along ? mask.at<uchar>(inward, pos) != 0 : mask.at<uchar>(pos, inward) != 0;
       run = hit ? run + 1 : 0;
@@ -743,13 +748,15 @@ InnerQuad fitInnerQuad(
   for (const auto & p : scan_quad) {polygon.emplace_back(cvRound(p.x) - bounds.x, cvRound(p.y) - bounds.y);}
   cv::fillConvexPoly(mask, polygon, cv::Scalar(255));
   cv::bitwise_and(mask, interior(bounds), mask);
+  // 三条内沿使用同一张掩膜，非零支持范围只需扫描一次。
+  const cv::Rect support = cv::boundingRect(mask);
   const double purple_hue = (cfg.purple_hue_lo_deg + cfg.purple_hue_hi_deg) * CV_PI / 360;
   const double inner_hue = (cfg.use_blue_interior ? cfg.blue_hue_lo_deg + cfg.blue_hue_hi_deg :
     cfg.red_hue_lo_deg + cfg.red_hue_hi_deg) * CV_PI / 360;
   const cv::Point2d contrast(std::cos(inner_hue) - std::cos(purple_hue),
     std::sin(inner_hue) - std::sin(purple_hue));
   const auto transitions = [&](bool along, bool from_end) {
-      auto points = innerTransitions(mask, along, from_end, cfg);
+      auto points = innerTransitions(mask, support, along, from_end, cfg);
       for (auto & p : points) {p += cv::Point2f(float(bounds.x), float(bounds.y));}
       if (!lab.empty()) {
         // 严格颜色判据负责确认内部身份；几何位置取附近的材质色度跃迁，

@@ -2,6 +2,8 @@
 
 更新于 2026-11-17。先读根目录的 [AGENTS.md](../AGENTS.md) 和[项目说明](../README.md)，再根据本轮任务核对 Git 状态和实际板端连接。
 
+本轮在云端 `62086f9` 基础上优化安全区内沿扫描与 STM32 USB 接收缓冲区；变更范围、主机检查和板端验证边界见 [代码优化与验证](code-optimization-2026-11-17.md)。
+
 ## 工程入口
 
 - `Jetson/src/vision_pkg/field` 负责安全区识别。候选搜索和跟踪在 [field.cpp](../Jetson/src/vision_pkg/field/field.cpp)，边线、内沿与投影在 [geometry.cpp](../Jetson/src/vision_pkg/field/opencv/geometry.cpp)，黑带测量在 [score.cpp](../Jetson/src/vision_pkg/field/opencv/score.cpp)。正式观测由 [ros_convert.hpp](../Jetson/src/vision_pkg/node/ros_convert.hpp) 检查后发布。
