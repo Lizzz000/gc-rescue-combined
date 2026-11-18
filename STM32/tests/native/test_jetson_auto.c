@@ -14,8 +14,8 @@ uint32_t test_tick;
 static uint32_t source_time_ms;
 static unsigned critical_depth;
 static uint8_t can_arrival_before_snapshot;
-static uint8_t enabled, stopped, motion_ready;
-static unsigned enables, stops, disables, velocity_requests;
+static uint8_t enabled, stopped, motion_ready, can_enable, enable_tx_failure;
+static unsigned enables, stops, hard_stops, disables, velocity_requests;
 static uint8_t tx_ready, tx_error;
 static unsigned distance_count, turn_count, sent_count;
 static Chassis_Translation_Direction_t last_translation;
@@ -85,8 +85,10 @@ void test_exit_critical(void) { assert(critical_depth > 0U); --critical_depth; }
 /** @brief 模拟软件受理使能，停车反馈由场景单独提供。 @return 1。 */
 uint8_t Chassis_Enable(void)
 {
-    enabled = motion_ready = 1U;
     ++enables;
+    if (enable_tx_failure)
+        return 0U;
+    enabled = motion_ready = 1U;
     return 1U;
 }
 
@@ -98,7 +100,10 @@ void Chassis_Disable(void)
 }
 
 /** @brief 记录停车请求；请求本身不生成停车反馈。 */
-void Chassis_Stop(void) { ++stops; motion_ready = 1U; }
+void Chassis_Stop(void) { ++stops; ++hard_stops; motion_ready = 1U; }
+void Chassis_Hold(void) { ++stops; motion_ready = 1U; last_vx = last_vy = last_wz = 0.0f; }
+uint8_t Chassis_Attitude_Ready(void) { return imu_age_ms <= 20U; }
+uint8_t Chassis_Can_Enable(void) { return can_enable; }
 /** @brief 读取模拟底盘使能状态。 @return 软件已使能为 1。 */
 uint8_t Chassis_Is_Enabled(void) { return enabled; }
 /** @brief 读取场景独立给出的停车反馈。 @return 已使能且确认停车为 1。 */
@@ -112,7 +117,7 @@ uint8_t Chassis_Motors_Ready(void) { return motors_ready; }
 uint8_t Chassis_Get_Odometry(Chassis_Odometry_t *data)
 {
     *data = odom;
-    return enabled && odom.valid;
+    return enabled && odom.valid && Chassis_Attitude_Ready();
 }
 
 /** @brief 提供可独立设置样本年龄的姿态。 @param[out] data 姿态快照。 @return 有效为 1。 */
@@ -213,7 +218,9 @@ static void Reset(void)
     critical_depth = 0U;
     can_arrival_before_snapshot = 0U;
     enabled = stopped = motion_ready = 0U;
-    enables = stops = disables = velocity_requests = 0U;
+    can_enable = 1U;
+    enable_tx_failure = 0U;
+    enables = stops = hard_stops = disables = velocity_requests = 0U;
     distance_count = turn_count = sent_count = return_commands = 0U;
     odom = (Chassis_Odometry_t){.valid = 1U};
 #ifdef TEST_JETSON_AUTO_CONFIGURED
@@ -343,25 +350,27 @@ static void Wait_For_Count_At(const unsigned *counter, unsigned count, unsigned 
 }
 #define Wait_For_Count(counter, count) Wait_For_Count_At((counter), (count), __LINE__)
 
-/** @brief 开机动作成功前始终禁用，成功后仍检查 IMU 和三轮就绪。 */
+/** @brief 等待本机就绪，夹爪成功前只允许零速。 */
 static void Start_Automatic(void)
 {
     const uint8_t ignored[8] = {1U};
     Jetson_CAN_Receive(1U, ignored, sizeof(ignored));
     Jetson_CAN_Receive(2U, ignored, 7U); /* 协议类型 2 为手动速度，自动固件应忽略。 */
-    Steps(3U);
-    assert(startup_id && startup_queries && !enabled && !enables && !velocity_requests);
-    Receive_Command_Ack(1U, 5U, startup_id);
-    Step();
-    assert(!enabled);
-    Receive_Action_Result(0U, 1U, startup_id);
     imu_age_ms = 21U;
     Steps(3U);
-    assert(!enabled && !enables && !velocity_requests);
+    assert(!enabled && !enables && !startup_id);
     imu_age_ms = 0U;
+    odom.valid = 0U;
     Wait_For_Count(&enables, 1U);
     Steps(3U);
-    assert(enabled && !velocity_requests && !stopped);
+    assert(enabled && !startup_id && !turn_count && !velocity_requests);
+    odom = expected_origin;
+    Step();
+    assert(startup_id && startup_queries && enables == 1U);
+    Receive_Command_Ack(1U, 5U, startup_id);
+    Step();
+    assert(enabled && !turn_count && !velocity_requests);
+    Receive_Action_Result(0U, 1U, startup_id);
 }
 
 static void Complete_Search_Turn(void)
@@ -374,11 +383,7 @@ static void Complete_Search_Turn(void)
 static void Begin_Target_Test(void)
 {
     Reset();
-    odom.valid = 0U;
     Start_Automatic();
-    Steps(3U);
-    assert(!turn_count && !velocity_requests);
-    odom = expected_origin;
     Wait_For_Count(&turn_count, 1U);
     assert(last_turn_direction == 1 && last_turn_angle == 180.0f);
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 4000);
@@ -465,6 +470,7 @@ static void Test_Approach_Brakes_And_Verifies(void)
     assert(stops == 1U && velocity_requests == moves && sent_count == 0U);
 
     /* 发出零速后漂到 5154 已超出 ±100，恢复连续跟随，不视为到位。 */
+    motion_ready = 0U; /* 仍在减速，也可以重新跟踪。 */
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5154, 7500);
     Step();
     assert(last_vx == 0.0f && last_vy > 0.0f && last_vy <= 0.005f && last_wz == 0.0f);
@@ -568,7 +574,7 @@ static void Test_Approach_No_Windup(void)
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 3500, 7500);
         Steps(4U);
     }
-    assert(last_vy < 0.0f && fabsf(last_vy) <= JETSON_AUTO_APPROACH_SPEED_MPS && stops == 0U);
+    assert(last_vy < 0.0f && fabsf(last_vy) <= JETSON_AUTO_APPROACH_SPEED_MPS && hard_stops == 0U);
 }
 
 /** @brief 合速饱和后靠近仍及时减速，不保留饱和补偿。 */
@@ -617,7 +623,7 @@ static void Test_Approach_Requires_New_Frame(void)
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
         Step();
         motion_ready = 0U; /* CAN 尚未提交零目标。 */
-        const unsigned ticks = blocked ? JETSON_AUTO_BRAKE_TIMEOUT_MS / 5U : 2U;
+        const unsigned ticks = blocked ? JETSON_AUTO_HOLD_TIMEOUT_MS / 5U : 2U;
         for (unsigned i = 0U; i < ticks; ++i)
         {
             Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
@@ -626,12 +632,15 @@ static void Test_Approach_Requires_New_Frame(void)
         assert(enabled && !sent_count);
         if (blocked)
         {
-            Step();
+            Steps(JETSON_AUTO_BRAKE_TIMEOUT_MS / 5U);
             assert(!enabled && disables == 1U && !sent_count);
         }
         else
         {
             motion_ready = 1U;
+            Steps(2U);
+            assert(!sent_count); /* 减速阶段的图像不能充当停车后的复核。 */
+            Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
             Steps(2U);
             assert(sent_count == 1U && !stopped);
         }
@@ -792,13 +801,13 @@ static void Align_Safety_And_Confirm(uint8_t destination, uint32_t token)
         Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, outside_x, 2000);
         Wait_For_Count(&velocity_requests, velocity_before + 1U);
         assert(last_vx == 0.0f && last_wz == 0.0f && last_vy != 0.0f);
-        const unsigned stops_before_alignment = stops;
+        const unsigned hard_stops_before_alignment = hard_stops;
         for (unsigned i = 0U; i < 4U; ++i)
         {
             const int16_t offset = (i % 2U == 0U ? 101 : 99) * (destination == 1U ? 1 : -1);
             Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, center_x + offset, 2000);
             Steps(4U);
-            assert(last_vx == 0.0f && stops == stops_before_alignment && sent_count == 3U);
+            assert(last_vx == 0.0f && hard_stops == hard_stops_before_alignment && sent_count == 3U);
         }
         Verify_Safety_Center(center_x, 2000);
         Verify_First_Safety_Frame(center_x, 2000, &sent_count);
@@ -936,8 +945,9 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
     assert(velocity_requests == before_localizing && turn_count == 1U && sent_count == 7U);
     if (stuck == 11U)
     {
-        Steps((JETSON_AUTO_CENTER_TIMEOUT_MS + JETSON_AUTO_BRAKE_TIMEOUT_MS +
-               JETSON_AUTO_BRAKE_TIMEOUT_MS) / 5U + 1U);
+        Steps(JETSON_AUTO_CENTER_TIMEOUT_MS / 5U + JETSON_AUTO_BRAKE_TIMEOUT_MS / 5U);
+        assert(enabled && !disables);  /* 短暂遮挡期间保持零速和使能。 */
+        Steps((JETSON_AUTO_ALIGN_TIMEOUT_MS + JETSON_AUTO_BRAKE_TIMEOUT_MS) / 5U);
         assert(!enabled && turn_count == 1U && sent_count == 7U);
         return;
     }
@@ -1220,30 +1230,53 @@ static void Test_Visual_Timeout_Without_Type1(void)
     }
 }
 
-/** @brief 未枚举或尚无合法周期流时，既不请求启动夹爪，也不使能底盘。 */
+/** @brief 未枚举或尚无合法周期流时保持使能零速，不请求启动夹爪。 */
 static void Test_Startup_Link_Gate(void)
 {
     Reset();
     periodic_stream = 0U;
     Steps(80U);
-    assert(!startup_queries && !enables && !stops);
+    assert(!startup_queries && enabled && enables == 1U && !stops && !turn_count);
     const uint8_t legacy[8] = {1U};
     const uint8_t malformed[8] = {2U};
     Jetson_CAN_Receive(1U, legacy, sizeof(legacy));
     Jetson_CAN_Receive(JETSON_CAN_TARGET_CENTER_ID, malformed, sizeof(malformed));
     Jetson_CAN_Receive(JETSON_CAN_SAFETY_CENTER_ID, legacy, 5U);
     Steps(80U);
-    assert(!startup_queries && !enables && !stops);
+    assert(!startup_queries && enabled && enables == 1U && !stops && !velocity_requests);
 
     usb_state.connected = 0U;
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 4000);
     Steps(3U);
-    assert(!startup_queries && !enables && !stops);
+    assert(!startup_queries && enabled && enables == 1U && !stops && !turn_count);
     usb_state.connected = 1U;
     ++usb_state.generation;
     periodic_stream = 1U;
     Step();
-    assert(startup_queries && !enables);
+    assert(startup_queries && enabled && enables == 1U && !turn_count);
+}
+
+/* 邮箱暂忙可短暂等待。已授予发送机会后的 HAL 失败及长期占用均锁存。 */
+static void Test_Startup_CAN_Fault(void)
+{
+    for (unsigned submit = 0U; submit < 2U; ++submit)
+    {
+        Reset();
+        can_enable = 0U;
+        Steps(4U);
+        assert(!enables && !stops && !startup_queries);
+        if (submit)
+        {
+            can_enable = 1U;
+            enable_tx_failure = 1U;
+        }
+        Steps(JETSON_AUTO_ARM_TIMEOUT_MS / 5U + 1U);
+        assert(stops == 1U && !enabled && enables == submit && !turn_count && !startup_queries);
+        can_enable = 1U;
+        enable_tx_failure = 0U;
+        Steps(10U);
+        assert(enables == submit && !enabled);
+    }
 }
 
 /** @brief 除合法现有周期坐标外，坏帧、旧类型、未知类型和回执都不能延长运行许可。 */
@@ -1333,30 +1366,28 @@ static void Test_USB_Disconnect_And_Reconnect(void)
     }
 }
 
-/** @brief 启动查询或等待 IMU 时已经绑定会话，断流后的迟到成功结果不能使能。 */
+/** @brief 夹爪受理前后断流都要锁存，迟到结果不得恢复运动。 */
 static void Test_Startup_Stream_Loss(void)
 {
-    for (unsigned waiting_imu = 0U; waiting_imu < 2U; ++waiting_imu)
+    for (unsigned accepted = 0U; accepted < 2U; ++accepted)
     {
         Reset();
         Step();
         assert(startup_id && startup_queries);
-        Receive_Command_Ack(1U, 5U, startup_id);
-        if (waiting_imu)
-        {
-            imu_age_ms = 21U;
-            Receive_Action_Result(0U, 1U, startup_id);
-        }
+        if (accepted)
+            Receive_Command_Ack(1U, 5U, startup_id);
         Step();
-        assert(!enabled);
+        assert(enabled && !turn_count);
         periodic_stream = 0U;
         Steps(JETSON_AUTO_LINK_TIMEOUT_MS / 5U);
-        assert(!enabled && !enables && stops == 1U);
+        assert(enabled && stops == 1U);
+        stopped = 1U;
+        Step();
+        assert(!enabled && disables == 1U);
         periodic_stream = 1U;
-        imu_age_ms = 0U;
         Receive_Action_Result(0U, 1U, startup_id);
         Steps(10U);
-        assert(!enabled && !enables);
+        assert(!enabled && enables == 1U && !turn_count);
     }
 }
 
@@ -1369,14 +1400,14 @@ static void Test_Startup_Action(void)
 {
     Reset();
     Steps(JETSON_AUTO_ACTION_TIMEOUT_MS / 5U * 2U);
-    assert(startup_queries > 2U && !enabled && !stops && !disables);
+    assert(startup_queries > 2U && enabled && !turn_count && !stops && !disables);
     const uint32_t first_id = startup_id;
     Receive_Action_Result(0U, 1U, startup_id);
     Step();
-    assert(!enabled); /* 结果先到，ACK 丢失则继续查询。 */
+    assert(enabled && !turn_count); /* 结果先到，ACK 丢失则保持零速。 */
     Receive_Command_Ack(1U, 5U, startup_id);
     Step();
-    assert(enabled && enables == 1U);
+    assert(enabled && enables == 1U && turn_count == 1U);
 
     Reset();
     Step();
@@ -1384,7 +1415,7 @@ static void Test_Startup_Action(void)
     Receive_Action_Result(0U, 1U, first_id);
     Receive_Command_Ack(1U, 5U, first_id);
     Step();
-    assert(!enabled);
+    assert(enabled && !turn_count);
     Receive_Command_Ack(1U, 5U, startup_id);
     Step();
     const uint32_t accepted_ms = test_tick;
@@ -1393,23 +1424,25 @@ static void Test_Startup_Action(void)
         test_tick = accepted_ms + (i + 1U) * 3000U;
         Receive_Command_Ack(1U, 5U, startup_id);
         Run_Auto();
-        assert(!enabled && !stops);
+        assert(enabled && !turn_count && !stops);
     }
     test_tick = accepted_ms + JETSON_AUTO_ACTION_TIMEOUT_MS;
     Run_Auto();
-    assert(!enabled && stops == 1U);
+    assert(enabled && !turn_count && stops == 1U);
+    stopped = 1U;
     Receive_Action_Result(0U, 1U, startup_id);
     Steps(3U);
-    assert(!enabled && !enables);
+    assert(!enabled && enables == 1U && !turn_count);
 
     Reset();
     Step();
     Receive_Action_Result(0U, 0U, startup_id);
+    stopped = 1U;
     Step();
     Receive_Command_Ack(1U, 5U, startup_id);
     Receive_Action_Result(0U, 1U, startup_id);
     Step();
-    assert(!enabled && !enables && stops == 1U);
+    assert(!enabled && enables == 1U && !turn_count && stops == 1U);
 
     Reset();
     Step();
@@ -1418,11 +1451,14 @@ static void Test_Startup_Action(void)
     const uint32_t boundary = test_tick + JETSON_AUTO_ACTION_TIMEOUT_MS;
     test_tick = boundary - 1U;
     Run_Auto();
-    assert(!enabled && !stops);
+    assert(enabled && !turn_count && !stops);
     test_tick = boundary;
     Receive_Action_Result(0U, 1U, startup_id);
     Run_Auto();
-    assert(!enabled && !enables && stops == 1U);
+    assert(enabled && !turn_count && stops == 1U);
+    stopped = 1U;
+    Step();
+    assert(!enabled && disables == 1U);
 
     Reset();
     Step();
@@ -1430,13 +1466,13 @@ static void Test_Startup_Action(void)
     Receive_Action_Result(0U, 1U, startup_id);
     imu_age_ms = 21U;
     Step();
-    const unsigned queries_after_complete = startup_queries;
+    const unsigned queries_before_fault = startup_queries;
     test_tick += JETSON_AUTO_ACTION_TIMEOUT_MS + 1U;
     Step();
-    assert(!enabled && !stops && startup_queries == queries_after_complete);
+    assert(!enabled && stops == 1U && startup_queries == queries_before_fault);
     imu_age_ms = 0U;
     Step();
-    assert(enabled && enables == 1U);
+    assert(!enabled && enables == 1U && !turn_count);
 }
 
 /** @brief 类型21两种报文任意顺序/分别丢失；重复查询同编号，终态失败和截止不续期。 */
@@ -1529,13 +1565,20 @@ static void Test_Action_Transactions(void)
     }
 }
 #else
-/** @brief 未填写生产参数时，即便收到视觉中心也始终不使能。 */
+/** @brief 未填写生产参数时保持使能与零输出，仍须监视本机反馈。 */
 static void Test_Unconfigured(void)
 {
     Reset();
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 8000);
     Steps(80U);
-    assert(!enabled && !enables && !velocity_requests && !sent_count);
+    assert(enabled && enables == 1U && !velocity_requests && !turn_count && !startup_queries && !sent_count);
+    motors_ready = 0U;
+    stopped = 1U;
+    Steps(2U);
+    assert(!enabled && disables == 1U);
+    motors_ready = 1U;
+    Steps(80U);
+    assert(!enabled && enables == 1U);
 }
 #endif
 
@@ -1575,6 +1618,7 @@ int main(void)
     Test_Search_Request_Identity();
     Test_Visual_Timeout_Without_Type1();
     Test_Startup_Link_Gate();
+    Test_Startup_CAN_Fault();
     Test_Periodic_Stream_Timeout();
     Test_USB_Disconnect_And_Reconnect();
     Test_Startup_Stream_Loss();
@@ -1583,7 +1627,7 @@ int main(void)
     puts("PASS: Jetson auto transport, action results, live target loss, USB sessions and periodic-stream fail-safe");
 #else
     Test_Unconfigured();
-    puts("PASS: unconfigured Jetson auto leaves motors and uplink idle");
+    puts("PASS: unconfigured Jetson auto holds enabled at zero, blocks all mission actions and latches hardware faults");
 #endif
     return 0;
 }

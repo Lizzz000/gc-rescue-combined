@@ -16,6 +16,7 @@ enum
     UART_ORIGIN,
     UART_RETURN,
     UART_KEEPALIVE,
+    UART_RELEASE = 0x46,
     UART_STATUS = 0x80,
     UART_POSE
 };
@@ -34,8 +35,8 @@ enum { RETURN_INACTIVE, RETURN_RUNNING, RETURN_STOPPING };
 #define TWO_PI 6.28318530717958647692f
 
 static const Point_Plan_Config_t default_return_config = {
-    .linear_limit_mps = 0.10f,
-    .angular_limit_rad_s = 0.50f,
+    .linear_limit_mps = CHASSIS_RUN_SPEED_MPS,
+    .angular_limit_rad_s = CHASSIS_RUN_YAW_RATE_RAD_S,
     .linear_deceleration_mps2 = 0.30f,
     .angular_deceleration_rad_s2 = 0.80f,
     .latency_s = 0.12f,
@@ -61,7 +62,7 @@ static uint8_t tx_buffer[2U * LINK_FRAME_MAX_BYTES];
 
 static uint8_t session_active, was_enabled, origin_valid, return_state;
 static uint32_t arm_started_ms, last_valid_ms, return_started_ms, stop_started_ms, last_report_ms;
-static uint16_t last_arm_id, last_origin_id, last_return_id, active_return_id;
+static uint16_t last_arm_id, last_origin_id, last_return_id, last_release_id, active_return_id;
 static uint16_t reply_id;
 static uint8_t reply_command, reply_result, reply_detail;
 static Chassis_Odometry_t origin;
@@ -121,23 +122,35 @@ static void Service_Request(const LinkFrame *frame, uint32_t now_ms)
         last_id = &last_arm_id;
     else if (frame->type == UART_ORIGIN)
         last_id = &last_origin_id;
+    else if (frame->type == UART_RELEASE)
+        last_id = &last_release_id;
     if (id == 0U || id == *last_id)
         return;
     *last_id = id;
 
     if (frame->type == UART_ARM)
     {
-        if (session_active || manual_control_state != MANUAL_DISARMED || Chassis_Is_Enabled())
+        if (session_active || (manual_control_state != MANUAL_DISARMED &&
+                               manual_control_state != MANUAL_READY))
         {
             Reply(UART_ARM, id, RESULT_REJECTED, DETAIL_STATE);
             return;
         }
-        /* 显式使能命令等价于手动状态机的一帧合法零速。 */
-        const uint8_t zero[7] = {1U};
-        Manual_CAN_Receive(zero, sizeof(zero));
+        Manual_Control_Arm_Request();
         arm_started_ms = last_valid_ms = now_ms;
         session_active = 1U;
         Reply(UART_ARM, id, RESULT_ACCEPTED, DETAIL_NONE);
+        return;
+    }
+    if (frame->type == UART_RELEASE)
+    {
+        if (!session_active || return_state != RETURN_INACTIVE || !Manual_Control_Release())
+            Reply(UART_RELEASE, id, RESULT_REJECTED, DETAIL_STATE);
+        else
+        {
+            session_active = was_enabled = origin_valid = 0U;
+            Reply(UART_RELEASE, id, RESULT_DONE, DETAIL_NONE);
+        }
         return;
     }
 
@@ -177,14 +190,12 @@ static void Service_Request(const LinkFrame *frame, uint32_t now_ms)
         config.linear_limit_mps = linear_milli / 1000.0f;
         config.angular_limit_rad_s = angular_milli / 1000.0f;
         if (linear_milli == 0U || angular_milli == 0U ||
-            config.linear_limit_mps > CHASSIS_STRAIGHT_MAX_SPEED_MPS ||
-            config.angular_limit_rad_s > CHASSIS_VECTOR_MAX_WZ_RAD_S)
+            config.linear_limit_mps > CHASSIS_RUN_SPEED_MPS ||
+            config.angular_limit_rad_s > CHASSIS_RUN_YAW_RATE_RAD_S)
         {
             Reply(UART_RETURN, id, RESULT_REJECTED, DETAIL_LIMIT);
             return;
         }
-        /* 满速斜向转到车体坐标时留出浮点舍入余量，避免合法目标被底盘拒绝。 */
-        config.linear_limit_mps = fminf(config.linear_limit_mps, CHASSIS_STRAIGHT_MAX_SPEED_MPS - 1e-6f);
     }
 
     const double from[3] = {position.x_m, position.y_m, position.yaw_rad};
@@ -250,7 +261,7 @@ static void Service_Return(uint32_t now_ms)
         Stop_Session(DETAIL_ODOM);
     else if (output.arrived)
     {
-        Chassis_Stop();
+        Chassis_Hold();
         stop_started_ms = now_ms;
         return_state = RETURN_STOPPING;
     }
@@ -269,7 +280,9 @@ static void Report_Status(uint32_t now_ms)
     if (return_state != RETURN_INACTIVE)
         state = return_state == RETURN_RUNNING ? 5U : 6U;
     const uint8_t status[] = {
-        state, (uint8_t)(origin_valid | (odom_valid << 1U)),
+        /* bit2：带电待接管；bit3：支持 0.40 m/s 与 3 rad/s 运行配置。 */
+        state, (uint8_t)(8U | origin_valid | (odom_valid << 1U) |
+                         ((!session_active && state == MANUAL_READY) << 2U)),
         (uint8_t)reply_id, (uint8_t)(reply_id >> 8U), reply_command, reply_result, reply_detail,
     };
     uint8_t tx_length = LinkFrame_Encode(UART_STATUS, status, sizeof(status), tx_buffer);
@@ -302,7 +315,7 @@ void UART6_Manual_Init(void)
     parser = (LinkParser){0};
     session_active = was_enabled = origin_valid = 0U;
     return_state = RETURN_INACTIVE;
-    last_arm_id = last_origin_id = last_return_id = active_return_id = 0U;
+    last_arm_id = last_origin_id = last_return_id = last_release_id = active_return_id = 0U;
     Reply(0U, 0U, RESULT_NONE, DETAIL_NONE);
     last_report_ms = (uint32_t)xTaskGetTickCount() - REPORT_INTERVAL_MS;
     taskENTER_CRITICAL();
@@ -354,7 +367,8 @@ void UART6_Manual_Loop(void)
                 parser = (LinkParser){0};
                 break;
             }
-            if (frame.type == UART_ARM || frame.type == UART_ORIGIN || frame.type == UART_RETURN)
+            if (frame.type == UART_ARM || frame.type == UART_ORIGIN ||
+                frame.type == UART_RETURN || frame.type == UART_RELEASE)
                 Service_Request(&frame, received_ms);
             else if (session_active && return_state != RETURN_INACTIVE && frame.type == UART_KEEPALIVE &&
                      frame.length == 0U)

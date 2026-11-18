@@ -6,7 +6,6 @@
 #if JETSON_AUTO_ENABLED
 #include "point_plan.h"
 #endif
-#include "INS_task.h"
 #include "jetson_link.h"
 #include "usb_link.h"
 #include "FreeRTOS.h"
@@ -20,7 +19,7 @@ typedef enum
     WAIT_ROI, TURN_OUT, WAIT_TURN_ACK, APPROACH_SAFETY, SAFETY_STRAIGHT, WAIT_SAFETY_ACK, PUSHING,
     WAIT_RELEASE_POINT_ACK, RETRACTING, WAIT_DELIVERY_ACK, TURN_BACK, WAIT_SEARCH_ACK,
     WAIT_REJECT_OPEN, RECOVERY_BACK, FAULT, TEST_DONE,
-    INITIAL_SEARCH_TURN, RETURN_TO_START, VERIFY_RETURN_POSE, LOCALIZE_START
+    INITIAL_SEARCH_TURN, RETURN_TO_START, VERIFY_RETURN_POSE, LOCALIZE_START, WAIT_ENABLE
 } Auto_Stage_t;
 
 typedef struct
@@ -42,7 +41,7 @@ typedef struct
 {
     Vision_Phase_t phase;
     AdaptiveKalman tracker;      /**< 图像定点位置和速度估计。 */
-    Jetson_CAN_Center_t previous;  /**< 上一帧积分或停车核验样本。 */
+    Visual_Observation_t previous; /**< 上一帧积分或停车核验样本。 */
     Window_Evidence_t verify_outside[2]; /**< 视觉核验时 x、y 各自最近一次越界。 */
     Visual_Servo_t servo;        /**< 有限制动距离的图像速度规划。 */
     uint32_t evidence_ms;         /**< 最近一次有效新图像的接收时刻，ms。 */
@@ -77,7 +76,7 @@ static const Image_Window_t safety_windows[2] = {
 };
 static const Point_Plan_Config_t return_config = {
     .linear_limit_mps = JETSON_AUTO_RETURN_SPEED_MPS,
-    .angular_limit_rad_s = 0.50f,
+    .angular_limit_rad_s = CHASSIS_RUN_YAW_RATE_RAD_S,
     .linear_deceleration_mps2 = 0.30f,
     .angular_deceleration_rad_s2 = 0.80f,
     .latency_s = 0.12f,
@@ -99,8 +98,10 @@ static uint32_t next_request_id;
 static uint8_t navigating;
 static uint32_t navigation_zero_ms;
 static uint8_t timed_zero_requested;
+#if JETSON_AUTO_CHASSIS_TEST
 static uint32_t safety_lost_ms;
 static uint8_t safety_lost;
+#endif
 static uint8_t link_bound;
 static uint32_t link_generation;
 static Vision_Approach_t vision;
@@ -130,7 +131,7 @@ static uint8_t Window_Configured(const Image_Window_t *window)
 }
 
 /** @brief 检查当前模式使用的参数；安全区直行距离也须完成标定。
- * @return 所需参数已配置返回 1；待标定时保持失能。
+ * @return 所需参数已配置返回 1；待标定时禁止启动任务。
  */
 static uint8_t Configuration_Ready(void)
 {
@@ -245,11 +246,24 @@ static void Begin_Approach(Auto_Stage_t next, const Jetson_CAN_Data_t *data, uin
     navigation_zero_ms = now_ms;
     vision = (Vision_Approach_t){0};
     center_boundary = data->rx_sequence;
+#if JETSON_AUTO_CHASSIS_TEST
     safety_lost = 0U;
-    const Jetson_CAN_Center_t *previous = next == APPROACH_TARGET ? &data->target : &data->safety;
+#endif
+    const Visual_Observation_t *previous = next == APPROACH_TARGET ? &data->target : &data->safety;
     center_source_valid = previous->valid;
     center_source_boundary = previous->source_frame;
     Enter(next, now_ms);
+}
+
+/** @brief 正常减速只请求一次，后续轮询保持当前斜坡。 */
+static void Hold_Navigation(uint32_t now_ms)
+{
+    if (navigating)
+    {
+        Chassis_Hold();
+        navigating = 0U;
+        navigation_zero_ms = now_ms;
+    }
 }
 
 /** @brief 更新连续速度，底盘负责检查动作准入。
@@ -259,40 +273,33 @@ static void Begin_Approach(Auto_Stage_t next, const Jetson_CAN_Data_t *data, uin
  */
 static void Navigate(float vx, float vy, float wz, uint32_t now_ms)
 {
+    if (vx == 0.0f && vy == 0.0f && wz == 0.0f)
+    {
+        /* 窗外换向的过零样本仍属于跟踪过程，下一帧可以直接反向。 */
+        Chassis_Hold();
+        navigating = 1U;
+        return;
+    }
     if (!Chassis_Set_Velocity(vx, vy, wz))
         Halt(now_ms);
     else
-    {
-        navigating = vx != 0.0f || vy != 0.0f || wz != 0.0f;
-        if (!navigating)
-            navigation_zero_ms = now_ms;
-    }
-}
-
-/** @brief 退出连续速度；后续轮询不重复清零。 */
-static void Stop_Navigation(uint32_t now_ms)
-{
-    if (navigating)
-    {
-        Chassis_Stop();
-        navigating = 0U;
-        navigation_zero_ms = now_ms;
-    }
+        navigating = 1U;
 }
 
 /** @brief 清除旧坐标速度，按当前视觉阶段搜索或停车。
  * @param[in] now_ms 当前 RTOS 毫秒。
  */
-static void Approach_Lost_Center(uint32_t now_ms)
+static void Approach_Lost_Center(uint32_t now_ms, uint8_t holding)
 {
     vision = (Vision_Approach_t){0};
-    Stop_Navigation(now_ms);
-#if JETSON_AUTO_ENABLED
-    /* 转完后原地等候目标，目标丢失时同样先停下等待新图像。 */
-    if (stage == APPROACH_TARGET)
-        return;
-#endif
-    /* 安全区中心丢失后只停车等待。超过制动期限仍没有新中心就 Halt，避免一直停在这个阶段。 */
+    if (navigating || holding)
+    {
+        Chassis_Stop();
+        navigating = 0U;
+        navigation_zero_ms = now_ms;
+    }
+#if JETSON_AUTO_CHASSIS_TEST
+    /* 单趟诊断有固定失去中心时限。正式搬运的安全区对准受独立总时限约束。 */
     if (!safety_lost)
     {
         safety_lost = 1U;
@@ -301,6 +308,7 @@ static void Approach_Lost_Center(uint32_t now_ms)
     }
     if ((uint32_t)(now_ms - safety_lost_ms) >= JETSON_AUTO_BRAKE_TIMEOUT_MS)
         Halt(now_ms);
+#endif
 }
 
 /** @brief 用合法视觉中心更新卡尔曼估计，取得本次积分的实际间隔。
@@ -308,7 +316,7 @@ static void Approach_Lost_Center(uint32_t now_ms)
  * @return 当前积分时长，单位秒。首包或长间隔返回 0。
  * @note 相同源帧编号的周期重发不重复参与滤波和积分。
  */
-static float Update_Image(const Jetson_CAN_Center_t *center)
+static float Update_Image(const Visual_Observation_t *center)
 {
     /* 按源帧间隔更新滤波，避免通信调度抖动变成虚假的图像速度。 */
     uint32_t elapsed = vision.previous.valid ?
@@ -359,31 +367,32 @@ static uint8_t Repeated_Outside(Window_Evidence_t *evidence, int8_t side,
  * @param[in] now_ms 当前 RTOS 毫秒。
  * @return 发出零速后取得新源帧并核验到位时返回 1。
  */
-static uint8_t Approach(const Jetson_CAN_Center_t *center, const Image_Window_t *window,
+static uint8_t Approach(const Visual_Observation_t *center, const Image_Window_t *window,
                         uint8_t x_only, uint32_t now_ms)
 {
     /* 邮箱暂忙可重试；持续未交付零目标时，即使相机还在发新图也须故障停车。 */
-    if (!navigating && !Chassis_Motion_Ready())
+    const uint8_t holding = !navigating && !Chassis_Motion_Ready();
+    if (holding && (uint32_t)(now_ms - navigation_zero_ms) >= JETSON_AUTO_HOLD_TIMEOUT_MS)
     {
-        if ((uint32_t)(now_ms - navigation_zero_ms) >= JETSON_AUTO_BRAKE_TIMEOUT_MS)
-            Halt(navigation_zero_ms);
+        Halt(now_ms);
         return 0U;
     }
-    const uint8_t newer = Received_After(center->sequence, center_boundary);
-    const uint8_t recent = (uint32_t)(now_ms - center->received_ms) < JETSON_AUTO_CENTER_TIMEOUT_MS;
-    const uint32_t source_delta = (center->source_frame - center_source_boundary) & 0xffffffU;
-    const uint8_t fresh = center->valid && newer && recent &&
-        (!center_source_valid || (source_delta != 0U && source_delta < 0x800000U));
+    if (holding && vision.phase != VISION_VERIFY)
+        return 0U;
+    const uint8_t fresh = Visual_Observation_Is_New(center, center_boundary, center_source_valid,
+        center_source_boundary, now_ms, JETSON_AUTO_CENTER_TIMEOUT_MS);
     if (!fresh)
     {
         /* 保持上一帧的速度或零目标，直到新的图像到达或已有证据过期。 */
         if (center->valid && (vision.previous.valid || vision.phase == VISION_VERIFY) &&
             (uint32_t)(now_ms - vision.evidence_ms) < JETSON_AUTO_CENTER_TIMEOUT_MS)
             return 0U;
-        Approach_Lost_Center(now_ms);
+        Approach_Lost_Center(now_ms, holding);
         return 0U;
     }
+#if JETSON_AUTO_CHASSIS_TEST
     safety_lost = 0U;
+#endif
     center_source_valid = 1U;
     center_source_boundary = center->source_frame;
     vision.evidence_ms = center->received_ms;
@@ -401,6 +410,12 @@ static uint8_t Approach(const Jetson_CAN_Center_t *center, const Image_Window_t 
 
     if (vision.phase == VISION_VERIFY)
     {
+        if (holding && inside)
+        {
+            /* 滑行时收到的入窗样本不能用于到位确认。窗外新目标可直接重定向斜坡。 */
+            vision.previous.valid = 0U;
+            return 0U;
+        }
         if (window->verify_pair)
         {
             const uint8_t arrived = inside && vision.previous.valid &&
@@ -432,12 +447,12 @@ static uint8_t Approach(const Jetson_CAN_Center_t *center, const Image_Window_t 
           Window_Side(goal_x - vision.previous.x, x_tol) == 0 &&
           (x_only || Window_Side(goal_y - vision.previous.y, y_tol) == 0))))
     {
-        Stop_Navigation(now_ms);
+        Hold_Navigation(now_ms);
         vision = (Vision_Approach_t){.phase = VISION_VERIFY, .evidence_ms = center->received_ms};
         return 0U;
     }
 
-    Jetson_CAN_Center_t measurement = *center;
+    Visual_Observation_t measurement = *center;
     if (x_only)
         measurement.y = (int16_t)goal_y;
     const float seconds = Update_Image(&measurement);
@@ -498,13 +513,13 @@ static uint8_t Timed_Move_Complete(uint32_t now_ms)
     {
         if ((uint32_t)(now_ms - stage_started_ms) < JETSON_AUTO_PUSH_DURATION_MS)
             return 0U;
-        Chassis_Stop();
+        Chassis_Hold();
         timed_zero_requested = 1U;
         stage_started_ms = now_ms;
     }
     if (Chassis_Motion_Ready())
         return 1U;
-    if ((uint32_t)(now_ms - stage_started_ms) >= JETSON_AUTO_BRAKE_TIMEOUT_MS)
+    if ((uint32_t)(now_ms - stage_started_ms) >= JETSON_AUTO_HOLD_TIMEOUT_MS)
         Halt(now_ms);
     return 0U;
 }
@@ -560,7 +575,7 @@ static void Service_Return(uint32_t now_ms)
         Halt(now_ms);
     else if (motion.arrived)
     {
-        Chassis_Stop();
+        Chassis_Hold();
         Enter(VERIFY_RETURN_POSE, now_ms);
     }
     else if (!Chassis_Set_Velocity_Explicit_Yaw(motion.vx_mps, motion.vy_mps, motion.wz_rad_s))
@@ -575,7 +590,7 @@ static void Begin_Alignment(Auto_Stage_t next, const Jetson_CAN_Data_t *data, ui
         Halt(now_ms);
 }
 
-static uint8_t Aligned(const Jetson_CAN_Center_t *center, uint8_t x_only,
+static uint8_t Aligned(const Visual_Observation_t *center, uint8_t x_only,
                        Chassis_Odometry_t *pose, uint32_t now_ms)
 {
     if ((uint32_t)(now_ms - stage_started_ms) >= JETSON_AUTO_ALIGN_TIMEOUT_MS ||
@@ -695,7 +710,7 @@ static void Service_Request(uint32_t now_ms)
         Halt(now_ms);
 }
 
-/** @brief 动作受理与终态可乱序；未完成持续查询，失败立即停车。启动时底盘仍禁用。 */
+/** @brief 动作受理与终态可乱序；未完成持续查询，失败立即停车。 */
 static uint8_t Action_Completed(const Jetson_CAN_Data_t *data, uint32_t now_ms)
 {
     if (!request.accepted && Reply_Accepted(&data->command_reply, JETSON_CAN_POINT_REPLY_COMMAND))
@@ -778,24 +793,6 @@ static void Service_Stage(const Jetson_CAN_Data_t *data, uint32_t now_ms)
     const Jetson_CAN_Command_Reply_t *reply = &data->command_reply;
     switch (stage)
     {
-    case ARMING:
-        /* 开机张爪已经完成，正式搬运在左侧停车位建立本趟起点。 */
-        if (Chassis_Motion_Ready()
-#if JETSON_AUTO_ENABLED
-            && Chassis_Get_Odometry(&start_pose)
-#endif
-           )
-        {
-#if JETSON_AUTO_CHASSIS_TEST
-            Begin_Approach(APPROACH_TARGET, data, now_ms);
-#else
-            start_side = SAFE_LEFT;
-            Start_Turn(1, 180.0f, INITIAL_SEARCH_TURN, now_ms);
-#endif
-        }
-        else if ((uint32_t)(now_ms - stage_started_ms) >= JETSON_AUTO_ARM_TIMEOUT_MS)
-            Halt(now_ms);
-        break;
 #if JETSON_AUTO_ENABLED
     case INITIAL_SEARCH_TURN:
         if (Chassis_Motion_Ready())
@@ -842,7 +839,7 @@ static void Service_Stage(const Jetson_CAN_Data_t *data, uint32_t now_ms)
             else
                 Begin_Request(JETSON_CAN_TURN_COMPLETED_ID, WAIT_TURN_ACK, now_ms);
         }
-        else if ((uint32_t)(now_ms - stage_started_ms) >= JETSON_AUTO_BRAKE_TIMEOUT_MS)
+        else if ((uint32_t)(now_ms - stage_started_ms) >= JETSON_AUTO_HOLD_TIMEOUT_MS)
             Halt(now_ms);
         break;
 #endif
@@ -962,18 +959,22 @@ void Jetson_Auto_Init(void)
     jetson_test_start = test_started = 0U;
     test_started_ms = 0U;
 #endif
+#if JETSON_AUTO_CHASSIS_TEST
     if (Configuration_Ready())
         Begin_Point_Request(JETSON_CAN_POINT_STARTUP, WAIT_STARTUP, (uint32_t)xTaskGetTickCount());
     else
         Enter(UNCONFIGURED, 0U);
+#else
+    Enter(WAIT_IMU, (uint32_t)xTaskGetTickCount());
+#endif
 }
 
 /** @brief 在底盘服务后推进一次，沿用现有链路、轮反馈和制动期限。 */
 void Jetson_Auto_Loop(void)
 {
+#if JETSON_AUTO_CHASSIS_TEST
     if (stage == UNCONFIGURED || stage == TEST_DONE)
         return;
-#if JETSON_AUTO_CHASSIS_TEST
     const uint32_t test_now_ms = (uint32_t)xTaskGetTickCount();
     if (!test_started)
     {
@@ -1004,6 +1005,8 @@ void Jetson_Auto_Loop(void)
     taskEXIT_CRITICAL();
     /* 先取接收快照再读时钟，避免中断跨 tick 写入更新的时间而被误判过期。 */
     const uint32_t now_ms = (uint32_t)xTaskGetTickCount();
+#if JETSON_AUTO_CHASSIS_TEST
+    /* 专用单趟测试沿用人工触发、在线夹爪握手、最后才使能的启动顺序。 */
     if (!Link_Ready(&data, &link, now_ms))
         return;
     if (stage == WAIT_STARTUP)
@@ -1012,26 +1015,80 @@ void Jetson_Auto_Loop(void)
             return;
         Enter(WAIT_IMU, now_ms);
     }
+#endif
     if (stage == WAIT_IMU)
     {
-        INS_control_data_t imu;
-        if (INS_Get_Data(&imu) &&
-            (uint32_t)((uint32_t)xTaskGetTickCount() - imu.sample_time_ms) <= JETSON_AUTO_IMU_MAX_AGE_MS && Chassis_Enable())
-            Enter(ARMING, now_ms);
-        return;
+        if (!Chassis_Attitude_Ready())
+            return;
+        Enter(WAIT_ENABLE, now_ms);
+    }
+    if (stage == WAIT_ENABLE)
+    {
+        if (!Chassis_Attitude_Ready() || now_ms - stage_started_ms >= JETSON_AUTO_ARM_TIMEOUT_MS)
+        {
+            Halt(now_ms);
+            return;
+        }
+        if (!Chassis_Can_Enable())
+            return;
+        if (!Chassis_Enable())
+        {
+            Halt(now_ms);
+            return;
+        }
+        Enter(ARMING, now_ms);
     }
 
-    if (!Chassis_Is_Enabled() || (stage != ARMING && !Chassis_Motors_Ready()))
+    if (stage == ARMING)
+    {
+        if (!Chassis_Is_Enabled())
+        {
+            Halt(now_ms);
+            return;
+        }
+        if (!Chassis_Motion_Ready()
+#if JETSON_AUTO_ENABLED
+            || !Chassis_Get_Odometry(&start_pose)
+#endif
+           )
+        {
+            if ((uint32_t)(now_ms - stage_started_ms) >= JETSON_AUTO_ARM_TIMEOUT_MS)
+                Halt(now_ms);
+            return;
+        }
+#if JETSON_AUTO_CHASSIS_TEST
+        Begin_Approach(APPROACH_TARGET, &data, now_ms);
+        return;
+#else
+        if (Configuration_Ready())
+            Begin_Point_Request(JETSON_CAN_POINT_STARTUP, WAIT_STARTUP, now_ms);
+        else
+            Enter(UNCONFIGURED, now_ms);
+#endif
+    }
+    if (!Chassis_Is_Enabled() || !Chassis_Motors_Ready())
     {
         Halt(now_ms);
         return;
     }
 #if JETSON_AUTO_ENABLED
-    /* 出发后任何阶段失去里程计都不得继续上次动作，包括限时盲推。 */
+    /* 已使能的零速待机同样监视反馈；出发后覆盖定时盲推等所有阶段。 */
     Chassis_Odometry_t pose;
-    if (stage != ARMING && !Chassis_Get_Odometry(&pose))
+    if (!Chassis_Get_Odometry(&pose))
     {
         Halt(now_ms);
+        return;
+    }
+    if (stage == UNCONFIGURED || !Link_Ready(&data, &link, now_ms))
+        return;
+    if (stage == WAIT_STARTUP)
+    {
+        if (Action_Completed(&data, now_ms) && Chassis_Motion_Ready())
+        {
+            start_pose = pose;
+            start_side = SAFE_LEFT;
+            Start_Turn(1, 180.0f, INITIAL_SEARCH_TURN, now_ms);
+        }
         return;
     }
 #endif

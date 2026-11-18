@@ -33,7 +33,7 @@ class BackendLimitsTest(unittest.TestCase):
         self.assertEqual(wz, -500)
         self.assertEqual(command.limits, {'linear_mps': 0.25, 'angular_radps': 0.5, 'timed_s': 1.5})
         self.assertEqual(ManualCommand(0.2, 0.1).limits,
-                         {'linear_mps': 0.5, 'angular_radps': 2.0, 'timed_s': 3600.0})
+                         {'linear_mps': 0.4, 'angular_radps': 3.0, 'timed_s': 3600.0})
 
     def test_timed_upper_boundary_excludes_prepare_then_stops(self):
         command = low_command()
@@ -43,7 +43,7 @@ class BackendLimitsTest(unittest.TestCase):
         self.assertEqual(command.frame(1.6), (True, 0, 0, 0))
 
     def test_invalid_limits_rejected_without_relaxing_protocol(self):
-        for key, above in (('max_linear_mps', 0.5001), ('max_angular_radps', 2.001), ('max_timed_s', 3601)):
+        for key, above in (('max_linear_mps', 0.4001), ('max_angular_radps', 3.001), ('max_timed_s', 3601)):
             for value in (0, -1, above, float('nan'), float('inf'), True, False):
                 with self.subTest(key=key, value=value), self.assertRaises(ValueError):
                     ManualCommand(0.2, 0.1, **{key: value})
@@ -74,7 +74,7 @@ class CliLimitsTest(unittest.TestCase):
             args = manual_control.parse_arguments(base + ['--max-linear-mps', '0.25',
                 '--max-angular-radps', '0.5', '--max-timed-s', '1.5'])
             self.assertEqual((args.max_linear_mps, args.max_angular_radps, args.max_timed_s), (0.25, 0.5, 1.5))
-            for flag, above in (('--max-linear-mps', '0.501'), ('--max-angular-radps', '2.01'),
+            for flag, above in (('--max-linear-mps', '0.401'), ('--max-angular-radps', '3.01'),
                                 ('--max-timed-s', '3601')):
                 for value in ('nan', 'inf', 'true', '0', above):
                     with self.subTest(flag=flag, value=value), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
@@ -124,7 +124,7 @@ class HttpLimitsTest(unittest.TestCase):
                 with self.subTest(path=path, value=value):
                     status, _ = self.request(path, body)
                     self.assertEqual(status, 400)
-                    self.assertEqual(self.command.frame(0), (False, 0, 0, 0))
+                    self.assertIsNone(self.command.frame(0))
 
 
 if __name__ == '__main__':

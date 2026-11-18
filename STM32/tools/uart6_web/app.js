@@ -32,11 +32,13 @@ const vectors = {
   ccw: [0, 0, 1], cw: [0, 0, -1],
 };
 let state = {};
-let pending = false;
+let pending = null;
 let stopping = false;
 let fetchingPorts = false;
 let issueOrder = 0;
 let appliedOrder = 0;
+let sessionOwned = false;
+let localMotion = null;
 let transientMessage = "";
 let transientIsError = false;
 let transientUntil = 0;
@@ -53,7 +55,11 @@ async function request(path, payload, options = {}) {
     ...options,
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "控制服务请求失败");
+  if (!response.ok) {
+    const error = new Error(data.error || "控制服务请求失败");
+    error.rejected = true;
+    throw error;
+  }
   return data;
 }
 
@@ -72,8 +78,36 @@ function applyState(next, order) {
   }
   previousServerMessage = next.message;
   state = next;
+  if (localMotion && order > localMotion.acknowledgedAt) checkMotionComplete(next);
+  if (!next.armed && pending !== "arm") sessionOwned = false;
   if (!next.armed || !next.fresh) clearDriveKeys();
   render();
+}
+
+function checkMotionComplete(snapshot) {
+  if (snapshot.fresh && (!snapshot.armed ||
+      (snapshot.mode === "idle" && (snapshot.state === 2 || snapshot.can_release) && !snapshot.pending))) localMotion = null;
+}
+
+async function motionRequest(path, payload, order) {
+  const previous = localMotion;
+  const motion = { acknowledgedAt: Infinity };
+  localMotion = motion;
+  try {
+    const next = await request(path, payload);
+    if (localMotion === motion) {
+      motion.acknowledgedAt = issueOrder;
+      sessionOwned = next.armed;
+      checkMotionComplete(next);
+    }
+    applyState(next, order);
+  } catch (error) {
+    if (localMotion === motion) {
+      if (error.rejected) localMotion = previous;
+      else motion.acknowledgedAt = issueOrder;
+    }
+    throw error;
+  }
 }
 
 function render() {
@@ -103,7 +137,14 @@ function render() {
   controls.refresh.disabled = connected || fetchingPorts || pending;
   controls.connect.textContent = connected ? "断开" : "连接";
   controls.connect.disabled = pending || (!connected && (fetchingPorts || !portSelect.value));
-  controls.arm.disabled = waiting || stopping || state.armed || !fresh || state.state !== 0 || !idle;
+  controls.arm.textContent = state.armed ? "归还控制" : "接管底盘";
+  controls.arm.disabled = waiting || stopping || !(state.can_arm || state.can_release) || !idle;
+  if (fresh) {
+    for (const input of [controls.angular, controls.returnAngular]) {
+      input.max = state.angular_limit;
+      if (input.valueAsNumber > state.angular_limit) input.value = state.angular_limit;
+    }
+  }
   controls.run.disabled = waiting || stopping || !state.armed || !fresh || ![2, 3].includes(state.state) || !idle;
   controls.origin.disabled = controls.run.disabled || state.state !== 2 || !state.odom;
   controls.return.disabled = controls.origin.disabled || !state.origin;
@@ -171,23 +212,32 @@ async function scanPorts() {
 
 async function action(path, payload = {}) {
   if (pending || stopping) return;
-  pending = true;
+  pending = path;
   transientIsError = false;
   transientUntil = 0;
   const order = ++issueOrder;
   render();
   try {
-    applyState(await request(path, payload), order);
+    if (path === "run" || path === "return") {
+      await motionRequest(path, payload, order);
+    } else {
+      const next = await request(path, payload, { keepalive: path === "release" });
+      if (path === "arm" && next.armed) sessionOwned = true;
+      if (path === "release" || path === "disconnect") sessionOwned = false;
+      applyState(next, order);
+    }
   } catch (error) {
     if (order >= appliedOrder) feedback(error.message, true);
   } finally {
-    pending = false;
+    pending = null;
     render();
   }
 }
 
 async function stopMotion() {
   if (stopping || (!state.connected && !pending)) return;
+  localMotion = null;
+  sessionOwned = false;
   clearDriveKeys();
   stopping = true;
   const order = ++issueOrder;
@@ -250,11 +300,11 @@ function postDrive(keys) {
       driveQueued = null;
       const order = ++issueOrder;
       try {
-        applyState(await request("drive", {
+        await motionRequest("drive", {
           keys: keysNow,
           linear: controls.linear.valueAsNumber,
           angular: controls.angular.valueAsNumber,
-        }), order);
+        }, order);
       } catch (error) {
         if (order >= appliedOrder) feedback(error.message, true);
       }
@@ -289,7 +339,7 @@ function clearDriveKeys() {
 function setInputMode(mode) {
   if (mode === inputMode || ["timed", "return"].includes(state.mode)) return;
   if (inputMode === "keys") {
-    const wasDriving = driving || state.mode === "keys";
+    const wasDriving = driving;
     clearDriveKeys();
     if (wasDriving) postDrive([]);
   }
@@ -299,7 +349,7 @@ function setInputMode(mode) {
 
 controls.modeTimed.addEventListener("click", () => setInputMode("timed"));
 controls.modeKeys.addEventListener("click", () => setInputMode("keys"));
-controls.arm.addEventListener("click", () => action("arm"));
+controls.arm.addEventListener("click", () => action(state.armed ? "release" : "arm"));
 controls.origin.addEventListener("click", () => action("origin"));
 controls.return.addEventListener("click", () => {
   const linear = controls.returnLinear.valueAsNumber;
@@ -376,10 +426,14 @@ document.addEventListener("keyup", (event) => {
   syncKeys();
   publishDrive();
 });
-window.addEventListener("pagehide", stopMotion);
-window.addEventListener("blur", stopMotion);
+function stopOwnedMotion() {
+  if (localMotion) stopMotion();
+  else if (sessionOwned && state.can_release && !pending) action("release");
+}
+window.addEventListener("pagehide", stopOwnedMotion);
+window.addEventListener("blur", stopOwnedMotion);
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) stopMotion();
+  if (document.hidden) stopOwnedMotion();
 });
 
 render();

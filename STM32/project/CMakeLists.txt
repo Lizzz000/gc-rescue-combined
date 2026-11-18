@@ -40,6 +40,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Algorithm/AHRS/MahonyAHRS.c
     Core/Algorithm/PID/pid.c
     Core/Algorithm/Chassis/motor_chassis.c
+    Core/Algorithm/Chassis/velocity_profile.c
     Core/Control/Chassis/chassis_odometry.c
     Core/Algorithm/Chassis/wheel_alignment.c
     Core/Algorithm/Chassis/planar_odometry.c
@@ -70,7 +71,6 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Algorithm/AHRS
     Core/Algorithm/PID
-    Core/Algorithm/Vision
     Core/Algorithm/Chassis
     Core/Bsp/ADC
     Core/Bsp/Buzzer
@@ -100,6 +100,13 @@ option(UART6_MANUAL_ENABLED "Build dedicated USART6 chassis remote control firmw
 if(UART6_MANUAL_ENABLED)
     target_sources(${CMAKE_PROJECT_NAME} PRIVATE Core/Control/Manual/uart6_manual.c)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE UART6_MANUAL_ENABLED=1)
+endif()
+option(JETSON_AUTO_ENABLED "Build the Jetson USB automatic transport controller" OFF)
+if(JETSON_AUTO_ENABLED)
+    if(CHASSIS_TUNING_ENABLED OR UART6_MANUAL_ENABLED)
+        message(FATAL_ERROR "Automatic transport requires exclusive chassis control")
+    endif()
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE JETSON_AUTO_ENABLED=1)
 endif()
 
 # 直接使用固件的模式宏（包括已有 -DCMAKE_C_FLAGS=-DJETSON_AUTO_...）。
@@ -131,7 +138,7 @@ if(BUILD_JETSON_CONTROLLER OR CHASSIS_TUNING_ENABLED)
         Core/Control/Vision/tracked_visual_servo.c
         Core/Algorithm/Vision/adaptive_kalman.c
         Core/Algorithm/Vision/visual_servo.c)
-    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE Core/Control/Vision)
+    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE Core/Control/Vision Core/Algorithm/Vision)
 endif()
 if(BUILD_JETSON_CONTROLLER OR CHASSIS_TUNING_ENABLED OR UART6_MANUAL_ENABLED)
     target_sources(${CMAKE_PROJECT_NAME} PRIVATE Core/Algorithm/Chassis/point_plan.c)

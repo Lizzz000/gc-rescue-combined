@@ -117,19 +117,20 @@ class ManualControlTest(unittest.TestCase):
         self.start()
         state = self.post('/api/hold', {'vx': 2.0, 'vy': 0, 'wz': -9})
         self.assertEqual(state['phase'], 'prepare')
-        self.assertEqual(state['limits'], {'linear_mps': 0.5, 'angular_radps': 2.0, 'timed_s': 3600.0})
+        self.assertEqual(state['limits'], {'linear_mps': 0.4, 'angular_radps': 3.0, 'timed_s': 3600.0})
         with self.assertRaises(urllib.error.HTTPError):
             self.post('/api/hold', {'vx': 'fast', 'vy': 0, 'wz': 0})
         self.post('/api/timed', {'vx': 0, 'vy': 0.1, 'wz': 0, 'seconds': 0.5})
         time.sleep(1.5)
-        self.assertEqual(self.post('/api/stop')['phase'], 'idle')
+        self.assertEqual(self.post('/api/release')['phase'], 'holding')
+        self.assertEqual(self.post('/api/stop')['phase'], 'stopping')
         frames = self.finish()
         span = frames[-1][0] - frames[0][0]
         self.assertGreater(len(frames) / span, 80)
         self.assertTrue(any(f[1:] == (1, 0, 100, 0) for f in frames))
         for _, _, vx, vy, wz in frames:
-            self.assertLessEqual((vx * vx + vy * vy) ** 0.5, 500)
-            self.assertLessEqual(abs(wz), 2000)
+            self.assertLessEqual((vx * vx + vy * vy) ** 0.5, 400)
+            self.assertLessEqual(abs(wz), 3000)
 
     def test_busy_device_is_not_written(self):
         fcntl.flock(self.slave, fcntl.LOCK_EX | fcntl.LOCK_NB)

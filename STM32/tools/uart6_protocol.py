@@ -4,13 +4,20 @@ import struct
 
 VELOCITY = 0x02
 ARM, STOP, ORIGIN, RETURN, KEEPALIVE = range(0x40, 0x45)
+RELEASE = 0x46
 STATUS, POSE = 0x80, 0x81
-
+AVAILABLE = 0x04  # Status flag: powered, ready, and no UART driving session owns the board.
+RUN_PROFILE = 0x08  # Supports 3 rad/s and orderly session release.
+LINEAR_LIMIT, ANGULAR_LIMIT = 0.40, 3.00
 DISARMED, PREPARING, READY, RUNNING, BRAKING, RETURNING, SETTLING = range(7)
 ACCEPTED, REJECTED, DONE, FAULT = range(1, 5)
 STATE_NAMES = ("失能", "准备中", "就绪", "遥控中", "制动中", "返航中", "返航到位，提交零速中")
 DETAIL_NAMES = ("", "状态不允许", "里程计失效", "尚未设原点", "超出行程限位",
                 "动作超时", "串口断流", "串口接收错误", "底盘故障")
+
+
+def angular_limit(flags):
+    return ANGULAR_LIMIT if flags & RUN_PROFILE else 2.0
 
 
 def crc16(data):

@@ -270,13 +270,8 @@ class HttpTest(ProcessTestBase):
         self.assertEqual(limits, {'linear_mps': manual_command.MAX_LINEAR_MPS,
                                   'angular_radps': manual_command.MAX_ANGULAR_RADPS,
                                   'timed_s': manual_command.MAX_TIMED_S})
-        stopping = time.monotonic()
         frames = self.stop_cleanly()
-        before = [f for f in frames if f.t < stopping]
-        self.assertTrue(before)
-        # 退出序列本身会发零速 valid=1，只检查退出前全为 valid=0、全程无非零速度
-        self.assertTrue(all(not f.valid for f in before), '错误请求产生了 valid=1 帧')
-        self.assertTrue(all(not any(f.velocity) for f in frames), '错误请求产生了运动帧')
+        self.assertEqual(frames, [], '查看状态、无效请求及退出未接管的服务均应保持链路静默')
 
 
 if __name__ == '__main__':

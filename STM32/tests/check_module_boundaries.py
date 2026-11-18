@@ -60,7 +60,8 @@ def check_module_boundaries(cc, temp_dir=None):
                 "Communication/Jetson/jetson_link", "Algorithm/Vision/adaptive_kalman",
                 "Algorithm/Vision/visual_servo", "Algorithm/Chassis/point_plan"]
         auto_headers = ["Control/Jetson/jetson_auto_config.h", "Control/Chassis/chassis_mode.h",
-                        "Control/Vision/visual_tracking_config.h", "Communication/Common/usb_link.h", "Task/INS/INS_task.h",
+                        "Control/Vision/visual_tracking_config.h", "Communication/Common/usb_link.h",
+                        "Communication/Common/visual_observation.h", "Task/INS/INS_task.h",
                         "Devices/BMI088/BMI088driver.h", "Devices/IST8310/ist8310driver.h"]
         auto_sources = [CORE / name for name in auto]
         auto_interfaces = common_headers + [CORE / name for name in auto_headers]

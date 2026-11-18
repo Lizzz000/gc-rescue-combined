@@ -12,6 +12,7 @@
 typedef struct
 {
     uint8_t valid;
+    uint8_t explicit_release; /**< 最近一次无效事件是否由完整 valid=0 帧产生。 */
     int16_t vx; /**< 前向速度，单位 0.001 m/s。 */
     int16_t vy; /**< 横向速度，单位 0.001 m/s。 */
     int16_t wz; /**< 角速度，单位 0.001 rad/s。 */
@@ -19,6 +20,7 @@ typedef struct
     uint32_t sequence;         /**< 每条类型 2（含无效/畸形）递增，按 uint32_t 自然回绕。 */
     uint32_t invalid_sequence; /**< 仅无效/畸形帧递增；保留同一接收批次的撤权事件。 */
     uint32_t zero_sequence;    /**< 仅有效全零帧递增；保留同一接收批次的停车事件。 */
+    uint32_t disconnect_sequence; /**< USB 离线边沿，保留快速重连事件。 */
 } Manual_CAN_Velocity_t;
 
 /**
@@ -34,6 +36,9 @@ void Manual_CAN_Init(void);
  * @return 无；无效、畸形帧立即覆盖上一条速度。
  */
 void Manual_CAN_Receive(const uint8_t *data, uint8_t len);
+
+/* USB 中断或屏蔽该中断的任务上下文调用。 */
+void Manual_CAN_Disconnect(void);
 
 /**
  * @brief 在任务临界区复制手动速度快照。

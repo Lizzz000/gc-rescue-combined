@@ -47,11 +47,11 @@
         <div class="motion-fields">
           <label class="number-field" for="linear-speed">
             <span>平移速度</span>
-            <span class="number-input"><input id="linear-speed" type="number" value="0.10" min="0.001" max="0.50" step="0.001" inputmode="decimal" required><span>m/s</span></span>
+            <span class="number-input"><input id="linear-speed" type="number" value="0.40" min="0.001" max="0.40" step="0.001" inputmode="decimal" required><span>m/s</span></span>
           </label>
           <label class="number-field" for="angular-speed">
             <span>转向速度</span>
-            <span class="number-input"><input id="angular-speed" type="number" value="0.50" min="0.001" max="2" step="0.001" inputmode="decimal" required><span>rad/s</span></span>
+            <span class="number-input"><input id="angular-speed" type="number" value="3.00" min="0.001" max="3" step="0.001" inputmode="decimal" required><span>rad/s</span></span>
           </label>
         </div>
         <form id="motion-form">
@@ -107,16 +107,16 @@
       <aside class="side-column">
         <section class="panel control-panel" aria-labelledby="control-title">
           <div class="panel-heading"><h2 id="control-title">底盘与返航</h2></div>
-          <button type="button" id="arm" class="button secondary arm-button" disabled>使能底盘</button>
+          <button type="button" id="arm" class="button secondary arm-button" disabled>接管底盘</button>
           <button type="button" id="origin" class="button secondary arm-button" disabled>建立原点</button>
           <div class="return-fields">
             <label class="number-field" for="return-linear">
               <span>返航平移</span>
-              <span class="number-input"><input id="return-linear" type="number" value="0.10" min="0.001" max="0.50" step="0.001" inputmode="decimal"><span>m/s</span></span>
+              <span class="number-input"><input id="return-linear" type="number" value="0.40" min="0.001" max="0.40" step="0.001" inputmode="decimal"><span>m/s</span></span>
             </label>
             <label class="number-field" for="return-angular">
               <span>返航转向</span>
-              <span class="number-input"><input id="return-angular" type="number" value="0.50" min="0.001" max="2" step="0.001" inputmode="decimal"><span>rad/s</span></span>
+              <span class="number-input"><input id="return-angular" type="number" value="3.00" min="0.001" max="3" step="0.001" inputmode="decimal"><span>rad/s</span></span>
             </label>
           </div>
           <button type="button" id="return" class="button secondary arm-button" disabled>按上述速度返回原点</button>

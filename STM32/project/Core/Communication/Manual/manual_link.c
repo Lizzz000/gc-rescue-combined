@@ -19,6 +19,7 @@ void Manual_CAN_Receive(const uint8_t *data, uint8_t len)
     const Link_Velocity_Frame_t frame = Link_Decode_Velocity(data, len);
     Manual_CAN_Velocity_t velocity = {
         .valid = frame.valid,
+        .explicit_release = manual_velocity.explicit_release,
         .vx = frame.vx,
         .vy = frame.vy,
         .wz = frame.wz,
@@ -26,16 +27,24 @@ void Manual_CAN_Receive(const uint8_t *data, uint8_t len)
         .sequence = manual_velocity.sequence + 1U,
         .invalid_sequence = manual_velocity.invalid_sequence,
         .zero_sequence = manual_velocity.zero_sequence,
+        .disconnect_sequence = manual_velocity.disconnect_sequence,
     };
     if (!frame.valid)
     {
         ++velocity.invalid_sequence;
+        velocity.explicit_release = Link_Is_Velocity_Frame(data, len) && data[0] == 0U;
     }
     else if (frame.vx == 0 && frame.vy == 0 && frame.wz == 0)
     {
         ++velocity.zero_sequence;
     }
     manual_velocity = velocity;
+}
+
+void Manual_CAN_Disconnect(void)
+{
+    manual_velocity.valid = 0U;
+    ++manual_velocity.disconnect_sequence;
 }
 
 /** @brief 复制快照；调用约束见头文件。 */

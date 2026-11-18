@@ -72,8 +72,8 @@
 <main>
   <section class="card">
     <h2>运动控制</h2>
-    <div class="slider"><span>平移速度</span><input id="linear" type="range" min="0.02" step="0.01" value="0.25"><output id="linear_v"></output></div>
-    <div class="slider"><span>转向速度</span><input id="angular" type="range" min="0.1" step="0.05" value="0.5"><output id="angular_v"></output></div>
+    <div class="slider"><span>平移速度</span><input id="linear" type="range" min="0.02" step="0.01" value="0.4"><output id="linear_v"></output></div>
+    <div class="slider"><span>转向速度</span><input id="angular" type="range" min="0.1" step="0.05" value="3"><output id="angular_v"></output></div>
     <div class="pad">
       <button data-move="ccw">⟲<small>Q 左转</small></button>
       <button data-move="forward">↑<small>W 前进</small></button>
@@ -85,7 +85,7 @@
       <button data-move="backward">↓<small>S 后退</small></button>
       <button class="blank" tabindex="-1" aria-hidden="true"></button>
     </div>
-    <button class="stop" id="stop">停车（空格）</button>
+    <button class="stop" id="stop">停车并失能（空格）</button>
     <p class="keys">键盘：<kbd>W</kbd>/<kbd>S</kbd> 或 <kbd>↑</kbd>/<kbd>↓</kbd> 前后，<kbd>A</kbd>/<kbd>D</kbd> 或 <kbd>←</kbd>/<kbd>→</kbd> 平移，<kbd>Q</kbd>/<kbd>E</kbd> 转向。</p>
     <div id="error" class="error"></div>
   </section>
@@ -106,7 +106,7 @@
     <section class="card">
       <h2>定时动作</h2>
       <div class="timed">
-        <label>vx（m/s）<input id="t_vx" type="number" step="0.01" value="0.25"></label>
+        <label>vx（m/s）<input id="t_vx" type="number" step="0.01" value="0.4"></label>
         <label>vy（m/s）<input id="t_vy" type="number" step="0.01" value="0"></label>
         <label>wz（rad/s）<input id="t_wz" type="number" step="0.05" value="0"></label>
         <label>时长（s）<input id="t_s" type="number" step="0.1" value="0.8"></label>
@@ -143,7 +143,7 @@ const KEYS = {
   ArrowUp: 'forward', KeyW: 'forward', ArrowDown: 'backward', KeyS: 'backward',
   ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', KeyQ: 'ccw', KeyE: 'cw',
 };
-const PHASES = {idle: '空闲', prepare: '使能零速', active: '运动中', stopping: '停车零速'};
+const PHASES = {waiting: '等待接管', idle: '已撤权', prepare: '接管零速', active: '运动中', holding: '零速保持', stopping: '停车中'};
 // 按住期间每 50 ms 续租；服务端租约 ≤ 200 ms，漏发几次即自动停车。
 const RENEW_MS = 50;
 const POLL_MS = 250;
@@ -153,6 +153,8 @@ let timer = null;
 const commandClient = Array.from(crypto.getRandomValues(new Uint8Array(16)),
   (value) => value.toString(16).padStart(2, '0')).join('');
 let commandSequence = 0;
+let motionOwned = false;
+let completionSequence = 0;
 
 const $ = (id) => document.getElementById(id);
 for (const id of ['linear', 'angular']) {
@@ -171,17 +173,33 @@ function highlight() {
 async function postJson(path, body, errorId) {
   try {
     const response = await fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(body || {})});
+      body: JSON.stringify(body || {}), keepalive: path === '/api/stop'});
     const data = await response.json();
     $(errorId).textContent = response.ok ? '' : data.error;
-    if (response.ok) { show(data); }
+    if (response.ok) { show(data); return data; }
   } catch (error) {
     $(errorId).textContent = '连接失败：' + error;
   }
 }
 
-function post(path, body) {
-  return postJson(path, {...body, client_id: commandClient, sequence: ++commandSequence}, 'error');
+function observeCompletion(state, sequence) {
+  if (sequence !== 0 && completionSequence === sequence &&
+      ['holding', 'idle', 'stopping', 'waiting'].includes(state.phase)) {
+    motionOwned = false;
+    completionSequence = 0;
+  }
+}
+
+async function post(path, body) {
+  const sequence = ++commandSequence;
+  completionSequence = 0;
+  if (path === '/api/hold' || path === '/api/timed') { motionOwned = true; }
+  if (path === '/api/stop') { motionOwned = false; }
+  const state = await postJson(path, {...body, client_id: commandClient, sequence}, 'error');
+  if (state && sequence === commandSequence && (path === '/api/timed' || path === '/api/release')) {
+    completionSequence = sequence;
+    observeCompletion(state, sequence);
+  }
 }
 
 function velocity() {
@@ -206,16 +224,16 @@ function press(move) {
 }
 
 function release(move) {
-  held.delete(move);
+  if (!held.delete(move)) { return; }
   highlight();
-  if (held.size === 0) { stop(); } else { renew(); }
+  if (held.size === 0) { stop('/api/release'); } else { renew(); }
 }
 
-function stop() {
+function stop(path = '/api/stop') {
   held.clear();
   highlight();
   if (timer !== null) { clearInterval(timer); timer = null; }
-  post('/api/stop');
+  post(path);
 }
 
 for (const button of document.querySelectorAll('[data-move]')) {
@@ -237,10 +255,14 @@ document.addEventListener('keyup', (event) => {
   const move = KEYS[event.code];
   if (move) { release(move); }
 });
-window.addEventListener('blur', stop);
-document.addEventListener('visibilitychange', () => { if (document.hidden) { stop(); } });
-$('stop').addEventListener('click', stop);
-$('pad_stop').addEventListener('click', stop);
+function stopOwnedMotion() {
+  if (motionOwned) { stop(); }
+}
+window.addEventListener('blur', stopOwnedMotion);
+window.addEventListener('pagehide', stopOwnedMotion);
+document.addEventListener('visibilitychange', () => { if (document.hidden) { stopOwnedMotion(); } });
+$('stop').addEventListener('click', () => stop());
+$('pad_stop').addEventListener('click', () => stop());
 // 限幅由服务端强制，页面同步输入范围；未取得前拒绝启动运动。
 let limits = null;
 $('timed').addEventListener('click', () => {
@@ -283,15 +305,15 @@ function show(state) {
     $('angular').min = Math.min(0.1, limits.angular_radps);
     $('linear').max = limits.linear_mps;
     $('angular').max = limits.angular_radps;
-    $('linear').value = Math.min(first ? 0.25 : Number($('linear').value), limits.linear_mps);
-    $('angular').value = Math.min(first ? 0.5 : Number($('angular').value), limits.angular_radps);
+    $('linear').value = first ? limits.linear_mps : Math.min(Number($('linear').value), limits.linear_mps);
+    $('angular').value = first ? limits.angular_radps : Math.min(Number($('angular').value), limits.angular_radps);
     $('linear_v').textContent = $('linear').value + ' m/s';
     $('angular_v').textContent = $('angular').value + ' rad/s';
     for (const id of ['t_vx', 't_vy', 't_wz']) {
       const maximum = id === 't_wz' ? limits.angular_radps : limits.linear_mps;
       $(id).min = -maximum;
       $(id).max = maximum;
-      const value = first && id === 't_vx' ? 0.25 : Number($(id).value);
+      const value = first && id === 't_vx' ? maximum : Number($(id).value);
       if (Number.isFinite(value)) { $(id).value = Math.max(-maximum, Math.min(maximum, value)); }
     }
     $('t_s').min = Math.min(0.1, limits.timed_s);
@@ -333,9 +355,12 @@ function rate(state) {
   lastCount = {frames: state.frames, at: now};
 }
 setInterval(async () => {
+  // 只有在本页运动应答以后发起的轮询，才能确认本次运动已经结束。
+  const sequence = completionSequence;
   try {
     const state = await (await fetch('/api/state')).json();
     show(state);
+    observeCompletion(state, sequence);
     rate(state);
   } catch (error) {
     $('phase').className = 'badge offline';

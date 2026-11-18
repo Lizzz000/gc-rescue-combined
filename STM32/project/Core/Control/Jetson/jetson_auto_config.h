@@ -2,6 +2,7 @@
 #define JETSON_AUTO_CONFIG_H
 
 #include "chassis_mode.h"
+#include "chassis.h"
 #include "visual_tracking_config.h"
 
 #define JETSON_AUTO_CHASSIS_TEST_TIMEOUT_MS 90000U
@@ -46,7 +47,7 @@
 /* 正式搬运的场地限位，0 表示未标定；前两项均须在清空场地后实测。 */
 #define JETSON_AUTO_RETURN_MAX_M 0.0f
 #define JETSON_AUTO_ALIGN_MAX_M 0.0f
-#define JETSON_AUTO_RETURN_SPEED_MPS 0.12f
+#define JETSON_AUTO_RETURN_SPEED_MPS CHASSIS_RUN_SPEED_MPS
 #define JETSON_AUTO_ALIGN_SPEED_MPS 0.10f
 #define JETSON_AUTO_RETURN_TIMEOUT_MS 20000U
 #define JETSON_AUTO_ALIGN_TIMEOUT_MS 10000U
@@ -59,7 +60,7 @@
 #define JETSON_AUTO_Y_TO_FORWARD VISUAL_TRACKING_Y_TO_FORWARD
 #endif
 /* 视觉速度规划；图像响应是待相机实测的局部初值，不是米制坐标标定。 */
-#define JETSON_AUTO_APPROACH_SPEED_MPS 0.50f
+#define JETSON_AUTO_APPROACH_SPEED_MPS CHASSIS_RUN_SPEED_MPS
 #ifndef JETSON_AUTO_APPROACH_ACCEL_MPS2
 #define JETSON_AUTO_APPROACH_ACCEL_MPS2 VISUAL_TRACKING_ACCEL_MPS2
 #endif
@@ -75,7 +76,6 @@
 #ifndef JETSON_AUTO_RESPONSE_Y_Q_PER_M
 #define JETSON_AUTO_RESPONSE_Y_Q_PER_M VISUAL_TRACKING_RESPONSE_Y_Q_PER_M
 #endif
-#define JETSON_AUTO_SEARCH_WZ_RAD_S 2.0f
 
 /* 图像位置/加速度标准差，单位 q、q/s²；1 张图宽/高为 10000q。 */
 #ifndef JETSON_AUTO_APPROACH_SIGMA_X_Q
@@ -92,9 +92,9 @@
 #define JETSON_AUTO_LINK_TIMEOUT_MS 250U
 /* 有效图像中心的接收期限，独立于通信在线状态，单位 ms。 */
 #define JETSON_AUTO_CENTER_TIMEOUT_MS 250U
-/* 使能前姿态样本允许的最大年龄，ms。 */
-#define JETSON_AUTO_IMU_MAX_AGE_MS 20U
 #define JETSON_AUTO_BRAKE_TIMEOUT_MS 500U
+/* 正常到位通过速度斜坡减至零，超时转故障制动。 */
+#define JETSON_AUTO_HOLD_TIMEOUT_MS 1500U
 
 /* 发出使能请求后，等待三轮反馈与姿态、里程计就绪的期限。 */
 #define JETSON_AUTO_ARM_TIMEOUT_MS 1000U
@@ -102,10 +102,10 @@
 /* 单次底盘联调用：对准安全区后锁航向直行，0 待实车标定。 */
 #define JETSON_AUTO_SAFETY_STRAIGHT_M 0.0f
 /* 安全区直行、检查后退与拒绝恢复共用定距速度。 */
-#define JETSON_AUTO_DISTANCE_SPEED_MPS 0.50f
+#define JETSON_AUTO_DISTANCE_SPEED_MPS CHASSIS_RUN_SPEED_MPS
 #define JETSON_AUTO_ROI_BACK_M 0.0f
-/* 直行目标可配置为 0.50 m/s；计时包含加速，到期下发零速。 */
-#define JETSON_AUTO_PUSH_SPEED_MPS 0.50f
+/* 计时包含加速，到期请求正常减速到零。 */
+#define JETSON_AUTO_PUSH_SPEED_MPS CHASSIS_RUN_SPEED_MPS
 #define JETSON_AUTO_PUSH_DURATION_MS 1200U
 #define JETSON_AUTO_RECOVERY_BACK_M 0.0f
 /* 单次联调按目的区选择转向；正式搬运从出发点原地转 180° 后找目标。 */

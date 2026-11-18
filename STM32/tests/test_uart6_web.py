@@ -138,6 +138,43 @@ class ControllerTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     web.timed_velocity({"vx": 0.1, "vy": 0, "wz": 0, "seconds": 1, **invalid})
 
+    def test_passive_connect_takeover_and_clean_disconnect(self):
+        self.control.action("stop", {})
+        self.control.action("disconnect", {})
+        self.serial.writes.clear()
+        self.control.action("connect", {"port": "COM9"})
+        self.serial.status(wire.READY, 0, flags=wire.AVAILABLE | wire.RUN_PROFILE | 2)
+        self.step(0.23)
+        self.assertFalse(self.serial.writes)
+        self.assertTrue(self.control.get_state()["can_arm"])
+        self.control.action("arm", {})
+        self.serial.status(wire.READY, wire.ARM, self.control.sequence, wire.ACCEPTED, flags=10)
+        self.step(0.25)
+        self.control.action("run", {"vx": 0.4, "vy": 0, "wz": 3, "seconds": .10})
+        self.assertEqual(self.serial.writes[-1], wire.frame(wire.VELOCITY, struct.pack("<Bhhh", 1, 400, 0, 3000)))
+        self.serial.status(wire.RUNNING, wire.ARM, flags=10)
+        self.step(.30)
+        self.assertFalse(self.control.get_state()["can_release"])
+        self.step(.36)
+        self.assertEqual(self.control.get_state()["state"], wire.RUNNING)
+        self.assertEqual(self.serial.writes[-1], web.ZERO)
+        self.control.action("disconnect", {})
+        seq = self.control.sequence
+        self.assertEqual(self.serial.writes[-1], wire.frame(wire.RELEASE, struct.pack("<H", seq)))
+        self.control.action("disconnect", {})
+        self.serial.status(wire.READY, wire.RELEASE, seq-1, wire.DONE, flags=14)
+        self.step(.37)
+        self.assertTrue(self.control.active)
+        self.serial.status(wire.READY, wire.RELEASE, seq, wire.DONE, flags=14)
+        self.step(.38)
+        self.assertIsNone(self.control.serial)
+        self.assertNotIn(web.STOP_FRAME, self.serial.writes)
+
+    def test_legacy_firmware_limits(self):
+        with self.assertRaises(ValueError):
+            self.control.action("run", {"vx": 0.4, "vy": 0, "wz": 3, "seconds": .1})
+        self.assertFalse(self.control.get_state()["can_release"])
+
 
 class LocalHttpTests(unittest.TestCase):
     def test_token_and_origin_are_required_for_commands(self):

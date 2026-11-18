@@ -169,7 +169,9 @@ class Sender:
         next_send = time.monotonic()
         while not stop_event.is_set():
             now = time.monotonic()
-            self._send(self._command.frame(now))
+            frame = self._command.frame(now)
+            if frame is not None:
+                self._send(frame)
             # 固定节拍不累积唤醒延迟；停顿超过一个周期时从当前时刻重新对齐，不补发积压帧。
             next_send += self._period
             if next_send < now:
@@ -177,8 +179,13 @@ class Sender:
             stop_event.wait(max(0.0, next_send - time.monotonic()))
 
     def shutdown(self):
-        """退出序列：零速 valid=1 持续 STOP_ZERO_S，再 valid=0 持续 EXIT_INVALID_S。"""
-        for frame, seconds in (((True, 0, 0, 0), STOP_ZERO_S), ((False, 0, 0, 0), EXIT_INVALID_S)):
+        """未接管时静默退出，已接管时发送停车和撤权序列。"""
+        if not self.frames and self._command.frame(time.monotonic()) is None:
+            return
+        sequence = [((False, 0, 0, 0), EXIT_INVALID_S)]
+        if self.last[0]:
+            sequence.insert(0, ((True, 0, 0, 0), STOP_ZERO_S))
+        for frame, seconds in sequence:
             deadline = time.monotonic() + seconds
             while time.monotonic() < deadline:
                 self._send(frame)
@@ -239,7 +246,7 @@ def main(argv=None):
                 print(f'{label}关闭失败：{error}。', file=sys.stderr)
                 code = 1
     if code == 0:
-        print('已停车并退出。', flush=True)
+        print('已停车并退出。' if sender.frames else '未接管底盘，服务已退出。', flush=True)
     return code
 
 

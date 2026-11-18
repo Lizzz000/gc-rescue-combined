@@ -17,7 +17,7 @@ from servo.s288 import ServoSession  # noqa: E402
 
 
 class ShutdownTest(unittest.TestCase):
-    def run_main(self, *, fail_send=False, fail_close=False, fail_run=False):
+    def run_main(self, *, claimed=True, fail_send=False, fail_close=False, fail_run=False):
         events = []
         packets = []
 
@@ -40,7 +40,7 @@ class ShutdownTest(unittest.TestCase):
                       shutdown=lambda: events.append('http stop'),
                       server_close=lambda: events.append('http close'))
         args = SimpleNamespace(lease_s=0.2, arm_zero_s=0.1, rate_hz=100, port=0,
-            max_linear_mps=0.5, max_angular_radps=2.0, max_timed_s=3600.0,
+            max_linear_mps=0.4, max_angular_radps=3.0, max_timed_s=3600.0,
             manual_config=dict(link_device='/fake', gripper_device='', gripper_id=0,
                                kp=0, kd=0, closed_deg=None, open_deg=None))
         clock = [0.0]
@@ -48,13 +48,19 @@ class ShutdownTest(unittest.TestCase):
         def sleep(seconds):
             clock[0] += seconds
 
+        def run(sender, _stop_event):
+            if fail_run:
+                raise LinkError('injected run failure')
+            if claimed:
+                sender.frames = 1
+                sender.last = (True, 100, 0, 0)
+
         stdout, stderr = StringIO(), StringIO()
         with patch.object(manual_control, 'parse_arguments', return_value=args), \
              patch.object(manual_control, 'CdcLink', return_value=link), \
              patch.object(manual_control, 'ServoSession', return_value=servo), \
              patch.object(manual_control, 'ManualServer', return_value=server), \
-             patch.object(manual_control.Sender, 'run',
-                          side_effect=LinkError('injected run failure') if fail_run else None), \
+             patch.object(manual_control.Sender, 'run', autospec=True, side_effect=run), \
              patch.object(manual_control.signal, 'signal'), \
              patch.object(manual_control.threading, 'Thread'), \
              patch.object(manual_control.time, 'monotonic', side_effect=lambda: clock[0]), \
@@ -68,7 +74,12 @@ class ShutdownTest(unittest.TestCase):
         self.assertIsNone(servo._link)
         return code, packets, stdout.getvalue(), stderr.getvalue()
 
-    def test_normal_exit_sends_zero_then_invalid_before_cleanup(self):
+    def test_exit_before_takeover_preserves_power_on_idle(self):
+        code, packets, stdout, stderr = self.run_main(claimed=False)
+        self.assertEqual((code, packets, stderr), (0, [], ''))
+        self.assertIn('未接管底盘', stdout)
+
+    def test_active_exit_sends_zero_then_invalid(self):
         code, packets, stdout, stderr = self.run_main()
         self.assertEqual(code, 0)
         self.assertEqual(stderr, '')
@@ -77,11 +88,8 @@ class ShutdownTest(unittest.TestCase):
         self.assertTrue(all(kind == MANUAL_ID and payload[1:] == bytes(6)
                             for kind, payload in packets))
         valid = [payload[0] for _, payload in packets]
-        self.assertIn(1, valid)
-        self.assertIn(0, valid)
-        first_invalid = valid.index(0)
-        self.assertEqual(valid[:first_invalid], [1] * first_invalid)
-        self.assertEqual(valid[first_invalid:], [0] * (len(valid) - first_invalid))
+        self.assertEqual(set(valid), {0, 1})
+        self.assertEqual(valid, sorted(valid, reverse=True))
 
     def test_shutdown_write_error_cleans_up_and_returns_failure(self):
         code, _, stdout, stderr = self.run_main(fail_send=True)

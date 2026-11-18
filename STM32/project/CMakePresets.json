@@ -31,6 +31,13 @@
             }
         },
         {
+            "name": "Debug-Auto",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "JETSON_AUTO_ENABLED": "ON"
+            }
+        },
+        {
             "name": "Debug-UART6-Manual",
             "inherits": "Debug",
             "cacheVariables": {
@@ -53,6 +60,10 @@
         {
             "name": "Debug-9axis",
             "configurePreset": "Debug-9axis"
+        },
+        {
+            "name": "Debug-Auto",
+            "configurePreset": "Debug-Auto"
         },
         {
             "name": "Debug-UART6-Manual",

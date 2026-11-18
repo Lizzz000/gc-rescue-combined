@@ -9,6 +9,7 @@ import struct
 import time
 
 from uart6_protocol import (
+    AVAILABLE, ANGULAR_LIMIT, LINEAR_LIMIT, RELEASE, RUN_PROFILE, angular_limit,
     ACCEPTED, ARM, BRAKING, DETAIL_NAMES, DISARMED, DONE, FAULT, KEEPALIVE,
     ORIGIN, POSE, PREPARING, READY, REJECTED, RETURN, RUNNING, STATE_NAMES,
     STATUS, STOP, VELOCITY, FrameReader, frame,
@@ -44,6 +45,7 @@ class ManualPanel:
         self.arm_deadline = None
         self.pending = None
         self.return_id = None
+        self.close_after_release = False
         self.request_number = secrets.randbelow(65535)
         self.held = set()
         self.motion = set()
@@ -60,7 +62,7 @@ class ManualPanel:
         ttk.Label(panel, textvariable=self.label).grid(row=1, column=0, columnspan=4, sticky="w", pady=(8, 0))
         ttk.Label(panel, textvariable=self.pose_label).grid(row=2, column=0, columnspan=4, sticky="w")
         ttk.Label(panel, textvariable=self.note, width=44).grid(row=3, column=0, columnspan=4, sticky="w", pady=(0, 10))
-        ttk.Button(panel, text="Enter 使能", command=self.arm).grid(row=4, column=0)
+        ttk.Button(panel, text="Enter 接管 / 归还", command=self.toggle_control).grid(row=4, column=0)
         ttk.Button(panel, text="O 建原点", command=self.save_origin).grid(row=4, column=1)
         ttk.Button(panel, text="R 返航", command=self.return_home).grid(row=4, column=2)
         ttk.Button(panel, text="空格 停车", command=self.stop).grid(row=4, column=3)
@@ -72,7 +74,7 @@ class ManualPanel:
         for widget in (root, panel, *panel.winfo_children()):
             widget.bindtags(("UartManualKeys", *widget.bindtags()))
         root.bind("<FocusOut>", self.focus_out)
-        self.stop("等待底盘失能，之后按 Enter 使能")
+        self.note.set("等待底盘状态，按 Enter 接管")
         root.after(0, self.tick)
 
     def send(self, kind, payload=b""):
@@ -104,16 +106,26 @@ class ManualPanel:
     def request(self, kind):
         if self.port is None or self.pending is not None or self.return_id is not None:
             return
+        if kind == RELEASE and not self.send(VELOCITY, struct.pack("<Bhhh", 1, 0, 0, 0)):
+            return
         self.request_number = self.request_number % 65535 + 1
         now = time.monotonic()
         self.pending = Request(kind, self.request_number, now, now)
         if kind == RETURN:
             self.return_id = self.request_number
-        self.send(kind, struct.pack("<H", self.request_number))
+        self.send_request(self.pending)
+
+    def send_request(self, request):
+        payload = struct.pack("<H", request.number)
+        if request.kind == RETURN:
+            payload += struct.pack("<HH", round(self.speed * 1000),
+                                   round(min(self.yaw_rate, angular_limit(self.flags)) * 1000))
+        self.send(request.kind, payload)
 
     def arm(self):
-        if self.active or self.state != DISARMED or time.monotonic() - self.last_status >= STATUS_TIMEOUT_S:
-            self.note.set("等待失能且有实时状态后再使能")
+        available = self.state == READY and self.flags & AVAILABLE
+        if self.active or (self.state != DISARMED and not available) or time.monotonic() - self.last_status >= STATUS_TIMEOUT_S:
+            self.note.set("等待底盘就绪或确认失能后接管")
             return
         self.active = True
         self.arm_deadline = time.monotonic() + 1.0
@@ -123,6 +135,17 @@ class ManualPanel:
 
     def at_rest(self):
         return self.active and self.state == READY and not self.motion and self.pending is None
+
+    def can_release(self):
+        return (self.active and self.pending is None and self.return_id is None and not self.motion and
+                self.state in (READY, RUNNING) and bool(self.flags & RUN_PROFILE) and
+                time.monotonic() - self.last_status < STATUS_TIMEOUT_S)
+
+    def toggle_control(self):
+        if not self.active:
+            self.arm()
+        elif self.can_release():
+            self.request(RELEASE)
 
     def save_origin(self):
         if not self.at_rest() or not (self.flags & 2):
@@ -145,13 +168,17 @@ class ManualPanel:
             self.note.set(message)
 
     def focus_out(self, _event):
-        # 应用切换焦点才撤销使能，窗口内部按钮切换不干扰控制。
+        # 窗口内按钮切换时仍由同一操作员控制。
         self.root.after_idle(self.check_focus)
 
     def check_focus(self):
         if self.root.focus_displayof() is None:
             self.held.clear()
-            if self.active:
+            if self.pending and self.pending.kind == RELEASE:
+                return
+            if self.can_release():
+                self.request(RELEASE)
+            elif self.active:
                 self.stop("窗口失焦，已请求停车")
 
     def key_down(self, event):
@@ -166,7 +193,7 @@ class ManualPanel:
             if self.active and self.state in (READY, RUNNING) and self.pending is None and self.return_id is None:
                 self.motion.add(key)
         elif key == "return":
-            self.arm()
+            self.toggle_control()
         elif key == "space":
             self.stop()
         elif key == "o":
@@ -188,7 +215,8 @@ class ManualPanel:
         y = int("a" in self.motion) - int("d" in self.motion)
         turn = int("q" in self.motion) - int("e" in self.motion)
         scale = math.floor(self.speed * 1000.0 / max(1.0, math.hypot(x, y)))
-        return struct.pack("<Bhhh", 1, x * scale, y * scale, round(turn * self.yaw_rate * 1000))
+        yaw = min(self.yaw_rate, angular_limit(self.flags))
+        return struct.pack("<Bhhh", 1, x * scale, y * scale, round(turn * yaw * 1000))
 
     def receive(self, kind, payload, now):
         if kind == POSE and len(payload) == 6 and (self.flags & 3) == 3:
@@ -214,11 +242,17 @@ class ManualPanel:
             reason = DETAIL_NAMES[detail] if detail < len(DETAIL_NAMES) else str(detail)
             if result in (REJECTED, FAULT):
                 self.note.set(f"请求未完成：{reason}")
+                self.close_after_release = False
                 if command == ARM:
                     self.active = False
                     self.arm_deadline = None
             elif command == ORIGIN:
                 self.note.set("已建立原点")
+            elif command == RELEASE and result == DONE and state == READY and flags & AVAILABLE:
+                self.active = False
+                self.note.set("已归还控制，底盘保持使能")
+                if self.close_after_release:
+                    self.root.after_idle(self.close)
             elif command == RETURN and result == ACCEPTED:
                 self.note.set("正在返航")
         if command == RETURN and number == self.return_id and result in (DONE, REJECTED, FAULT):
@@ -263,7 +297,7 @@ class ManualPanel:
                     self.stop("请求应答超时，已请求停车")
                 elif now - request.sent >= 0.10:
                     request.sent = now
-                    self.send(request.kind, struct.pack("<H", request.number))
+                    self.send_request(request)
 
             if self.active:
                 if self.return_id is not None:
@@ -281,7 +315,15 @@ class ManualPanel:
         self.root.after(50, self.tick)
 
     def close(self):
-        self.stop()
+        if self.pending and self.pending.kind == RELEASE:
+            self.close_after_release = True
+            return
+        if self.can_release():
+            self.close_after_release = True
+            self.request(RELEASE)
+            return
+        if self.active:
+            self.stop()
         if self.port is not None:
             try:
                 self.port.close()
@@ -294,11 +336,11 @@ class ManualPanel:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", required=True, help="接 USART6 的电脑串口，例如 COM7")
-    parser.add_argument("--speed", type=float, default=0.10, help="手动平移速度，m/s")
-    parser.add_argument("--yaw-rate", type=float, default=0.50, help="手动转向速度，rad/s")
+    parser.add_argument("--speed", type=float, default=LINEAR_LIMIT, help="手动平移速度，m/s")
+    parser.add_argument("--yaw-rate", type=float, default=ANGULAR_LIMIT, help="手动转向速度，rad/s")
     args = parser.parse_args()
-    if not 0.001 <= args.speed <= 0.50 or not 0.001 <= args.yaw_rate <= 2.0:
-        parser.error("平移速度须为 0.001–0.50 m/s，转向速度须为 0.001–2.00 rad/s")
+    if not 0.001 <= args.speed <= LINEAR_LIMIT or not 0.001 <= args.yaw_rate <= ANGULAR_LIMIT:
+        parser.error("平移速度须为 0.001–0.40 m/s，转向速度须为 0.001–3.00 rad/s")
     try:
         import serial
     except ImportError:

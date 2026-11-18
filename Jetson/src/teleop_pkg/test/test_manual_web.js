@@ -5,23 +5,40 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {webcrypto} = require('node:crypto');
 const html = fs.readFileSync(path.join(__dirname, '../web/index.html'), 'utf8');
-const handlers = new Map(), elements = new Map(), requests = [];
+const handlers = new Map(), elements = new Map(), requests = [], intervals = new Map();
 function element(id) {
   if (!elements.has(id)) elements.set(id, {
     value: id === 'linear' ? '0.25' : id === 'angular' ? '0.5' : '0',
-    textContent: '', classList: {toggle() {}}, addEventListener() {},
+    textContent: '', classList: {toggle() {}},
+    addEventListener(name, action) { handlers.set(`${id}.${name}`, action); },
   });
   return elements.get(id);
 }
+function fetchStub(url, options) {
+  return new Promise(resolve => {
+    requests.push({
+      url, keepalive: options?.keepalive, body: options && JSON.parse(options.body),
+      reply(phase) {
+        const state = {phase, velocity_milli: [0, 0, 0], remaining_s: 0, last_frame: [true, 0, 0, 0], frames: 0};
+        resolve({ok: true, json: async () => state});
+      },
+    });
+  });
+}
 const context = vm.createContext({
-  crypto: webcrypto, Uint8Array, console,
+  crypto: webcrypto, Uint8Array, console, performance,
   document: {getElementById: element, querySelectorAll: () => [],
     addEventListener: (name, action) => handlers.set(name, action)},
-  window: {addEventListener() {}},
-  setInterval: () => 1, clearInterval() {},
-  fetch: (url, options) => { requests.push({url, body: JSON.parse(options.body)}); return new Promise(() => {}); },
+  window: {addEventListener: (name, action) => handlers.set(name, action)},
+  setInterval: (fn, delay) => { intervals.set(delay, fn); return delay; }, clearInterval() {},
+  fetch: fetchStub,
 });
 vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1], context);
+context.document.hidden = true;
+handlers.get('blur')();
+handlers.get('visibilitychange')();
+handlers.get('pagehide')();
+assert.equal(requests.length, 0, 'an observing page must leave powered standby alone');
 let prevented = false;
 handlers.get('keydown')({code: 'Space', target: {tagName: 'INPUT'}, preventDefault() { prevented = true; }});
 assert.equal(prevented, true);
@@ -38,4 +55,49 @@ assert.equal(requests.length, 3, 'held-key autorepeat must not undo Space stop')
 handlers.get('keyup')({code: 'KeyW'});
 handlers.get('keydown')({code: 'KeyW', repeat: false, target: {tagName: 'BODY'}, preventDefault() {}});
 assert.equal(requests.at(-1).url, '/api/hold', 'a fresh key press after release may start again');
-console.log('manual web: focused-input stop and ordered motion requests passed');
+handlers.get('keyup')({code: 'KeyW'});
+assert.equal(requests.at(-1).url, '/api/release', 'ordinary key release should hold zero with power');
+
+async function testFocusDuringMotion() {
+  const settle = () => new Promise(resolve => setImmediate(resolve));
+  const last = () => requests.at(-1);
+  last().reply('holding');
+  await settle();
+  handlers.get('blur')();
+  assert.equal(last().url, '/api/release', 'a confirmed ordinary release stays at powered zero');
+
+  const press = () => vm.runInContext("press('forward');", context);
+  press();
+  handlers.get('blur')();
+  assert.equal(last().url, '/api/stop', 'focus loss stops a held direction even before its reply');
+  assert.equal(last().keepalive, true);
+  const stopped = requests.length;
+  handlers.get('visibilitychange')();
+  assert.equal(requests.length, stopped);
+
+  element('t_vx').value = '0.1';
+  element('t_s').value = '1';
+  handlers.get('timed.click')();
+  const timed = last();
+  assert.equal(timed.url, '/api/timed');
+  const oldPoll = intervals.get(250)();
+  const earlier = last();
+  timed.reply('prepare');
+  await settle();
+  earlier.reply('holding');
+  await oldPoll;
+  handlers.get('visibilitychange')();
+  assert.equal(last().url, '/api/stop', 'a delayed observation predating this timed command cannot clear ownership');
+
+  handlers.get('timed.click')();
+  last().reply('active');
+  await settle();
+  const newPoll = intervals.get(250)();
+  last().reply('holding');
+  await newPoll;
+  const finished = requests.length;
+  handlers.get('pagehide')();
+  assert.equal(requests.length, finished, 'an acknowledged timed run that ended normally stays at powered zero');
+  console.log('manual web: ordered requests, explicit stop and focus ownership passed');
+}
+testFocusDuringMotion().catch(error => { console.error(error); process.exitCode = 1; });

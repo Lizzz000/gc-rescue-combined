@@ -4,14 +4,12 @@ import enum
 import math
 import threading
 
-# 与 STM32 jetson_control.c 的超限制动阈值一致：平移按 hypot(vx, vy)，角速度按 |wz|。
-MAX_LINEAR_MPS = 0.5
-MAX_ANGULAR_RADPS = 2.0
+# 与 STM32 手动控制的运行限幅一致，平移按合速度计算。
+MAX_LINEAR_MPS = 0.40
+MAX_ANGULAR_RADPS = 3.0
 # 租约上限须小于 STM32 手动帧 250 ms 超时。
 MAX_LEASE_S = 0.2
-# STM32 在上电、valid=0、超时或自身保护（姿态/CAN、超速、电机反馈超时）后为 DISARMED，
-# 上位机看不到，须先收到 valid=1 全零帧才使能。每次从空闲或停车序列起步都先发；
-# 运动会话中指令零速再起步不发。默认值须实车确认，太短表现为起步即制动。
+# 首次接管或显式停车后，先发送一段有效零速。持续使能期间的新方向可直接接续。
 DEFAULT_ARM_ZERO_S = 0.1
 MAX_ARM_ZERO_S = 1.0
 # 停车：先发零速 valid=1，再转入 valid=0。
@@ -21,9 +19,11 @@ _SCALE = 1000
 
 
 class Phase(enum.Enum):
+    WAITING = 'waiting'    # 启动后等待首次接管，不给底盘发送撤权或运动指令
     IDLE = 'idle'          # valid=0
     PREPARE = 'prepare'    # 使能零速 valid=1，之后进入 ACTIVE
     ACTIVE = 'active'      # 指令速度 valid=1
+    HOLDING = 'holding'    # 正常松键或定时结束，继续发送有效零速
     STOPPING = 'stopping'  # 零速 valid=1，之后进入 IDLE
 
 
@@ -59,7 +59,7 @@ def quantize(vx, vy, wz, *, max_linear_mps=MAX_LINEAR_MPS, max_angular_radps=MAX
 
 
 class ManualCommand:
-    """线程安全的指令状态。hold 续租约；timed 定时；stop 或过期进入停车序列，之后起步重新使能。"""
+    """按键续租，定时动作到期和正常松键都保持零速。急停和按键租约超时撤权。"""
 
     def __init__(self, lease_s, arm_zero_s, *, max_linear_mps=MAX_LINEAR_MPS,
                  max_angular_radps=MAX_ANGULAR_RADPS, max_timed_s=MAX_TIMED_S):
@@ -69,7 +69,8 @@ class ManualCommand:
         self._max_angular_radps = _positive_limit(max_angular_radps, MAX_ANGULAR_RADPS, '转向上限')
         self._max_timed_s = _positive_limit(max_timed_s, MAX_TIMED_S, '定时上限')
         self._lock = threading.Lock()
-        self._phase = Phase.IDLE
+        self._phase = Phase.WAITING
+        self._timed = False
         self._phase_until = 0.0
         self._velocity = (0, 0, 0)
         self._deadline = 0.0
@@ -96,10 +97,20 @@ class ManualCommand:
         with self._lock:
             self._enter_stop(now)
 
-    def frame(self, now):
-        """返回本拍应发送的 (valid, vx, vy, wz)，并推进阶段。"""
+    def release(self, now):
+        """只结束当前运动。丢失租约或已显式撤权的会话不会被迟到的松键恢复。"""
         with self._lock:
             self._advance(now)
+            if self._phase in (Phase.PREPARE, Phase.ACTIVE):
+                self._phase = Phase.HOLDING
+                self._velocity = (0, 0, 0)
+
+    def frame(self, now):
+        """推进阶段并返回本拍速度帧 (valid, vx, vy, wz)。尚未接管时返回 None。"""
+        with self._lock:
+            self._advance(now)
+            if self._phase is Phase.WAITING:
+                return None
             if self._phase is Phase.IDLE:
                 return (False, 0, 0, 0)
             if self._phase is Phase.ACTIVE:
@@ -116,21 +127,30 @@ class ManualCommand:
     def _start(self, velocity, duration, now, *, timed=False):
         with self._lock:
             self._advance(now)
-            if self._phase in (Phase.IDLE, Phase.STOPPING):
+            if self._phase in (Phase.WAITING, Phase.IDLE, Phase.STOPPING):
                 self._phase, self._phase_until = Phase.PREPARE, now + self._arm_zero_s
+            elif self._phase is Phase.HOLDING:
+                self._phase = Phase.PREPARE if now < self._phase_until else Phase.ACTIVE
             self._velocity = velocity
+            self._timed = timed
             # 定时动作只补当前剩余的使能时间；hold 租约仍从收到请求时起算。
             start = self._phase_until if timed and self._phase is Phase.PREPARE else now
             self._deadline = start + duration
 
     def _enter_stop(self, now):
-        if self._phase in (Phase.PREPARE, Phase.ACTIVE):
+        if self._phase is Phase.WAITING:
+            self._phase = Phase.IDLE
+        elif self._phase in (Phase.PREPARE, Phase.ACTIVE, Phase.HOLDING):
             self._phase, self._phase_until = Phase.STOPPING, now + STOP_ZERO_S
         self._velocity = (0, 0, 0)
 
     def _advance(self, now):
         if self._phase in (Phase.PREPARE, Phase.ACTIVE) and now >= self._deadline:
-            self._enter_stop(now)
+            if self._timed:
+                self._phase = Phase.HOLDING
+                self._velocity = (0, 0, 0)
+            else:
+                self._enter_stop(now)
         if self._phase is Phase.PREPARE and now >= self._phase_until:
             self._phase = Phase.ACTIVE
         if self._phase is Phase.STOPPING and now >= self._phase_until:

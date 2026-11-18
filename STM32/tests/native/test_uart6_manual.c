@@ -12,7 +12,7 @@
 
 enum
 {
-    ARM = 0x40, STOP, ORIGIN, RETURN, KEEPALIVE,
+    ARM = 0x40, STOP, ORIGIN, RETURN, KEEPALIVE, RELEASE = 0x46,
     STATUS = 0x80, POSE
 };
 enum { ACCEPTED = 1, REJECTED, DONE, FAULT };
@@ -69,6 +69,9 @@ void Chassis_Stop(void)
     ++stops;
     last_vx = last_vy = last_wz = 0.0f;
 }
+void Chassis_Hold(void) { Chassis_Stop(); }
+uint8_t Chassis_Attitude_Ready(void) { return 1U; }
+uint8_t Chassis_Can_Enable(void) { return !enabled; }
 
 uint8_t Chassis_Is_Enabled(void) { return enabled; }
 uint8_t Chassis_Is_Stopped(void) { return enabled && stopped; }
@@ -77,6 +80,7 @@ uint8_t Chassis_Motion_Ready(void)
     return enabled && motors_ready && last_vx == 0.0f && last_vy == 0.0f && last_wz == 0.0f;
 }
 uint8_t Chassis_Motors_Ready(void) { return motors_ready; }
+uint8_t Chassis_Can_Release(void) { return Chassis_Motion_Ready(); }
 
 uint8_t Chassis_Get_Odometry(Chassis_Odometry_t *out)
 {
@@ -241,14 +245,15 @@ static void Reset(uint32_t initial_ms)
     Manual_Control_Init();
     UART6_Manual_Init();
     Step(0U);
-    assert(!enabled && report.state == MANUAL_DISARMED);
+    Step(100U);
+    assert(enabled && report.state == MANUAL_READY && (report.flags & 12U) == 12U);
 }
 
 static void Arm_And_Confirm(uint16_t id)
 {
     Request(ARM, id);
     Step(100U);
-    assert(enabled && report.state == MANUAL_PREPARING);
+    assert(enabled && (report.state == MANUAL_PREPARING || report.state == MANUAL_READY));
     assert(report.command == ARM && report.id == id && report.result == ACCEPTED);
     stopped = 1U;
     Velocity(0, 0, 0);
@@ -262,7 +267,7 @@ static void Test_Manual_Frames_And_Stop(void)
     Velocity(0, 0, 0);
     Velocity(100, 0, 0);
     Step(100U);
-    assert(enables == 0U && manual_vectors == 0U);
+    assert(enables == 1U && manual_vectors == 0U && (report.flags & 4U));
 
     const uint8_t id[] = {0x23U, 0x01U};
     uint8_t encoded[LINK_FRAME_MAX_BYTES];
@@ -270,7 +275,7 @@ static void Test_Manual_Frames_And_Stop(void)
     encoded[size - 1U] ^= 0x80U;
     Feed(encoded, size);
     Step(100U);
-    assert(enables == 0U);
+    assert((report.flags & 4U) && report.command != ARM);
 
     encoded[size - 1U] ^= 0x80U;
     Feed(encoded, 3U);
@@ -278,11 +283,11 @@ static void Test_Manual_Frames_And_Stop(void)
     Step(45U);
     Feed(encoded + 3U, size - 3U);
     Step(50U);
-    assert(enables == 0U);
+    assert((report.flags & 4U) && report.command != ARM);
 
     Feed(encoded, 3U);
     Step(5U);
-    assert(enables == 0U);
+    assert((report.flags & 4U) && report.command != ARM);
     Feed(encoded + 3U, size - 3U);
     Step(5U);
     Step(90U);
@@ -308,7 +313,7 @@ static void Test_Manual_Frames_And_Stop(void)
     Velocity(0, 0, 0);
     Velocity(-100, 0, 0);
     Step(100U);
-    assert(stops == 1U && manual_vectors == 1U && report.state == MANUAL_PREPARING);
+    assert(stops == 1U && manual_vectors == 1U && report.state == MANUAL_READY);
     assert(last_vx == 0.0f && last_vy == 0.0f && last_wz == 0.0f);
     stopped = 1U;
     Velocity(0, 0, 0);
@@ -355,7 +360,7 @@ static void Test_Origin_And_Return(void)
     Step(100U);
     assert(report.state == RETURNING && report.result == ACCEPTED && report.id == 0x0203U);
     assert(last_vx < 0.0f && last_vy > 0.0f && last_wz < 0.0f);
-    assert(hypotf(last_vx, last_vy) <= 0.10001f && fabsf(last_wz) <= 0.50001f);
+    assert(hypotf(last_vx, last_vy) <= 0.40001f && fabsf(last_wz) <= 3.00001f);
     /* 闭环模型把返回命令转换成世界位姿，轮速未归零仍可确认到位。 */
     unsigned iterations = 0U;
     while (report.state == RETURNING && iterations++ < 150U)
@@ -392,20 +397,21 @@ static void Test_Buffered_Rx_Time(void)
     test_tick += 50U;
     Feed(encoded + 3U, size - 3U);
     Step(0U);
-    assert(enables == 0U); /* 同次调度、跨时钟回绕的半帧仍受真实收帧间隔约束。 */
+    assert((report.flags & 4U) && report.command != ARM);
 
     Request(ARM, 2U);
     test_tick += 250U;
     Send(KEEPALIVE, NULL, 0U);
     Step(0U);
-    assert(enables == 0U); /* 同批新字节不能刷新过期使能请求。 */
+    assert((report.flags & 4U) && report.command != ARM);
 
     Feed(encoded, 3U);
     Step(0U);
     test_tick += 49U;
     Feed(encoded + 3U, size - 3U);
     Step(10U);
-    assert(enables == 1U); /* 间隔合格的续帧不因任务晚调度而被丢弃。 */
+    Step(100U);
+    assert(report.command == ARM && report.id == 1U && report.result == ACCEPTED);
 }
 
 static void Begin_Return(void)
@@ -437,6 +443,14 @@ static void Test_Return_Protection(void)
     Step(250U);
     assert(report.command == RETURN && report.id == 3U);
     Assert_Braking(LINK);
+    for (unsigned i = 0U; i < 4U; ++i)
+    {
+        Velocity(0, 0, 0);
+        Send(KEEPALIVE, NULL, 0U);
+        Step(100U);
+        assert(!enabled && report.state == MANUAL_DISARMED);
+    }
+    Arm_And_Confirm(4U);
 
     Reset(100U);
     Begin_Return();
@@ -502,7 +516,7 @@ static void Test_Return_Speed(void)
     Step(100U);
     position.x_m = 0.20;
     unsigned vectors = return_vectors;
-    Request_Return_Speed(6U, 501U, 500U);
+    Request_Return_Speed(6U, 401U, 500U);
     Step(100U);
     assert(report.result == REJECTED && report.detail == LIMIT && return_vectors == vectors);
 
@@ -527,14 +541,14 @@ static void Test_Full_Speed_Diagonal_Return(void)
     Request(ORIGIN, 2U);
     Step(100U);
 
-    /* 这一组合在满速绕到车体坐标时会将合速度舍入到 0.50 之上。 */
+    /* 满速返航允许按当前航向同时分解车体速度。 */
     position.x_m = -cos(0.82);
     position.y_m = -sin(0.82);
     position.yaw_rad = 0.01f;
-    Request_Return_Speed(3U, 500U, 2000U);
+    Request_Return_Speed(3U, 400U, 3000U);
     Step(100U);
     assert(report.state == RETURNING && report.result == ACCEPTED);
-    assert(hypotf(last_vx, last_vy) >= 0.4999f);
+    assert(hypotf(last_vx, last_vy) >= 0.3999f);
 }
 
 static void Test_Uart_Overflow(void)
@@ -558,8 +572,34 @@ static void Test_Uart_Overflow(void)
     assert(uart_aborts == 2U && report.result == FAULT && report.detail == UART);
 }
 
+static void Test_Release(void)
+{
+    Reset(0U);
+    Step(800U);
+    assert(enabled && (report.flags & 4U));
+    Arm_And_Confirm(1U);
+    Velocity(400, 0, -3000);
+    Step(100U);
+    Request(RELEASE, 2U);
+    Step(100U);
+    assert(report.result == REJECTED && report.state == MANUAL_RUNNING);
+    Velocity(0, 0, 0);
+    Request(RELEASE, 3U);
+    Step(10U);
+    Step(90U);
+    assert(report.command == RELEASE && report.id == 3U && report.result == DONE);
+    assert(report.state == MANUAL_READY && (report.flags & 4U));
+    Step(1000U);
+    Velocity(400, 0, 0);
+    Step(100U);
+    assert(report.state == MANUAL_READY && disables == 0U && manual_vectors == 2U);
+    Arm_And_Confirm(4U);
+    assert(enables == 1U && !(report.flags & 4U));
+}
+
 int main(void)
 {
+    Test_Release();
     Test_Manual_Frames_And_Stop();
     Test_Buffered_Rx_Time();
     Test_Origin_And_Return();

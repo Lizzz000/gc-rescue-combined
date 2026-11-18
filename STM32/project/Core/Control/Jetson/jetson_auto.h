@@ -10,7 +10,7 @@
 extern volatile uint8_t jetson_test_start;
 #endif
 
-/** @brief 清除搬运状态，等待配置、姿态及 Jetson 链路就绪。 */
+/** @brief 正式固件等待姿态后自动使能，配置、视觉会话和夹爪握手就绪后才开始搬运。 */
 void Jetson_Auto_Init(void);
 
 /** @brief 在现有 5 ms 任务中推进一次搬运流程，在底盘之后调度 USB 板间握手。 */

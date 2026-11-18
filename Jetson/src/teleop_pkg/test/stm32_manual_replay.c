@@ -24,9 +24,12 @@ void vTaskDelay(TickType_t ticks) { (void)ticks; }
 void vTaskDelayUntil(TickType_t *wake, TickType_t ticks) { *wake += ticks; }
 
 uint8_t Chassis_Is_Enabled(void) { return enabled; }
+uint8_t Chassis_Can_Enable(void) { return !enabled; }
+uint8_t Chassis_Attitude_Ready(void) { return 1U; }
 uint8_t Chassis_Enable(void) { enabled = 1U; return 1U; }
 void Chassis_Disable(void) { enabled = 0U; moving = 0U; }
 void Chassis_Stop(void) { if (moving && stop_at == 0U) stop_at = test_tick + STOP_DELAY_MS; }
+void Chassis_Hold(void) { Chassis_Stop(); }
 uint8_t Chassis_Is_Stopped(void)
 {
     if (moving && stop_at != 0U && test_tick >= stop_at) { moving = 0U; stop_at = 0U; }
@@ -34,6 +37,7 @@ uint8_t Chassis_Is_Stopped(void)
 }
 uint8_t Chassis_Motors_Ready(void) { return enabled; }
 uint8_t Chassis_Motion_Ready(void) { return enabled && (!moving || stop_at != 0U); }
+uint8_t Chassis_Can_Release(void) { return Chassis_Motion_Ready(); }
 uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
 {
     if (vx != 0.0f || vy != 0.0f || wz != 0.0f) { moving = 1U; stop_at = 0U; }

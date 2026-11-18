@@ -69,6 +69,9 @@ void Chassis_Disable(void)
 
 /** @brief 记录停车请求；请求本身不生成停车反馈。 */
 void Chassis_Stop(void) { ++stops; motion_ready = 1U; }
+void Chassis_Hold(void) { ++stops; motion_ready = 1U; }
+uint8_t Chassis_Attitude_Ready(void) { return imu_age_ms <= 20U; }
+uint8_t Chassis_Can_Enable(void) { return !enabled; }
 /** @brief 读取模拟底盘使能状态。 @return 软件已使能为 1。 */
 uint8_t Chassis_Is_Enabled(void) { return enabled; }
 /** @brief 读取场景独立给出的停车反馈。 @return 已使能且确认停车为 1。 */

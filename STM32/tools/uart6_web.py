@@ -14,6 +14,7 @@ import time
 import webbrowser
 
 from uart6_protocol import (
+    ANGULAR_LIMIT, AVAILABLE, LINEAR_LIMIT, RELEASE, RUN_PROFILE, angular_limit,
     ACCEPTED, ARM, BRAKING, DETAIL_NAMES, DISARMED, DONE, FAULT, KEEPALIVE, ORIGIN,
     POSE, READY, REJECTED, RETURN, RUNNING, SETTLING, STATUS, STOP,
     VELOCITY, FrameReader, frame,
@@ -61,6 +62,7 @@ class Controller:
         self.pending = None
         self.sequence = secrets.randbelow(65535)
         self.return_id = None
+        self.close_after_release = False
         self.mode = "idle"
         self.end_time = None
         self.velocity = ZERO
@@ -69,6 +71,7 @@ class Controller:
         self.message = "选择串口后连接"
 
     def reset_motion(self):
+        self.close_after_release = False
         self.active = False
         self.pending = None
         self.return_id = None
@@ -105,7 +108,8 @@ class Controller:
         with self.lock:
             if self.serial is not None:
                 try:
-                    self.stop("串口已关闭", time.monotonic())
+                    if self.active:
+                        self.stop("串口已关闭", time.monotonic())
                 except OSError:
                     pass
                 finally:
@@ -118,6 +122,9 @@ class Controller:
             "state": self.state, "origin": fresh and bool(self.flags & 1),
             "odom": fresh and bool(self.flags & 2), "pose": self.pose if fresh else None,
             "armed": self.active, "pending": self.pending is not None, "mode": self.mode,
+            "can_arm": fresh and not self.active and self.can_arm(),
+            "can_release": fresh and self.can_release(),
+            "angular_limit": angular_limit(self.flags) if fresh else None,
             "remaining": max(0.0, self.end_time - now) if self.end_time is not None else None,
             "message": self.message,
         }
@@ -162,7 +169,8 @@ class Controller:
         self.last_status = now
         if flags & 3 != 3:
             self.pose = None
-        if not self.active and state == DISARMED and command == STOP and now - self.last_stop >= 0.10:
+        if not self.active and state == DISARMED and (self.last_stop == float("-inf") or
+                (command == STOP and result == DONE and now - self.last_stop >= 0.10)):
             self.stop_confirmed = True
 
         reason = DETAIL_NAMES[detail] if detail < len(DETAIL_NAMES) else "底盘拒绝请求"
@@ -173,11 +181,18 @@ class Controller:
             elif command == ORIGIN and result == DONE:
                 self.pending = None
                 self.message = "已建立原点"
+            elif command == RELEASE and result == DONE and state == READY and flags & AVAILABLE:
+                close = self.close_after_release
+                self.reset_motion()
+                self.message = "已归还控制，底盘保持使能"
+                if close:
+                    self.close_serial(self.message)
             elif command == RETURN and result in (ACCEPTED, DONE):
                 self.pending = None
                 self.message = "正在返航"
             elif result in (REJECTED, FAULT):
                 self.pending = None
+                self.close_after_release = False
                 self.message = reason or "指令未完成"
                 if command == ARM:
                     self.reset_motion()
@@ -205,6 +220,8 @@ class Controller:
         chunk = self.serial.read(min(self.serial.in_waiting, 4096))
         for kind, payload in self.reader.feed(chunk):
             self.receive(kind, payload, now)
+            if self.serial is None:
+                return
         if not self.active:
             return
         if self.pending:
@@ -261,12 +278,21 @@ class Controller:
             self.serial = self.open_serial(port)
             self.port = port
             self.reader = FrameReader()
-            self.stop("串口已连接，等待失能确认", now)
+            self.last_stop = float("-inf")
+            self.message = "串口已连接，等待读取底盘状态"
             return
         if name == "disconnect":
             if self.serial is not None:
+                if self.pending and self.pending.command == RELEASE:
+                    self.close_after_release = True
+                    return
+                if now - self.last_status < LINK_TIMEOUT_S and self.can_release():
+                    self.close_after_release = True
+                    self.begin_request(RELEASE, now)
+                    return
                 try:
-                    self.stop("串口已关闭", now)
+                    if self.active:
+                        self.stop("串口已关闭", now)
                 finally:
                     self.close_serial("串口已关闭")
             return
@@ -278,18 +304,23 @@ class Controller:
         if now - self.last_status >= LINK_TIMEOUT_S:
             raise ValueError("等待最新底盘状态")
         if name == "arm":
-            if self.active or self.state != DISARMED or not self.stop_confirmed:
-                raise ValueError("等待底盘确认失能")
+            if self.active or not self.can_arm():
+                raise ValueError("等待底盘就绪或确认失能")
             self.begin_request(ARM, now)
             self.active = True
             self.message = "等待底盘使能就绪"
+            return
+        if name == "release":
+            if not self.can_release():
+                raise ValueError("松开方向键，等待底盘零速就绪后归还控制")
+            self.begin_request(RELEASE, now)
             return
         if name == "drive":
             if not self.active or self.pending or self.mode not in ("idle", "keys"):
                 raise ValueError("请等待底盘就绪")
             if self.state not in (READY, RUNNING):
                 raise ValueError("请等待底盘就绪")
-            self.velocity = stick_velocity(data)
+            self.velocity = stick_velocity(data, angular_limit(self.flags))
             self.last_drive = now
             if self.velocity == ZERO:
                 self.finish_motion("已松开按键，已发零速", now)
@@ -302,7 +333,7 @@ class Controller:
         if not self.active or self.pending or self.mode != "idle":
             raise ValueError("请等待底盘就绪")
         if name == "run" and self.state in (READY, RUNNING):
-            self.velocity, duration = timed_velocity(data)
+            self.velocity, duration = timed_velocity(data, angular_limit(self.flags))
             self.send(self.velocity)
             self.mode = "timed"
             self.end_time = now + duration
@@ -319,14 +350,24 @@ class Controller:
                 return
             if not self.flags & 1:
                 raise ValueError("请先建立原点")
-            linear = milli_speed(data.get("linear"), 0.50, "返航平移速度")
-            angular = milli_speed(data.get("angular"), 2.00, "返航转向速度")
+            linear = milli_speed(data.get("linear"), LINEAR_LIMIT, "返航平移速度")
+            angular = milli_speed(data.get("angular"), angular_limit(self.flags), "返航转向速度")
             self.begin_request(RETURN, now, struct.pack("<HH", linear, angular))
             self.return_id = self.sequence
             self.mode = "return"
             self.message = "正在返航"
             return
         raise ValueError("请等待底盘就绪")
+
+    def can_arm(self):
+        if self.state == DISARMED:
+            return self.stop_confirmed
+        return self.state == READY and bool(self.flags & AVAILABLE) and (
+            self.last_stop == float("-inf") or self.stop_confirmed)
+
+    def can_release(self):
+        return (self.active and self.pending is None and self.mode == "idle" and
+                self.velocity == ZERO and self.state in (READY, RUNNING) and bool(self.flags & RUN_PROFILE))
 
 
 def milli_speed(value, limit, label):
@@ -335,7 +376,7 @@ def milli_speed(value, limit, label):
     return math.trunc(value * 1000)
 
 
-def stick_velocity(data):
+def stick_velocity(data, yaw_limit=ANGULAR_LIMIT):
     """按住的方向合成一帧速度。斜向平移按合速度缩回设定值，松开则为零速。"""
     keys = data.get("keys")
     if not isinstance(keys, list) or any(type(key) is not str or key.lower() not in DRIVE_KEYS for key in keys):
@@ -346,8 +387,8 @@ def stick_velocity(data):
     turn = int("q" in held) - int("e" in held)
     if forward == 0 and left == 0 and turn == 0:
         return ZERO
-    linear = milli_speed(data.get("linear"), 0.50, "平移速度") if forward or left else 0
-    angular = milli_speed(data.get("angular"), 2.00, "转向速度") if turn else 0
+    linear = milli_speed(data.get("linear"), LINEAR_LIMIT, "平移速度") if forward or left else 0
+    angular = milli_speed(data.get("angular"), yaw_limit, "转向速度") if turn else 0
     if forward or left:
         scale = math.floor(linear / max(1.0, math.hypot(forward, left)))
         vx, vy = forward * scale, left * scale
@@ -357,13 +398,13 @@ def stick_velocity(data):
     return frame(VELOCITY, struct.pack("<Bhhh", 1, vx, vy, wz))
 
 
-def timed_velocity(data):
+def timed_velocity(data, yaw_limit=ANGULAR_LIMIT):
     values = [data.get(key) for key in ("vx", "vy", "wz", "seconds")]
     if any(type(value) not in (int, float) or abs(value) > 1e100 or not math.isfinite(value)
            for value in values):
         raise ValueError("请填写有效的速度和运行时间")
     vx, vy, wz, duration = values
-    if math.hypot(vx, vy) > 0.50 or abs(wz) > 2.00 or duration < 0.10:
+    if math.hypot(vx, vy) > LINEAR_LIMIT or abs(wz) > yaw_limit or duration < 0.10:
         raise ValueError("速度超限，或运行时间小于 0.1 秒")
     # 朝零量化，确保斜向速度也在板端支持的合速度范围内。
     fixed = tuple(math.trunc(value * 1000) for value in (vx, vy, wz))
@@ -437,7 +478,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.authorized():
             self.send_json(403, {"error": "请求来源无效，请刷新控制页"})
             return
-        allowed_actions = {"connect", "disconnect", "arm", "stop", "origin", "return", "run", "drive"}
+        allowed_actions = {"connect", "disconnect", "arm", "release", "stop", "origin", "return", "run", "drive"}
         action = self.path.removeprefix("/api/") if self.path.startswith("/api/") else ""
         if action not in allowed_actions:
             self.send_json(404, {"error": "命令不存在"})

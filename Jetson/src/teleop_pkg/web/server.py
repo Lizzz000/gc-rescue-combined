@@ -2,7 +2,8 @@
 
 POST /api/hold  {"vx","vy","wz"}            按住中的速度，租约内须续发
 POST /api/timed {"vx","vy","wz","seconds"}  定时动作
-POST /api/stop                              停车
+POST /api/release                           正常松键，减速并保持使能
+POST /api/stop                              停车并撤权
 POST /api/servo {"degrees","seconds"}       手动舵机相对转角，立即 202；忙时 409
 POST /api/servo/open {"seconds"}            转到已标定的张开角；缺 seconds 或非法时 400，忙时 409，受理后 202
 POST /api/servo/close {"seconds"}           转到已标定的闭合角；缺 seconds 或非法时 400，忙时 409，受理后 202
@@ -100,6 +101,7 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         actions = {
             '/api/hold': self._hold, '/api/timed': self._timed, '/api/stop': self._stop,
+            '/api/release': self._release,
             '/api/servo': self._servo, '/api/servo/open': self._servo_open,
             '/api/servo/close': self._servo_close, '/api/servo/stop': self._servo_stop,
         }
@@ -109,7 +111,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         try:
             body = self._body()
-            if self.path in ('/api/hold', '/api/timed', '/api/stop'):
+            if self.path in ('/api/hold', '/api/timed', '/api/stop', '/api/release'):
                 status = self.server.apply_motion(action, body, time.monotonic(),
                                                   stopping=self.path == '/api/stop')
             else:
@@ -130,6 +132,9 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _stop(self, body, now):
         self.server.command.stop(now)
+
+    def _release(self, body, now):
+        self.server.command.release(now)
 
     def _servo(self, body, now):
         degrees, seconds = _numbers(body, ('degrees', 'seconds'))

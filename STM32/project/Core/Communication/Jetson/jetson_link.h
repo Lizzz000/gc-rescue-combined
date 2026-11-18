@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "link_payload.h"
+#include "visual_observation.h"
 
 /* 板间类型号。快照由 USB 任务写入、控制任务临界区读取。
  * received_ms 使用现有 1 kHz FreeRTOS 时基，不是总线事务编号。
@@ -32,16 +33,7 @@
 /* 手动类型 2 的速度载荷：valid:uint8 + vx/vy/wz:int16 小端，共 7 字节。 */
 typedef Link_Velocity_Frame_t Jetson_CAN_Velocity_Frame_t;
 
-typedef struct
-{
-    uint8_t valid;
-    /* 图像归一化中心坐标乘 10000；不在协议层裁剪。 */
-    int16_t x;
-    int16_t y;
-    uint32_t received_ms;
-    uint32_t sequence;
-    uint32_t source_frame; /**< 源帧时间的低 24 位毫秒，用于区分周期重发。 */
-} Jetson_CAN_Center_t;
+typedef Visual_Observation_t Jetson_CAN_Center_t;
 
 typedef struct
 {

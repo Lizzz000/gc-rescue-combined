@@ -141,6 +141,7 @@ def main():
                 sources.append("project/Core/Algorithm/Vision/visual_servo.c")
         if "project/Core/Control/Chassis/chassis.c" in sources:
             sources.append("project/Core/Control/Chassis/chassis_odometry.c")
+            sources.append("project/Core/Algorithm/Chassis/velocity_profile.c")
         if "project/Core/Control/Chassis/chassis_odometry.c" in sources:
             sources.extend(["project/Core/Algorithm/Chassis/wheel_alignment.c",
                             "project/Core/Algorithm/Chassis/planar_odometry.c"])

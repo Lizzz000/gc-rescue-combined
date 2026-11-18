@@ -9,5 +9,5 @@ void UsbLink_OnFrame(const LinkFrame *frame)
 
 void UsbLink_OnDisconnect(void)
 {
-    /* 手动控制任务根据最后一个速度帧的接收时间撤权。 */
+    Manual_CAN_Disconnect();
 }

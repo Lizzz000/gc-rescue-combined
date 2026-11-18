@@ -24,6 +24,7 @@ static uint32_t nonzero_controls, imu_age_ms;
 static unsigned critical_depth;
 static uint8_t imu_ready, abort_pending, last_sent_id;
 static int imu_reads_before_failure;
+static uint16_t failing_motor;
 static float motor_velocity[3];
 
 typedef enum { NO_FEEDBACK, QUIET_FEEDBACK, MOVING_FEEDBACK } Feedback_Mode_t;
@@ -84,6 +85,8 @@ HAL_StatusTypeDef ctrl_motor(CAN_HandleTypeDef *can, uint16_t id, float position
     assert(position == 0.0f && kp == 0.0f && isfinite(torque) && fabsf(torque) <= 0.05f &&
            kd == expected_kd[id - 1U]);
     assert(isfinite(velocity) && fabsf(velocity) <= 40.0f);
+    if (id == failing_motor)
+        return HAL_ERROR;
     motor_velocity[id - 1U] = velocity;
     last_sent_id = (uint8_t)id;
     --free_mailboxes;
@@ -206,6 +209,7 @@ static void Reset(uint32_t milliseconds, uint32_t microseconds)
     critical_depth = 0U;
     imu_ready = 1U;
     imu_reads_before_failure = -1;
+    failing_motor = 0U;
     abort_pending = last_sent_id = 0U;
     memset(motor_velocity, 0, sizeof(motor_velocity));
     memset((void *)dm_motor, 0, sizeof(dm_motor));
@@ -278,23 +282,25 @@ static void Run_Target(int16_t vx, int16_t vy, int16_t wz, unsigned periods)
     }
 }
 
-/** @brief 核对上电与旧非零帧不能使能，零帧时刻 0 合法，反馈失效时不可起步。
+/** @brief 核对姿态就绪后上电零速使能，旧非零帧不能接管，反馈失效时不可起步。
  * @return 无。
  */
 static void Test_Startup(void)
 {
     Reset(0U, 0U);
-    Service(NO_FEEDBACK, 1U);
-    Receive(100, 0, 0, 1U, 7U);
-    Service(QUIET_FEEDBACK, 1U);
-    for (unsigned i = 0U; i < 4U; ++i)
+    imu_ready = 0U;
+    for (unsigned i = 0; i < 200U; ++i)
+        Step(NO_FEEDBACK);
+    assert(!Chassis_Is_Enabled() && enables == 0U);
+    imu_ready = 1U;
+    Receive(100, 0, 0, 1U, 7U);  /* 接管前的非零帧不能产生运动。 */
+    for (unsigned i = 0; i < 200U; ++i)
         Step(QUIET_FEEDBACK);
-    assert(manual_control_state == MANUAL_DISARMED && !Chassis_Is_Enabled());
-    assert(controls == 0U && enables == 0U);
+    assert(Chassis_Is_Enabled() && manual_control_state == MANUAL_READY);
+    assert(enables == 3U && nonzero_controls == 0U && disables == 0U);
     Receive_Zero();
-    Receive(100, 0, 0, 1U, 7U);
     Step(QUIET_FEEDBACK);
-    assert(manual_control_state == MANUAL_DISARMED && !Chassis_Is_Enabled());
+    Start_Moving(100, 0, 0);
 
     Reset(0U, 0U);
     Prepare_Zero();
@@ -324,55 +330,43 @@ static void Test_Stop_Before_Reverse(uint8_t repeat, uint8_t batch)
 {
     Reset(0U, 0U);
     Prepare_Ready();
-    Start_Moving(0, 500, 0);
-    const uint32_t before = nonzero_controls;
+    Start_Moving(0, 400, 0);
+    Run_Target(0, 400, 0, 15U);
+    const float before = motor_velocity[0];
     Advance(5U);
     Receive_Zero();
     if (batch)
-        Receive(0, -500, 0, 1U, 7U);
+        Receive(0, -400, 0, 1U, 7U);
     Service(MOVING_FEEDBACK, 1U);
-    assert(manual_control_state == MANUAL_PREPARING);
+    assert(manual_control_state == MANUAL_READY);
     Step(MOVING_FEEDBACK);
-    Assert_Zero_Target();
+    /* 松键提交平滑减速，保留当前轮速方向。 */
+    assert(motor_velocity[0] > 0.0f && motor_velocity[0] <= before);
     if (repeat)
-        Receive(0, -500, 0, 1U, 7U);
-    Step(MOVING_FEEDBACK);
-    assert(manual_control_state == MANUAL_READY && !Chassis_Is_Stopped());
+        Receive(0, -400, 0, 1U, 7U);
     Step(MOVING_FEEDBACK);
     assert(manual_control_state == (repeat ? MANUAL_RUNNING : MANUAL_READY));
-    Step(MOVING_FEEDBACK);
     if (repeat)
-        assert(nonzero_controls > before && motor_velocity[0] < 0.0f);
-    else
-        assert(nonzero_controls == before);
+    {
+        Run_Target(0, -400, 0, 60U);
+        assert(motor_velocity[0] < 0.0f);
+    }
     assert(disables == 0U && aborts == 0U);
 }
 
 /** @brief 反馈过期或 CAN 邮箱持续拥塞，均不能越过零目标提交。 */
 static void Test_Stop_Preparing_Protection(void)
 {
-    for (unsigned stale = 0U; stale < 2U; ++stale)
-    {
-        Reset(0U, 0U);
-        Prepare_Ready();
-        Start_Moving(0, 500, 0);
-        Receive_Zero();
-        Service(MOVING_FEEDBACK, 1U);
-        assert(manual_control_state == MANUAL_PREPARING);
-        const uint32_t deadline = stale ? CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS + 1U : MANUAL_PREPARE_TIMEOUT_MS;
-        for (uint32_t elapsed = 10U; elapsed < deadline; elapsed += 10U)
-        {
-            Advance(10U);
-            Receive(0, -500, 0, 1U, 7U);
-            free_mailboxes = 0U;
-            Service(stale ? NO_FEEDBACK : MOVING_FEEDBACK, 0U);
-            assert(manual_control_state == MANUAL_PREPARING);
-        }
-        Advance(stale ? 1U : 10U);
-        Receive(0, -500, 0, 1U, 7U);
-        Service(stale ? NO_FEEDBACK : MOVING_FEEDBACK, 0U);
-        assert(manual_control_state == MANUAL_BRAKING && Chassis_Is_Enabled());
-    }
+    Reset(0U, 0U);
+    Prepare_Ready();
+    Start_Moving(0, 400, 0);
+    Receive_Zero();
+    Service(MOVING_FEEDBACK, 1U);
+    assert(manual_control_state == MANUAL_READY);
+    Advance(CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS + 1U);
+    Receive(0, -400, 0, 1U, 7U);
+    Service(NO_FEEDBACK, 1U);
+    assert(manual_control_state == MANUAL_BRAKING && Chassis_Is_Enabled());
 }
 
 /** @brief 核对正负车体角速度经真实三轮逆解与方向后，各轮目标符号和幅值。
@@ -385,7 +379,7 @@ static void Test_Rotation(void)
         Reset(0U, 0U);
         Prepare_Ready();
         Start_Moving(0, 0, (int16_t)(sign * 1000));
-        Run_Target(0, 0, (int16_t)(sign * 1000), 70U);
+        Run_Target(0, 0, (int16_t)(sign * 1000), 160U);
         float expected = -(float)sign * 0.0982f / 0.035f;
         for (unsigned wheel = 0U; wheel < 3U; ++wheel)
             assert(fabsf(motor_velocity[wheel] - expected) < 0.00001f);
@@ -395,7 +389,7 @@ static void Test_Rotation(void)
 /** @brief 制动期收到新零/非零都不得复位 500 ms 截止；结束后缓存帧不能再使能。
  * @param[in] braking_start 制动起点 RTOS 毫秒。 @return 无。
  */
-static void Assert_Braking_Locked(uint32_t braking_start)
+static void Assert_Braking_Locked(uint32_t braking_start, uint8_t require_release)
 {
     while ((uint32_t)(test_tick - braking_start) < 490U)
     {
@@ -427,6 +421,19 @@ static void Assert_Braking_Locked(uint32_t braking_start)
     Receive(100, 0, 0, 1U, 7U);
     Step(QUIET_FEEDBACK);
     assert(manual_control_state == MANUAL_DISARMED && !Chassis_Is_Enabled());
+    if (require_release)
+    {
+        Receive(0, 0, 0, 1U, 6U); /* 畸形帧撤销运动权限，但不能解开故障锁。 */
+        Step(QUIET_FEEDBACK);
+        for (unsigned i = 0; i < 30U; ++i)
+        {
+            Receive_Zero();
+            Step(QUIET_FEEDBACK);
+            assert(manual_control_state == MANUAL_DISARMED && !Chassis_Is_Enabled());
+        }
+        Receive(0, 0, 0, 0U, 7U);
+        Step(QUIET_FEEDBACK);
+    }
     Receive_Zero();
     Service(QUIET_FEEDBACK, 1U);
     assert(manual_control_state == MANUAL_PREPARING && Chassis_Is_Enabled());
@@ -453,7 +460,7 @@ static void Test_Invalid_Batch(void)
         Service(MOVING_FEEDBACK, 1U);
         assert(manual_control_state == MANUAL_BRAKING && nonzero_controls == before_nonzero);
         Assert_Zero_Target();
-        Assert_Braking_Locked(test_tick);
+        Assert_Braking_Locked(test_tick, malformed);
     }
 }
 
@@ -483,7 +490,7 @@ static void Test_Timeout(uint8_t wrap)
     uint32_t braking_start = test_tick;
     Step(MOVING_FEEDBACK);
     Assert_Zero_Target();
-    Assert_Braking_Locked(braking_start);
+    Assert_Braking_Locked(braking_start, 1U);
 }
 
 /** @brief 核对电机反馈 30 ms 边界、异常状态、非有限值和 IMU 有效期。
@@ -570,11 +577,11 @@ static void Test_Chassis_Protection(void)
 static void Test_Ranges(void)
 {
     const int16_t accepted[][3] = {
-        {500, 0, 0}, {-500, 0, 0}, {0, 500, 0}, {0, -500, 0},
-        {0, 0, 2000}, {0, 0, -2000}, {300, 400, 2000}, {-300, -400, -2000}
+        {400, 0, 0}, {-400, 0, 0}, {0, 400, 0}, {0, -400, 0},
+        {0, 0, 3000}, {0, 0, -3000}, {240, 320, 3000}, {-240, -320, -3000}
     };
     const int16_t rejected[][3] = {
-        {501, 0, 0}, {0, -501, 0}, {0, 0, 2001}, {0, 0, -2001},
+        {401, 0, 0}, {0, -401, 0}, {0, 0, 3001}, {0, 0, -3001},
         {400, 400, 0}, {-400, 400, 0}, {32767, 0, 0}
     };
     for (unsigned i = 0U; i < sizeof(accepted) / sizeof(accepted[0]); ++i)
@@ -593,13 +600,124 @@ static void Test_Ranges(void)
     }
     Reset(0U, 0U);
     Prepare_Ready();
-    Start_Moving(500, 0, 1000);
-    Run_Target(500, 0, 1000, 120U);
+    Start_Moving(400, 0, 1000);
+    Run_Target(400, 0, 1000, 160U);
     float wheels[3] = {-motor_velocity[0], -motor_velocity[1], -motor_velocity[2]};
     float body[3];
     Motor_Chassis_Forward(wheels, body);
-    assert(fabsf(body[0] - 0.5f) < 0.00001f && fabsf(body[1]) < 0.00001f);
+    assert(fabsf(body[0] - 0.4f) < 0.00001f && fabsf(body[1]) < 0.00001f);
     assert(fabsf(body[2] - 1.0f) < 0.00001f);
+}
+
+static void Test_Fault_Requires_Release(void)
+{
+    Reset(0U, 0U);
+    Prepare_Ready();
+    Receive(401, 0, 0, 1U, 7U);
+    Step(QUIET_FEEDBACK);
+    assert(manual_control_state == MANUAL_BRAKING);
+    for (unsigned i = 0; i < 120U; ++i)
+    {
+        Receive_Zero();
+        Step(QUIET_FEEDBACK);
+    }
+    assert(manual_control_state == MANUAL_DISARMED && enables == 3U);
+    Receive(0, 0, 0, 0U, 7U);
+    Step(QUIET_FEEDBACK);
+    Receive_Zero();
+    Step(QUIET_FEEDBACK);
+    assert(manual_control_state == MANUAL_PREPARING);
+}
+
+static void Test_Release_During_Hold(void)
+{
+    Reset(0U, 0U);
+    Prepare_Ready();
+    Start_Moving(400, 0, 3000);
+    Run_Target(400, 0, 3000, 160U);
+    assert(!Chassis_Can_Release() && !Manual_Control_Release());
+    Receive_Zero();
+    /* 归还紧随零帧，控制循环尚未处理零帧，车轮仍以非零指令运行。 */
+    assert(Manual_Control_Release() && manual_control_state == MANUAL_READY);
+    assert(!Chassis_Motion_Ready() && Chassis_Can_Release());
+    const uint32_t before = nonzero_controls;
+    Step(MOVING_FEEDBACK);
+    assert(nonzero_controls > before && !Chassis_Motion_Ready());
+    for (unsigned i = 0; i < 160U; ++i)
+        Step(QUIET_FEEDBACK);
+    Assert_Zero_Target();
+    assert(Chassis_Can_Release() && Chassis_Is_Stopped());
+    assert(manual_control_state == MANUAL_READY && enables == 3U && disables == 0U);
+
+    for (unsigned fault = 0; fault < 4U; ++fault)
+    {
+        Reset(0U, 0U);
+        Prepare_Ready();
+        Start_Moving(400, 0, 3000);
+        Receive_Zero();
+        Step(MOVING_FEEDBACK);
+        if (fault == 0U)
+            imu_ready = 0U;
+        else if (fault == 1U)
+            dm_motor[1].state = 2U;
+        else if (fault == 2U)
+        {
+            Receive(0, 0, 0, 1U, 2U);
+            Receive_Zero(); /* 已损坏的会话不能由后续同批零帧归还。 */
+        }
+        else
+            Advance(MANUAL_VELOCITY_TIMEOUT_MS);
+        if (fault < 2U)
+            assert(!Chassis_Can_Release());
+        assert(!Manual_Control_Release());
+        Manual_Control_Loop();
+        assert(manual_control_state == MANUAL_BRAKING);
+    }
+}
+
+static void Test_Fast_USB_Reconnect(void)
+{
+    Reset(0U, 0U);
+    UsbLink_OnDisconnect();         /* 开机尚未接管，USB 枚举复位不撤销零速使能。 */
+    for (unsigned i = 0; i < 20U; ++i)
+        Step(QUIET_FEEDBACK);
+    assert(manual_control_state == MANUAL_READY);
+    Receive_Zero();
+    Step(QUIET_FEEDBACK);
+    Start_Moving(100, 0, 0);
+    UsbLink_OnDisconnect();
+    Receive(200, 0, 0, 1U, 7U);
+    Step(MOVING_FEEDBACK);
+    assert(manual_control_state == MANUAL_BRAKING);
+    Assert_Braking_Locked(test_tick, 1U);
+}
+
+static void Test_Start_Transmit_Failure(void)
+{
+    Reset(0U, 0U);
+    free_mailboxes = 2U;
+    Service(NO_FEEDBACK, 0U);
+    assert(!Chassis_Is_Enabled() && controls == 0U);
+    failing_motor = 2U;
+    Step(NO_FEEDBACK); /* 第一台已提交，第二台 HAL 失败；撤销整组。 */
+    assert(!Chassis_Is_Enabled() && controls == 1U && aborts == 1U);
+    failing_motor = 0U;
+    for (unsigned i = 0; i < 120U; ++i)
+    {
+        Receive_Zero();
+        Step(QUIET_FEEDBACK);
+    }
+    assert(controls == 1U && enables == 0U);
+
+    Reset(UINT32_MAX - 500U, 0U);
+    for (unsigned i = 0; i < 110U; ++i)
+    {
+        Advance(10U);
+        free_mailboxes = 0U;
+        Service(NO_FEEDBACK, 0U);
+    }
+    Step(QUIET_FEEDBACK);
+    assert(!Chassis_Is_Enabled() && controls == 0U);
 }
 
 /** @brief 已删除的类型 1 各种旧载荷都不能影响手动控制。 */
@@ -624,13 +742,14 @@ static void Test_Heartbeat_Isolated(void)
     {
         Receive_Heartbeat_Traffic();
         Step(QUIET_FEEDBACK);
-        assert(manual_control_state == MANUAL_DISARMED && !Chassis_Is_Enabled() && enables == 0U);
+        assert(Chassis_Is_Enabled() && nonzero_controls == 0U);
     }
     Manual_CAN_Velocity_t velocity;
     Manual_CAN_Get_Velocity(&velocity);
     assert(velocity.sequence == 0U && !velocity.invalid_sequence && !velocity.zero_sequence);
-
-    Prepare_Ready();
+    assert(manual_control_state == MANUAL_READY && enables == 3U);
+    Receive_Zero();
+    Step(QUIET_FEEDBACK);
     Start_Moving(100, 0, 0);
     Receive(100, 0, 0, 1U, 7U);
     const uint32_t received_ms = test_tick;
@@ -665,6 +784,10 @@ int main(void)
     Test_Feedback_And_IMU();
     Test_Chassis_Protection();
     Test_Ranges();
+    Test_Fault_Requires_Release();
+    Test_Release_During_Hold();
+    Test_Fast_USB_Reconnect();
+    Test_Start_Transmit_Failure();
     Test_Heartbeat_Isolated();
     puts("PASS Manual control: 类型 2 codec/chassis startup, invalid batches, deadlines, guards, wraparound, 类型 1 isolation");
     return 0;

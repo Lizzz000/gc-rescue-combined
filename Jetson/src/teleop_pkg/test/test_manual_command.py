@@ -17,8 +17,8 @@ ARM = DEFAULT_ARM_ZERO_S
 class QuantizeTest(unittest.TestCase):
     def test_linear_and_angular_limits(self):
         vx, vy, wz = quantize(1.0, 1.0, -5.0)
-        self.assertLessEqual((vx * vx + vy * vy) ** 0.5, 500)
-        self.assertEqual(wz, -2000)
+        self.assertLessEqual((vx * vx + vy * vy) ** 0.5, 400)
+        self.assertEqual(wz, -3000)
         self.assertEqual(quantize(0.08, -0.1, 0.2), (80, -100, 200))
 
     def test_rejects_non_finite(self):
@@ -42,8 +42,17 @@ class LeaseTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ManualCommand(LEASE, arm)
 
-    def test_idle_is_invalid(self):
-        self.assertEqual(ManualCommand(LEASE, ARM).frame(0.0), (False, 0, 0, 0))
+    def test_waits_for_operator_and_keeps_zero_after_release(self):
+        command = ManualCommand(LEASE, ARM)
+        self.assertIsNone(command.frame(0))
+        command.hold(.4, 0, 0, 1)
+        command.release(1.05)
+        self.assertEqual(command.frame(2), (True, 0, 0, 0))
+        command.hold(0, 0, 3, 2)
+        self.assertEqual(command.frame(2), (True, 0, 0, 3000))
+        command.stop(2.1)
+        command.release(2.15)
+        self.assertEqual(command.frame(3), (False, 0, 0, 0))
 
     def test_hold_prepares_then_moves_then_expires(self):
         command = ManualCommand(LEASE, ARM)
@@ -88,17 +97,17 @@ class LeaseTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             command.timed(0.1, 0, 0, 0.0, 0.0)
 
-    def test_timed_after_expiry_without_sender_tick_rearms_for_full_duration(self):
+    def test_timed_after_normal_completion_keeps_control_without_rearming(self):
         command = ManualCommand(LEASE, ARM)
         command.timed(0.1, 0, 0, 0.15, 10.0)
         self.assertEqual(command.frame(10.0 + ARM + 0.01), (True, 100, 0, 0))
         # HTTP 请求先于下一拍发送到来；旧 ACTIVE 已过期，但尚未被 frame() 推进。
         start = 10.0 + ARM + 0.151
         command.timed(0.2, 0, 0, 0.04, start)
-        self.assertEqual(command.frame(start + ARM - 0.001), (True, 0, 0, 0))
-        self.assertEqual(command.frame(start + ARM + 0.001), (True, 200, 0, 0))
-        self.assertEqual(command.frame(start + ARM + 0.039), (True, 200, 0, 0))
-        self.assertEqual(command.frame(start + ARM + 0.041), (True, 0, 0, 0))
+        self.assertEqual(command.frame(start), (True, 200, 0, 0))
+        self.assertEqual(command.frame(start + 0.039), (True, 200, 0, 0))
+        self.assertEqual(command.frame(start + 0.041), (True, 0, 0, 0))
+        self.assertEqual(command.frame(start + 1), (True, 0, 0, 0))
 
     def test_timed_replacement_uses_remaining_prepare_time(self):
         command = ManualCommand(LEASE, ARM)
