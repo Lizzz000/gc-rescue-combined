@@ -188,12 +188,12 @@ USART6 与 SWD 的共同 134 帧、每帧 56 字段全部一致。在三轮零�
 
 ## 随机搬运与回原点离线准备
 
-`tools/live_tuning/simulate_return.py` 将实际 `chassis_odometry.c` 与 `motor_chassis.c` 编译为主机库，配合独立的电机响应/地面模型及简化导航器。固定 seed=20261117 的默认路线为 8 段平移、2 次转向和 8 次停留，最后按估计位姿返回原点并恢复航向；限速 0.10 m/s，0.5 m 正方形仅约束底盘中心，不包含车体外形、障碍物或真实夹爪。
+`manual_test/live_tuning/simulate_return.py` 将实际 `chassis_odometry.c` 与 `motor_chassis.c` 编译为主机库，配合独立的电机响应/地面模型及简化导航器。固定 seed=20261117 的默认路线为 8 段平移、2 次转向和 8 次停留，最后按估计位姿返回原点并恢复航向；限速 0.10 m/s，0.5 m 正方形仅约束底盘中心，不包含车体外形、障碍物或真实夹爪。
 
 模型真值只用于评分及区域越界中止，不提供给返航控制。按确认轮位修正后重新运行，理想场景估计/真值回零误差为 1.72/1.71 mm；假设传感器误差、滑移及 IMU 漂移场景为 5.51/5.66 mm，真值末航向 −1.85°，两场景均符合 2 cm / 5° 模拟标准。误差参数不是本车标定值，未模拟视觉；另有测试验证漂移较大时“估计通过而真值失败”。七项模拟测试与独立 CLI 运行通过。
 
 ```sh
-python STM32/tools/live_tuning/simulate_return.py --seed 20261117 --output STM32/outputs/random_return_new
+python STM32/manual_test/live_tuning/simulate_return.py --seed 20261117 --output STM32/outputs/random_return_new
 python -m unittest discover -s STM32/tests -p test_simulate_return.py
 ```
 

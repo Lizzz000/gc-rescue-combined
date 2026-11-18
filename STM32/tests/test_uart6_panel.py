@@ -5,7 +5,7 @@ import sys
 import unittest
 from unittest.mock import Mock, patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "manual_test/uart6"))
 import uart6_manual as manual
 import uart6_protocol as wire
 

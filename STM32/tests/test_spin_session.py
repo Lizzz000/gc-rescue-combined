@@ -4,7 +4,7 @@ import struct
 import sys
 import unittest
 from unittest.mock import Mock
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools/live_tuning'))
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'manual_test/live_tuning'))
 from spin_session import SPIN_NAMES,make_plan,check_complete,check_sample,new_spin_running,stop
 from uart_telemetry import FrameDecoder
 import swd_session as swd

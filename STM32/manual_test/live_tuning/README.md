@@ -16,9 +16,9 @@ cmake --build build/Live-Tuning
 主机脚本只依赖 Python 标准库及 `arm-none-eabi-nm`。以下命令从仓库根目录运行，`--elf` 必须指向刚烧录的同一份 ELF；每次连接先逐字节核对全部 Flash 加载段（含 `.data` 初值），版本不匹配或初始状态非法时不写任何 RAM。每次日志路径必须不同，以免覆盖实测记录。
 
 ```sh
-python STM32/tools/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --describe
-python STM32/tools/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --read
-python STM32/tools/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 2 --reg 1
+python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --describe
+python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --read
+python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 2 --reg 1
 ```
 
 寄存器 1 为 Kt，21/22/23 为位置、速度、力矩协议量程。必须检查三台结果与本工程的 ±12.5 rad、±40 rad/s、±1/±1/±2 N·m 一致后再比较动作。Kt 读到 0 表示采用驱动辨识的理论值，不能据此判为未配置；1.8 kg 车重不能确定电机 Kt。依据本机达妙 V1.4 手册 p10/p40 和[官方 SDK](https://github.com/dmBots/motor-sdk/blob/main/Python%E4%BE%8B%E7%A8%8B/u2can/DM_CAN.py)。本工具只读电机寄存器，不提供内部参数写入或 Flash 保存。
@@ -28,12 +28,12 @@ python STM32/tools/live_tuning/swd_session.py --elf STM32/project/build/Live-Tun
 每次只比较一个变量。先记录原 Kd、零前馈的前进/后退和双向旋转，再比较 Kd，最后比较前馈；每段运动结束都确认停稳并失能。
 
 ```sh
-python STM32/tools/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 3 --kd 0.20 0.25 0.20 --ff-gain 0 --friction 0 0 0
-python STM32/tools/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 4 --vx 0.25 --duration-ms 800
-python STM32/tools/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 4 --vx -0.25 --duration-ms 800
-python STM32/tools/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 4 --wz 0.5 --duration-ms 800
-python STM32/tools/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 4 --wz -0.5 --duration-ms 800
-python STM32/tools/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 1
+python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 3 --kd 0.20 0.25 0.20 --ff-gain 0 --friction 0 0 0
+python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 4 --vx 0.25 --duration-ms 800
+python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 4 --vx -0.25 --duration-ms 800
+python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 4 --wz 0.5 --duration-ms 800
+python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 4 --wz -0.5 --duration-ms 800
+python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 1
 ```
 
 专用测试限速 0.25 m/s、0.5 rad/s，平移与旋转互斥，单段 100–1500 ms。配置限 Kd 0.05–0.5，惯性前馈比例 0–1，单轮摩擦项 0–0.03 N·m；运行中不能改配置。修改只在 RAM 中生效，复位恢复源代码默认值。
@@ -56,11 +56,11 @@ JSONL 包含请求、参数回执、轮位置/速度/估计力矩、IMU、温度
 
 ```sh
 # 静态采样 1 秒；保持零速，自动失能。
-python STM32/tools/live_tuning/swd_session.py --elf STM32/project/build/Odometry-Live-Test/project.elf --command 5 --duration-ms 1000
+python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Odometry-Live-Test/project.elf --command 5 --duration-ms 1000
 # 前进 5 cm，限速 0.05 m/s，独立硬时限 5 秒。
-python STM32/tools/live_tuning/swd_session.py --elf STM32/project/build/Odometry-Live-Test/project.elf --command 6 --direction 1 --distance-m 0.05 --speed-mps 0.05 --duration-ms 5000 --timeout 8
+python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Odometry-Live-Test/project.elf --command 6 --direction 1 --distance-m 0.05 --speed-mps 0.05 --duration-ms 5000 --timeout 8
 # 短距通过且前方至少有 1.5 m 净空后，前进 1 m，限速 0.10 m/s。
-python STM32/tools/live_tuning/swd_session.py --elf STM32/project/build/Odometry-Live-Test/project.elf --command 6 --direction 1 --distance-m 1 --speed-mps 0.10 --duration-ms 20000 --timeout 23
+python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Odometry-Live-Test/project.elf --command 6 --direction 1 --distance-m 1 --speed-mps 0.10 --duration-ms 20000 --timeout 23
 ```
 
 方向 1 为前进、2 为后退。测试入口限制距离 0.01–1.00 m、速度 0.02–0.10 m/s、定距硬时限 100–20000 ms；静态保持 100–1500 ms。主机定距等待时限须大于硬时限加 2 秒且不超过 25 秒，其他命令仍不超过 15 秒。原命令 4 的 1500 ms 速度动作上限保持不变。增加距离与硬时限不改变 300 ms 失联制动，也不改变正式底盘控制参数。
@@ -80,12 +80,12 @@ USART6 为 PG14/TX、PG9/RX，115200、8N1。测试构建由底盘任务独占�
 实车入口 `random_return_session.py` 默认仅描述计划。明确执行时先核对完整 Flash/ELF，保持一个写入锁；开头仅调用一次命令 5 建立原点，随后用命令 4 的有限时前后/旋转脉冲保留累计里程计，每段必须正常停稳并确认三台失能。出发包含 8 段前后平移、2 次小角转向及停留；返航根据累计估计位置、当前航向选前进或倒车，最后恢复初始航向。此为现场实验编排，不接视觉或实际夹爪。
 
 ```sh
-python STM32/tools/live_tuning/random_return_session.py --describe
-python STM32/tools/live_tuning/random_return_session.py --describe --profile accelerated
+python STM32/manual_test/live_tuning/random_return_session.py --describe
+python STM32/manual_test/live_tuning/random_return_session.py --describe --profile accelerated
 # 仅在已确认场地、起点、探针和串口连接后显式执行，日志与停止文件使用新路径。
-python STM32/tools/live_tuning/random_return_session.py --execute --elf STM32/project/build/Odometry-Live-Test/project.elf --log STM32/outputs/random_trial/mission.jsonl --stop-file STM32/outputs/random_trial/STOP
+python STM32/manual_test/live_tuning/random_return_session.py --execute --elf STM32/project/build/Odometry-Live-Test/project.elf --log STM32/outputs/random_trial/mission.jsonl --stop-file STM32/outputs/random_trial/STOP
 # 已确认更长净空并要求加速时，显式选择 accelerated；默认仍为 low。
-python STM32/tools/live_tuning/random_return_session.py --execute --profile accelerated --elf STM32/project/build/Odometry-Live-Test/project.elf --log STM32/outputs/random_accelerated/mission.jsonl --stop-file STM32/outputs/random_accelerated/STOP
+python STM32/manual_test/live_tuning/random_return_session.py --execute --profile accelerated --elf STM32/project/build/Odometry-Live-Test/project.elf --log STM32/outputs/random_accelerated/mission.jsonl --stop-file STM32/outputs/random_accelerated/STOP
 ```
 
 创建 `--stop-file` 指定文件可请求停止；已存在时拒绝启动，不自动删除。两种配置均先静态采样 1000 ms，初始化后最多 60 秒、24 个动作、12 个返航脉冲；每个运动脉冲仍不超过 1500 ms。
@@ -112,8 +112,8 @@ PREPARE通过后，首次速度提交若因停车资格短暂撤销而拒绝，�
 `continuous_return_session.py` 是跨固件更新的单次返航入口，必须提供旧随机任务日志和更新前只读 checkpoint。它用旧冻结坐标同一时刻的航向计算车体相对原点，再映射到新固件参考系；不会重跑随机路线，也不会将新零点充当旧原点。此方式假设更新期间没有物理搬动车辆；六轴静置漂移和真实回零误差须另行记录。
 
 ```sh
-python STM32/tools/live_tuning/continuous_return_session.py --describe --mission-log path/to/mission.jsonl --checkpoint-log path/to/checkpoint.jsonl
-python STM32/tools/live_tuning/continuous_return_session.py --execute --mission-log path/to/mission.jsonl --checkpoint-log path/to/checkpoint.jsonl --elf path/to/exact-new.elf --log path/to/new-return.jsonl --stop-file path/to/STOP
+python STM32/manual_test/live_tuning/continuous_return_session.py --describe --mission-log path/to/mission.jsonl --checkpoint-log path/to/checkpoint.jsonl
+python STM32/manual_test/live_tuning/continuous_return_session.py --execute --mission-log path/to/mission.jsonl --checkpoint-log path/to/checkpoint.jsonl --elf path/to/exact-new.elf --log path/to/new-return.jsonl --stop-file path/to/STOP
 ```
 
 本入口要求新固件未接受过命令，先逐字节核对 Flash；只发送一次命令 7。成功后只读观察保持状态，不发送失能 STOP；任何执行或保持检查失败仍执行 STOP，且不自动重试运动。明确要求保持使能的现场实验结束后，可保留该专用固件和零目标 HOLD；此时不要再烧录正常固件，否则复位会失能。
@@ -123,8 +123,8 @@ python STM32/tools/live_tuning/continuous_return_session.py --execute --mission-
 `continuous_random_session.py` 从现有命令 7 的使能零速 HOLD 开始，将当前有效里程计位姿记录为整轮原点；沿同一坐标系依次执行目标，再自动返原点。每个目标完成后保持使能，下一目标直接接续，不重置里程计，不执行中间失能或固件更新。默认只描述路线。
 
 ```sh
-python STM32/tools/live_tuning/continuous_random_session.py --describe
-python STM32/tools/live_tuning/continuous_random_session.py --execute --elf path/to/exact.elf --log path/to/new-mission.jsonl --stop-file path/to/STOP
+python STM32/manual_test/live_tuning/continuous_random_session.py --describe
+python STM32/manual_test/live_tuning/continuous_random_session.py --execute --elf path/to/exact.elf --log path/to/new-mission.jsonl --stop-file path/to/STOP
 ```
 
 默认 seed=20261117 为 10 个路点加原点，共 11 次命令 7，规划路程 5.948 m、最长单段 0.787 m、航向约 ±45°–60°，预计约 55 秒。线/角限速为 0.20 m/s、0.50 rad/s；全程最多 90 秒、12 个命令、累计请求距离 7 m、累计请求角度 6π。初始车体坐标中的估计围栏为 x∈[−0.10,1.30] m、|y|≤0.40 m 且半径≤1.35 m。每个计划段不超过 0.95 m，该脚本实时起点到目标仍限1 m，小于当前固件1.5 m上限。
@@ -134,8 +134,8 @@ python STM32/tools/live_tuning/continuous_random_session.py --execute --elf path
 用户要求每个动作持续更久时，显式选择 `--profile long`：8 段较长复合运动再返航，航向交替为 ±90°，中间各段约转 180°，线/角速度仍为 0.20 m/s、0.50 rad/s。seed=20261117 的前 8 段距离为 0.88–0.94 m，规划总路程 7.429 m、累计转角 8π，预计 65.8 秒；最后一段返回原点约 0.185 m。此配置使用 120 秒、9 m、9π 总预算，单段 0.95 m 规划上限、原区域围栏和故障停车不变。默认 `standard` 继续使用原 90 秒、7 m、6π 预算。
 
 ```sh
-python STM32/tools/live_tuning/continuous_random_session.py --describe --profile long
-python STM32/tools/live_tuning/continuous_random_session.py --execute --profile long --elf path/to/exact.elf --log path/to/new-long-mission.jsonl --stop-file path/to/STOP
+python STM32/manual_test/live_tuning/continuous_random_session.py --describe --profile long
+python STM32/manual_test/live_tuning/continuous_random_session.py --execute --profile long --elf path/to/exact.elf --log path/to/new-long-mission.jsonl --stop-file path/to/STOP
 ```
 
 2026-11-17 编码器增量里程计版本连续完成两轮 `long`，各9段、约59.4/58.4秒，最终均保持使能和零目标。用户确认第二轮回到起点附近且动作平顺；估计毫米级偏差不是尺量精度。完整参数、前次失败与固件SHA256见 [里程计实测记录](../../docs/ODOMETRY.md)。
@@ -145,9 +145,9 @@ python STM32/tools/live_tuning/continuous_random_session.py --execute --profile 
 `visual_return_session.py` 默认只输出计划，执行需额外安装`pyserial`并指定接在STM32 USART6上的电脑串口。命令8使用与正式视觉流程相同的Kalman和速度规划；图像坐标按真实编码器/IMU里程计经合成投影生成，加入60ms延迟、15/25q交替噪声和一次1800q异常。它验证控制代码和执行器，不验证真实相机或独立地面定位精度。
 
 ```sh
-python STM32/tools/live_tuning/visual_return_session.py --forward 1.2 --left .6 --turn-deg 60
+python STM32/manual_test/live_tuning/visual_return_session.py --forward 1.2 --left .6 --turn-deg 60
 # 在对应前方/左侧净空已确认后执行，路径必须全新。
-python STM32/tools/live_tuning/visual_return_session.py --execute --elf path/to/exact.elf --log path/to/mission.jsonl --stop-file path/to/STOP --serial-port COM7 --forward 1.2 --left .6 --turn-deg 60
+python STM32/manual_test/live_tuning/visual_return_session.py --execute --elf path/to/exact.elf --log path/to/mission.jsonl --stop-file path/to/STOP --serial-port COM7 --forward 1.2 --left .6 --turn-deg 60
 ```
 
 执行路径为可选初始旋转→命令8视觉接近→命令7直线返航，成功保持使能。视觉段16s硬时限、19s主机期限；新坐标250ms失效、心跳300ms失效。只修改测试邮箱，禁止写滤波器、编码器或里程计状态。前方参数0.1–1.2m、侧向±0.6m、初始转角±60°；大距离投影6000q/m，小距离10000q/m，均为合成模型。
@@ -163,8 +163,8 @@ python STM32/tools/live_tuning/visual_return_session.py --execute --elf path/to/
 仅调试构建的纯旋转入口接受4rad/s；普通向量、定角转向仍限2rad/s。全过程硬时限120s、平移漂移围栏0.35m、原300ms心跳和反馈检查有效。成功保持使能零目标，故障STOP。执行前必须已安排同向连续旋转的防缠线连接。
 
 ```sh
-python STM32/tools/live_tuning/spin_session.py
-python STM32/tools/live_tuning/spin_session.py --execute --elf path/to/exact.elf --serial-port COM7 --log path/to/new-spin.jsonl --stop-file path/to/STOP
+python STM32/manual_test/live_tuning/spin_session.py
+python STM32/manual_test/live_tuning/spin_session.py --execute --elf path/to/exact.elf --serial-port COM7 --log path/to/new-spin.jsonl --stop-file path/to/STOP
 ```
 
 命令9的USART6以40ms周期发送64列：前56列不变，追加编码器累计rad、YAW累计rad、gyro累计rad、请求wz、阶段0–4、目标rad、YAW减编码器rad、轮速正解wz。未进入命令9时为56列；命令9后的STOP/HOLD仍为64列，复测CLI须加`--previous-spin`，复位后恢复56列。正常固件三姿态输出不变。运动循环只写DAP心跳，UART源时钟对照起步前已核验的板端时钟；不执行此前反复超时的整包/标量SWD诊断读取。终点后被动观察3秒，不继续发心跳。结果见 [YAW记录](../../docs/SPIN_YAW_20261117.md)。

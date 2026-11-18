@@ -7,7 +7,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "manual_test/uart6"))
 import uart6_protocol as wire
 import uart6_web as web
 

@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 
-SCRIPT = Path(__file__).resolve().parents[1] / "tools/live_tuning/simulate_return.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "manual_test/live_tuning/simulate_return.py"
 SPEC = importlib.util.spec_from_file_location("simulate_return", SCRIPT)
 sim = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = sim

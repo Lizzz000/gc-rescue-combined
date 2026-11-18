@@ -238,7 +238,7 @@ def stm32_probe(compiler, root, cases, uplinks):
         command = [compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic", "-O0",
                    "-I" + str(root / "tests/native/stubs"),
                    "-I" + str(root / "project/Core/Communication/Jetson"),
-                   "-I" + str(root / "project/Core/Communication/Manual"),
+                   "-I" + str(root / "manual_test/firmware"),
                    "-I" + str(root / "project/Core/Communication/Common"),
                    "-I" + str(root / "project/Core/Control/Chassis"),
                    "-I" + str(root / "project/Core/Control/Vision"),
@@ -246,7 +246,7 @@ def stm32_probe(compiler, root, cases, uplinks):
                    "-I" + str(root / "project/Core/Algorithm/Chassis"),
                    str(root / "tests/native/jetson_codec_probe.c"),
                    str(root / "project/Core/Communication/Jetson/jetson_link.c"),
-                   str(root / "project/Core/Communication/Manual/manual_link.c"),
+                   str(root / "manual_test/firmware/manual_link.c"),
                    "-o", str(executable)]
         subprocess.run(command, check=True, timeout=30)
         frames = [case[0] for case in cases] + [case[0] for case in uplinks]

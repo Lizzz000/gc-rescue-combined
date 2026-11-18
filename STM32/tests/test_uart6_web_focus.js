@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const script = fs.readFileSync(path.join(__dirname, '../tools/uart6_web/app.js'), 'utf8');
+const script = fs.readFileSync(path.join(__dirname, '../manual_test/uart6/uart6_web/app.js'), 'utf8');
 const idle = {connected: true, fresh: true, armed: true, mode: 'idle', state: 2, can_release: true};
 const moving = mode => ({...idle, mode, state: mode === 'return' ? 5 : 3, can_release: false});
 

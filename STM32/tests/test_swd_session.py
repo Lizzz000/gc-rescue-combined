@@ -12,7 +12,7 @@ from unittest.mock import patch
 from types import SimpleNamespace
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "tools/live_tuning/swd_session.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "manual_test/live_tuning/swd_session.py"
 SPEC = importlib.util.spec_from_file_location("swd_session", SCRIPT)
 swd = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(swd)

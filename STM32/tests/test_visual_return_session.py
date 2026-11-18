@@ -4,7 +4,7 @@ import sys
 import struct
 import unittest
 from unittest.mock import Mock
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"tools/live_tuning"))
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"manual_test/live_tuning"))
 from visual_return_session import image_center
 from uart_telemetry import FrameDecoder, visual_snapshot
 import swd_session as swd

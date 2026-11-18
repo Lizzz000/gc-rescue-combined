@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-FOLDER = Path(__file__).resolve().parents[1] / "tools/live_tuning"
+FOLDER = Path(__file__).resolve().parents[1] / "manual_test/live_tuning"
 sys.path.insert(0, str(FOLDER))
 import random_return_session as rr
 

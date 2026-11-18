@@ -51,10 +51,10 @@ def check_module_boundaries(cc, temp_dir=None):
         common_headers = [CORE / name for name in ("Control/Chassis/chassis.h",
                           "Control/Chassis/chassis_pose.h", "Communication/Common/link_payload.h")]
         platform = ["-I" + str(NATIVE / "stubs")]
-        manual = ["Control/Manual/uart6_manual", "Control/Manual/manual_control",
-                  "Communication/Manual/manual_link", "Communication/Common/link_frame",
-                  "Algorithm/Chassis/point_plan"]
-        build(cc, work / "manual", [CORE / name for name in manual], common_headers,
+        manual_firmware = ROOT / "manual_test/firmware"
+        manual = [manual_firmware / name for name in ("uart6_manual", "manual_control", "manual_link")]
+        manual += [CORE / "Communication/Common/link_frame", ALGORITHM / "Chassis/point_plan"]
+        build(cc, work / "manual", manual, common_headers,
               NATIVE / "test_uart6_manual.c", platform)
         auto = ["Control/Jetson/jetson_auto", "Control/Vision/tracked_visual_servo",
                 "Communication/Jetson/jetson_link", "Algorithm/Vision/adaptive_kalman",

@@ -23,6 +23,7 @@ REPO = TELEOP.parents[2]
 # Jetson 单独部署时可显式指定冻结的 STM32 源码夹具，不依赖板端旧/不完整检出。
 STM32_ROOT = Path(os.environ.get('GC_RESCUE_STM32_ROOT', str(REPO / 'STM32'))).resolve()
 STM32_CORE = STM32_ROOT / 'project/Core'
+STM32_MANUAL_FIRMWARE = STM32_ROOT / 'manual_test/firmware'
 STM32_STUBS = STM32_ROOT / 'tests/native/stubs'
 REPLAY_SOURCE = Path(__file__).resolve().parent / 'stm32_manual_replay.c'
 
@@ -111,16 +112,25 @@ def _define(path, name):
     return float(match.group(1))
 
 
+def stm32_manual_sources():
+    if (STM32_MANUAL_FIRMWARE / 'manual_control.h').is_file():
+        return STM32_MANUAL_FIRMWARE, STM32_MANUAL_FIRMWARE
+    # 兼容 GC_RESCUE_STM32_ROOT 指向的旧版冻结夹具。
+    return STM32_CORE / 'Control/Manual', STM32_CORE / 'Communication/Manual'
+
+
 def stm32_available():
-    return (STM32_CORE / 'Control/Manual/manual_control.h').exists()
+    control, _ = stm32_manual_sources()
+    return (control / 'manual_control.h').is_file()
 
 
 def stm32_constants():
     """手动固件的超时、限速与任务周期；任务周期取 chassis_task.c 的 vTaskDelayUntil 参数。"""
     task = (STM32_CORE / 'Task/Chassis/chassis_task.c').read_text(encoding='utf-8')
     period = re.search(r'vTaskDelayUntil\([^,]+,\s*pdMS_TO_TICKS\((\d+)U?\)\)', task)
+    control, _ = stm32_manual_sources()
     return {
-        'timeout_ms': _define(STM32_CORE / 'Control/Manual/manual_control.h', 'MANUAL_VELOCITY_TIMEOUT_MS'),
+        'timeout_ms': _define(control / 'manual_control.h', 'MANUAL_VELOCITY_TIMEOUT_MS'),
         'max_linear_mps': _define(STM32_CORE / 'Control/Chassis/chassis.h', 'CHASSIS_RUN_SPEED_MPS'),
         'max_angular_radps': _define(STM32_CORE / 'Control/Chassis/chassis.h', 'CHASSIS_RUN_YAW_RATE_RAD_S'),
         'task_period_ms': float(period.group(1)) if period else None,
@@ -135,10 +145,10 @@ def build_replay():
     if not cc or not stm32_available():
         return None
     out = Path(tempfile.mkdtemp(prefix='gc_manual_replay_')) / 'replay'
-    includes = [STM32_STUBS, STM32_CORE / 'Communication/Common', STM32_CORE / 'Communication/Manual',
-                STM32_CORE / 'Control/Manual', STM32_CORE / 'Control/Chassis']
-    sources = [REPLAY_SOURCE, STM32_CORE / 'Communication/Manual/manual_link.c',
-               STM32_CORE / 'Control/Manual/manual_control.c']
+    control, communication = stm32_manual_sources()
+    includes = [STM32_STUBS, STM32_CORE / 'Communication/Common', STM32_CORE / 'Control/Chassis',
+                *dict.fromkeys((control, communication))]
+    sources = [REPLAY_SOURCE, communication / 'manual_link.c', control / 'manual_control.c']
     if not (STM32_CORE / 'Communication/Common/link_payload.h').is_file():
         # GC_RESCUE_STM32_ROOT 也支持旧版冻结夹具，当时速度解码器位于 jetson_link.c。
         includes.append(STM32_CORE / 'Communication/Jetson')

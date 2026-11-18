@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools/live_tuning"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "manual_test/live_tuning"))
 import continuous_random_session as cr
 
 
