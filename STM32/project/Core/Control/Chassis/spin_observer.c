@@ -42,15 +42,17 @@ uint8_t Spin_Observer_Update(Spin_Observer_t *state, const float position[3],
     return 1U;
 }
 
-float Spin_Test_Speed(double yaw_rad, unsigned *stage)
+float Spin_Test_Speed(double yaw_rad, unsigned turns, unsigned *stage)
 {
     static const float speeds[5] = {2.0f, 3.0f, 4.0f, 3.0f, 2.0f};
-    if (!isfinite(yaw_rad) || yaw_rad < -.2 || yaw_rad > SPIN_TEST_ANGLE_RAD + .2)
+    const double target_rad = turns * SPIN_RADIANS_PER_TURN;
+    if ((turns != SPIN_DEFAULT_TURNS && turns != SPIN_EXTENDED_TURNS) ||
+        !isfinite(yaw_rad) || yaw_rad < -.2 || yaw_rad > target_rad + .2)
         return 0.0f;
-    unsigned index = yaw_rad > 0.0 ? (unsigned)(yaw_rad / (6.0 * 6.28318530717958647692)) : 0U;
+    unsigned index = yaw_rad > 0.0 ? (unsigned)(yaw_rad / (target_rad / 5.0)) : 0U;
     if (index > 4U) index = 4U;
     if (stage) *stage = index;
-    const float remaining = (float)(SPIN_TEST_ANGLE_RAD - yaw_rad);
+    const float remaining = (float)(target_rad - yaw_rad);
     if (remaining <= .02f) return 0.0f;
     /* 低于现有1.6rad/s²斜坡的制动假设，并计入80ms执行余量。 */
     const float a = 1.4f, at = 1.4f * .08f;

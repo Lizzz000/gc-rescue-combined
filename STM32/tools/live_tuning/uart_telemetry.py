@@ -9,10 +9,11 @@ import swd_session as swd
 class FrameDecoder:
     TAIL = b"\x00\x00\x80\x7f"
 
-    def __init__(self, names=swd.SAMPLE_NAMES):
+    def __init__(self, names=swd.SAMPLE_NAMES, *other_layouts):
         self.buffer = bytearray()
-        self.names = tuple(names)
-        self.payload = struct.Struct(f"<{len(self.names)}f")
+        self.layouts = {4*len(layout): (layout, struct.Struct(f"<{len(layout)}f"))
+                        for layout in (names, *other_layouts)}
+        self.max_payload = max(self.layouts)
 
     def feed(self, data):
         self.buffer.extend(data)
@@ -22,11 +23,12 @@ class FrameDecoder:
             if end < 0:
                 # Keep one more byte than a valid payload plus a partial tail.
                 # An oversized frame must still look oversized after trimming.
-                del self.buffer[:-(self.payload.size + len(self.TAIL))]
+                del self.buffer[:-(self.max_payload + len(self.TAIL))]
                 return frames
-            if end == self.payload.size:
-                values = self.payload.unpack_from(self.buffer)
-                sample = dict(zip(self.names, values))
+            if end in self.layouts:
+                names, payload = self.layouts[end]
+                values = payload.unpack_from(self.buffer)
+                sample = dict(zip(names, values))
                 if (all(math.isfinite(x) for x in values) and
                     sample["phase"] in range(6) and sample["error"] in range(11) and
                     sample["enabled"] in (0, 1) and sample["odom_valid"] in (0, 1) and
@@ -54,8 +56,8 @@ class UartTelemetry:
         self.port.reset_input_buffer()
         self.decoder.buffer.clear()
 
-    def set_names(self, names):
-        self.decoder = FrameDecoder(names)
+    def set_names(self, names, *other_layouts):
+        self.decoder = FrameDecoder(names, *other_layouts)
         self.discard()
 
     def latest(self, timeout=.18):

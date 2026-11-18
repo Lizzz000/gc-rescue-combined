@@ -29,6 +29,7 @@ volatile float tuning_spin_sample[8];
 static Spin_Observer_t spin_observer;
 static float spin_requested_wz;
 static unsigned spin_stage;
+static unsigned spin_turns;
 
 typedef enum { INACTIVE, PREPARE, RUN, STATIC_SETTLE, RETURN_SETTLE, HOLD,
                BRAKE, WAIT_DISABLED, READ_PARAMETER } Work_State;
@@ -79,7 +80,7 @@ static uint8_t Return_At_Goal(const Chassis_Odometry_t *data)
 {
     if (active_command == TUNING_SPIN_SWEEP)
         return Return_Fence(data) && hypot(data->x_m-origin_x, data->y_m-origin_y) <= .35 &&
-            fabs(spin_observer.yaw_rad - SPIN_TEST_ANGLE_RAD) <= .2;
+            fabs(spin_observer.yaw_rad - spin_turns * SPIN_RADIANS_PER_TURN) <= .2;
     const float tolerance = active_command == TUNING_VISUAL_HOLD ?
         TUNING_VISUAL_POSITION_TOLERANCE_M : TUNING_RETURN_POSITION_TOLERANCE_M;
     return Return_Fence(data) && Return_Remaining(data) <= tolerance &&
@@ -225,10 +226,11 @@ static uint8_t Valid_Move(const float args[8])
 
 static uint8_t Valid_Spin(uint32_t command, const float args[8])
 {
-    static const float required[8] = {30, 2, 3, 4, 3, 2, 120000, 0};
-    if (command != TUNING_SPIN_SWEEP) return 0U;
-    for (unsigned i = 0; i < 8U; ++i)
-        if (args[i] != required[i]) return 0U;
+    static const float profile[7] = {2, 3, 4, 3, 2, 120000, 0};
+    if (command != TUNING_SPIN_SWEEP ||
+        (args[0] != SPIN_DEFAULT_TURNS && args[0] != SPIN_EXTENDED_TURNS)) return 0U;
+    for (unsigned i = 0; i < 7U; ++i)
+        if (args[i + 1U] != profile[i]) return 0U;
     return 1U;
 }
 
@@ -373,12 +375,12 @@ static void Service_Spin(uint32_t now_ms, const Chassis_Odometry_t *data)
 {
     if ((uint32_t)(now_ms-motion_ms) >= motion_duration_ms ||
         hypot(data->x_m-origin_x, data->y_m-origin_y) > .35 ||
-        spin_observer.yaw_rad < -.2 || spin_observer.yaw_rad > SPIN_TEST_ANGLE_RAD+.2)
+        spin_observer.yaw_rad < -.2 || spin_observer.yaw_rad > spin_turns * SPIN_RADIANS_PER_TURN + .2)
     {
         Begin_Brake(now_ms, TUNING_ERROR_ACTION_TIMEOUT);
         return;
     }
-    spin_requested_wz = Spin_Test_Speed(spin_observer.yaw_rad, &spin_stage);
+    spin_requested_wz = Spin_Test_Speed(spin_observer.yaw_rad, spin_turns, &spin_stage);
     if (spin_requested_wz == 0.0f)
     {
         Chassis_Stop();
@@ -428,6 +430,8 @@ static void Accept_Command(uint32_t command, const float args[8], uint32_t now_m
              Valid_Return(command, args) || Valid_Spin(command, args))
     {
         active_command = command;
+        if (command == TUNING_SPIN_SWEEP)
+            spin_turns = (unsigned)args[0];
         requested_vx = args[0];
         requested_wz = args[2];
         requested_direction = command == TUNING_ODOM_DISTANCE ?
@@ -469,6 +473,7 @@ static void Accept_Command(uint32_t command, const float args[8], uint32_t now_m
 
 void Live_Tuning_Init(void)
 {
+    spin_turns = SPIN_DEFAULT_TURNS;
     spin_observer = (Spin_Observer_t){0};
     spin_requested_wz = 0.0f;
     spin_stage = 0U;
@@ -865,7 +870,7 @@ void Live_Tuning_Snapshot(void)
     tuning_spin_sample[2] = (float)spin_observer.gyro_rad;
     tuning_spin_sample[3] = spin_requested_wz;
     tuning_spin_sample[4] = (float)spin_stage;
-    tuning_spin_sample[5] = (float)SPIN_TEST_ANGLE_RAD;
+    tuning_spin_sample[5] = (float)(spin_turns * SPIN_RADIANS_PER_TURN);
     tuning_spin_sample[6] = (float)(spin_observer.yaw_rad - spin_observer.encoder_rad);
     tuning_spin_sample[7] = data.wheel_wz_rad_s;
     ++tuning_sample_seq;

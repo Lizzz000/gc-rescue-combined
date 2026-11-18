@@ -63,7 +63,7 @@ enum { TUNING_ERROR_ODOMETRY = 9U, TUNING_ERROR_ACTION_TIMEOUT = 10U };
  */
 extern volatile float tuning_visual_center[2], tuning_visual_sample[10];
 extern volatile uint32_t tuning_visual_seq, tuning_visual_time_ms, tuning_visual_valid;
-/* 命令9 args=[30,2,3,4,3,2,120000,0]，正向连续30圈，每6圈切换速度，
+/* 命令9 args=[圈数,2,3,4,3,2,120000,0]，正向连续30或35圈，每6或7圈切换速度，
  * 原1.6rad/s²斜坡；以AHRS YAW计圈，编码器为对照。仅此命令UART追加8列（64列/40ms）：
  * 编码器累计rad、YAW累计rad、gyro累计rad、请求wz、阶段0..4、目标rad、
  * YAW-编码器rad、三轮正解角速度。成功保持使能；原300ms心跳与故障停止有效。 */

@@ -1103,16 +1103,16 @@ static void test_visual_input_and_return_handoff(void)
     assert(tuning_phase == TUNING_DONE && enabled && !disable_calls);
 }
 
-static void start_spin(void)
+static void start_spin(float turns)
 {
-    const float args[8]={30,2,3,4,3,2,120000,0};
+    const float args[8]={turns,2,3,4,3,2,120000,0};
     for(unsigned i=0;i<8;++i)tuning_args[i]=args[i];
     submit(TUNING_SPIN_SWEEP);
 }
 
-static void test_spin_sweep(void)
+static void complete_spin(unsigned turns)
 {
-    reset_case(); start_spin();
+    reset_case(); start_spin((float)turns);
     assert(tuning_phase==TUNING_RUNNING && enabled);
     double angle=0, speed=0;
     for(unsigned i=0;i<25000 && tuning_phase!=TUNING_DONE;++i)
@@ -1129,15 +1129,23 @@ static void test_spin_sweep(void)
     }
     assert(tuning_phase==TUNING_DONE && enabled && !disable_calls);
     Live_Tuning_Snapshot();
-    assert(fabs(tuning_spin_sample[0]-SPIN_TEST_ANGLE_RAD)<.03);
+    assert(fabs(tuning_spin_sample[0]-(turns*SPIN_RADIANS_PER_TURN))<.03);
     assert(tuning_spin_sample[4]==4 && tuning_spin_sample[3]==0);
-    assert(fabs(tuning_spin_sample[1]-SPIN_TEST_ANGLE_RAD)<.03); /* 以实际YAW进度完成。 */
+    assert(fabs(tuning_spin_sample[1]-(turns*SPIN_RADIANS_PER_TURN))<.03); /* 以实际YAW进度完成。 */
 
-    reset_case(); start_spin(); loop(5U,1U); loop(300U,0U);
+    assert(fabs(tuning_spin_sample[5]-turns*SPIN_RADIANS_PER_TURN)<.00002);
+}
+
+static void test_spin_sweep(void)
+{
+    complete_spin(30U);
+    complete_spin(35U);
+    reset_case(); start_spin(34); assert(tuning_error==1 && !enable_calls);
+    reset_case(); start_spin(35); loop(5U,1U); loop(300U,0U);
     assert(tuning_error==5U && stop_calls); /* 高速实验仍受原心跳保护。 */
-    reset_case(); start_spin(); odom.x_m=.36; loop(5U,1U);
+    reset_case(); start_spin(30); odom.x_m=.36; loop(5U,1U);
     assert(tuning_error==TUNING_ERROR_ACTION_TIMEOUT && stop_calls);
-    reset_case(); start_spin(); submit(TUNING_STOP); loop(5U,1U);
+    reset_case(); start_spin(30); submit(TUNING_STOP); loop(5U,1U);
     assert(!enabled && !tuning_error);
     reset_case();
     tuning_args[0]=30; tuning_args[1]=2; tuning_args[2]=3; tuning_args[3]=4.01f;

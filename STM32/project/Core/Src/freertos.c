@@ -83,7 +83,11 @@ void vApplicationGetIdleTaskMemory( StaticTask_t **ppxIdleTaskTCBBuffer, StackTy
   */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
-
+#if !UART6_MANUAL_ENABLED
+  /* The USB HAL needs TIM6 for HAL_Delay. Creating the first FreeRTOS task masks
+     TIM6 until the scheduler starts, so complete USB setup before creating tasks. */
+  const uint8_t usb_ready = UsbLink_Init();
+#endif
   /* USER CODE END Init */
 
   /* USER CODE BEGIN RTOS_MUTEX */
@@ -114,7 +118,7 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN RTOS_THREADS */
 #if !UART6_MANUAL_ENABLED
   /* USB 组帧低于底盘任务，避免读阻塞 5 ms 控制拍。 */
-  if (UsbLink_Init())
+  if (usb_ready)
   {
     osThreadDef(usbLink, UsbLink_Task, osPriorityBelowNormal, 0, 512);
     osThreadCreate(osThread(usbLink), NULL);

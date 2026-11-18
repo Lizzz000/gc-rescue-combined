@@ -111,6 +111,8 @@ def main():
         "project/Core/Communication/Common/link_frame.c",
     ]
     suites["usb_rx_buffer"] = ["tests/native/test_usb_rx_buffer.c"]
+    suites["rtos_startup"] = ["tests/native/test_rtos_startup.c"]
+    suites["rtos_startup_uart6"] = ["tests/native/test_rtos_startup.c"]
     suites["usb_link_state"] = [
         "tests/native/test_usb_link_state.c", "project/Core/Communication/Jetson/jetson_link.c",
         "project/Core/Communication/Jetson/jetson_usb.c",
@@ -159,6 +161,8 @@ def main():
             command = [cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-O0"]
             if name == "sensors_nine_axis":
                 command.append("-DINS_USE_MAGNETOMETER=1")
+            if name == "rtos_startup_uart6":
+                command.append("-DUART6_MANUAL_ENABLED=1")
             if name == "can":
                 command.append("-DJETSON_AUTO_ENABLED=0")
             if name == "can_auto":
