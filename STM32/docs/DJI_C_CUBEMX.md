@@ -41,7 +41,7 @@
 | PCLK1 / APB1 定时器 | 42 MHz / 84 MHz |
 | PCLK2 / APB2 定时器 | 84 MHz / 168 MHz |
 | 电源 / Flash | Scale 1 / 5 WS |
-| PLLQ | `SystemClock_Config` 保持 Cube 的 4。`UsbLink_Init` 若 USB 时钟不是 48 MHz，切到 HSI、把 PLLQ 改为 7、再切回 PLL。SYSCLK 仍是 168 MHz。OTG FS 外设时钟 48 MHz，线上是全速 12 Mbit/s |
+| PLLQ | CubeMX 配置为 7。启动时 VCO 的 336 MHz 分别除以 2 和 7，得到 168 MHz 系统时钟和 48 MHz USB 时钟。USB 校验时钟并启动成功后创建接收任务，线上速率为 12 Mbit/s |
 | HAL 时基 | TIM6，1 ms，IRQ 优先级15 |
 | RTOS 时基 | SysTick，1000 Hz；SysTick/PendSV 优先级15，SVC默认0 |
 | NVIC | Priority Group 4；FreeRTOS最低优先级15，允许系统调用边界5 |

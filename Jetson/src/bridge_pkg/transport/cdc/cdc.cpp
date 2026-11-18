@@ -103,23 +103,21 @@ CanTransport::ReadResult CdcLink::read(can_frame & frame, std::string & error)
     error = "CDC closed";
     return ReadResult::FAILED;
   }
-  const auto emit = [this, &frame](std::uint8_t byte) {
+  int reads_remaining = 32;
+  for (;;) {
+    while (stash_pos_ < stash_count_) {
       link_frame::Frame decoded;
-      if (!parser_.feed(byte, decoded)) {return false;}
+      if (!parser_.feed(stash_[stash_pos_++], decoded)) {continue;}
       frame = {};
       frame.can_id = decoded.type;
       frame.len = decoded.length;
-      if (decoded.length > 0) {std::memcpy(frame.data, decoded.data, decoded.length);}
-      return true;
-    };
-  while (stash_pos_ < stash_count_) {
-    const auto byte = stash_[stash_pos_++];
-    if (stash_pos_ == stash_count_) {stash_pos_ = stash_count_ = 0;}
-    if (emit(byte)) {return ReadResult::FRAME;}
-  }
-  std::uint8_t chunk[256];
-  for (int spins = 0; spins < 32; ++spins) {
-    const auto n = ::read(fd_, chunk, sizeof(chunk));
+      std::memcpy(frame.data, decoded.data, decoded.length);
+      return ReadResult::FRAME;
+    }
+    // One frame is returned per call. Refill only after consuming the whole batch.
+    if (reads_remaining == 0) {return ReadResult::EMPTY;}
+    --reads_remaining;
+    const auto n = ::read(fd_, stash_.data(), stash_.size());
     if (n < 0) {
       if (errno == EINTR) {return ReadResult::INTERRUPTED;}
       if (errno == EAGAIN || errno == EWOULDBLOCK) {return ReadResult::EMPTY;}
@@ -130,18 +128,9 @@ CanTransport::ReadResult CdcLink::read(can_frame & frame, std::string & error)
       error = "CDC disconnected";
       return ReadResult::FAILED;
     }
-    for (ssize_t i = 0; i < n; ++i) {
-      if (!emit(chunk[i])) {continue;}
-      const auto rest = static_cast<std::size_t>(n - i - 1);
-      if (rest > 0) {
-        std::memcpy(stash_.data(), chunk + i + 1, rest);
-        stash_count_ = rest;
-        stash_pos_ = 0;
-      }
-      return ReadResult::FRAME;
-    }
+    stash_pos_ = 0;
+    stash_count_ = static_cast<std::size_t>(n);
   }
-  return ReadResult::EMPTY;
 }
 
 CanTransport::WriteResult CdcLink::write(const can_frame & frame, std::string & error)

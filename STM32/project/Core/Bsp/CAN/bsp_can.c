@@ -70,9 +70,8 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
         entry[3] = (uint32_t)xTaskGetTickCountFromISR();
         can_rx_diag_seq = sequence + 1U;
 #endif
-        if (header.IDE != CAN_ID_STD || header.RTR != CAN_RTR_DATA || header.DLC > 8U)
-            continue;
-        if (header.StdId == 0U && header.DLC == 8U)
+        if (header.IDE == CAN_ID_STD && header.RTR == CAN_RTR_DATA &&
+            header.StdId == 0U && header.DLC == 8U)
             DM_Motor_ReceiveFeedback(data);
     }
 }

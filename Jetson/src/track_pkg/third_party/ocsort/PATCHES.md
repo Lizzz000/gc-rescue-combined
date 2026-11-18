@@ -2,6 +2,11 @@
 
 The upstream MIT license remains in `LICENSE`.
 
+2026-11-18:
+
+- On consecutive matched frames, store the new observation once. Occlusion
+  replay still receives the complete history through the returning observation.
+
 2026-11-15:
 
 - Return `OCSortTrack` records with fixed-size float box geometry, integer class,

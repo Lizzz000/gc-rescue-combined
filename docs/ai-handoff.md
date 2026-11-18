@@ -1,16 +1,27 @@
 # 后续 AI 交接
 
-更新于 2026-11-17。先读根目录的 [AGENTS.md](../AGENTS.md) 和[项目说明](../README.md)，再根据本轮任务核对 Git 状态和实际板端连接。
+更新于 2026-11-18。先读根目录的 [AGENTS.md](../AGENTS.md) 和[项目说明](../README.md)，再根据本轮任务核对 Git 状态和实际板端连接。
 
-上一轮在云端 `62086f9` 基础上优化安全区内沿扫描与 STM32 USB 接收缓冲区；变更范围、主机检查和板端验证边界见 [代码优化与验证](code-optimization-2026-11-17.md)。本轮在该基础上接入 STM32 轮速反馈与 IMU 航向里程计，八向定距改为实测位移投影闭环，见 [里程计与定距控制](../STM32/docs/ODOMETRY.md)。历史验证文档中的指令积分描述仅对应当时版本。
+## 11 月 18 日代码审阅
+
+以 `5971dd8` 为基线审阅 Jetson 各包、STM32 固件、主机工具及测试。HAL、CMSIS 和 FreeRTOS 按本项目实际使用的接口核查。
+
+- **USB 和底盘**。STM32 启动时配置 48 MHz USB 时钟，删除 USB 初始化中切换系统时钟和重启 PLL 的补救流程。时钟校验或 USB 控制器启动失败时，接收任务和中断均不启动。姿态解算跳过异常采样时距时撤销底盘快照，下一次有效更新后恢复。六轴和九轴主机测试均覆盖 70 ms 采样停顿。[时钟配置](../STM32/docs/DJI_C_CUBEMX.md)
+- **视觉和通信**。安全区搜索复用候选的准入结果，Mission 对外框和两个分区都检查消息约定的 `z=0`。CDC 直接从接收缓冲解析同批多帧，Bridge 共用中心缓存清理逻辑。OC-SORT 连续命中时少复制一次观测，遮挡回放仍保留两端观测。
+- **配置和调试**。自动和手动程序都拒绝点号键与嵌套键指向同一参数。自动配置拒绝无穷大的夹爪增益。视觉和旋转调试各读取一次 ELF 符号表。串口按 56 或 64 通道的完整帧宽解码，拒绝超长帧中的合法长度后缀。主机收到显式 STOP 的完成确认后结束命令，丢失确认时仍执行停止清理。
+- **主机验证**。STM32 原生回归 33 套、控制开关组合 9 种、Python 测试 101 项通过。五种 ARM 配置编译通过，CubeMX 从 `.ioc` 重新生成的 PLLQ 为 7。双端协议下行 155 帧、上行 33 帧互验通过。Jetson Bridge 540 项、Mission 493 项、分割 CPU 后处理 20,794 项及 NVMM 主机测试桩 58 项通过。
+- **离线模拟和回放**。安全区 210 帧逐帧对照一致，完整压力与专项测试合计 3419 项通过、7 项失败，与既有记录一致。OC-SORT 的 2048 帧遮挡序列状态对照一致。理想和打滑扰动两种返航模拟均完成。两段历史串口记录共解出 2459 个完整帧，按不同块长回放结果相同。
+- **待验证项**。本轮未烧录、未执行板端 USB 枚举、ROS/GPU 或实车搬运。安全区实拍回放缺少标注。参数文档生成器的 `--check` 仍因仓库缺少 `Jetson/docs/reference/parameter-catalog.json` 失败。
+
+11 月 17 日的安全区与 USB 优化、里程计和算法变更见[代码优化与验证](code-optimization-2026-11-17.md)、[里程计与定距控制](../STM32/docs/ODOMETRY.md)和[算法升级记录](../STM32/docs/ALGORITHM_UPGRADE_20261117.md)。历史验证文档中的指令积分描述仅对应当时版本。
 
 ## 工程入口
 
 - `Jetson/src/vision_pkg/field` 负责安全区识别。候选搜索和跟踪在 [field.cpp](../Jetson/src/vision_pkg/field/field.cpp)，边线、内沿与投影在 [geometry.cpp](../Jetson/src/vision_pkg/field/opencv/geometry.cpp)，黑带测量在 [score.cpp](../Jetson/src/vision_pkg/field/opencv/score.cpp)。正式观测由 [ros_convert.hpp](../Jetson/src/vision_pkg/node/ros_convert.hpp) 检查后发布。
 - 常规启动读取 [rescue.yaml](../Jetson/src/bringup_pkg/config/rescue.yaml) 和 [rescue_advanced.yaml](../Jetson/src/bringup_pkg/config/rescue_advanced.yaml)。标准场地外框 660 × 360 mm，内框 600 × 300 mm，平面内缩每侧 30 mm。紫围栏高 20 mm，黑带长 300 mm、宽 20 mm、高 20 mm。11 月 16 日实测的 660 × 640 mm 场地使用当时的[独立配置](../Jetson/outputs/field_trial_20261116/FIELD_PARAMETERS.txt)。
 - 板间通信使用 USB CDC。STM32 通过 CAN1 控制电机。载荷和时序以 [USB 协议](../Jetson/docs/usb-protocol.md) 为准，实际双端联调从对应日期的[现场记录](../Jetson/outputs/field_trial_20261116/COMMUNICATION_CHECK_END.txt)接续。
-- 里程计纯计算在 `STM32/project/Core/Algorithm/Chassis/chassis_odometry.*`，反馈快照、定距闭环与故障停车在 [chassis.c](../STM32/project/Core/Control/Chassis/chassis.c)。本轮未烧录或实车运行；自动模式仍关闭，自动距离仍为 0，Jetson `gripper.move_s` 仍留空。先完成轮径、方向、IMU 航向和实际定距复核再启用自动搬运。
-- 本轮里程计主机回归 27 套、双端协议互验和四种 ARM 配置编译通过，含慢跟随、堵转、到位后滑行与 CAN 拥塞反例；详细结果见[里程计验证](../STM32/docs/ODOMETRY.md#2026-11-17-主机验证结果)。这些结果不代替板端里程和停车效果验收。
+- 里程计纯计算在 `STM32/project/Core/Algorithm/Chassis/chassis_odometry.*`，反馈快照、定距闭环与故障停车在 [chassis.c](../STM32/project/Core/Control/Chassis/chassis.c)。正式配置默认关闭自动模式，自动距离为 0，Jetson `gripper.move_s` 留空。现场标定与复测历史见[里程计记录](../STM32/docs/ODOMETRY.md)。
+- 里程计初次接入时，主机回归 27 套、双端协议互验和四种 ARM 配置编译通过，覆盖慢跟随、堵转、到位后滑行与 CAN 拥塞。[当时的验证结果](../STM32/docs/ODOMETRY.md#2026-11-17-主机验证结果)
 
 ## 安全区当前行为和待验证项
 

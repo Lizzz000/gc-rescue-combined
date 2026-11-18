@@ -7,9 +7,7 @@
 
 /* 只替代硬件寄存器和 HAL 调用；下方直接编译真实 USB 回调、任务和协议解析路径。 */
 #define JETSON_AUTO_ENABLED 1
-typedef enum { RESET = 0, SET = 1 } FlagStatus;
 typedef struct { uint32_t PLLCFGR; } TestRcc;
-typedef struct { uint32_t ClockType, SYSCLKSource; } RCC_ClkInitTypeDef;
 typedef struct { uint32_t Pin, Mode, Pull, Speed, Alternate; } GPIO_InitTypeDef;
 typedef struct {
     uint32_t dev_endpoints, ep0_mps, speed, dma_enable, phy_itface, Sof_enable;
@@ -18,7 +16,9 @@ typedef struct {
 } PCD_InitTypeDef;
 typedef struct { void *Instance; PCD_InitTypeDef Init; uint32_t Setup[3]; } PCD_HandleTypeDef;
 static TestRcc test_rcc;
-static FlagStatus test_pll_ready = SET;
+static uint32_t test_sysclk_source, test_sysclk_hz;
+static HAL_StatusTypeDef test_init_status, test_start_status;
+static unsigned init_calls, start_calls, irq_enables;
 static HAL_StatusTypeDef test_tx_status = HAL_OK;
 static uint32_t test_rx_count;
 #define RCC (&test_rcc)
@@ -29,12 +29,6 @@ static uint32_t test_rx_count;
 #define RCC_PLLCFGR_PLLQ_Pos 24U
 #define RCC_PLLCFGR_PLLP 0x00030000U
 #define RCC_PLLCFGR_PLLP_Pos 16U
-#define RCC_FLAG_PLLRDY 1U
-#define RCC_FLAG_HSIRDY 2U
-#define RCC_CLOCKTYPE_SYSCLK 1U
-#define RCC_SYSCLKSOURCE_HSI 0U
-#define RCC_SYSCLKSOURCE_PLLCLK 2U
-#define FLASH_LATENCY_5 5U
 #define GPIO_PIN_10 (1U << 10U)
 #define GPIO_PIN_11 (1U << 11U)
 #define GPIO_PIN_12 (1U << 12U)
@@ -49,16 +43,13 @@ static uint32_t test_rx_count;
 #define EP_TYPE_CTRL 0U
 #define EP_TYPE_BULK 2U
 #define EP_TYPE_INTR 3U
-#define __HAL_RCC_GET_SYSCLK_SOURCE() RCC_CFGR_SWS_PLL
-#define __HAL_RCC_GET_FLAG(flag) ((flag) == RCC_FLAG_PLLRDY ? test_pll_ready : SET)
-#define __HAL_RCC_HSI_ENABLE() ((void)0)
-#define __HAL_RCC_PLL_DISABLE() (test_pll_ready = RESET)
-#define __HAL_RCC_PLL_ENABLE() (test_pll_ready = SET)
+#define __HAL_RCC_GET_SYSCLK_SOURCE() test_sysclk_source
 #define __HAL_RCC_GPIOA_CLK_ENABLE() ((void)0)
 #define __HAL_RCC_USB_OTG_FS_CLK_ENABLE() ((void)0)
-#define MODIFY_REG(reg, clear, set) ((reg) = ((reg) & ~(clear)) | (set))
-#define HAL_RCC_GetSysClockFreq() 168000000U
-#define HAL_GetTick() test_tick
+#define HAL_RCC_GetSysClockFreq() test_sysclk_hz
+#define HAL_GetUIDw0() 0x01234567U
+#define HAL_GetUIDw1() 0x89ABCDEFU
+#define HAL_GetUIDw2() 0xAABBCCDDU
 
 /** @brief 接受未参与本测试的 HAL 参数并返回成功；不模拟硬件时序。 */
 static HAL_StatusTypeDef Test_Hal_Ok(unsigned unused, ...)
@@ -87,14 +78,13 @@ static uint32_t Test_Rx_Count(PCD_HandleTypeDef *pcd, uint8_t ep)
 #define HAL_PCD_EP_Transmit Test_Transmit
 #define HAL_PCD_EP_GetRxCount Test_Rx_Count
 #define HAL_PCD_SetAddress(...) Test_Hal_Ok(0U, __VA_ARGS__)
-#define HAL_RCC_ClockConfig(...) Test_Hal_Ok(0U, __VA_ARGS__)
 #define HAL_GPIO_Init(...) Test_Hal_Ok(0U, __VA_ARGS__)
 #define HAL_NVIC_SetPriority(...) Test_Hal_Ok(0U, __VA_ARGS__)
-#define HAL_NVIC_EnableIRQ(...) Test_Hal_Ok(0U, __VA_ARGS__)
-#define HAL_PCD_Init(...) Test_Hal_Ok(0U, __VA_ARGS__)
+#define HAL_NVIC_EnableIRQ(irq) (++irq_enables)
+#define HAL_PCD_Init(pcd) (++init_calls, test_init_status)
 #define HAL_PCDEx_SetRxFiFo(...) Test_Hal_Ok(0U, __VA_ARGS__)
 #define HAL_PCDEx_SetTxFiFo(...) Test_Hal_Ok(0U, __VA_ARGS__)
-#define HAL_PCD_Start(...) Test_Hal_Ok(0U, __VA_ARGS__)
+#define HAL_PCD_Start(pcd) (++start_calls, test_start_status)
 #define HAL_PCD_IRQHandler(...) Test_Hal_Ok(0U, __VA_ARGS__)
 #define HAL_PCD_DevDisconnect(...) Test_Hal_Ok(0U, __VA_ARGS__)
 #define HAL_PCD_DevConnect(...) Test_Hal_Ok(0U, __VA_ARGS__)
@@ -273,9 +263,37 @@ void test_delay_ms(uint32_t ms)
     }
 }
 
-/** @brief 运行 USB 状态与真实接收任务回归，不访问芯片 UID 或硬件初始化。 */
+/** @brief 仅当时钟和 PCD 启动都成功时允许创建接收任务并启用中断。 */
+static void Check_Init(void)
+{
+    test_sysclk_hz = 168000000U;
+    test_rcc.PLLCFGR = 7U << RCC_PLLCFGR_PLLQ_Pos;
+    assert(!UsbLink_Init()); /* 还未切换到 PLL。 */
+    test_sysclk_source = RCC_CFGR_SWS_PLL;
+    test_rcc.PLLCFGR = 4U << RCC_PLLCFGR_PLLQ_Pos;
+    assert(!UsbLink_Init()); /* 336 MHz / 4 = 84 MHz。 */
+    test_rcc.PLLCFGR = 7U << RCC_PLLCFGR_PLLQ_Pos;
+    ++test_sysclk_hz;
+    assert(!UsbLink_Init()); /* 整除截断不能把错误频率伪装成 48 MHz。 */
+    --test_sysclk_hz;
+    assert(init_calls == 0U && start_calls == 0U && irq_enables == 0U);
+    test_init_status = HAL_ERROR;
+    assert(!UsbLink_Init());
+    assert(init_calls == 1U && start_calls == 0U && irq_enables == 0U);
+    test_init_status = HAL_OK;
+    test_start_status = HAL_BUSY;
+    assert(!UsbLink_Init());
+    assert(init_calls == 2U && start_calls == 1U && irq_enables == 0U);
+    test_start_status = HAL_OK;
+    assert(UsbLink_Init());
+    assert(init_calls == 3U && start_calls == 2U && irq_enables == 1U);
+    assert(strcmp(serial_text, "0123456789ABCDEFAABBCCDD") == 0);
+}
+
+/** @brief 运行 USB 启动、状态与接收任务回归。 */
 int main(void)
 {
+    Check_Init();
     Check_Callbacks();
     Jetson_CAN_Init();
     parser = (LinkParser){0};

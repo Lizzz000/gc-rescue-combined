@@ -113,8 +113,11 @@ void MX_FREERTOS_Init(void) {
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* USB 组帧低于底盘任务，避免读阻塞 5 ms 控制拍。 */
-  osThreadDef(usbLink, UsbLink_Task, osPriorityBelowNormal, 0, 512);
-  osThreadCreate(osThread(usbLink), NULL);
+  if (UsbLink_Init())
+  {
+    osThreadDef(usbLink, UsbLink_Task, osPriorityBelowNormal, 0, 512);
+    osThreadCreate(osThread(usbLink), NULL);
+  }
   /* USER CODE END RTOS_THREADS */
 
 }

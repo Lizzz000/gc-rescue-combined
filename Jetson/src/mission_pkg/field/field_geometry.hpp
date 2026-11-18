@@ -8,13 +8,12 @@
 // ---- 安全区消息入口几何与内部中心计算 ----
 namespace FieldGeometry
 {
-// z 必须为 0：平面点。空集允许，点数由上层入口约束。
+// ROS 点的 z 必须为 0。x/y 和点数由对应的二维几何算法检查。
 template<class Points>
-bool finitePoints(const Points & points)
+bool inImagePlane(const Points & points)
 {
   for (const auto & point : points) {
-    if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
-      !std::isfinite(point.z) || point.z != 0) {return false;}
+    if (point.z != 0) {return false;}
   }
   return true;
 }
@@ -23,11 +22,16 @@ bool finitePoints(const Points & points)
 template<class Observation>
 bool validObservation(const Observation & value)
 {
+  const auto valid_quad = [](const auto & points) {
+    return PolygonValidation::convexQuad(points) && inImagePlane(points);
+  };
+  const auto valid_endpoint = [](const auto & point) {
+    return point.z == 0 && PolygonValidation::planarPoint(point);
+  };
   if (!value.valid || !value.committed ||
-    !PolygonValidation::convexQuad(value.corners) ||
-    !PolygonValidation::convexQuad(value.left_region) ||
-    !PolygonValidation::convexQuad(value.right_region) ||
-    value.split_line.size() != 2 || !finitePoints(value.split_line) ||
+    !valid_quad(value.corners) || !valid_quad(value.left_region) ||
+    !valid_quad(value.right_region) || value.split_line.size() != 2 ||
+    !valid_endpoint(value.split_line[0]) || !valid_endpoint(value.split_line[1]) ||
     value.bev_width <= 0 || value.bev_height <= 0) {return false;}
   // 两个分界端点必须不同；有限但重合的点不能定义一条分界线。
   if (value.split_line[0].x == value.split_line[1].x &&
@@ -41,10 +45,10 @@ namespace detail
 template<class Points>
 bool normalizedCenter(const Points & points, double width, double height, double & x, double & y)
 {
-  if (points.size() != 4 || !finitePoints(points) || !std::isfinite(width) ||
+  if (!std::isfinite(width) ||
     !std::isfinite(height) || width <= 0 || height <= 0) {return false;}
   double center_x, center_y;
-  if (!projectiveCenter(points, center_x, center_y)) {return false;}
+  if (!projectiveCenter(points, center_x, center_y) || !inImagePlane(points)) {return false;}
   center_x /= width;
   center_y /= height;
   if (!std::isfinite(center_x) || !std::isfinite(center_y)) {return false;}

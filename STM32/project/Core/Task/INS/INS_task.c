@@ -55,6 +55,13 @@ float INS_angle[3] = {0.0f, 0.0f, 0.0f};
 static INS_control_data_t INS_control_data;
 static uint8_t INS_control_ready;
 
+static void invalidate_control_data(void)
+{
+    taskENTER_CRITICAL();
+    INS_control_ready = 0U;
+    taskEXIT_CRITICAL();
+}
+
 /** @brief 复制底盘控制快照；参数、时基、就绪定义及返回值见 INS_task.h。 */
 uint8_t INS_Get_Data(INS_control_data_t *data)
 {
@@ -241,6 +248,38 @@ static void imu_cali_slove(float gyro[3], float accel[3], float mag[3], bmi088_r
     }
 }
 
+static void update_attitude(float dt, uint32_t sample_time_ms, ist8310_real_data_t *mag)
+{
+    imu_cali_slove(INS_gyro, INS_accel, INS_mag, &bmi088_real_data, mag);
+    if (!AHRS_update(INS_quat, dt, INS_gyro, INS_accel, INS_mag))
+    {
+        invalidate_control_data();
+        return;
+    }
+    get_angle(INS_quat, INS_angle + INS_YAW_ADDRESS_OFFSET, INS_angle + INS_PITCH_ADDRESS_OFFSET,
+              INS_angle + INS_ROLL_ADDRESS_OFFSET);
+    /* 用机体到世界旋转矩阵的第三行投影角速度。除以模长平方保持比例。 */
+    float q0 = INS_quat[0], q1 = INS_quat[1], q2 = INS_quat[2], q3 = INS_quat[3];
+    float norm_squared = q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3;
+    INS_control_data_t next = {
+        .yaw_deg = INS_angle[INS_YAW_ADDRESS_OFFSET] * 57.295779513f,
+        .world_z_rad_s = (2.0f * (q1 * q3 - q0 * q2) * INS_gyro[0] +
+                          2.0f * (q2 * q3 + q0 * q1) * INS_gyro[1] +
+                          (q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3) * INS_gyro[2]) / norm_squared,
+        .sample_time_ms = sample_time_ms
+    };
+    uint8_t ready = isfinite(next.yaw_deg) && isfinite(next.world_z_rad_s);
+    taskENTER_CRITICAL();
+    INS_control_data = next;
+    INS_control_ready = ready;
+    taskEXIT_CRITICAL();
+#if !CHASSIS_TUNING_ENABLED
+    /* 正常构建由 INS 独占 USART6；现场测试由底盘任务发送完整快照。 */
+    vofa_send(INS_angle[INS_ROLL_ADDRESS_OFFSET] * 57.295779513f,
+              INS_angle[INS_PITCH_ADDRESS_OFFSET] * 57.295779513f, next.yaw_deg);
+#endif
+}
+
 /** @brief 初始化后周期采集、解算和发送姿态，覆盖生成文件的弱 INS_task。
  * @param[in] argument 未使用。 @return 不返回。
  * @note 入口来自官方第 18 章；实测 dt 传入算法参考 basic_framework 的 INS_Task。
@@ -252,9 +291,7 @@ void INS_task(void const *argument)
     (void)argument;
     uint8_t bmi088_read_flag = 0;
 
-    taskENTER_CRITICAL();
-    INS_control_ready = 0U;
-    taskEXIT_CRITICAL();
+    invalidate_control_data();
     HAL_TIM_Base_Start(&htim2);
     osDelay(INS_TASK_INIT_TIME);
     while ((BMI088_error = BMI088_init()) != BMI088_NO_ERROR)
@@ -306,45 +343,13 @@ void INS_task(void const *argument)
             BMI088_read(bmi088_real_data.gyro, bmi088_real_data.accel, &bmi088_real_data.temp);
             imu_temp_control(bmi088_real_data.temp);
             if (!isfinite(bmi088_real_data.temp))
-            {
-                taskENTER_CRITICAL();
-                INS_control_ready = 0U;
-                taskEXIT_CRITICAL();
-            }
+                invalidate_control_data();
         }
         ist8310_real_data_t *mag = NULL;
         if (INS_USE_MAGNETOMETER && read_ist8310())
             mag = &ist8310_real_data;
-        if (bmi088_read_flag && isfinite(bmi088_real_data.temp) && dt > 0.0f)
-        {
-            imu_cali_slove(INS_gyro, INS_accel, INS_mag, &bmi088_real_data, mag);
-            AHRS_update(INS_quat, dt, INS_gyro, INS_accel, INS_mag);
-            get_angle(INS_quat, INS_angle + INS_YAW_ADDRESS_OFFSET, INS_angle + INS_PITCH_ADDRESS_OFFSET, INS_angle + INS_ROLL_ADDRESS_OFFSET);
-            /* 旧车 Publish 使用归一化四元数的机体→世界旋转矩阵乘去零偏 gyro。
-             * 此处只取第三行，除以模长平方与旧 Get_Rotation_Matrix 的归一化等价，
-             * 保持旋转后的角速度比例，不修改解算四元数。 */
-            float q0 = INS_quat[0], q1 = INS_quat[1], q2 = INS_quat[2], q3 = INS_quat[3];
-            float norm_squared = q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3;
-            INS_control_data_t next = {
-                .yaw_deg = INS_angle[INS_YAW_ADDRESS_OFFSET] * 57.295779513f,
-                .world_z_rad_s = (2.0f * (q1 * q3 - q0 * q2) * INS_gyro[0] +
-                                  2.0f * (q2 * q3 + q0 * q1) * INS_gyro[1] +
-                                  (q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3) * INS_gyro[2]) / norm_squared,
-                .sample_time_ms = sample_time_ms
-            };
-            uint8_t ready = isfinite(next.yaw_deg) && isfinite(next.world_z_rad_s);
-            taskENTER_CRITICAL();
-            INS_control_data = next;
-            INS_control_ready = ready;
-            taskEXIT_CRITICAL();
-#if !CHASSIS_TUNING_ENABLED
-            /* 正常构建由 INS 独占 USART6；现场测试由底盘任务发送完整快照。 */
-            /* VOFA 通道顺序为 roll、pitch、yaw，单位由 rad 转换为度。 */
-            vofa_send(INS_angle[INS_ROLL_ADDRESS_OFFSET] * 57.295779513f,
-                      INS_angle[INS_PITCH_ADDRESS_OFFSET] * 57.295779513f,
-                      INS_angle[INS_YAW_ADDRESS_OFFSET] * 57.295779513f);
-#endif
-        }
+        if (bmi088_read_flag && isfinite(bmi088_real_data.temp))
+            update_attitude(dt, sample_time_ms, mag);
         bmi088_read_flag = !bmi088_read_flag;
     }
 }

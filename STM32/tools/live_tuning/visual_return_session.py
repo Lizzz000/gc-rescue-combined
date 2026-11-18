@@ -10,8 +10,6 @@ from collections import deque
 import json
 import math
 from pathlib import Path
-import shutil
-import subprocess
 import time
 import swd_session as swd
 from continuous_return_session import ContinuousSession, wrap
@@ -19,20 +17,6 @@ from uart_telemetry import UartTelemetry, visual_snapshot
 
 VISUAL_SIZES = {"tuning_visual_center":8, "tuning_visual_sample":40,
                 "tuning_visual_seq":4, "tuning_visual_time_ms":4, "tuning_visual_valid":4}
-
-def load_visual_symbols(elf):
-    result = swd.load_symbols(elf)
-    lines = subprocess.check_output([shutil.which("arm-none-eabi-nm"), "-S", "--defined-only", str(elf)], text=True)
-    for line in lines.splitlines():
-        fields = line.split()
-        if len(fields) == 4 and fields[3] in VISUAL_SIZES:
-            address, size, name = int(fields[0],16), int(fields[1],16), fields[3]
-            if size != VISUAL_SIZES[name] or not 0x20000000 <= address < address+size <= 0x20020000 or address % 4:
-                raise swd.SessionError("Visual ABI mismatch")
-            result[name] = address
-    if not VISUAL_SIZES.keys() <= result.keys():
-        raise swd.SessionError("Missing visual injection ABI")
-    return result
 
 def image_center(pose, goal, frame, response=10000.0):
     dx,dy = goal[0]-pose[0], goal[1]-pose[1]
@@ -167,7 +151,7 @@ def main():
         client=log=session=telemetry=None
         complete=False
         try:
-            symbols=load_visual_symbols(args.elf)
+            symbols = swd.load_symbols(args.elf, extra_sizes=VISUAL_SIZES)
             log=swd.JsonLog(args.log)
             client=swd.TclClient("127.0.0.1",6666)
             if client.evaluate("stm32f4x.cpu curstate")!="running":

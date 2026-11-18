@@ -39,36 +39,34 @@ def _mapping(path, document, label):
     return document
 
 
-def _flatten(document, prefix=''):
-    result = {}
+def _merge_fields(document, values, prefix=''):
     for key, value in document.items():
         name = f'{prefix}.{key}' if prefix else key
         if isinstance(value, dict):
-            result.update(_flatten(value, name))
+            _merge_fields(value, values, name)
+        elif name in values:
+            raise ValueError(f'配置字段重复：{name}')
         else:
-            result[name] = value
-    return result
+            values[name] = value
 
 
 def _read_config_values(path):
     """读取 --config 及其 advanced_config 引用，按叶键合并；只用于提取中性键。"""
     path = Path(path).resolve()
-    document = _mapping(path, yaml.safe_load(path.read_text()), '配置')
+    document = _mapping(path, yaml.safe_load(path.read_bytes()), '配置')
     reference = document.pop('advanced_config', None)
-    basic = _flatten(document)
+    values = {}
+    _merge_fields(document, values)
     if reference is None:
-        return basic
+        return values
     if not isinstance(reference, str) or not reference.strip():
         raise ValueError('advanced_config 须为非空路径')
     advanced_path = Path(reference)
     if not advanced_path.is_absolute():
         advanced_path = path.parent / advanced_path
-    advanced = _flatten(_mapping(advanced_path, yaml.safe_load(advanced_path.read_text()), '高级配置'))
-    repeated = basic.keys() & advanced.keys()
-    if repeated:
-        raise ValueError(f'配置字段在两个文件中重复：{sorted(repeated)}')
-    basic.update(advanced)
-    return basic
+    advanced = _mapping(advanced_path, yaml.safe_load(advanced_path.read_bytes()), '高级配置')
+    _merge_fields(advanced, values)
+    return values
 
 
 def load_manual_config(path):

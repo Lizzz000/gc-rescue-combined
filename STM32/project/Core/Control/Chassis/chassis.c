@@ -189,7 +189,7 @@ uint8_t Chassis_Get_Odometry(Chassis_Odometry_t *data)
     data->valid = data->valid &&
         (uint32_t)(__HAL_TIM_GET_COUNTER(&htim2) - data->sample_time_us) <=
             CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS * 1000U &&
-        Chassis_Motors_Ready() && Read_IMU(&imu) && isfinite(imu.yaw_deg);
+        Chassis_Motors_Ready() && Read_IMU(&imu);
     return data->valid;
 }
 
@@ -410,7 +410,7 @@ static void Chassis_Translation_Target(Chassis_Translation_Direction_t direction
 static uint8_t Prepare_Translation(Chassis_Translation_Direction_t direction)
 {
     INS_control_data_t imu;
-    if (disable_after_stop || !Chassis_Is_Stopped() || direction < CHASSIS_TRANSLATION_FORWARD ||
+    if (!Chassis_Is_Stopped() || direction < CHASSIS_TRANSLATION_FORWARD ||
         direction > CHASSIS_TRANSLATION_BACKWARD_RIGHT || !Read_IMU(&imu))
         return 0U;
     Chassis_Stop();
@@ -543,7 +543,7 @@ uint8_t Chassis_Straight_Start(float speed, uint32_t duration_ms)
 uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg)
 {
     INS_control_data_t imu;
-    if (disable_after_stop || !Chassis_Is_Stopped() ||
+    if (!Chassis_Is_Stopped() ||
         (direction != 1 && direction != -1) || !isfinite(angle_deg) ||
         angle_deg <= 0.0f || angle_deg > 360.0f || !Read_IMU(&imu))
         return 0U;

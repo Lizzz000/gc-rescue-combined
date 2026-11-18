@@ -94,7 +94,7 @@ void testFieldGeometry()
   bad = valid; bad.split_line.pop_back();
   CHECK(!FieldGeometry::validObservation(bad));
   for (int component = 0; component < 3; ++component) {
-    for (int problem = 0; problem < 5; ++problem) {
+    for (int problem = 0; problem < 7; ++problem) {
       bad = valid;
       auto & points = component == 0 ? bad.corners :
         component == 1 ? bad.left_region : bad.right_region;
@@ -104,6 +104,8 @@ void testFieldGeometry()
         case 2: std::swap(points[1], points[2]); break;  // 自交，不能默默重排接收端消息。
         case 3: points = {{0, 0, 0}, {1, 0, 0}, {2, 0, 0}, {3, 0, 0}}; break;
         case 4: points.pop_back(); break;
+        case 5: points[1].z = 1; break;
+        case 6: points[2].z = std::numeric_limits<double>::quiet_NaN(); break;
       }
       CHECK(!FieldGeometry::validObservation(bad));
     }

@@ -25,11 +25,11 @@ uint8_t AHRS_init(float quat[4], const float accel[3], const float mag[3]);
  * @param[in] gyro 统一坐标系的 x/y/z 角速度，rad/s。
  * @param[in] accel 统一坐标系的 x/y/z 加速度，m/s²。
  * @param[in] mag 统一坐标系的 x/y/z 磁场，μT。
- * @return 无。
- * @note 保留官方教程函数签名；实测时间传递参考 basic_framework 的 INS_Task
+ * @return 1 本次样本已参与积分；0 表示输入或时距无效，跳过本次更新。
+ * @note 实测时间传递参考 basic_framework 的 INS_Task
  *       与 IMU_QuaternionEKF_Update，将 time 用于 Mahony 的积分及积分反馈。
  */
-void AHRS_update(float quat[4], float time, float gyro[3], float accel[3], float mag[3]);
+uint8_t AHRS_update(float quat[4], float time, float gyro[3], float accel[3], float mag[3]);
 
 /**
  * @brief 沿教程接口将四元数转换为欧拉角。

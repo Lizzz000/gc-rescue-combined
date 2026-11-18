@@ -41,8 +41,10 @@
             y = Eigen::VectorXf::Zero(dim_z, 1);
             return;
         }
-        history_obs.push_back(*z_);
-        if (false == observed) unfreeze();
+        if (!observed) {
+            history_obs.push_back(*z_);
+            unfreeze();
+        }
         observed = true;
         // Re-update only requires the last observation and subsequent gap.
         // Retain the current endpoint, including after an occlusion replay.

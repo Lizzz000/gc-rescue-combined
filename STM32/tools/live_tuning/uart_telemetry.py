@@ -8,12 +8,11 @@ import swd_session as swd
 
 class FrameDecoder:
     TAIL = b"\x00\x00\x80\x7f"
-    SIZE = 4 * len(swd.SAMPLE_NAMES)
 
     def __init__(self, names=swd.SAMPLE_NAMES):
         self.buffer = bytearray()
         self.names = tuple(names)
-        self.SIZE = 4 * len(self.names)
+        self.payload = struct.Struct(f"<{len(self.names)}f")
 
     def feed(self, data):
         self.buffer.extend(data)
@@ -21,13 +20,12 @@ class FrameDecoder:
         while True:
             end = self.buffer.find(self.TAIL)
             if end < 0:
-                # Keep one complete candidate and a partial marker for resync.
-                if len(self.buffer) > self.SIZE + 3:
-                    del self.buffer[:-(self.SIZE + 3)]
+                # Keep one more byte than a valid payload plus a partial tail.
+                # An oversized frame must still look oversized after trimming.
+                del self.buffer[:-(self.payload.size + len(self.TAIL))]
                 return frames
-            if end >= self.SIZE:
-                values = struct.unpack("<" + "f" * len(self.names),
-                                       self.buffer[end-self.SIZE:end])
+            if end == self.payload.size:
+                values = self.payload.unpack_from(self.buffer)
                 sample = dict(zip(self.names, values))
                 if (all(math.isfinite(x) for x in values) and
                     sample["phase"] in range(6) and sample["error"] in range(11) and
@@ -54,7 +52,7 @@ class UartTelemetry:
 
     def discard(self):
         self.port.reset_input_buffer()
-        self.decoder = FrameDecoder(self.decoder.names)
+        self.decoder.buffer.clear()
 
     def set_names(self, names):
         self.decoder = FrameDecoder(names)

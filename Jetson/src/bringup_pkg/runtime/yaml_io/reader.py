@@ -30,12 +30,21 @@ _UniqueLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _m
 
 
 # 展平只生成规范路径，不建立旧字段别名；字段齐全与否由未知/缺失字段检查确认。
-def _flatten(document, prefix=''):
-    result = {}
-    for key, value in document.items():
-        name = f'{prefix}.{key}' if prefix else key
-        result.update(_flatten(value, name) if isinstance(value, dict) else {name: value})
-    return result
+def _flatten(document):
+    values = {}
+
+    def visit(mapping, prefix):
+        for key, value in mapping.items():
+            name = prefix + key
+            if isinstance(value, dict):
+                visit(value, name + '.')
+            elif name in values:
+                raise ConfigurationError(f'configuration field defined twice: {name}')
+            else:
+                values[name] = value
+
+    visit(document, '')
+    return values
 
 
 # ---- 文件读取：资源路径、基础/高级合并与字段来源 ----
