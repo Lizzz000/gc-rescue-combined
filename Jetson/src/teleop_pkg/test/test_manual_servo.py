@@ -60,6 +60,15 @@ def session_with_link(**kwargs):
 
 
 class ManualConfigTest(unittest.TestCase):
+    def test_dotted_path_matches_nested_and_rejects_conflicts(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'manual.yaml'
+            path.write_text('link.device: /dev/first\n', encoding='utf-8')
+            self.assertEqual(manual_control.load_manual_config(path)['link_device'], '/dev/first')
+            path.write_text('link.device: /dev/first\nlink:\n  device: /dev/second\n', encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, r'link\.device'):
+                manual_control.load_manual_config(path)
+
     def test_load_split_files_and_ignore_other_sections(self):
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)

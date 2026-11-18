@@ -241,21 +241,14 @@ static void Prepare_Zero(void)
     assert(!Chassis_Is_Stopped() && manual_control_state == MANUAL_PREPARING);
 }
 
-/** @brief 零速基线之后提供恰好三组新停车反馈，验证前两组不足以起步。
- * @return 无。
- */
+/** @brief 使能包序完成，健康的运动中反馈也可就绪。 */
 static void Confirm_Ready(void)
 {
-    for (unsigned group = 0U; group < 3U; ++group)
-    {
-        Step(QUIET_FEEDBACK);
-        assert(manual_control_state == (group == 2U ? MANUAL_READY : MANUAL_PREPARING));
-        assert(Chassis_Is_Stopped() == (group == 2U));
-        Assert_Zero_Target();
-    }
+    Step(MOVING_FEEDBACK);
+    assert(manual_control_state == MANUAL_READY && !Chassis_Is_Stopped());
+    Assert_Zero_Target();
 }
 
-/** @brief 准备正常起步；仍通过真实使能与三组停车确认。 @return 无。 */
 static void Prepare_Ready(void) { Prepare_Zero(); Confirm_Ready(); }
 
 /** @brief 从就绪状态提交新非零速度，并等待第一组非零 MIT。
@@ -286,7 +279,7 @@ static void Run_Target(int16_t vx, int16_t vy, int16_t wz, unsigned periods)
     }
 }
 
-/** @brief 核对上电与旧非零帧不能使能，零帧时刻 0 合法，三组确认不可省略。
+/** @brief 核对上电与旧非零帧不能使能，零帧时刻 0 合法，反馈失效时不可起步。
  * @return 无。
  */
 static void Test_Startup(void)
@@ -309,6 +302,7 @@ static void Test_Startup(void)
     Manual_CAN_Velocity_t data;
     Manual_CAN_Get_Velocity(&data);
     assert(data.valid && data.sequence == 1U && data.received_ms == 0U);
+    Advance(CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS + 1U);
     for (unsigned i = 0U; i < 3U; ++i)
     {
         Step(NO_FEEDBACK);
@@ -326,62 +320,39 @@ static void Test_Startup(void)
     assert(manual_control_state == MANUAL_BRAKING && nonzero_controls == 0U);
 }
 
-/** @brief 验证运行后收到单帧全零仍立即清目标，停稳前非零不得执行或触发失能。
- * @param[in] repeat 1 持续发送换向请求，0 不在确认期间持续重发。
- * @param[in] batch 1 模拟同一任务周期内全零后又收到非零。
- * @return 无。
- */
+/** @brief 验证零速实际发出、同批非零丢弃；之后的新速度在轮速仍非零时生效。 */
 static void Test_Stop_Before_Reverse(uint8_t repeat, uint8_t batch)
 {
     Reset(0U, 0U);
     Prepare_Ready();
     Start_Moving(0, 500, 0);
-    uint32_t before_nonzero = nonzero_controls;
-
+    const uint32_t before = nonzero_controls;
     Advance(5U);
     Receive_Zero();
     if (batch)
         Receive(0, -500, 0, 1U, 7U);
-    const uint32_t stop_ms = test_tick;
     Service(MOVING_FEEDBACK, 1U);
     assert(manual_control_state == MANUAL_PREPARING);
     Step(MOVING_FEEDBACK);
     Assert_Zero_Target();
-
-    Advance(10U);
-    assert(test_tick - stop_ms == 20U);
-    Receive(0, -500, 0, 1U, 7U);
-    Service(MOVING_FEEDBACK, 1U);
-    assert(manual_control_state == MANUAL_PREPARING && Chassis_Is_Enabled());
-    Assert_Zero_Target();
-
-    for (unsigned group = 0U; group < 3U; ++group)
-    {
-        Advance(10U);
-        if (repeat)
-            Receive(0, -500, 0, 1U, 7U);
-        Service(QUIET_FEEDBACK, 1U);
-        assert(manual_control_state == (group == 2U ? MANUAL_READY : MANUAL_PREPARING));
-        assert(Chassis_Is_Enabled());
-        Assert_Zero_Target();
-    }
-    Step(QUIET_FEEDBACK);
-    assert(manual_control_state == MANUAL_READY && nonzero_controls == before_nonzero);
-    assert(disables == 0U && aborts == 0U);
-    Assert_Zero_Target();
     if (repeat)
-    {
-        Start_Moving(0, -500, 0);
-        assert(nonzero_controls > before_nonzero && motor_velocity[0] < 0.0f);
-    }
+        Receive(0, -500, 0, 1U, 7U);
+    Step(MOVING_FEEDBACK);
+    assert(manual_control_state == MANUAL_READY && !Chassis_Is_Stopped());
+    Step(MOVING_FEEDBACK);
+    assert(manual_control_state == (repeat ? MANUAL_RUNNING : MANUAL_READY));
+    Step(MOVING_FEEDBACK);
+    if (repeat)
+        assert(nonzero_controls > before && motor_velocity[0] < 0.0f);
+    else
+        assert(nonzero_controls == before);
+    assert(disables == 0U && aborts == 0U);
 }
 
-/** @brief 运行后等待停稳仍检查轮反馈超时，并保留原停稳等待期限。
- * @return 无。
- */
+/** @brief 反馈过期或 CAN 邮箱持续拥塞，均不能越过零目标提交。 */
 static void Test_Stop_Preparing_Protection(void)
 {
-    for (unsigned stale_feedback = 0U; stale_feedback < 2U; ++stale_feedback)
+    for (unsigned stale = 0U; stale < 2U; ++stale)
     {
         Reset(0U, 0U);
         Prepare_Ready();
@@ -389,22 +360,19 @@ static void Test_Stop_Preparing_Protection(void)
         Receive_Zero();
         Service(MOVING_FEEDBACK, 1U);
         assert(manual_control_state == MANUAL_PREPARING);
-
-        const uint32_t deadline = stale_feedback ? CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS + 1U : MANUAL_PREPARE_TIMEOUT_MS;
-        const Feedback_Mode_t feedback = stale_feedback ? NO_FEEDBACK : MOVING_FEEDBACK;
+        const uint32_t deadline = stale ? CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS + 1U : MANUAL_PREPARE_TIMEOUT_MS;
         for (uint32_t elapsed = 10U; elapsed < deadline; elapsed += 10U)
         {
             Advance(10U);
             Receive(0, -500, 0, 1U, 7U);
-            Service(feedback, 1U);
+            free_mailboxes = 0U;
+            Service(stale ? NO_FEEDBACK : MOVING_FEEDBACK, 0U);
             assert(manual_control_state == MANUAL_PREPARING);
-            Assert_Zero_Target();
         }
-        Advance(stale_feedback ? 1U : 10U);
+        Advance(stale ? 1U : 10U);
         Receive(0, -500, 0, 1U, 7U);
-        Service(feedback, 1U);
+        Service(stale ? NO_FEEDBACK : MOVING_FEEDBACK, 0U);
         assert(manual_control_state == MANUAL_BRAKING && Chassis_Is_Enabled());
-        Assert_Zero_Target();
     }
 }
 

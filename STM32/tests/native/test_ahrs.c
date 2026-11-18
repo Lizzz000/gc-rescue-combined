@@ -157,9 +157,9 @@ static void test_invalid_and_scaled_quaternion(void)
     for(unsigned i=0;i<4;++i) before[i]=q[i];
     float gyro[3]={0,0,1}, accel[3]={0,0,9.80665f}, mag[3]={0};
     const float bad_times[]={0,-.01f,.051f,NAN,INFINITY};
-    for(unsigned t=0;t<5;++t) AHRS_update(q,bad_times[t],gyro,accel,mag);
+    for(unsigned t=0;t<5;++t) assert(!AHRS_update(q,bad_times[t],gyro,accel,mag));
     gyro[0]=NAN;
-    AHRS_update(q,.01f,gyro,accel,mag);
+    assert(!AHRS_update(q,.01f,gyro,accel,mag));
     for(unsigned i=0;i<4;++i) assert(q[i]==before[i]);
     assert(!AHRS_init(q,(float[3]){0,0,0},mag));
     for(unsigned i=0;i<4;++i) assert(q[i]==before[i]);
@@ -169,7 +169,7 @@ static void test_invalid_and_scaled_quaternion(void)
     get_angle(q,&y2,&p2,&r2);
     assert(fabsf(y1-y2)<1e-6f && fabsf(p1-p2)<1e-6f && fabsf(r1-r2)<1e-6f);
     gyro[0]=0; mag[0]=NAN;
-    AHRS_update(q,.01f,gyro,accel,mag);
+    assert(AHRS_update(q,.01f,gyro,accel,mag));
     for(unsigned i=0;i<4;++i) assert(isfinite(q[i]));
     get_angle((float[4]){0},&y2,&p2,&r2);
     assert(isnan(y2) && isnan(p2) && isnan(r2));

@@ -8,7 +8,6 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include <math.h>
-#include <string.h>
 
 enum
 {
@@ -24,7 +23,7 @@ enum
 enum { RESULT_NONE, RESULT_ACCEPTED, RESULT_REJECTED, RESULT_DONE, RESULT_FAULT };
 enum { DETAIL_NONE, DETAIL_STATE, DETAIL_ODOM, DETAIL_NO_ORIGIN, DETAIL_LIMIT,
        DETAIL_TIMEOUT, DETAIL_LINK, DETAIL_UART, DETAIL_CHASSIS };
-enum { RETURN_INACTIVE, RETURN_RUNNING, RETURN_SETTLING };
+enum { RETURN_INACTIVE, RETURN_RUNNING, RETURN_STOPPING };
 
 #define RX_CAPACITY 128U
 #define RX_FRAME_GAP_MS 50U
@@ -47,16 +46,21 @@ static const Point_Plan_Config_t default_return_config = {
 static Point_Plan_Config_t return_config;
 
 static uint8_t rx_byte;
-static uint8_t rx_buffer[RX_CAPACITY];
+typedef struct
+{
+    uint8_t data[RX_CAPACITY];
+    uint32_t time_ms[RX_CAPACITY];
+} Rx_Batch_t;
+static Rx_Batch_t rx_batches[2];
+static volatile uint8_t rx_bank;
 static volatile uint16_t rx_count;
 static volatile uint8_t rx_failed;
-static volatile uint32_t rx_time_ms;
 static LinkParser parser;
 static uint32_t parser_activity_ms;
 static uint8_t tx_buffer[2U * LINK_FRAME_MAX_BYTES];
 
 static uint8_t session_active, was_enabled, origin_valid, return_state;
-static uint32_t arm_started_ms, last_valid_ms, return_started_ms, settle_started_ms, last_report_ms;
+static uint32_t arm_started_ms, last_valid_ms, return_started_ms, stop_started_ms, last_report_ms;
 static uint16_t last_arm_id, last_origin_id, last_return_id, active_return_id;
 static uint16_t reply_id;
 static uint8_t reply_command, reply_result, reply_detail;
@@ -89,8 +93,9 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *uart)
         return;
     if (!rx_failed && rx_count < RX_CAPACITY)
     {
-        rx_buffer[rx_count++] = rx_byte;
-        rx_time_ms = (uint32_t)xTaskGetTickCountFromISR();
+        rx_batches[rx_bank].data[rx_count] = rx_byte;
+        rx_batches[rx_bank].time_ms[rx_count] = (uint32_t)xTaskGetTickCountFromISR();
+        ++rx_count;
     }
     else
         rx_failed = 1U;
@@ -137,7 +142,8 @@ static void Service_Request(const LinkFrame *frame, uint32_t now_ms)
     }
 
     if (!session_active || return_state != RETURN_INACTIVE ||
-        manual_control_state != MANUAL_READY || !Chassis_Is_Stopped())
+        manual_control_state != MANUAL_READY ||
+        (frame->type == UART_ORIGIN ? !Chassis_Is_Stopped() : !Chassis_Motion_Ready()))
     {
         Reply(frame->type, id, RESULT_REJECTED, DETAIL_STATE);
         return;
@@ -221,22 +227,18 @@ static void Service_Return(uint32_t now_ms)
         return;
     }
 
-    if (return_state == RETURN_SETTLING)
+    if (return_state == RETURN_STOPPING)
     {
-        if (Chassis_Is_Stopped())
+        if (remaining > 0.02 || fabsf(remainderf(position.yaw_rad - origin.yaw_rad, TWO_PI)) > 0.174532925f)
+            Stop_Session(DETAIL_LIMIT);
+        else if (Chassis_Motion_Ready())
         {
-            if (remaining > 0.02 ||
-                fabsf(remainderf(position.yaw_rad - origin.yaw_rad, TWO_PI)) > 0.174532925f)
-            {
-                Stop_Session(DETAIL_LIMIT);
-                return;
-            }
             const uint8_t zero[7] = {1U};
             Manual_CAN_Receive(zero, sizeof(zero));
             Reply(UART_RETURN, active_return_id, RESULT_DONE, DETAIL_NONE);
             return_state = RETURN_INACTIVE;
         }
-        else if ((uint32_t)(now_ms - settle_started_ms) >= MANUAL_PREPARE_TIMEOUT_MS)
+        else if ((uint32_t)(now_ms - stop_started_ms) >= MANUAL_PREPARE_TIMEOUT_MS)
             Stop_Session(DETAIL_TIMEOUT);
         return;
     }
@@ -249,8 +251,8 @@ static void Service_Return(uint32_t now_ms)
     else if (output.arrived)
     {
         Chassis_Stop();
-        settle_started_ms = now_ms;
-        return_state = RETURN_SETTLING;
+        stop_started_ms = now_ms;
+        return_state = RETURN_STOPPING;
     }
     else if (!Chassis_Set_Velocity_Explicit_Yaw(output.vx_mps, output.vy_mps, output.wz_rad_s))
         Stop_Session(DETAIL_CHASSIS);
@@ -311,38 +313,37 @@ void UART6_Manual_Init(void)
 
 void UART6_Manual_Loop(void)
 {
-    uint8_t received[RX_CAPACITY];
     taskENTER_CRITICAL();
     const uint32_t now_ms = (uint32_t)xTaskGetTickCount();
     const uint16_t count = rx_count;
-    const uint32_t received_ms = rx_time_ms;
+    const Rx_Batch_t *received = &rx_batches[rx_bank];
     const uint8_t failure = rx_failed;
+    rx_bank ^= 1U;
     rx_count = 0U;
     if (failure)
     {
         HAL_UART_AbortReceive(&huart6);
         rx_failed = HAL_UART_Receive_IT(&huart6, &rx_byte, 1U) != HAL_OK;
     }
-    else if (count != 0U)
-        memcpy(received, rx_buffer, count);
     taskEXIT_CRITICAL();
-
-    /* 半帧不能跨接收间隔拼到随后一次操作。 */
-    if (parser.count != 0U && (uint32_t)(now_ms - parser_activity_ms) >= RX_FRAME_GAP_MS)
-        parser = (LinkParser){0};
 
     if (failure || (session_active && (uint32_t)(now_ms - last_valid_ms) >= MANUAL_VELOCITY_TIMEOUT_MS))
     {
         parser = (LinkParser){0};
         Stop_Session(failure ? DETAIL_UART : DETAIL_LINK);
     }
-    else if (count != 0U && (uint32_t)(now_ms - received_ms) < MANUAL_VELOCITY_TIMEOUT_MS)
+    else
     {
-        parser_activity_ms = received_ms;
         for (uint16_t index = 0U; index < count; ++index)
         {
             LinkFrame frame;
-            if (!LinkParser_Feed(&parser, received[index], &frame))
+            const uint32_t received_ms = received->time_ms[index];
+            /* 使用中断收字节的时刻，同一批中的长间隔也会撤销半帧。 */
+            if (parser.count != 0U && received_ms - parser_activity_ms >= RX_FRAME_GAP_MS)
+                parser = (LinkParser){0};
+            parser_activity_ms = received_ms;
+            if (!LinkParser_Feed(&parser, received->data[index], &frame) ||
+                now_ms - received_ms >= MANUAL_VELOCITY_TIMEOUT_MS)
                 continue;
 
             if ((frame.type == UART_STOP && frame.length == 0U) ||
@@ -354,7 +355,7 @@ void UART6_Manual_Loop(void)
                 break;
             }
             if (frame.type == UART_ARM || frame.type == UART_ORIGIN || frame.type == UART_RETURN)
-                Service_Request(&frame, now_ms);
+                Service_Request(&frame, received_ms);
             else if (session_active && return_state != RETURN_INACTIVE && frame.type == UART_KEEPALIVE &&
                      frame.length == 0U)
                 last_valid_ms = received_ms;
@@ -365,7 +366,7 @@ void UART6_Manual_Loop(void)
             }
         }
     }
-    else if (count != 0U)
+    if (parser.count != 0U && now_ms - parser_activity_ms >= RX_FRAME_GAP_MS)
         parser = (LinkParser){0};
 
     if (return_state != RETURN_INACTIVE)

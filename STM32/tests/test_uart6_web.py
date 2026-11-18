@@ -64,7 +64,7 @@ class ControllerTests(unittest.TestCase):
         self.control.action("run", {"vx": 0.12, "vy": 0, "wz": 0, "seconds": 0.2})
         return wire.frame(wire.VELOCITY, struct.pack("<Bhhh", 1, 120, 0, 0))
 
-    def test_timer_sends_zero_then_waits_for_stationary(self):
+    def test_timer_sends_zero_and_allows_new_run_before_ready_report(self):
         moving = self.start_run()
         self.assertEqual(self.serial.writes[-1], moving)
         self.serial.status(wire.RUNNING, wire.ARM)
@@ -72,10 +72,9 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.serial.writes[-1], moving)
         self.step(0.35)
         self.assertEqual(self.serial.writes[-1], web.ZERO)
-        self.assertEqual(self.control.mode, "settling")
-        self.serial.status(wire.READY, wire.ARM)
-        self.step(0.49)
         self.assertEqual(self.control.mode, "idle")
+        self.start_run()
+        self.assertEqual(self.serial.writes[-2:], [web.ZERO, moving])
         self.assertTrue(self.control.active)
 
     def test_expired_page_cannot_resume_by_polling_again(self):
@@ -106,14 +105,9 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.serial.writes[-1], diagonal)
         self.control.action("drive", {"keys": [], "linear": 0.10, "angular": 0.50})
         self.assertEqual(self.serial.writes[-1], web.ZERO)
-        self.assertEqual(self.control.mode, "settling")
-        self.assertTrue(self.control.active)
-        with self.assertRaises(ValueError):
-            self.control.action("drive", {"keys": ["w"], "linear": 0.10, "angular": 0.50})
-        self.serial.status(wire.READY, wire.ARM)
-        self.step(0.32)
         self.assertEqual(self.control.mode, "idle")
-
+        self.assertTrue(self.control.active)
+        self.clock.return_value = 0.32
         self.control.action("drive", {"keys": ["q"], "linear": 0.10, "angular": 0.40})
         turning = wire.frame(wire.VELOCITY, struct.pack("<Bhhh", 1, 0, 0, 400))
         self.assertEqual(self.serial.writes[-1], turning)
@@ -122,7 +116,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.control.mode, "keys")
         self.step(0.58)
         self.assertEqual(self.serial.writes[-1], web.ZERO)
-        self.assertEqual(self.control.mode, "settling")
+        self.assertEqual(self.control.mode, "idle")
         self.assertTrue(self.control.active)
         with self.assertRaises(ValueError):
             self.control.action("drive", {"keys": ["x"], "linear": 0.10, "angular": 0.50})

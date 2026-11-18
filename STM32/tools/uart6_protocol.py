@@ -8,7 +8,7 @@ STATUS, POSE = 0x80, 0x81
 
 DISARMED, PREPARING, READY, RUNNING, BRAKING, RETURNING, SETTLING = range(7)
 ACCEPTED, REJECTED, DONE, FAULT = range(1, 5)
-STATE_NAMES = ("失能", "准备中", "就绪", "遥控中", "制动中", "返航中", "返航停稳中")
+STATE_NAMES = ("失能", "准备中", "就绪", "遥控中", "制动中", "返航中", "返航到位，提交零速中")
 DETAIL_NAMES = ("", "状态不允许", "里程计失效", "尚未设原点", "超出行程限位",
                 "动作超时", "串口断流", "串口接收错误", "底盘故障")
 

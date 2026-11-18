@@ -111,20 +111,12 @@ void Manual_Control_Loop(void)
     }
     if (manual_control_state == MANUAL_PREPARING)
     {
-        /* 使能握手须保持零速；运行后停车可忽略早到的非零帧，但反馈仍须正常。 */
+        /* 初次使能保持零速；运行后的新指令可在零 MIT 提交后接续。 */
         if ((uint32_t)(now_ms - state_started_ms) >= MANUAL_PREPARE_TIMEOUT_MS ||
             (preparing_after_stop ? !Chassis_Motors_Ready() : !zero))
             Begin_Braking(now_ms);
-        else if (Chassis_Is_Stopped())
-        {
-            if (preparing_after_stop)
-            {
-                /* 停稳后再取接收边界，不能把停车期间最后一帧留给 READY 执行。 */
-                Manual_CAN_Get_Velocity(&velocity);
-                blocked_sequence = velocity.sequence;
-            }
+        else if (Chassis_Motion_Ready())
             manual_control_state = MANUAL_READY;
-        }
         return;
     }
     if (!Chassis_Motors_Ready())
@@ -136,6 +128,7 @@ void Manual_Control_Loop(void)
     if (manual_control_state == MANUAL_RUNNING && (zero || stop_requested))
     {
         Chassis_Stop();
+        blocked_sequence = velocity.sequence;
         state_started_ms = now_ms;
         preparing_after_stop = 1U;
         manual_control_state = MANUAL_PREPARING;

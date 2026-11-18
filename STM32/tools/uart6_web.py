@@ -63,7 +63,6 @@ class Controller:
         self.return_id = None
         self.mode = "idle"
         self.end_time = None
-        self.settle_after = None
         self.velocity = ZERO
         self.last_drive = 0.0
         self.next_tx = 0.0
@@ -74,7 +73,7 @@ class Controller:
         self.pending = None
         self.return_id = None
         self.mode = "idle"
-        self.end_time = self.settle_after = None
+        self.end_time = None
         self.velocity = ZERO
 
     def close_serial(self, message):
@@ -141,12 +140,12 @@ class Controller:
         self.pending = Request(command, self.sequence, packet, now, now)
         self.next_tx = now
 
-    def begin_settling(self, message, now):
+    def finish_motion(self, message, now):
+        self.send(ZERO)
         self.velocity = ZERO
-        self.mode = "settling"
+        self.mode = "idle"
         self.end_time = None
-        self.settle_after = now + 0.10
-        self.next_tx = now
+        self.next_tx = now + TICK_S
         self.message = message
 
     def receive(self, kind, payload, now):
@@ -165,10 +164,6 @@ class Controller:
             self.pose = None
         if not self.active and state == DISARMED and command == STOP and now - self.last_stop >= 0.10:
             self.stop_confirmed = True
-        if self.mode == "settling" and state == READY and now > self.settle_after:
-            self.mode = "idle"
-            self.settle_after = None
-            self.message = "运行完成，三轮已停稳"
 
         reason = DETAIL_NAMES[detail] if detail < len(DETAIL_NAMES) else "底盘拒绝请求"
         if self.pending and (self.pending.command, self.pending.number) == (command, number):
@@ -221,12 +216,9 @@ class Controller:
                 self.send(request.packet)
                 request.sent = now
         if self.mode == "keys" and now - self.last_drive >= KEY_HOLD_S:
-            self.begin_settling("按键中断，正在停车", now)
+            self.finish_motion("按键中断，已发零速", now)
         if self.mode == "timed" and now >= self.end_time:
-            self.begin_settling("已到设定时间，正在停车", now)
-        if self.mode == "settling" and now - self.settle_after >= 1.0:
-            self.stop("停稳确认超时，已撤销使能", now)
-            return
+            self.finish_motion("定时运行结束，已发零速", now)
         if now >= self.next_tx:
             if self.mode == "return":
                 packet = HOLD
@@ -287,10 +279,10 @@ class Controller:
             raise ValueError("等待最新底盘状态")
         if name == "arm":
             if self.active or self.state != DISARMED or not self.stop_confirmed:
-                raise ValueError("等待底盘停稳并确认失能")
+                raise ValueError("等待底盘确认失能")
             self.begin_request(ARM, now)
             self.active = True
-            self.message = "等待三轮停稳"
+            self.message = "等待底盘使能就绪"
             return
         if name == "drive":
             if not self.active or self.pending or self.mode not in ("idle", "keys"):
@@ -299,18 +291,27 @@ class Controller:
                 raise ValueError("请等待底盘就绪")
             self.velocity = stick_velocity(data)
             self.last_drive = now
-            self.send(self.velocity)
-            self.next_tx = now + TICK_S
             if self.velocity == ZERO:
-                if self.mode == "keys":
-                    self.begin_settling("已松开按键，正在停车", now)
+                self.finish_motion("已松开按键，已发零速", now)
             else:
+                self.send(self.velocity)
+                self.next_tx = now + TICK_S
                 self.mode = "keys"
                 self.message = "按键遥控中"
             return
-        if not self.active or self.state != READY or self.pending or self.mode != "idle":
+        if not self.active or self.pending or self.mode != "idle":
             raise ValueError("请等待底盘就绪")
+        if name == "run" and self.state in (READY, RUNNING):
+            self.velocity, duration = timed_velocity(data)
+            self.send(self.velocity)
+            self.mode = "timed"
+            self.end_time = now + duration
+            self.next_tx = now + TICK_S
+            self.message = "正在按设定速度运行"
+            return
         if name in ("origin", "return"):
+            if self.state != READY:
+                raise ValueError("等待底盘确认零速指令")
             if not self.flags & 2:
                 raise ValueError("里程计尚未就绪")
             if name == "origin":
@@ -325,13 +326,7 @@ class Controller:
             self.mode = "return"
             self.message = "正在返航"
             return
-        if name == "run":
-            self.velocity, duration = timed_velocity(data)
-            self.send(self.velocity)
-            self.mode = "timed"
-            self.end_time = now + duration
-            self.next_tx = now + TICK_S
-            self.message = "正在按设定速度运行"
+        raise ValueError("请等待底盘就绪")
 
 
 def milli_speed(value, limit, label):

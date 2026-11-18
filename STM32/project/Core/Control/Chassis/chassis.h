@@ -53,8 +53,6 @@ uint8_t Chassis_Set_Test_Rotation(float wz);
 #define CHASSIS_TURN_ACCEL_RAD_S2 4.0f
 #define CHASSIS_TURN_FINE_ANGLE_DEG 5.0f
 #define CHASSIS_TURN_ANGLE_TOLERANCE_DEG 2.0f
-#define CHASSIS_TURN_RATE_TOLERANCE_RAD_S 0.08f
-#define CHASSIS_TURN_SETTLE_TIME_MS 200U
 #define CHASSIS_TURN_TIMEOUT_MS 15000U
 
 /* 数值与旧车 chassis_translation.h 一致，斜向合速度与正向相同。 */
@@ -103,7 +101,7 @@ uint8_t Chassis_Set_Tuning(const float kd[3], float ff_gain, const float frictio
 
 /* 以下接口及 Loop 由同一 test_task 调用；其他任务/中断不得并发修改目标。
  * 先 Init、显式 Enable，再调用动作；默认失能。返回成功表示软件请求接受，
- * 通常切换动作先 Stop，待 Is_Stopped 确认后起步；定距可接转向尾段，见其接口说明。
+ * 通常切换动作先 Stop，零目标成功提交后可起步；定距可接转向尾段，见其接口说明。
  * 连续速度模式可直接更新目标。
  */
 
@@ -114,13 +112,13 @@ void Chassis_Init(void);
 
 /** @brief 查询底盘的软件使能状态，供同一控制任务处理通信故障。
  * @return 已受理使能且尚未请求失能返回 1，否则 0。
- * @note 不表示电机已使能或停稳，起步仍须 Chassis_Is_Stopped 确认。
+ * @note 运动准入还须核验使能包序、三轮反馈与姿态。
  */
 uint8_t Chassis_Is_Enabled(void);
 
 /** @brief 接受使能请求，按旧零 MIT、FC、零 MIT 顺序分组提交，之后执行动作。
  * @return 首组三轮零目标已提交或本就使能返回 1；请求不能接受返回 0。
- * @note 后两组由 Loop 每 10 ms 提交。三轮新反馈确认静止后才接受起步。
+ * @note 后两组由 Loop 每 10 ms 提交。完整提交并收到有效电机反馈后接受起步。
  */
 uint8_t Chassis_Enable(void);
 
@@ -141,6 +139,12 @@ void Chassis_Stop(void);
  * @note 定时平移制动成功时可在随后失能前查询。轮速只能判断车轮是否停转。
  */
 uint8_t Chassis_Is_Stopped(void);
+
+/** @brief 检查零目标已提交、无待执行动作、三轮及姿态有效时的运动准入。
+ * @note 定距到达后按有效里程计核验并消费终点；诊断要求静止时应使用 Chassis_Is_Stopped。
+ *       故障和到期失能期间始终返回 0。
+ */
+uint8_t Chassis_Motion_Ready(void);
 
 /** @brief 检查三轮是否已使能、速度有限且反馈未超过 30 ms，供手动与自动控制复用。
  * @return 三轮均满足返回 1，否则 0。
@@ -170,11 +174,11 @@ uint8_t Chassis_Translation_Start(Chassis_Translation_Direction_t direction,
  * @param[in] distance_m 沿锁定方向的位移，m，有限且不小于 CHASSIS_DISTANCE_MIN_M。
  * @param[in] speed_limit_mps 本段合速度上限，m/s，范围 (0,0.50]。
  * @return 已接受返回 1，参数、姿态或底盘状态不满足时返回 0。
- * @note 起步须有效里程计；待命起步还须三轮确认停车，首个定距控制拍开始计时。
+ * @note 起步须有效里程计，首个定距控制拍开始计时。
  *       转向剩余角不超过 5 度时也接受定距衔接，保留原转向终点航向，边走边修偏，
  *       不等待原地精修或停车确认；角速度按转向斜坡接入直行 PID。
  *       其他情况仍须从停车待命启动。进度取轮编码器里程计在锁定方向的有符号投影，
- *       剩余 1.5 mm 时请求停车，最终仍须在 3 mm 容差内且三轮确认停稳才完成；
+ *       剩余 1.5 mm 时请求停车，零目标提交且在 3 mm 容差内即可衔接；
  *       末段接近速度仍受请求限速与制动距离约束；断流、过冲、无进展或总超时制动后失能。
  *       轮速里程不能排除打滑，也不提供横向路径闭环，实际距离须实测标定。
  */
@@ -188,10 +192,8 @@ uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction,
  * @note 本次定角参数适配：180 表示半圈，旧整圈可传 CHASSIS_TURN_LEFT_ANGLE_DEG
  *       或 CHASSIS_TURN_RIGHT_ANGLE_DEG；累计角度与 PID 增益沿旧车。
  *       远端按剩余角安排制动，最后 5 度由原 PID 修偏；按 4.0 rad/s² 加减速，
- *       车体角速度上限 2.0 rad/s。正常到位还要求
- *       斜坡指令降到原角速度容差内。显式 Stop/Disable 仍立即清目标。
- *       三轮确认停车后才接受转向，避免提前累计转角或启动超时计时；
- *       到位回零速待命，15 s 超时失能。
+ *       车体角速度上限 2.0 rad/s。进入角度窗口后沿斜坡回零速待命；
+ *       小转角的完成容差不超过请求角度的一半。显式 Stop/Disable 立即清目标，15 s 超时失能。
  */
 uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg);
 
@@ -201,7 +203,7 @@ uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg);
  * @param[in] wz 角速度，rad/s，逆时针正，有限且绝对值不超过 2.0。
  * @return 零速请求或待命/连续速度模式下接受返回 1；参数或姿态不满足返回 0。
  * @note 三项全零在任一已使能动作中等价 Stop，不依赖姿态就绪；非零目标
- *       从待命起步须确认三轮已停，运行中可直接更新，直至显式 Stop/Disable。
+ *       从待命起步须有新鲜有效反馈，运行中可直接更新，直至显式 Stop/Disable。
  *       纯平移时保持开始该段纯平移的航向；显式非零 wz 按指令转动，切回纯平移
  *       按当时的姿态重新锁定。航向修正沿用原 PID 和连续速度的加速度限制。
  */

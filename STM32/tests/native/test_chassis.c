@@ -267,7 +267,11 @@ static void test_stop_feedback(void)
     reset_case(0U, UINT32_MAX - 85U);
     assert(!Chassis_Is_Stopped());
     assert(Chassis_Enable());
+    for (unsigned i = 0U; i < 3U; ++i)
+        wheel_feedback(i, 0.0f, 1U);
     step(10000U, 1U); /* FC 已发送；此时收到的低速帧不能确认后续零速。 */
+    step(10000U, 1U);
+    assert(!Chassis_Motion_Ready()); /* FC 前的三帧仍在 30 ms 内。 */
     for (unsigned i = 0U; i < 3U; ++i)
     {
         dm_motor[i].feedback_seq = UINT32_MAX - 2U;
@@ -311,7 +315,7 @@ static void test_stop_feedback(void)
     /* 刚确认后，单轮反向超速或失能都应撤销确认，须再等三组。 */
     wheel_feedback(1U, -0.201f, 1U);
     step(10000U, 1U);
-    assert(!Chassis_Is_Stopped() && !Chassis_Set_Velocity(0.1f, 0, 0));
+    assert(!Chassis_Is_Stopped() && Chassis_Motion_Ready());
     stopped_group(); stopped_group();
     assert(!Chassis_Is_Stopped());
     wheel_feedback(2U, 0.0f, 0U);
@@ -340,7 +344,7 @@ static void test_stop_feedback(void)
     stopped_group();
     Chassis_Stop(); /* 重复零速请求应让本轮制动继续计数。 */
     stopped_group();
-    assert(!Chassis_Is_Stopped() && !Chassis_Straight_Start(0.1f, 0U));
+    assert(!Chassis_Is_Stopped() && Chassis_Motion_Ready());
     stopped_group();
     assert(Chassis_Is_Stopped());
     Chassis_Disable();
@@ -750,7 +754,7 @@ static void test_distance_no_progress(void)
         for (unsigned frame = 0U; frame < 230U; ++frame)
         {
             feedback_step(10000U,wheels);
-            assert(!Chassis_Is_Stopped());
+            assert(!Chassis_Is_Stopped() && !Chassis_Motion_Ready());
         }
         assert(!Chassis_Is_Enabled() && disables == 3U);
     }
@@ -870,8 +874,8 @@ static void test_distance_total_timeout(void)
     assert(!Chassis_Is_Enabled() && disables == 3U);
 }
 
-/** @brief 沿轴到位后只有纯旋转，位置仍合格也必须在停车期限内失能。 */
-static void test_distance_stop_deadline(void)
+/** @brief 同一个到位样本可直接接续。要求实测静止的调用者仍受 500 ms 期限保护。 */
+static void test_distance_stop_deadline(uint8_t accept_motion)
 {
     reset_case(0U,0U);
     assert(enable_ready());
@@ -888,6 +892,13 @@ static void test_distance_stop_deadline(void)
     Chassis_Odometry_t at_zero, rotating;
     assert(Chassis_Get_Odometry(&at_zero));
     const float feedback[3] = {1.0f,1.0f,1.0f};
+    if (accept_motion)
+    {
+        feedback_step(10000U, feedback);
+        assert(!Chassis_Is_Stopped() && Chassis_Motion_Ready());
+        assert(Chassis_Turn_Start(1, 90.0f));
+        return;
+    }
     for (frame = 0U; frame < 70U; ++frame)
     {
         feedback_step(10000U,feedback);
@@ -1183,7 +1194,7 @@ static void test_zero_vector_stops_actions(void)
     assert(Chassis_Translation_Start(CHASSIS_TRANSLATION_LEFT,0.4f,0U));
 }
 
-/** @brief 拒绝非法角度；双向180/360度跨±180、200ms连续到位和15s超时沿旧逻辑。 */
+/** @brief 拒绝非法角度；双向180/360度跨±180，实测到角后可直接接续，15s超时仍失能。 */
 static void test_turn(void)
 {
     const float invalid_angles[] = {0.0f, -1.0f, 360.01f, INFINITY, -INFINITY, NAN};
@@ -1212,25 +1223,20 @@ static void test_turn(void)
         assert(!Chassis_Straight_Start(0.4f,0U)); /* 起始航向不能视为完成请求转角。 */
         for (unsigned sample = 1U; sample <= half_turns * 2U; ++sample)
         {
-            yaw_deg = remainderf(direction*(170.0f+90.0f*sample),360.0f);
+            const float offset = sample == half_turns * 2U ? 4.0f : 0.0f;
+            yaw_deg = remainderf(direction*(170.0f+90.0f*sample-offset),360.0f);
             yaw_rate = direction*0.2f;
             step(10000U,1U);
         }
-        /* 剩余1°和低角速度测试转向原Kp=2,Kd=0.1，随后回到请求角度终点。 */
-        yaw_deg = remainderf(direction*(170.0f+angle_deg-1.0f),360.0f);
-        yaw_rate = direction*0.05f;
-        for (unsigned i = 0U; i < 3U; ++i) step(10000U,1U);
-        body_target(body); near(body[2],direction*0.029906585f);
-        yaw_deg = remainderf(direction*(170.0f+angle_deg),360.0f); yaw_rate = 0.0f;
-        for (unsigned i = 0; i < 10U; ++i) step(10000U,1U);
-        yaw_rate = direction*0.09f; step(10000U,1U); /* 大于0.08需重新累计。 */
-        yaw_rate = 0.0f; step(10000U,1U);
-        for (unsigned i = 0; i < 19U; ++i) step(10000U,1U);
-        assert(!Chassis_Straight_Start(0.4f,0U));
-        step(10000U,1U); /* 满200ms，回零速使能待命。 */
+        yaw_deg = remainderf(direction*(170.0f+angle_deg),360.0f);
+        yaw_rate = direction*0.15f;
+        for (unsigned i = 0; i < 8U; ++i)
+        {
+            const float moving[3] = {0.5f, 0.5f, 0.5f};
+            feedback_step(10000U, moving);
+        }
         body_target(body); near(body[2],0);
-        assert(!Chassis_Is_Stopped());
-        confirm_stopped();
+        assert(!Chassis_Is_Stopped() && Chassis_Motion_Ready());
         assert(disables == 0U && Chassis_Straight_Start(0.4f,0U));
     }
     reset_case(0U,UINT32_MAX-5000U);
@@ -1813,7 +1819,8 @@ int main(void)
     test_distance_feedback_tick_race();
     test_distance_coast_after_zero();
     test_distance_total_timeout();
-    test_distance_stop_deadline();
+    test_distance_stop_deadline(0U);
+    test_distance_stop_deadline(1U);
     test_distance_overshoot_busy_can();
     test_vector();
     test_motion_start_cadence();

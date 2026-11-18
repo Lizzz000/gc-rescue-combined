@@ -409,7 +409,7 @@ void HAL_PCD_DataOutStageCallback(PCD_HandleTypeDef *pcd, uint8_t epnum)
 
 static void read_uid(void)
 {
-    const uint32_t *uid = (const uint32_t *)0x1FFF7A10U;
+    const uint32_t uid[] = {HAL_GetUIDw0(), HAL_GetUIDw1(), HAL_GetUIDw2()};
     static const char hex[] = "0123456789ABCDEF";
     for (uint8_t word = 0U; word < 3U; ++word)
     {
@@ -422,10 +422,8 @@ static void read_uid(void)
     serial_text[24] = '\0';
 }
 
-/* SystemClock_Config 的 PLLQ 保持 4。VCO 336 MHz 时 USB 时钟是 84 MHz，这里改成 7 得到 48 MHz。
- * 改 PLL 前先切到 HSI，改完再切回 PLL。SYSCLK 仍是 168 MHz。只由 UsbLink_Init 调用。
- */
-static uint32_t usb_clock_hz(void)
+/* 时钟由 SystemClock_Config 一次配置，启动 OTG FS 前核对实际分频。 */
+static uint8_t usb_clock_ready(void)
 {
     if (__HAL_RCC_GET_SYSCLK_SOURCE() != RCC_CFGR_SWS_PLL)
     {
@@ -433,72 +431,7 @@ static uint32_t usb_clock_hz(void)
     }
     const uint32_t pllq = (RCC->PLLCFGR & RCC_PLLCFGR_PLLQ) >> RCC_PLLCFGR_PLLQ_Pos;
     const uint32_t pllp = (((RCC->PLLCFGR & RCC_PLLCFGR_PLLP) >> RCC_PLLCFGR_PLLP_Pos) + 1U) * 2U;
-    if (pllq < 2U)
-    {
-        return 0U;
-    }
-    return (HAL_RCC_GetSysClockFreq() / pllq) * pllp;
-}
-
-static uint8_t wait_pll(FlagStatus ready)
-{
-    const uint32_t start = HAL_GetTick();
-    while (__HAL_RCC_GET_FLAG(RCC_FLAG_PLLRDY) != ready)
-    {
-        if ((HAL_GetTick() - start) > 100U)
-        {
-            return 0U;
-        }
-    }
-    return 1U;
-}
-
-static void usb_clock_48mhz(void)
-{
-    if (usb_clock_hz() == 48000000U)
-    {
-        return;
-    }
-
-    __HAL_RCC_HSI_ENABLE();
-    const uint32_t start = HAL_GetTick();
-    while (__HAL_RCC_GET_FLAG(RCC_FLAG_HSIRDY) == RESET)
-    {
-        if ((HAL_GetTick() - start) > 100U)
-        {
-            return;
-        }
-    }
-
-    RCC_ClkInitTypeDef clk = {0};
-    clk.ClockType = RCC_CLOCKTYPE_SYSCLK;
-    clk.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
-    if (HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_5) != HAL_OK)
-    {
-        return;
-    }
-
-    __HAL_RCC_PLL_DISABLE();
-    if (!wait_pll(RESET))
-    {
-        /* PLL 没关掉就停在 HSI 上。能重新打开就切回去，避免 CPU 留在 16 MHz。 */
-        __HAL_RCC_PLL_ENABLE();
-        if (wait_pll(SET))
-        {
-            clk.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-            HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_5);
-        }
-        return;
-    }
-    MODIFY_REG(RCC->PLLCFGR, RCC_PLLCFGR_PLLQ, 7U << RCC_PLLCFGR_PLLQ_Pos);
-    __HAL_RCC_PLL_ENABLE();
-    if (!wait_pll(SET))
-    {
-        return;
-    }
-
-    clk.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-    HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_5);
+    return pllq >= 2U && (uint64_t)HAL_RCC_GetSysClockFreq() * pllp == 48000000U * pllq;
 }
 
 void HAL_PCD_MspInit(PCD_HandleTypeDef *pcd)
@@ -521,15 +454,13 @@ void HAL_PCD_MspInit(PCD_HandleTypeDef *pcd)
     pin.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(GPIOA, &pin);
     HAL_NVIC_SetPriority(OTG_FS_IRQn, 6, 0);
-    HAL_NVIC_EnableIRQ(OTG_FS_IRQn);
 }
 
-void UsbLink_Init(void)
+uint8_t UsbLink_Init(void)
 {
-    usb_clock_48mhz();
-    if (usb_clock_hz() != 48000000U)
+    if (!usb_clock_ready())
     {
-        return;
+        return 0U;
     }
     read_uid();
     hpcd.Instance = USB_OTG_FS;
@@ -547,7 +478,7 @@ void UsbLink_Init(void)
     hpcd.Init.use_dedicated_ep1 = DISABLE;
     if (HAL_PCD_Init(&hpcd) != HAL_OK)
     {
-        return;
+        return 0U;
     }
     /* 复位后的 RX FIFO 是 512 字，起点已经超出 OTG FS 实际的 320 字，描述符写不进去。
      * C 板官方底盘例程把 RX 设为 128、EP0 设为 64。这里还要给批量 IN 和中断 IN 各留一份。 */
@@ -555,7 +486,12 @@ void UsbLink_Init(void)
     HAL_PCDEx_SetTxFiFo(&hpcd, 0, 0x40);
     HAL_PCDEx_SetTxFiFo(&hpcd, 1, 0x60);
     HAL_PCDEx_SetTxFiFo(&hpcd, 2, 0x20);
-    HAL_PCD_Start(&hpcd);
+    if (HAL_PCD_Start(&hpcd) != HAL_OK)
+    {
+        return 0U;
+    }
+    HAL_NVIC_EnableIRQ(OTG_FS_IRQn);
+    return 1U;
 }
 
 void OTG_FS_IRQHandler(void)

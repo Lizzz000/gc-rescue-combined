@@ -33,6 +33,15 @@ class UartFrames(unittest.TestCase):
         self.assertEqual(decoder.feed(data),[])
         self.assertEqual(decoder.feed(self.frame(140.))[0]['tick_ms'],140.)
 
+    def test_long_frame_cannot_supply_a_plausible_56_channel_suffix(self):
+        wrong_width = bytes(8 * 4) + self.frame(100.)
+        stream = wrong_width + self.frame(140.)
+        for split in range(len(wrong_width) + 1):
+            with self.subTest(split=split):
+                decoder = FrameDecoder()
+                samples = decoder.feed(stream[:split]) + decoder.feed(stream[split:])
+                self.assertEqual([sample["tick_ms"] for sample in samples], [140.])
+
     def test_uart_snapshot_keeps_real_command_identity(self):
         session=Mock()
         fields=['request_seq','command','heartbeat','ack_seq','phase','error']

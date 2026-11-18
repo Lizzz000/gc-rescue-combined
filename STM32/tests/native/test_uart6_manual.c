@@ -72,6 +72,10 @@ void Chassis_Stop(void)
 
 uint8_t Chassis_Is_Enabled(void) { return enabled; }
 uint8_t Chassis_Is_Stopped(void) { return enabled && stopped; }
+uint8_t Chassis_Motion_Ready(void)
+{
+    return enabled && motors_ready && last_vx == 0.0f && last_vy == 0.0f && last_wz == 0.0f;
+}
 uint8_t Chassis_Motors_Ready(void) { return motors_ready; }
 
 uint8_t Chassis_Get_Odometry(Chassis_Odometry_t *out)
@@ -282,7 +286,7 @@ static void Test_Manual_Frames_And_Stop(void)
     Feed(encoded + 3U, size - 3U);
     Step(5U);
     Step(90U);
-    assert(enables == 1U && report.state == MANUAL_PREPARING && report.id == 0x0123U);
+    assert(enables == 1U && report.state == MANUAL_READY && report.id == 0x0123U);
     assert(manual_vectors == 0U);
     stopped = 1U;
     Velocity(0, 0, 0);
@@ -346,12 +350,13 @@ static void Test_Origin_And_Return(void)
     Step(100U);
     assert(report.relative[0] == 400 && report.relative[1] == -200 && report.relative[2] == 3000);
 
+    stopped = 0U;
     Request(RETURN, 0x0203U);
     Step(100U);
     assert(report.state == RETURNING && report.result == ACCEPTED && report.id == 0x0203U);
     assert(last_vx < 0.0f && last_vy > 0.0f && last_wz < 0.0f);
     assert(hypotf(last_vx, last_vy) <= 0.10001f && fabsf(last_wz) <= 0.50001f);
-    /* 简单的闭环车体模型把返回命令转换成世界系位姿，既检验持续控制也检验停稳复核。 */
+    /* 闭环模型把返回命令转换成世界位姿，轮速未归零仍可确认到位。 */
     unsigned iterations = 0U;
     while (report.state == RETURNING && iterations++ < 150U)
     {
@@ -366,7 +371,7 @@ static void Test_Origin_And_Return(void)
     }
     assert(report.state == SETTLING && manual_vectors == 0U && return_vectors > 1U);
     assert(stops == 1U && last_vx == 0.0f && last_vy == 0.0f && last_wz == 0.0f);
-    stopped = 1U;
+    assert(!Chassis_Is_Stopped());
     Send(KEEPALIVE, NULL, 0U);
     Step(100U);
     assert(report.state == MANUAL_READY && report.result == DONE && report.id == 0x0203U);
@@ -375,6 +380,32 @@ static void Test_Origin_And_Return(void)
     Velocity(-100, 0, 0);
     Step(100U);
     assert(report.state == MANUAL_RUNNING && manual_vectors == 1U && last_vx < 0.0f);
+}
+
+static void Test_Buffered_Rx_Time(void)
+{
+    uint8_t encoded[LINK_FRAME_MAX_BYTES];
+    const uint8_t id[2] = {1U, 0U};
+    const uint8_t size = LinkFrame_Encode(ARM, id, sizeof(id), encoded);
+    Reset(UINT32_MAX - 20U);
+    Feed(encoded, 3U);
+    test_tick += 50U;
+    Feed(encoded + 3U, size - 3U);
+    Step(0U);
+    assert(enables == 0U); /* 同次调度、跨时钟回绕的半帧仍受真实收帧间隔约束。 */
+
+    Request(ARM, 2U);
+    test_tick += 250U;
+    Send(KEEPALIVE, NULL, 0U);
+    Step(0U);
+    assert(enables == 0U); /* 同批新字节不能刷新过期使能请求。 */
+
+    Feed(encoded, 3U);
+    Step(0U);
+    test_tick += 49U;
+    Feed(encoded + 3U, size - 3U);
+    Step(10U);
+    assert(enables == 1U); /* 间隔合格的续帧不因任务晚调度而被丢弃。 */
 }
 
 static void Begin_Return(void)
@@ -530,6 +561,7 @@ static void Test_Uart_Overflow(void)
 int main(void)
 {
     Test_Manual_Frames_And_Stop();
+    Test_Buffered_Rx_Time();
     Test_Origin_And_Return();
     Test_Return_Protection();
     Test_Return_Speed();

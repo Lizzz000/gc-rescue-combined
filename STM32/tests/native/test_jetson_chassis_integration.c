@@ -181,7 +181,7 @@ static void Arrive(uint16_t center_type, uint16_t uplink_type)
         else
             Step(0.0f);
     }
-    assert(last_uplink == uplink_type && Chassis_Is_Stopped());
+    assert(last_uplink == uplink_type && Chassis_Motion_Ready());
 }
 
 static void Start_Safety_Approach(void)
@@ -233,7 +233,7 @@ static void Start_Safety_Approach(void)
     Jetson_CAN_Receive(JETSON_CAN_ROI_REPLY_ID, roi, sizeof(roi));
     Jetson_CAN_Receive(JETSON_CAN_TURN_REQUEST_ID, turn, sizeof(turn));
     Step(0.0f);
-    /* 为真实定角控制提供终点姿态；转向到位与三组停车确认仍由底盘执行。 */
+    /* 为真实定角控制提供终点姿态；转向到位和零目标发送均由底盘执行。 */
     imu_yaw = 180.0f;
     for (unsigned i = 0U; i < 200U && last_uplink != JETSON_CAN_TURN_COMPLETED_ID; ++i)
         Step(0.0f);
@@ -269,15 +269,8 @@ static void Test_Safety_Edge_Recovery(unsigned axis)
     for (unsigned i = 0U; i < 8U; ++i)
         Step(1.0f);
     assert(Chassis_Is_Enabled() && !Chassis_Is_Stopped());
-    assert(nonzero_controls == before_recovery);
-
-    /* 两组静止反馈还不足以重新起步；之后确认停稳才恢复非零输出。 */
-    Step(0.0f);
-    Step(0.0f);
-    assert(nonzero_controls == before_recovery);
-    for (unsigned i = 0U; i < 6U; ++i)
-        Step(0.0f);
-    assert(Chassis_Is_Enabled() && nonzero_controls > before_recovery);
+    /* 车轮持续报告非零速度，也能恢复窗外所需的微调。 */
+    assert(nonzero_controls > before_recovery);
 
     /* 能继续完成安全区双帧核验和上行握手，证明未锁入 FAULT。 */
     Arrive(JETSON_CAN_SAFETY_CENTER_ID, JETSON_CAN_SAFETY_ARRIVED_ID);
@@ -287,12 +280,12 @@ static void Test_Safety_Edge_Recovery(unsigned axis)
     assert(!Chassis_Is_Enabled());
 }
 
-/** @brief 经公开流程和真实停车核验进入定距，起步航向故意不同于原转向终点。 */
+/** @brief 经公开流程和视觉双帧核验进入定距，起步航向故意不同于原转向终点。 */
 static void Start_Safety_Straight(void)
 {
     Start_Safety_Approach();
     imu_yaw = 176.0f;
-    for (unsigned i = 0U; i < 200U && Chassis_Is_Stopped(); ++i)
+    for (unsigned i = 0U; i < 200U && Chassis_Motion_Ready(); ++i)
     {
         Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, 5000, 7500);
         Step(0.0f);
@@ -305,7 +298,7 @@ static void Start_Safety_Straight(void)
     measure_straight = 1U;
 }
 
-/** @brief 快慢跟随均由反馈位移和三组停稳决定到达，定距中不消费后续视觉。 */
+/** @brief 快慢跟随均由反馈位移决定到达，定距中不消费后续视觉。 */
 static void Test_Safety_Straight_Completion(float gain)
 {
     Start_Safety_Straight();
@@ -339,14 +332,11 @@ static void Test_Safety_Straight_Completion(float gain)
            CHASSIS_DISTANCE_TOLERANCE_M + 0.0003);
     if (gain < 1.0f)
         assert(commanded_forward_m > JETSON_AUTO_SAFETY_STRAIGHT_M);
-    assert(!Chassis_Is_Stopped());
-    Step(0.0f);
-    Step(0.0f);
-    assert(last_uplink == JETSON_CAN_TURN_COMPLETED_ID);
-    for (unsigned i = 0U; i < 8U && last_uplink != JETSON_CAN_SAFETY_ARRIVED_ID; ++i)
-        Step(0.0f);
+    /* 维持非零的三轮反馈；零目标提交后两拍内到达握手已发出。 */
+    Step(1.0f);
+    Step(1.0f);
     assert(last_uplink == JETSON_CAN_SAFETY_ARRIVED_ID && last_argument == route_token);
-    assert(Chassis_Is_Stopped());
+    assert(!Chassis_Is_Stopped());
     Receive_Command_Ack(2U);
     Step(0.0f);
     assert(!Chassis_Is_Enabled());

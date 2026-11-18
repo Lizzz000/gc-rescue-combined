@@ -20,7 +20,7 @@ const controls = {
 const form = byId("motion-form");
 const keyPad = byId("key-pad");
 const directionSet = form.querySelector("fieldset");
-const stateLabels = ["已失能", "使能准备中", "就绪", "运行中", "制动中", "返航中", "返航停稳中"];
+const stateLabels = ["已失能", "使能准备中", "就绪", "运行中", "制动中", "返航中", "返航到位，提交零速中"];
 const keyboardKeys = new Set();
 const pointerKeys = new Set();
 let inputMode = "timed";
@@ -95,7 +95,6 @@ function render() {
     if (state.state === 4 || state.state === 6) tone = "warning";
     if (state.mode === "timed") { stateText = "定时运行中"; tone = "active"; }
     if (state.mode === "keys") { stateText = "按键遥控中"; tone = "active"; }
-    if (state.mode === "settling") { stateText = "停车确认中"; tone = "warning"; }
   }
   label.textContent = stateText;
   status.dataset.tone = tone;
@@ -105,12 +104,12 @@ function render() {
   controls.connect.textContent = connected ? "断开" : "连接";
   controls.connect.disabled = pending || (!connected && (fetchingPorts || !portSelect.value));
   controls.arm.disabled = waiting || stopping || state.armed || !fresh || state.state !== 0 || !idle;
-  controls.run.disabled = waiting || stopping || state.armed === false || !fresh || state.state !== 2 || !idle;
-  controls.origin.disabled = controls.run.disabled || !state.odom;
+  controls.run.disabled = waiting || stopping || !state.armed || !fresh || ![2, 3].includes(state.state) || !idle;
+  controls.origin.disabled = controls.run.disabled || state.state !== 2 || !state.odom;
   controls.return.disabled = controls.origin.disabled || !state.origin;
   controls.stop.disabled = !connected || stopping;
   const locked = connected && !idle && state.mode !== "keys";
-  const modeLocked = ["timed", "settling", "return"].includes(state.mode);
+  const modeLocked = ["timed", "return"].includes(state.mode);
   directionSet.disabled = locked;
   controls.linear.disabled = locked;
   controls.angular.disabled = locked;
@@ -288,7 +287,7 @@ function clearDriveKeys() {
 }
 
 function setInputMode(mode) {
-  if (mode === inputMode || ["timed", "settling", "return"].includes(state.mode)) return;
+  if (mode === inputMode || ["timed", "return"].includes(state.mode)) return;
   if (inputMode === "keys") {
     const wasDriving = driving || state.mode === "keys";
     clearDriveKeys();

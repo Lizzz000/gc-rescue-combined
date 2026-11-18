@@ -13,7 +13,7 @@
 uint32_t test_tick;
 static unsigned critical_depth;
 static uint8_t can_arrival_before_snapshot;
-static uint8_t enabled, stopped;
+static uint8_t enabled, stopped, motion_ready;
 static unsigned enables, stops, disables, velocity_requests;
 static uint8_t tx_ready;
 static unsigned distance_count, turn_count, sent_count;
@@ -55,7 +55,7 @@ void test_exit_critical(void) { assert(critical_depth > 0U); --critical_depth; }
 /** @brief 模拟软件受理使能，停车反馈由场景单独提供。 @return 1。 */
 uint8_t Chassis_Enable(void)
 {
-    enabled = 1U;
+    enabled = motion_ready = 1U;
     ++enables;
     return 1U;
 }
@@ -63,16 +63,17 @@ uint8_t Chassis_Enable(void)
 /** @brief 模拟请求失能及撤销停车反馈。 */
 void Chassis_Disable(void)
 {
-    enabled = stopped = 0U;
+    enabled = stopped = motion_ready = 0U;
     ++disables;
 }
 
 /** @brief 记录停车请求；请求本身不生成停车反馈。 */
-void Chassis_Stop(void) { ++stops; }
+void Chassis_Stop(void) { ++stops; motion_ready = 1U; }
 /** @brief 读取模拟底盘使能状态。 @return 软件已使能为 1。 */
 uint8_t Chassis_Is_Enabled(void) { return enabled; }
 /** @brief 读取场景独立给出的停车反馈。 @return 已使能且确认停车为 1。 */
 uint8_t Chassis_Is_Stopped(void) { return enabled && stopped; }
+uint8_t Chassis_Motion_Ready(void) { return enabled && motors_ready && motion_ready; }
 
 /** @brief 提供可单独断开的三轮反馈条件。 @return 反馈正常为 1。 */
 uint8_t Chassis_Motors_Ready(void) { return motors_ready; }
@@ -95,7 +96,8 @@ uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
     last_vx = vx;
     last_vy = vy;
     last_wz = wz;
-    if (vx != 0.0f || vy != 0.0f || wz != 0.0f)
+    motion_ready = vx == 0.0f && vy == 0.0f && wz == 0.0f;
+    if (!motion_ready)
         stopped = 0U;
     return 1U;
 }
@@ -107,9 +109,9 @@ uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction, float 
 {
     last_distance_direction = direction;
     last_distance = distance;
-    assert(enabled && stopped && distance > 0.0f && speed == JETSON_AUTO_DISTANCE_SPEED_MPS);
+    assert(Chassis_Motion_Ready() && distance > 0.0f && speed == JETSON_AUTO_DISTANCE_SPEED_MPS);
     ++distance_count;
-    stopped = 0U;
+    stopped = motion_ready = 0U;
     return 1U;
 }
 
@@ -118,11 +120,11 @@ uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction, float 
  */
 uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg)
 {
-    assert(enabled && stopped && (direction == -1 || direction == 1) && angle_deg > 0.0f);
+    assert(Chassis_Motion_Ready() && (direction == -1 || direction == 1) && angle_deg > 0.0f);
     last_turn_direction = direction;
     last_turn_angle = angle_deg;
     ++turn_count;
-    stopped = 0U;
+    stopped = motion_ready = 0U;
     return 1U;
 }
 
@@ -154,7 +156,7 @@ static void Reset(void)
     test_tick = 100U;
     critical_depth = 0U;
     can_arrival_before_snapshot = 0U;
-    enabled = stopped = 0U;
+    enabled = stopped = motion_ready = 0U;
     enables = stops = disables = velocity_requests = 0U;
     distance_count = turn_count = sent_count = 0U;
     imu_age_ms = startup_id = 0U;
@@ -271,7 +273,6 @@ static void Flow_Start(void)
     imu_age_ms = 0U;
     Step();
     assert(enabled && enables == 1U);
-    stopped = 1U;
     Step();
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 4000);
     Step();
@@ -279,7 +280,7 @@ static void Flow_Start(void)
     Flow_No_Actuator();
 }
 
-/** @brief 用新鲜窗内坐标和独立停车反馈推进到上行握手。
+/** @brief 用新鲜窗内坐标在轮速非零时推进到上行握手。
  * @param[in] id 目标类型 3或安全区类型 4。 @param[in] uplink 预期上行ID。
  */
 static void Flow_Arrive(uint16_t id, uint16_t uplink)
@@ -289,8 +290,7 @@ static void Flow_Arrive(uint16_t id, uint16_t uplink)
     Step();
     Receive_Center(id, 5000, 7500);
     Step();
-    stopped = 1U;
-    for (unsigned i = 0U; i < JETSON_AUTO_VERIFY_WAIT_MS / 5U + 20U && sent_count == before; ++i)
+    for (unsigned i = 0U; i < 4U && sent_count == before; ++i)
     {
         Receive_Center(id, 5000, 7500);
         Step();
@@ -309,8 +309,7 @@ static void Flow_Safety_Straight(void)
     Step();
     Steps(10U);
     assert(!stopped && distance_count == 0U && sent_count == before);
-    stopped = 1U;
-    for (unsigned i = 0U; i < JETSON_AUTO_VERIFY_WAIT_MS / 5U + 20U && !distance_count; ++i)
+    for (unsigned i = 0U; i < 4U && !distance_count; ++i)
     {
         Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, 5000, 7500);
         Step();
@@ -332,9 +331,9 @@ static void Flow_Safety_Straight(void)
     }
     assert(enabled && distance_count == 1U && sent_count == before);
     assert(velocity_requests == velocities && stops == stop_requests);
-    stopped = 1U;
+    motion_ready = 1U;
     Steps(2U);
-    assert(sent_count == before + 1U && sent[before].id == JETSON_CAN_SAFETY_ARRIVED_ID);
+    assert(!stopped && sent_count == before + 1U && sent[before].id == JETSON_CAN_SAFETY_ARRIVED_ID);
 }
 
 /** @brief 核验左右路由、真实握手、定距后到位锁止及夹爪命令为零。
@@ -353,7 +352,7 @@ static void Flow_One_Shot(uint8_t destination)
     assert(last_turn_angle == 180.0f && !stopped);
     Steps(10U);
     assert(sent_count == 1U);
-    stopped = 1U;
+    motion_ready = 1U;
     Steps(2U);
     Check_Sent(1U, JETSON_CAN_TURN_COMPLETED_ID, token);
     Receive_Command_Ack(1U, 1U, token + 1U);
@@ -390,6 +389,7 @@ static void Flow_Rejection(void)
     Flow_Arrive(JETSON_CAN_TARGET_CENTER_ID, JETSON_CAN_ARRIVAL_ID);
     Receive_Arrival_Ack(1U);
     Receive_Roi(0U, 0U);
+    stopped = 1U;
     Steps(2U);
     assert(!enabled && turn_count == 0U);
     jetson_test_start = 0U;
@@ -429,49 +429,19 @@ static void Flow_Interruptions(void)
     Flow_No_Actuator();
 }
 
-/** @brief 正常视觉停车允许600ms；真正停稳后仍等待270ms并核对新坐标。 */
-static void Flow_Visual_Stop_Wait(void)
+/** @brief 新图漂出到位窗口时，在反馈仍在减速的情况下恢复跟随。 */
+static void Flow_Visual_Recheck(void)
 {
     Flow_Start();
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
     Step();
     const unsigned moves = velocity_requests;
-    const unsigned braking_stops = stops;
-    for (unsigned i = 0U; i < 120U; ++i)
-    {
-        Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
-        Step();
-    }
-    assert(enabled && !stopped && !sent_count && stops == braking_stops);
-    assert(velocity_requests == moves);
-    stopped = 1U;
-    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
-    Step();
-    for (unsigned i = 0U; i < JETSON_AUTO_VERIFY_WAIT_MS / 5U; ++i)
-    {
-        Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
-        Step();
-    }
-    assert(enabled && stopped && !sent_count && velocity_requests == moves);
-    /* 截止后新图像仍在窗外，必须重新对准，不能使用停车前/等待中的窗内图像。 */
+    Steps(4U);
+    assert(enabled && !stopped && !sent_count && velocity_requests == moves);
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5101, 7500);
     Step();
     assert(!stopped && !sent_count && velocity_requests == moves + 1U);
     Flow_Arrive(JETSON_CAN_TARGET_CENTER_ID, JETSON_CAN_ARRIVAL_ID);
-    Flow_No_Actuator();
-
-    Flow_Start();
-    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
-    Step();
-    const unsigned stops_before_timeout = stops;
-    Steps(120U);
-    assert(enabled && !sent_count && stops == stops_before_timeout);
-    Steps(JETSON_AUTO_SETTLE_TIMEOUT_MS / 5U - 121U);
-    assert(enabled && !sent_count && stops == stops_before_timeout);
-    Step(); /* 1000ms：超时Halt仍保留最初视觉制动时刻。 */
-    assert(enabled && !sent_count && stops == stops_before_timeout + 1U);
-    Step(); /* 下一任务拍失能，不再追加500ms故障制动等待。 */
-    assert(!enabled && disables == 1U && !sent_count);
     Flow_No_Actuator();
 }
 
@@ -504,7 +474,7 @@ int main(void)
     (void)Flow_One_Shot;
     (void)Flow_Rejection;
     (void)Flow_Interruptions;
-    (void)Flow_Visual_Stop_Wait;
+    (void)Flow_Visual_Recheck;
     (void)Flow_Deadline;
     Reset();
     jetson_test_start = 1U;
@@ -517,7 +487,7 @@ int main(void)
     Flow_One_Shot(2U);
     Flow_Rejection();
     Flow_Interruptions();
-    Flow_Visual_Stop_Wait();
+    Flow_Visual_Recheck();
     Flow_Deadline();
     puts("PASS: chassis-only gate, routing, straight distance, handshake, stopping, loss and deadline");
 #endif

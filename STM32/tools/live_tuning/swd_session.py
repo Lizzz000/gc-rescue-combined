@@ -3,7 +3,7 @@
 Use the exact ELF flashed on the board. --describe is offline; all connected
 sessions compare every ELF Flash load byte before accessing the mailbox.
 Mutating sessions own one local writer lock, publish arguments before the
-request sequence, renew the heartbeat, and request STOP in finally.
+request sequence, renew the heartbeat, and confirm STOP or the requested HOLD.
 """
 from __future__ import annotations
 
@@ -30,7 +30,6 @@ SYMBOLS = (
     "tuning_ack_seq", "tuning_phase", "tuning_error", "tuning_sample_seq",
     "tuning_sample",
 )
-OPTIONAL_SYMBOLS = ("dm_param_reply",)
 SCALARS = ("request_seq", "ack_seq", "phase", "error", "heartbeat", "command")
 SAMPLE_NAMES = (
     "tick_ms", "phase", "error", "enabled", "yaw_deg", "wz_imu",
@@ -67,24 +66,26 @@ def word_float(value):
     return struct.unpack("<f", struct.pack("<I", value))[0]
 
 
-def load_symbols(elf, nm=None):
+def load_symbols(elf, nm=None, *, extra_sizes=None):
     nm = nm or shutil.which("arm-none-eabi-nm") or shutil.which("arm-none-eabi-nm.exe")
     if not nm:
         raise SessionError("arm-none-eabi-nm not found; pass --nm")
     result = subprocess.run([nm, "-S", "--defined-only", "--numeric-sort", str(elf)],
                             check=True, capture_output=True, text=True, timeout=15)
+    extra_sizes = extra_sizes or {}
+    sizes = {**SYMBOL_SIZES, **extra_sizes}
     symbols = {}
     for line in result.stdout.splitlines():
         fields = line.split()
-        if len(fields) == 4 and fields[3] in (*SYMBOLS, *OPTIONAL_SYMBOLS):
+        if len(fields) == 4 and fields[3] in sizes:
             name, size = fields[3], int(fields[1], 16)
             address = int(fields[0], 16)
-            if name in symbols or size != SYMBOL_SIZES[name]:
+            if name in symbols or size != sizes[name]:
                 raise SessionError(f"ELF tuning ABI size/uniqueness mismatch: {name}, size={size}")
             if not 0x20000000 <= address < address + size <= 0x20020000 or address % 4:
                 raise SessionError(f"{name} is not aligned F407 SRAM: {address:#x}")
             symbols[name] = address
-    missing = set(SYMBOLS) - symbols.keys()
+    missing = (set(SYMBOLS) | extra_sizes.keys()) - symbols.keys()
     if missing:
         raise SessionError("ELF missing tuning symbols: " + ", ".join(sorted(missing)))
     return symbols
@@ -456,7 +457,6 @@ class Session:
         if command != 1 and state["phase"] in (1, 2, 3):
             raise SessionError("Firmware is already preparing/moving/braking")
         failure = None
-        hold_success = False
         try:
             # Only a validated, actually attempted publish enables final STOP.
             sequence = self.publish(command, args)
@@ -467,7 +467,8 @@ class Session:
                 self.log.emit("endpoint_verified", **{**result, "command": command})
                 if command == 7:
                     self.log.emit("enabled_hold_preserved")
-                hold_success = command == 7
+            if command == 1:
+                self.log.emit("final_stop_confirmed")
             if command == 2:
                 result["parameter_replies"] = self.parameter_replies()
                 self.log.emit("parameter_replies", replies=result["parameter_replies"])
@@ -477,11 +478,8 @@ class Session:
             self.log.emit("failure", message=str(exc), kind=type(exc).__name__)
             raise
         finally:
-            if hold_success and failure is None:
-                # Command 7 has already confirmed zero target and stopped wheels.
-                # Its firmware HOLD keeps enable without further motion/heartbeat.
-                pass
-            else:
+            # Commands 1 and 7 already verified their requested STOP or HOLD.
+            if failure is not None or command not in (1, 7):
                 try:
                     # Reconnect only for STOP; never retry a motion command.
                     if not getattr(self.client, "usable", True):

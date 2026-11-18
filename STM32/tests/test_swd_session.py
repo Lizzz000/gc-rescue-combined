@@ -243,6 +243,28 @@ class LiveTuningTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in publish.call_args_list], [4, 1])
         self.assertIn("final_stop_confirmed", [record[0] for record in session.log.records])
 
+    def test_explicit_stop_is_sent_once_after_confirmation(self):
+        session = swd.Session(MemoryClient(), SYMBOLS, Log())
+        session._firmware_verified = True
+        with patch.object(session, "snapshot", return_value=valid_state()), \
+             patch.object(session, "publish", return_value=10) as publish, \
+             patch.object(session, "wait_complete", return_value=valid_state()) as complete:
+            session.execute(1, [0.] * 8, 2.5)
+        publish.assert_called_once_with(1, [0.] * 8)
+        complete.assert_called_once_with(10, 2.5, stop=True)
+        self.assertIn("final_stop_confirmed", [event for event, _ in session.log.records])
+
+    def test_unconfirmed_explicit_stop_still_retries_cleanup(self):
+        session = swd.Session(MemoryClient(), SYMBOLS, Log())
+        session._firmware_verified = True
+        with patch.object(session, "snapshot", return_value=valid_state()), \
+             patch.object(session, "publish", side_effect=[10, 11]) as publish, \
+             patch.object(session, "wait_complete", side_effect=[swd.SessionError("lost ack"), {}]), \
+             self.assertRaisesRegex(swd.SessionError, "lost ack"):
+            session.execute(1, [0.] * 8, 2.5)
+        self.assertEqual([call.args[0] for call in publish.call_args_list], [1, 1])
+        self.assertIn("final_stop_confirmed", [event for event, _ in session.log.records])
+
     def test_unconfirmed_final_stop_fails_successful_session(self):
         session = swd.Session(MemoryClient(), SYMBOLS, Log())
         session._firmware_verified = True
@@ -532,6 +554,20 @@ class LiveTuningTests(unittest.TestCase):
                  patch.object(swd.subprocess, "run", return_value=SimpleNamespace(stdout="\n".join(corrupted))), \
                  self.assertRaises(swd.SessionError):
                 swd.load_symbols("test.elf", "nm")
+
+    def test_extra_firmware_symbols_are_required_and_unique_in_one_nm_pass(self):
+        rows = [f"{address:08x} {swd.SYMBOL_SIZES[name]:08x} B {name}" for name, address in SYMBOLS.items()]
+        extra = {"tuning_spin_sample": 32}
+        row = "20003000 00000020 B tuning_spin_sample"
+        with patch.object(swd.subprocess, "run", return_value=SimpleNamespace(stdout="\n".join(rows + [row]))) as nm:
+            self.assertEqual(swd.load_symbols("test.elf", "nm", extra_sizes=extra),
+                             {**SYMBOLS, "tuning_spin_sample": 0x20003000})
+            nm.assert_called_once()
+        for extra_rows in ([], [row, row], ["20003000 00000004 B tuning_spin_sample"]):
+            with self.subTest(extra_rows=extra_rows), \
+                 patch.object(swd.subprocess, "run", return_value=SimpleNamespace(stdout="\n".join(rows + extra_rows))), \
+                 self.assertRaises(swd.SessionError):
+                swd.load_symbols("test.elf", "nm", extra_sizes=extra)
 
     def test_new_fault_codes_are_valid_mailbox_values(self):
         for code in (9, 10):

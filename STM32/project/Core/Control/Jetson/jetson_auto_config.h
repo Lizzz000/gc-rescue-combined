@@ -40,14 +40,26 @@
 /* 左右安全区的实车对准窗口；现场可以分别覆盖。 */
 #ifndef JETSON_AUTO_LEFT_X
 #define JETSON_AUTO_LEFT_X JETSON_AUTO_SAFETY_X
+#endif
+#ifndef JETSON_AUTO_LEFT_Y
 #define JETSON_AUTO_LEFT_Y JETSON_AUTO_SAFETY_Y
+#endif
+#ifndef JETSON_AUTO_LEFT_TOL_X
 #define JETSON_AUTO_LEFT_TOL_X JETSON_AUTO_SAFETY_TOL_X
+#endif
+#ifndef JETSON_AUTO_LEFT_TOL_Y
 #define JETSON_AUTO_LEFT_TOL_Y JETSON_AUTO_SAFETY_TOL_Y
 #endif
 #ifndef JETSON_AUTO_RIGHT_X
 #define JETSON_AUTO_RIGHT_X JETSON_AUTO_SAFETY_X
+#endif
+#ifndef JETSON_AUTO_RIGHT_Y
 #define JETSON_AUTO_RIGHT_Y JETSON_AUTO_SAFETY_Y
+#endif
+#ifndef JETSON_AUTO_RIGHT_TOL_X
 #define JETSON_AUTO_RIGHT_TOL_X JETSON_AUTO_SAFETY_TOL_X
+#endif
+#ifndef JETSON_AUTO_RIGHT_TOL_Y
 #define JETSON_AUTO_RIGHT_TOL_Y JETSON_AUTO_SAFETY_TOL_Y
 #endif
 
@@ -84,18 +96,15 @@
 #define JETSON_AUTO_IMU_MAX_AGE_MS 20U
 #define JETSON_AUTO_BRAKE_TIMEOUT_MS 500U
 
-/* 使能准备与正常视觉入窗后的停稳期限，ms；不改变故障制动期限或停稳轮速门限。 */
-#define JETSON_AUTO_SETTLE_TIMEOUT_MS 1000U
-/* 停稳后的核验等待 = 中心接收期限 + 发送及计时余量，单位 ms。 */
-#define JETSON_AUTO_VERIFY_MARGIN_MS 20U
-#define JETSON_AUTO_VERIFY_WAIT_MS (JETSON_AUTO_CENTER_TIMEOUT_MS + JETSON_AUTO_VERIFY_MARGIN_MS)
+/* 发出使能请求后，等待三轮反馈与姿态、里程计就绪的期限。 */
+#define JETSON_AUTO_ARM_TIMEOUT_MS 1000U
 
 /* 单次底盘联调用：对准安全区后锁航向直行，0 待实车标定。 */
 #define JETSON_AUTO_SAFETY_STRAIGHT_M 0.0f
 /* 安全区直行、检查后退与拒绝恢复共用定距速度。 */
 #define JETSON_AUTO_DISTANCE_SPEED_MPS 0.50f
 #define JETSON_AUTO_ROI_BACK_M 0.0f
-/* 直行目标可配置为 0.50 m/s；计时包含加速，停稳还需额外时间。 */
+/* 直行目标可配置为 0.50 m/s；计时包含加速，到期下发零速。 */
 #define JETSON_AUTO_PUSH_SPEED_MPS 0.50f
 #define JETSON_AUTO_PUSH_DURATION_MS 1200U
 #define JETSON_AUTO_RECOVERY_BACK_M 0.0f
@@ -107,7 +116,7 @@
 #define JETSON_AUTO_REQUEST_SERVICE_MS 3000U
 /* 覆盖 USB 提交等待、250 ms 重报、20 ms 双向调度、100 ms 回复队列及传输，单位 ms。 */
 #define JETSON_AUTO_REQUEST_LINK_MARGIN_MS 450U
-/* 唯一请求期限：停稳后首次尝试提交起算，含 USB 提交等待，见 Jetson/docs/usb-protocol.md。 */
+/* 唯一请求期限：自进入请求阶段起算，含 USB 提交等待，见 Jetson/docs/usb-protocol.md。 */
 #define JETSON_AUTO_REQUEST_TIMEOUT_MS (JETSON_AUTO_REQUEST_SERVICE_MS + JETSON_AUTO_REQUEST_LINK_MARGIN_MS)
 #define JETSON_AUTO_REQUEST_RETRY_MS 250U
 /* 10 s 运动 + prepare/Stop 各最多 3×200 ms + 末次 exchange 200 ms/sleep 20 ms

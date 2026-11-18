@@ -18,7 +18,6 @@
 #include <cmath>
 #include <cstdio>
 #include <numeric>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -54,6 +53,7 @@ struct FieldLocator::SearchResult
 {
   std::vector<cv::Point2f> quad;
   std::string reason, quality = "none";
+  std::string rejection;  // 所选几何的评分拒绝原因，搜索、全图回退和提交共用。
   std::pair<double, double> field_size_px{0, 0};  // first=长边、second=短边，处理图像素。
   CandidateScore score;
   EdgeState edges[4] = {EdgeState::LOST, EdgeState::LOST, EdgeState::LOST, EdgeState::LOST};
@@ -292,10 +292,12 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
     }
     finalizeScore(score, cfg_);
     // 通过硬门槛的候选始终优先；同为通过或同为拒绝时才比较总分，拒绝者可留下供诊断。
-    const bool accepted = rejectCandidate(score, fit_result.measured_edges, cfg_, tracking).empty();
+    auto rejection = rejectCandidate(score, fit_result.measured_edges, cfg_, tracking);
+    const bool accepted = rejection.empty();
     if ((accepted && !best_accepted) || (accepted == best_accepted && score.total > best_total)) {
       best_accepted = accepted;
       best_total = score.total;
+      search_result.rejection = std::move(rejection);
       search_result.quad = q;
       search_result.inner = inner.quad;
       for (auto & p : search_result.inner) {p += offset;}
@@ -320,16 +322,6 @@ FieldLocator::SearchResult FieldLocator::findCandidate(
 {
   const auto & small = evidence.small;
   const auto & predicted = evidence.predicted;
-  const bool tracking = evidence.tracking;
-  std::optional<SearchResult> full_search;
-  std::vector<cv::Point2f> quad;
-  std::string reason, quality = "none";
-  std::pair<double, double> field_size_px{0, 0};  // first=长边、second=短边，处理图像素。
-  CandidateScore best_score;
-  EdgeState best_edges[4] = {EdgeState::LOST, EdgeState::LOST, EdgeState::LOST, EdgeState::LOST};
-  int best_measured = 0;
-  std::vector<cv::Point2f> inner;
-  int inner_measured = 0;
 
   auto window = [&](const std::vector<cv::Point2f> & ref, double scale) {
       float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
@@ -347,51 +339,21 @@ FieldLocator::SearchResult FieldLocator::findCandidate(
     };
 
   // 平时围绕预测搜索；定期全图重拟合，或 ROI 无可接受候选时退回全图，避免裁剪边缘成为假边界。
-  if (tracking && !force_full) {
-    cv::Rect win = window(predicted, cfg_.track_window_scale);
-    if (win.width > 8 && win.height > 8) {
-      SearchResult search_result = searchRegion(evidence, small(win), cv::Point2f(float(win.x), float(win.y)));
-      // 跟踪窗口恰好覆盖全图时，这次搜索已是全图搜索；拒绝后复用它，避免重复拟合与评分。
-      if (win == cv::Rect(0, 0, small.cols, small.rows)) {full_search = search_result;}
-      quad = search_result.quad; reason = search_result.reason; quality = search_result.quality;
-      inner = search_result.inner; inner_measured = search_result.inner_measured;
-      field_size_px = search_result.field_size_px;
-      best_score = search_result.score; best_measured = search_result.measured;
-      for (int k = 0; k < 4; ++k) {
-        best_edges[k] = search_result.edges[k];
-      }
+  SearchResult roi;
+  if (evidence.tracking && !force_full) {
+    const cv::Rect win = window(predicted, cfg_.track_window_scale);
+    if (win.width > 8 && win.height > 8 && win != cv::Rect(0, 0, small.cols, small.rows)) {
+      roi = searchRegion(evidence, small(win), cv::Point2f(float(win.x), float(win.y)));
+      if (!roi.quad.empty() && roi.rejection.empty()) {return roi;}
     }
   }
-  // 回退按字段合并：全图有几何才替换 ROI 候选及评分；无几何只补原因／质量，尺寸仍取全图结果。
-  // 因而全图失败并不等于把 ROI 结果整体清空，不能用一次结构赋值替代下面的分支。
-  if (quad.empty() || !rejectCandidate(best_score, best_measured, cfg_, tracking).empty()) {
-    SearchResult search_result = full_search ? std::move(*full_search) :
-      searchRegion(evidence, small, cv::Point2f(0, 0));
-    if (!search_result.quad.empty()) {
-      quad = search_result.quad; reason.clear(); quality = search_result.quality;
-      inner = search_result.inner; inner_measured = search_result.inner_measured;
-      best_score = search_result.score; best_measured = search_result.measured;
-      for (int k = 0; k < 4; ++k) {
-        best_edges[k] = search_result.edges[k];
-      }
-    } else if (reason.empty()) {
-      reason = search_result.reason;
-    }
-    if (quality == "none" && !search_result.quality.empty()) {quality = search_result.quality;}
-    field_size_px = search_result.field_size_px;
-  }
-
-  SearchResult result;
-  result.quad = std::move(quad);
-  result.reason = std::move(reason);
-  result.quality = std::move(quality);
-  result.field_size_px = field_size_px;
-  result.score = best_score;
-  result.measured = best_measured;
-  result.inner = std::move(inner);
-  result.inner_measured = inner_measured;
-  for (int edge = 0; edge < 4; ++edge) {result.edges[edge] = best_edges[edge];}
-  return result;
+  auto full = searchRegion(evidence, small, cv::Point2f(0, 0));
+  if (!full.quad.empty()) {return full;}
+  // 全图无几何时保留 ROI 的候选和评分，补齐诊断。尺寸始终以最后一次搜索为准。
+  if (roi.reason.empty()) {roi.reason = std::move(full.reason);}
+  if (roi.quality == "none") {roi.quality = std::move(full.quality);}
+  roi.field_size_px = full.field_size_px;
+  return roi;
 }
 
 // 帧准备、状态更新与诊断输出分别处理；update() 保留整帧调用顺序。
@@ -528,7 +490,6 @@ void FieldLocator::updateTracking(
   auto & reason = candidate.reason;
   auto & quality = candidate.quality;
   const auto & best_score = candidate.score;
-  const int best_measured = candidate.measured;
   const auto & predicted = evidence.predicted;
   const bool tracking = evidence.tracking;
   const auto & small = evidence.small;
@@ -560,7 +521,7 @@ void FieldLocator::updateTracking(
     // (a) 大跳变: 不立刻切换, 先挂起, 连续 N 帧确认再切 (误检通常只持续一帧)
   const std::string fail = frameCutsGroundEdge(evidence, quad) ?
     "地面被画面边缘裁断，缺少完整分区的几何证据" :
-    rejectCandidate(best_score, best_measured, cfg_, tracking);
+    candidate.rejection;
   if (fail.empty() && tracking && res.jump_ratio > cfg_.max_jump_frac) {
         // 例外: 当前跟踪的几何已经没有紫框证据 (说明跟丢了), 而新候选非常干净
         // -> 允许立即切换, 否则会一直抱着一个假四边形不放。
@@ -663,11 +624,7 @@ void FieldLocator::updateTracking(
   ++hits_; lost_ = 0; hold_frames_ = 0;
   state_ = hits_ >= cfg_.locate_hits_needed ? "TRACK" : "LOCATE";
   res.committed = true;
-  res.ok = true;
-  res.quality = quality == "prior_fallback" ? quality : (best_measured == 4 ? "good" : "degraded");
-  buildOutput(evidence, candidate, res, true, res.quality, reason);
-  return;
-
+  buildOutput(evidence, candidate, res, true, quality, reason);
 }
 
 void FieldLocator::commitGeometry(const SearchResult & candidate)

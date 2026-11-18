@@ -175,6 +175,31 @@ void testDeliveryLocalization()
     fixture.command->reply(2, {true});
     CHECK(!BridgeRuntimeTestAccess::safetyValid(*fixture.runtime));
   }
+
+  // 同侧投送可以在 Mission 确认切换后立即到达。Bridge 自己的 field 话题可能晚到。
+  Fixture same_side;
+  CHECK(BridgeRuntimeTestAccess::receive(*same_side.runtime, CanProtocol::ARRIVAL_ID));
+  interface_pkg::srv::CheckRoi::Response passed;
+  passed.result.valid = passed.result.passed = true;
+  passed.result.request_id = 77;
+  same_side.roi->reply(0, passed);
+  same_side.mission(10, BridgeCyclePhase::WaitingTurn, BridgeOutcome::Success, 77);
+  CHECK(BridgeRuntimeTestAccess::receive(*same_side.runtime, CanProtocol::TURN_COMPLETED_ID, 77));
+  same_side.mission(11, BridgeCyclePhase::NavigatingSafety, BridgeOutcome::Success, 77);
+  same_side.command->reply(0, {true});
+  CHECK(same_side.result(true, 77, CanProtocol::TURN_COMPLETED));
+  CHECK(BridgeRuntimeTestAccess::receive(*same_side.runtime, CanProtocol::SAFETY_ARRIVED_ID, 77));
+  same_side.task("field");
+  same_side.safety(1);
+  CHECK(!BridgeRuntimeTestAccess::safetyValid(*same_side.runtime));
+  same_side.mission(11, BridgeCyclePhase::WaitingTransfer, BridgeOutcome::Success, 77);
+  same_side.command->reply(1, {true});
+  CHECK(same_side.result(true, 77, CanProtocol::SAFETY_ARRIVED));
+  CHECK(BridgeRuntimeTestAccess::receive(*same_side.runtime, CanProtocol::DELIVERY_COMPLETED_ID, 77));
+  same_side.command->reply(2, {true});
+  same_side.mission(11, BridgeCyclePhase::LocalizingStart, BridgeOutcome::Success, 77);
+  same_side.safety(1);
+  CHECK(BridgeRuntimeTestAccess::safetyValid(*same_side.runtime));
 }
 
 void testBridgeRuntimeSearch()

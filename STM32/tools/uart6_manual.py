@@ -7,9 +7,6 @@ import math
 import secrets
 import struct
 import time
-import tkinter as tk
-from tkinter import ttk
-
 
 from uart6_protocol import (
     ACCEPTED, ARM, BRAKING, DETAIL_NAMES, DISARMED, DONE, FAULT, KEEPALIVE,
@@ -33,6 +30,8 @@ class Request:
 
 class ManualPanel:
     def __init__(self, root, port, speed, yaw_rate):
+        from tkinter import StringVar, ttk
+
         self.root = root
         self.port = port
         self.speed = speed
@@ -54,9 +53,9 @@ class ManualPanel:
         root.protocol("WM_DELETE_WINDOW", self.close)
         panel = ttk.Frame(root, padding=18)
         panel.grid()
-        self.label = tk.StringVar(value="等待固件状态")
-        self.pose_label = tk.StringVar(value="原点未建立")
-        self.note = tk.StringVar()
+        self.label = StringVar(value="等待固件状态")
+        self.pose_label = StringVar(value="原点未建立")
+        self.note = StringVar()
         ttk.Label(panel, text=f"{port.port} · 115200 8N1").grid(row=0, column=0, columnspan=4, sticky="w")
         ttk.Label(panel, textvariable=self.label).grid(row=1, column=0, columnspan=4, sticky="w", pady=(8, 0))
         ttk.Label(panel, textvariable=self.pose_label).grid(row=2, column=0, columnspan=4, sticky="w")
@@ -119,7 +118,7 @@ class ManualPanel:
         self.active = True
         self.arm_deadline = time.monotonic() + 1.0
         self.motion.clear()
-        self.note.set("等待三轮停稳")
+        self.note.set("等待底盘使能就绪")
         self.request(ARM)
 
     def at_rest(self):
@@ -133,7 +132,7 @@ class ManualPanel:
 
     def return_home(self):
         if not self.at_rest() or (self.flags & 3) != 3:
-            self.note.set("有有效原点且停稳后再返航")
+            self.note.set("请先建立原点并松开方向键，等底盘就绪后返航")
             return
         self.request(RETURN)
 
@@ -238,6 +237,9 @@ class ManualPanel:
 
     def tick(self):
         now = time.monotonic()
+        # 窗口调度可能停顿；先处理已到期的会话，缓冲状态只更新显示。
+        if self.active and now - self.last_status >= STATUS_TIMEOUT_S:
+            self.stop("状态超时，已请求停车")
         if self.port is not None:
             try:
                 chunk = self.port.read(min(self.port.in_waiting, 4096))
@@ -251,8 +253,6 @@ class ManualPanel:
             if not status_fresh:
                 self.label.set("等待有效串口状态")
                 self.pose = None
-                if self.active:
-                    self.stop("状态超时，已请求停车")
             else:
                 self.label.set(STATE_NAMES[self.state])
             if self.active and self.arm_deadline is not None and now >= self.arm_deadline:
@@ -303,6 +303,10 @@ def main():
         import serial
     except ImportError:
         parser.error("缺少 pyserial，请运行 python -m pip install pyserial")
+    try:
+        import tkinter as tk
+    except ImportError:
+        parser.error("缺少 tkinter，请先安装 Python 的 Tk 支持")
     try:
         root = tk.Tk()
     except tk.TclError as error:

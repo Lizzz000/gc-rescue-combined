@@ -3,6 +3,7 @@
 """配置校验：数组形状、发布开关依赖与跨节点业务约束（与节点重复的范围校验交由节点）。"""
 from __future__ import annotations
 
+import math
 from pathlib import PurePosixPath
 import sys
 
@@ -79,19 +80,16 @@ def _validate_bridge(values):
 def _validate_device_path(name, device, allow_empty):
     if allow_empty and device == '':
         return
-    parts = PurePosixPath(device).parts
-    if (not isinstance(device, str) or len(parts) < 3 or parts[:2] != ('/', 'dev') or '..' in parts or
+    parts = PurePosixPath(device).parts if isinstance(device, str) else ()
+    if (len(parts) < 3 or parts[:2] != ('/', 'dev') or '..' in parts or
             any(not 0x21 <= ord(char) <= 0x7e for char in device)):
         raise ConfigurationError(f'{name}: expected printable ASCII /dev/ device path without whitespace or ..')
 
 
-def _optional_number(name, value, minimum=None):
-    if value is None:
-        return
-    if type(value) is bool or not isinstance(value, (int, float)) or value != value or value in (float('inf'), float('-inf')):
-        raise ConfigurationError(f'{name}: expected a finite number or empty, got {value!r}')
-    if minimum is not None and value <= minimum:
-        raise ConfigurationError(f'{name}: expected > {minimum}, got {value}')
+def _finite_number(name, value):
+    if type(value) not in (int, float) or not math.isfinite(value):
+        raise ConfigurationError(f'{name}: expected a finite number, got {value!r}')
+    return value
 
 
 # 单次开合时长范围（秒），须与 bridge_pkg/gripper/s288_servo.hpp 及 teleop_pkg/servo/s288.py 一致。
@@ -105,18 +103,16 @@ def _validate_gripper(values, run):
     if type(ident) is bool or not isinstance(ident, int) or not 0 <= ident <= 14:
         raise ConfigurationError(f'gripper.id: expected integer in [0, 14], got {ident!r}')
     for name in ('gripper.kp', 'gripper.kd'):
-        value = values[name]
-        if type(value) is bool or not isinstance(value, (int, float)) or value != value or value < 0:
-            raise ConfigurationError(f'{name}: expected a finite number ≥ 0, got {value!r}')
+        if _finite_number(name, values[name]) < 0:
+            raise ConfigurationError(f'{name}: expected a nonnegative gain, got {values[name]!r}')
     for name in ('gripper.closed_deg', 'gripper.open_deg'):
-        value = values[name]
-        if type(value) is bool or not isinstance(value, (int, float)) or value != value or value in (float('inf'), float('-inf')):
-            raise ConfigurationError(f'{name}: expected a finite number, got {value!r}')
+        _finite_number(name, values[name])
     move_s = values['gripper.move_s']
-    _optional_number('gripper.move_s', move_s)
-    if move_s is not None and not GRIPPER_MOVE_S_MIN <= move_s <= GRIPPER_MOVE_S_MAX:
-        raise ConfigurationError(
-            f'gripper.move_s: expected [{GRIPPER_MOVE_S_MIN:g}, {GRIPPER_MOVE_S_MAX:g}], got {move_s}')
+    if move_s is not None:
+        _finite_number('gripper.move_s', move_s)
+        if not GRIPPER_MOVE_S_MIN <= move_s <= GRIPPER_MOVE_S_MAX:
+            raise ConfigurationError(
+                f'gripper.move_s: expected [{GRIPPER_MOVE_S_MIN:g}, {GRIPPER_MOVE_S_MAX:g}], got {move_s}')
     # 自动路径在 bridge 角色启用时拒绝空键；手动 teleop 不走本入口。
     if run in ('all', 'bridge'):
         missing = [name for name, filled in (

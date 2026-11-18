@@ -65,17 +65,18 @@ uint8_t AHRS_init(float quat[4], const float accel[3], const float mag[3])
 /** @brief 沿教程调用 Mahony 更新；参数及返回值见 AHRS.h。
  * @note 实测 time 传递参考 basic_framework 的 INS_Task/IMU_QuaternionEKF_Update。
  */
-void AHRS_update(float quat[4], float time, float gyro[3], float accel[3], float mag[3])
+uint8_t AHRS_update(float quat[4], float time, float gyro[3], float accel[3], float mag[3])
 {
     if (!Quaternion_Valid(quat) || !isfinite(time) || time <= 0.0f || time > 0.05f ||
         !isfinite(Vector_Norm_Squared(gyro)))
-        return;
+        return 0U;
     const float zero[3] = {0};
     const float acceleration_sq = Vector_Norm_Squared(accel);
     const float magnetic_sq = Vector_Norm_Squared(mag);
     const float *a = isfinite(acceleration_sq) && acceleration_sq > 1e-12f ? accel : zero;
     const float *m = isfinite(magnetic_sq) && magnetic_sq > 1e-12f ? mag : zero;
     MahonyAHRSupdate(quat, gyro[0], gyro[1], gyro[2], a[0], a[1], a[2], m[0], m[1], m[2], time);
+    return 1U;
 }
 
 /** @brief 将四元数转换为 yaw/pitch/roll；参数及返回值见 AHRS.h。

@@ -75,7 +75,7 @@ BridgeState::BridgeState(BridgeStateConfig config)
 
 void BridgeState::resetInputs(BridgeSourceTime current)
 {
-  // 断线／恢复重新建立感知基线；任务、运输阶段与到达保持不属于本次清理范围。
+  // 会话或运动授权改变时重新建立感知基线。
   target_ = Center{};
   safety_ = Center{};
   safety_hold_ = Center{};
@@ -93,10 +93,7 @@ BridgeStateUpdate BridgeState::task(const BridgeTaskState & input, BridgeSourceT
   if (task_ && task_->task == input.task && task_->epoch == input.epoch &&
     task_->stamp.ns == input.stamp.ns) {return {};}
   task_ = input;
-  cutoff_.ns = std::max(cutoff_.ns, input.stamp.ns);
-  target_ = Center{};
-  safety_ = Center{};
-  safety_hold_ = Center{};
+  resetInputs(input.stamp);
   releaseCoordinates(current);
   return {true, true};
 }
@@ -133,10 +130,6 @@ BridgeStateUpdate BridgeState::mission(
   // 业务字段不变的状态心跳只更新 mission 快照，保留已授权的新坐标。
   if (changed) {
     localization_authorized_ = resumes_transfer;
-    target_ = Center{};
-    safety_ = Center{};
-    safety_hold_ = Center{};
-    cutoff_.ns = std::max(cutoff_.ns, input.stamp.ns);
   }
   mission_ = input;
   if (restarted) {
@@ -148,6 +141,9 @@ BridgeStateUpdate BridgeState::mission(
   } else if (resumes_transfer) {
     coordinates_held_ = false;
     resetInputs(current);
+  } else if (changed) {
+    // 普通阶段变化按消息源时间撤旧，原阶段心跳只更新 mission 快照。
+    resetInputs(input.stamp);
   }
   releaseCoordinates(current);
   return {true, changed, restarted};
@@ -276,18 +272,17 @@ BridgeCenterOutput BridgeState::safetyOutput(
 
 void BridgeState::holdCoordinates(BridgeSourceTime current)
 {
-  // 重复到达不能刷新本次闭锁的起点，否则会吞掉已经观察到的中间阶段。
-  if (coordinates_held_) {return;}
+  const bool transfer = mission_ && mission_->cycle_phase == BridgeCyclePhase::NavigatingSafety;
+  // 同侧投送可早于本机收到 field 话题；用新一代的到达覆盖之前的 ROI 闭锁。
+  // 同代重发保留原边界，显式重找或重启仍由新搜索解除。
+  if (coordinates_held_ && (!transfer || held_until_search_ ||
+    mission_->cycle_generation <= held_generation_)) {return;}
   coordinates_held_ = true;
   held_generation_ = mission_ ? mission_->cycle_generation : 0;
   // 记下发送安全区到达时的路由；等待期换侧或换 ROI 不能解除本趟闭锁。
-  const bool transfer = mission_ && mission_->cycle_phase == BridgeCyclePhase::NavigatingSafety;
   held_transfer_roi_ = transfer ? mission_->roi_request_id : 0;
   held_transfer_side_ = transfer ? mission_->destination : BridgeDestination::None;
-  target_ = Center{};
-  safety_ = Center{};
-  safety_hold_ = Center{};
-  cutoff_.ns = std::max(cutoff_.ns, current.ns);
+  resetInputs(current);
 }
 
 void BridgeState::holdForSearch(BridgeSourceTime current, std::uint64_t requested_generation)
@@ -308,7 +303,7 @@ std::optional<BridgeCyclePhase> BridgeState::cyclePhase() const
 
 bool BridgeState::movingPhase() const
 {
-  return mission_ && task_ && idle() &&
+  return idle() && task_ &&
          ((mission_->cycle_phase == BridgeCyclePhase::SearchingTarget && task_->task == "seg") ||
           ((mission_->cycle_phase == BridgeCyclePhase::NavigatingSafety || localization_authorized_) &&
           task_->task == "field"));
@@ -327,15 +322,12 @@ void BridgeState::releaseCoordinates(BridgeSourceTime current)
   coordinates_held_ = false;
   held_until_search_ = false;
   // 新授权代次不依赖订阅者收到中间态；同代心跳不能解锁，等待期旧缓存不能复活。
-  target_ = Center{};
-  safety_ = Center{};
-  safety_hold_ = Center{};
-  cutoff_.ns = std::max(cutoff_.ns, current.ns);
+  resetInputs(current);
 }
 
 bool BridgeState::waitingTurn() const
 {
-  return mission_ && idle() && mission_->cycle_phase == BridgeCyclePhase::WaitingTurn &&
+  return idle() && mission_->cycle_phase == BridgeCyclePhase::WaitingTurn &&
          mission_->outcome == BridgeOutcome::Success && mission_->roi_request_id != 0 &&
          mission_->destination != BridgeDestination::None;
 }

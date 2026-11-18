@@ -43,7 +43,7 @@ static uint64_t previous_fusion_us;
 static uint32_t magnetic_failures, initial_gravity_checks;
 static HAL_StatusTypeDef next_i2c_status = HAL_OK;
 static enum { STATIC_BIAS, MOVING_MEAN, MOVING_PEAK, BAD_GYRO_ID, DYNAMIC_WRAP, COLD_START,
-              CALI_TEMP_INVALID, RUNTIME_ERROR, TILTED_WORLD, TILTED_AVERAGE, MAGNETIC_READS,
+              CALI_TEMP_INVALID, RUNTIME_ERROR, TIMING_GAP, TILTED_WORLD, TILTED_AVERAGE, MAGNETIC_READS,
               START_MAG_RETRY } scenario;
 static jmp_buf task_finished;
 static unsigned critical_depth, critical_entries;
@@ -173,6 +173,7 @@ void test_timer_compare(TIM_HandleTypeDef *h, uint32_t channel, uint32_t value)
 void vofa_send(float roll, float pitch, float yaw)
 {
     const float rad_to_deg = 180.0f / 3.14159265358979323846f;
+    assert(!(scenario == TIMING_GAP && loops == 4U));
     assert(isfinite(roll) && isfinite(pitch) && isfinite(yaw));
     assert(fabsf(roll - INS_angle[2] * rad_to_deg) < 0.0001f);
     assert(fabsf(pitch - INS_angle[1] * rad_to_deg) < 0.0001f);
@@ -524,6 +525,11 @@ void vTaskDelayUntil(TickType_t *wake, TickType_t ticks)
 {
     assert(critical_depth == 0U);
     if (!runtime_started || vofa_calls == 0U) assert_ins_not_ready();
+    if (scenario == TIMING_GAP && runtime_started && loops == 4U)
+    {
+        assert_ins_not_ready();
+        assert(vofa_calls == 1U && memcmp(INS_quat, last_quat, sizeof(last_quat)) == 0);
+    }
     if (failure_pending && runtime_started)
     {
         assert_ins_not_ready();
@@ -581,6 +587,13 @@ void vTaskDelayUntil(TickType_t *wake, TickType_t ticks)
         {
             const uint32_t jitter[6] = {0,3000,0,7000,0,2000};
             deadline += jitter[loops % 6U];
+        }
+        /* 在已有有效姿态后使下一次 BMI 间隔由 10 ms 变为 70 ms，然后恢复正常节拍。 */
+        if (scenario == TIMING_GAP && loops == 3U)
+        {
+            *wake += 60U;
+            deadline += 60000U;
+            ++runtime_skips;
         }
         ++loops;
     }

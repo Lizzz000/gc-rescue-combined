@@ -15,7 +15,7 @@ uint32_t test_tick;
 static uint32_t source_time_ms;
 static unsigned critical_depth;
 static uint8_t can_arrival_before_snapshot;
-static uint8_t enabled, stopped;
+static uint8_t enabled, stopped, motion_ready;
 static unsigned enables, stops, disables, velocity_requests;
 static uint8_t tx_ready, tx_error;
 static unsigned distance_count, turn_count, sent_count;
@@ -86,7 +86,7 @@ void test_exit_critical(void) { assert(critical_depth > 0U); --critical_depth; }
 /** @brief 模拟软件受理使能，停车反馈由场景单独提供。 @return 1。 */
 uint8_t Chassis_Enable(void)
 {
-    enabled = 1U;
+    enabled = motion_ready = 1U;
     ++enables;
     return 1U;
 }
@@ -94,16 +94,17 @@ uint8_t Chassis_Enable(void)
 /** @brief 模拟请求失能及撤销停车反馈。 */
 void Chassis_Disable(void)
 {
-    enabled = stopped = 0U;
+    enabled = stopped = motion_ready = 0U;
     ++disables;
 }
 
 /** @brief 记录停车请求；请求本身不生成停车反馈。 */
-void Chassis_Stop(void) { ++stops; }
+void Chassis_Stop(void) { ++stops; motion_ready = 1U; }
 /** @brief 读取模拟底盘使能状态。 @return 软件已使能为 1。 */
 uint8_t Chassis_Is_Enabled(void) { return enabled; }
 /** @brief 读取场景独立给出的停车反馈。 @return 已使能且确认停车为 1。 */
 uint8_t Chassis_Is_Stopped(void) { return enabled && stopped; }
+uint8_t Chassis_Motion_Ready(void) { return enabled && motors_ready && motion_ready; }
 
 /** @brief 提供可单独断开的三轮反馈条件。 @return 反馈正常为 1。 */
 uint8_t Chassis_Motors_Ready(void) { return motors_ready; }
@@ -133,7 +134,8 @@ uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
     last_vx = vx;
     last_vy = vy;
     last_wz = wz;
-    if (vx != 0.0f || vy != 0.0f || wz != 0.0f)
+    motion_ready = vx == 0.0f && vy == 0.0f && wz == 0.0f;
+    if (!motion_ready)
         stopped = 0U;
     return 1U;
 }
@@ -149,11 +151,11 @@ uint8_t Chassis_Set_Velocity_Explicit_Yaw(float vx, float vy, float wz)
  */
 uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction, float distance, float speed)
 {
-    assert(enabled && stopped && distance > 0.0f && speed == JETSON_AUTO_DISTANCE_SPEED_MPS);
+    assert(Chassis_Motion_Ready() && distance > 0.0f && speed == JETSON_AUTO_DISTANCE_SPEED_MPS);
     last_translation = direction;
     last_distance = distance;
     ++distance_count;
-    stopped = 0U;
+    stopped = motion_ready = 0U;
     return 1U;
 }
 
@@ -162,11 +164,11 @@ uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction, float 
  */
 uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg)
 {
-    assert(enabled && stopped && (direction == -1 || direction == 1) && angle_deg > 0.0f);
+    assert(Chassis_Motion_Ready() && (direction == -1 || direction == 1) && angle_deg > 0.0f);
     last_turn_direction = direction;
     last_turn_angle = angle_deg;
     ++turn_count;
-    stopped = 0U;
+    stopped = motion_ready = 0U;
     return 1U;
 }
 
@@ -211,7 +213,7 @@ static void Reset(void)
     source_time_ms = 0x00ffff00U; /* 接近协议的 24 位源时钟回绕。 */
     critical_depth = 0U;
     can_arrival_before_snapshot = 0U;
-    enabled = stopped = 0U;
+    enabled = stopped = motion_ready = 0U;
     enables = stops = disables = velocity_requests = 0U;
     distance_count = turn_count = sent_count = return_commands = 0U;
     odom = (Chassis_Odometry_t){.valid = 1U};
@@ -342,7 +344,7 @@ static void Wait_For_Count_At(const unsigned *counter, unsigned count, unsigned 
 }
 #define Wait_For_Count(counter, count) Wait_For_Count_At((counter), (count), __LINE__)
 
-/** @brief 开机动作成功前始终禁用，成功后仍检查 IMU 和三轮停稳。 */
+/** @brief 开机动作成功前始终禁用，成功后仍检查 IMU 和三轮就绪。 */
 static void Start_Automatic(void)
 {
     const uint8_t ignored[8] = {1U};
@@ -360,22 +362,21 @@ static void Start_Automatic(void)
     imu_age_ms = 0U;
     Wait_For_Count(&enables, 1U);
     Steps(3U);
-    assert(enabled && !velocity_requests);
-    stopped = 1U;
+    assert(enabled && !velocity_requests && !stopped);
 }
 
 static void Complete_Search_Turn(void)
 {
     odom.yaw_rad = remainderf(odom.yaw_rad + last_turn_direction * 3.141592654f, 6.283185307f);
-    stopped = 1U;
+    motion_ready = 1U;
 }
 
-/* 首次停稳后保存左侧起点，转满半圈才接受新目标。 */
+/* 使能就绪后保存左侧起点，转满半圈才接受新目标。 */
 static void Begin_Target_Test(void)
 {
     Reset();
-    Start_Automatic();
     odom.valid = 0U;
+    Start_Automatic();
     Steps(3U);
     assert(!turn_count && !velocity_requests);
     odom = expected_origin;
@@ -399,18 +400,7 @@ static void Test_Wait_After_Search_Turn(void)
         Jetson_CAN_Receive(JETSON_CAN_TARGET_CENTER_ID, no_target, sizeof(no_target));
         Step();
     }
-    assert(enabled && stopped && turn_count == 1U && !velocity_requests && !sent_count);
-}
-
-/** @brief 从刚确认停稳的一拍推进到核验截止，模拟等待期间晚到的两个窗内中心。
- * @param[in] id 物资或安全区中心 CAN ID。
- */
-static void Reach_Verify_Cutoff(uint16_t id)
-{
-    Receive_Center(id, 5000, 7500);
-    Steps((JETSON_AUTO_VERIFY_WAIT_MS - 1U) / 5U);
-    Receive_Center(id, 5000, 7500);
-    Step();
+    assert(enabled && !stopped && turn_count == 1U && !velocity_requests && !sent_count);
 }
 
 /** @brief 在 CAN 快照前跨一个 RTOS tick，包含计数回绕，保持健康链路和追踪。 */
@@ -473,12 +463,9 @@ static void Test_Approach_Brakes_And_Verifies(void)
 
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
     Steps(5U);
-    stopped = 1U;
-    Step();
-    Reach_Verify_Cutoff(JETSON_CAN_TARGET_CENTER_ID);
     assert(stops == 1U && velocity_requests == moves && sent_count == 0U);
 
-    /* 停稳后漂到 5154 已超出 ±100，恢复连续跟随，不视为到位。 */
+    /* 发出零速后漂到 5154 已超出 ±100，恢复连续跟随，不视为到位。 */
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5154, 7500);
     Step();
     assert(last_vx == 0.0f && last_vy > 0.0f && last_vy <= 0.005f && last_wz == 0.0f);
@@ -492,9 +479,6 @@ static void Test_Approach_Brakes_And_Verifies(void)
     Step();
     assert(stops == 2U && sent_count == 0U);
 
-    stopped = 1U;
-    Step();
-    Reach_Verify_Cutoff(JETSON_CAN_TARGET_CENTER_ID);
     assert(sent_count == 0U);
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5100, 7400);
     Wait_For_Count(&sent_count, 1U);
@@ -512,24 +496,12 @@ static void Test_Approach_Lost_During_Brake(void)
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
         Step();
         const unsigned moves = velocity_requests;
-        const uint8_t invalid_center[5] = {0};
+        const uint8_t invalid_center[8] = {0};
         Jetson_CAN_Receive(JETSON_CAN_TARGET_CENTER_ID, invalid_center, sizeof(invalid_center));
         Steps(5U);
-        stopped = 1U;
-        Step();
-        assert(stops == 1U && velocity_requests == moves && sent_count == 0U);
-
         if (timeout)
-            Steps((JETSON_AUTO_VERIFY_WAIT_MS + 4U) / 5U);
-        else
-        {
-            Reach_Verify_Cutoff(JETSON_CAN_TARGET_CENTER_ID);
-            assert(velocity_requests == moves && sent_count == 0U);
-            Jetson_CAN_Receive(JETSON_CAN_TARGET_CENTER_ID, invalid_center, sizeof(invalid_center));
-            Step();
-        }
-        Steps(4U);
-        assert(stops == 1U && velocity_requests == moves && sent_count == 0U && enabled && stopped);
+            Steps(JETSON_AUTO_CENTER_TIMEOUT_MS / 5U + 1U);
+        assert(stops == 1U && velocity_requests == moves && sent_count == 0U && enabled && !stopped);
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5500, 7000);
         Wait_For_Count(&velocity_requests, moves + 1U);
         assert(last_wz == 0.0f);
@@ -594,7 +566,6 @@ static void Test_Approach_No_Windup(void)
     assert(last_vy > 0.0f && last_vy < steady && stops == 0U);
     for (unsigned i = 0; i < 6; ++i)
     {
-        if (last_vx == 0.0f && last_vy == 0.0f) stopped = 1U;
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 3500, 7500);
         Steps(4U);
     }
@@ -620,31 +591,62 @@ static void Test_Approach_Anti_Windup(void)
     assert(last_vy > 0.0f && last_vy < 0.06f && stops == 0U);
 }
 
-/** @brief 轮速未达到停车确认条件时，按视觉停车期限失能，不额外延长故障制动。 */
-static void Test_Approach_Brake_Timeout(void)
+/** @brief 减速时重报入窗源帧不放行；过期后仍可凭新图像重新取得目标。 */
+static void Test_Approach_Requires_New_Frame(void)
 {
     Begin_Target_Test();
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7000);
     Step();
-    assert(!stopped);
+    const uint32_t source = source_time_ms;
+    for (unsigned i = 0U; i < JETSON_AUTO_ARM_TIMEOUT_MS / 5U; ++i)
+    {
+        Receive_Center_At(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500, source);
+        Step();
+    }
+    assert(enabled && !stopped && !sent_count && stops == 1U);
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
     Step();
-    assert(stops == 1U && enabled);
-    Steps(JETSON_AUTO_SETTLE_TIMEOUT_MS / 5U - 1U);
-    assert(enabled && stops == 1U);
+    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
     Steps(2U);
-    assert(!enabled && disables == 1U && sent_count == 0U);
+    assert(sent_count == 1U && !stopped);
+
+    for (unsigned blocked = 0U; blocked < 2U; ++blocked)
+    {
+        Begin_Target_Test();
+        Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 6000, 7500);
+        Step();
+        Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
+        Step();
+        motion_ready = 0U; /* CAN 尚未提交零目标。 */
+        const unsigned ticks = blocked ? JETSON_AUTO_BRAKE_TIMEOUT_MS / 5U : 2U;
+        for (unsigned i = 0U; i < ticks; ++i)
+        {
+            Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
+            Step();
+        }
+        assert(enabled && !sent_count);
+        if (blocked)
+        {
+            Step();
+            assert(!enabled && disables == 1U && !sent_count);
+        }
+        else
+        {
+            motion_ready = 1U;
+            Steps(2U);
+            assert(sent_count == 1U && !stopped);
+        }
+    }
 }
 
-/** @brief 从当前目标接近阶段推进到抓取完成、后退停车后申请 ROI。
+/** @brief 从当前目标接近阶段推进到抓取完成、后退到位后申请 ROI。
  * @param[in] destination 夹具用于旧回复的目的区。 @param[in] token 夹具用于旧授权的身份。
  */
 static void Prepare_ROI_From_Target(uint8_t destination, uint32_t token)
 {
-    /* 横向超出容差时继续修正；双轴同时入窗后等待停车反馈。 */
+    /* 横向超出容差时继续修正；双轴同时入窗后核验新图像。 */
     for (unsigned i = 0; i < 12; ++i)
     {
-        if (last_vx == 0.0f && last_vy == 0.0f) stopped = 1U;
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5800, 7500);
         Steps(4U);
     }
@@ -652,9 +654,6 @@ static void Prepare_ROI_From_Target(uint8_t destination, uint32_t token)
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
     Steps(4U);
     assert(stops && sent_count == 0U);
-    stopped = 1U;
-    Step();
-    Reach_Verify_Cutoff(JETSON_CAN_TARGET_CENTER_ID);
     assert(sent_count == 0U);
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 4900, 7600);
     Wait_For_Count(&sent_count, 1U);
@@ -669,7 +668,7 @@ static void Prepare_ROI_From_Target(uint8_t destination, uint32_t token)
 
     /* 邮箱忙期间的旧回包不得在发出 200 后释放转向。 */
     tx_ready = 0U;
-    stopped = 1U;
+    motion_ready = 1U;
     Steps(3U);
     Receive_Arrival_Ack(1U);
     Receive_Roi(1U, destination);
@@ -718,9 +717,6 @@ static void Test_Distance_Stream_Loss(void)
     Begin_Target_Test();
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
     Step();
-    stopped = 1U;
-    Step();
-    Reach_Verify_Cutoff(JETSON_CAN_TARGET_CENTER_ID);
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 4900, 7600);
     Wait_For_Count(&sent_count, 1U);
     Complete_Last_Action();
@@ -746,7 +742,7 @@ static void Begin_Return_From_ROI(uint8_t destination, uint32_t token)
     assert(last_vx < 0.0f && last_wz < 0.0f && turn_count == turns_before);
 }
 
-/* 模拟到达后单独确认停车，确认前不得上报类型17。 */
+/* 模拟到达起点，下一拍用新的里程计快照复核位置。 */
 static void Stop_At_Return_Origin(void)
 {
     const unsigned stops_before = stops;
@@ -757,11 +753,6 @@ static void Stop_At_Return_Origin(void)
 
 static void Verify_Safety_Center(int16_t x, int16_t y)
 {
-    Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, x, y);
-    Step();
-    stopped = 1U;
-    Step();
-    Steps((JETSON_AUTO_VERIFY_WAIT_MS - 1U) / 5U);
     Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, x, y);
     Step();
 }
@@ -851,7 +842,6 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
         assert(!enabled && disables == 1U && sent_count == 2U);
         return;
     }
-    stopped = 1U;
     Wait_For_Count(&sent_count, 3U);
     Check_Sent(2U, JETSON_CAN_TURN_COMPLETED_ID, token);
     Align_Safety_And_Confirm(destination, token);
@@ -895,11 +885,11 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
     assert(stops == before_push_stop + 1U && sent_count == 4U);
     if (stuck == 1U)
     {
-        Steps((2U * JETSON_AUTO_BRAKE_TIMEOUT_MS) / 5U + 1U);
-        assert(!enabled && disables == 1U && sent_count == 4U);
+        Steps(3U);
+        assert(enabled && !stopped && sent_count == 5U);
+        Check_Sent(4U, JETSON_CAN_POINT_REACHED_ID, 2U);
         return;
     }
-    stopped = 1U;
     Wait_For_Count(&sent_count, 5U);
     Check_Sent(4U, JETSON_CAN_POINT_REACHED_ID, 2U);
     assert(distance_count == 1U);
@@ -911,6 +901,7 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
         const uint32_t action_id = sent[4].request_id;
         Receive_Command_Ack(1U, 5U, action_id);
         Receive_Action_Result(2U, 0U, action_id);
+        stopped = 1U; /* 故障制动收到停车反馈。 */
         Steps(2U);
         assert(!enabled && disables == 1U && velocity_requests == before_retract);
         return;
@@ -928,7 +919,6 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
     assert(stops == before_retract_stop && sent_count == 5U);
     Step();
     assert(stops == before_retract_stop + 1U && sent_count == 5U);
-    stopped = 1U;
     Wait_For_Count(&sent_count, 6U);
     Check_Sent(5U, JETSON_CAN_DELIVERY_COMPLETED_ID, token);
 
@@ -948,7 +938,7 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
     if (stuck == 11U)
     {
         Steps((JETSON_AUTO_CENTER_TIMEOUT_MS + JETSON_AUTO_BRAKE_TIMEOUT_MS +
-               JETSON_AUTO_SETTLE_TIMEOUT_MS) / 5U + 1U);
+               JETSON_AUTO_BRAKE_TIMEOUT_MS) / 5U + 1U);
         assert(!enabled && turn_count == 1U && sent_count == 7U);
         return;
     }
@@ -961,7 +951,7 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
     odom.y_m = destination == 1U ? 0.03 : -0.30;
     odom.yaw_rad += 0.04f;
     Verify_Safety_Center(center_x, center_y);
-    /* 停稳后 x 越界两次才微调，期间 y 越界的独立证据不会覆盖 x。 */
+    /* 下发零速后 x 越界两次才微调，期间 y 越界的独立证据不会覆盖 x。 */
     const unsigned before_adjust = velocity_requests;
     Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, center_x + 105, center_y);
     Step();
@@ -1003,6 +993,7 @@ static void Test_Return_Distance_Fence(void)
 {
     Prepare_ROI(1U, 73U);
     odom.x_m = expected_origin.x_m + JETSON_AUTO_RETURN_MAX_M + 0.10;
+    stopped = 1U; /* 故障制动可以在下一拍失能。 */
     Receive_Arrival_Ack(1U);
     Receive_Roi(1U, 1U);
     Receive_Turn(1U, 73U);
@@ -1127,7 +1118,7 @@ static void Test_Request_Deadline(void)
     }
 }
 
-/** @brief 拒绝后请求 kind3；动作结果成功且停稳后退离，失败则停止。 */
+/** @brief 拒绝后请求 kind3；动作结果成功后退离，失败则停止。 */
 static void Test_Reject_And_Resume(void)
 {
     for (unsigned failure = 0U; failure < 2U; ++failure)
@@ -1144,6 +1135,7 @@ static void Test_Reject_And_Resume(void)
         Receive_Action_Result(3U, failure ? 0U : 1U, id);
         if (failure)
         {
+            stopped = 1U;
             Steps(2U);
             assert(!enabled && disables == 1U && distance_count == 1U);
             continue;
@@ -1153,7 +1145,7 @@ static void Test_Reject_And_Resume(void)
         assert(last_distance == JETSON_AUTO_RECOVERY_BACK_M);
         Steps(3U);
         assert(sent_count == 3U);
-        stopped = 1U;
+        motion_ready = 1U;
         Wait_For_Count(&sent_count, 4U);
         const uint32_t search_id = sent[3].token;
         assert(search_id != 0U);
@@ -1180,7 +1172,7 @@ static void Test_Search_Request_Identity(void)
         Wait_For_Count(&sent_count, 3U);
         Complete_Last_Action();
         Wait_For_Count(&distance_count, 2U);
-        stopped = 1U;
+        motion_ready = 1U;
         Wait_For_Count(&sent_count, 4U);
         const uint32_t search_id = sent[3].token;
         assert(search_id != 0U && search_id != previous_id);
@@ -1203,7 +1195,7 @@ static void Test_Search_Request_Identity(void)
     }
 }
 
-/** @brief 合法无目标帧保持链路，停稳等待期间删除的类型1不参与控制。 */
+/** @brief 合法无目标帧保持链路，等待新图像时已删除的类型 1不参与控制。 */
 static void Test_Visual_Timeout_Without_Type1(void)
 {
     for (unsigned wrap = 0U; wrap < 2U; ++wrap)
@@ -1456,9 +1448,6 @@ static void Test_Action_Transactions(void)
         Begin_Target_Test();
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
         Step();
-        stopped = 1U;
-        Step();
-        Reach_Verify_Cutoff(JETSON_CAN_TARGET_CENTER_ID);
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 4900, 7600);
         if (scenario == 6U)
         {
@@ -1494,6 +1483,7 @@ static void Test_Action_Transactions(void)
         assert(sent[1].request_id == id && sent[1].token == 1U);
         if (scenario == 3U || scenario == 4U)
         {
+            stopped = 1U;
             test_tick = started_ms + JETSON_AUTO_ACTION_TIMEOUT_MS - 1U;
             Receive_Command_Ack(1U, 5U, id);
             Run_Auto();
@@ -1527,15 +1517,13 @@ static void Test_Action_Transactions(void)
         Receive_Action_Result(1U, 1U, id - 1U);
         if (scenario == 2U)
         {
+            stopped = 1U;
             Steps(2U);
             assert(!enabled && !distance_count && disables == 1U);
         }
         else
         {
             stopped = 0U;
-            Step();
-            assert(!distance_count);
-            stopped = 1U;
             Step();
             assert(distance_count == 1U && last_distance == JETSON_AUTO_ROI_BACK_M);
         }
@@ -1565,7 +1553,7 @@ int main(void)
     Test_Approach_Axis_Window_Continuity();
     Test_Approach_No_Windup();
     Test_Approach_Anti_Windup();
-    Test_Approach_Brake_Timeout();
+    Test_Approach_Requires_New_Frame();
     Test_Consecutive_Transports();
     Test_Transport(2U, 0U, 0U);
     Test_Transport(1U, 123U, 1U);

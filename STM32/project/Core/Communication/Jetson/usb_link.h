@@ -21,7 +21,8 @@ typedef struct
  */
 void UsbLink_Get_State(UsbLink_State_t *out);
 
-void UsbLink_Init(void);
+/** @return 1 表示 USB 外设已启动，可以创建收发任务。 */
+uint8_t UsbLink_Init(void);
 void UsbLink_Task(void const *argument);
 int Jetson_Link_Send(uint8_t type, const uint8_t *data, uint8_t length);
 

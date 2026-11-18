@@ -3,8 +3,6 @@ import argparse
 import json
 import math
 from pathlib import Path
-import shutil
-import subprocess
 import time
 import swd_session as swd
 from continuous_return_session import ContinuousSession
@@ -17,20 +15,6 @@ ARGS = [30.,2.,3.,4.,3.,2.,120000.,0.]
 PLAN = dict(turns=30, direction='CCW', stages_rad_s=[2,3,4,3,2], turns_per_stage=6,
             ramp_rad_s2=1.6, counter='AHRS_YAW', rotation_radius_m=.0982,
             real_ground_angle_verified=False)
-
-
-def load_symbols(elf):
-    symbols=swd.load_symbols(elf)
-    lines=subprocess.check_output([shutil.which('arm-none-eabi-nm'),'-S','--defined-only',str(elf)],text=True)
-    for line in lines.splitlines():
-        fields=line.split()
-        if len(fields)==4 and fields[3]=='tuning_spin_sample':
-            address,size=int(fields[0],16),int(fields[1],16)
-            if size!=32 or address%4 or not 0x20000000<=address<address+size<=0x20020000:
-                raise swd.SessionError('Spin ABI mismatch')
-            symbols['tuning_spin_sample']=address
-    if 'tuning_spin_sample' not in symbols:raise swd.SessionError('Missing spin test firmware')
-    return symbols
 
 
 def check_sample(sample, start_xy):
@@ -163,7 +147,8 @@ def main():
     with swd.writer_lock('127.0.0.1',6666):
         client=log=session=telemetry=None;complete=False
         try:
-            symbols=load_symbols(args.elf);log=swd.JsonLog(args.log)
+            symbols = swd.load_symbols(args.elf, extra_sizes={"tuning_spin_sample": 32})
+            log = swd.JsonLog(args.log)
             client=swd.TclClient('127.0.0.1',6666)
             if client.evaluate('stm32f4x.cpu curstate')!='running':raise swd.SessionError('MCU not running')
             session=ContinuousSession(client,symbols,log,stop_file=args.stop_file)
