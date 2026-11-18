@@ -60,7 +60,7 @@ static LinkParser parser;
 static uint32_t parser_activity_ms;
 static uint8_t tx_buffer[2U * LINK_FRAME_MAX_BYTES];
 
-static uint8_t session_active, was_enabled, origin_valid, return_state;
+static uint8_t session_active, was_enabled, origin_valid, return_state, return_corrected;
 static uint32_t arm_started_ms, last_valid_ms, return_started_ms, stop_started_ms, last_report_ms;
 static uint16_t last_arm_id, last_origin_id, last_return_id, last_release_id, active_return_id;
 static uint16_t reply_id;
@@ -211,6 +211,7 @@ static void Service_Request(const LinkFrame *frame, uint32_t now_ms)
         config.linear_limit_mps -= 0.000001f;
     return_config = config;
     active_return_id = id;
+    return_corrected = 0U;
     return_started_ms = last_valid_ms = now_ms;
     return_state = RETURN_RUNNING;
     Reply(UART_RETURN, id, RESULT_ACCEPTED, DETAIL_NONE);
@@ -243,16 +244,37 @@ static void Service_Return(uint32_t now_ms)
 
     if (return_state == RETURN_STOPPING)
     {
-        if (remaining > 0.02 || fabsf(remainderf(position.yaw_rad - origin.yaw_rad, TWO_PI)) > 0.174532925f)
-            Stop_Session(DETAIL_LIMIT);
-        else if (Chassis_Motion_Ready())
+        const float yaw_error = fabsf(remainderf(position.yaw_rad - origin.yaw_rad, TWO_PI));
+        if (Chassis_Motion_Ready())
         {
-            const uint8_t zero[7] = {1U};
-            Manual_CAN_Receive(zero, sizeof(zero));
-            Reply(UART_RETURN, active_return_id, RESULT_DONE, DETAIL_NONE);
-            return_state = RETURN_INACTIVE;
+            if (remaining <= CHASSIS_RETURN_POSITION_TOLERANCE_M &&
+                yaw_error <= CHASSIS_RETURN_YAW_TOLERANCE_RAD)
+            {
+                const uint8_t zero[7] = {1U};
+                Manual_CAN_Receive(zero, sizeof(zero));
+                Reply(UART_RETURN, active_return_id, RESULT_DONE, DETAIL_NONE);
+                return_state = RETURN_INACTIVE;
+                return;
+            }
+            if (remaining > CHASSIS_RETURN_CORRECTION_MAX_M || yaw_error > CHASSIS_RETURN_CORRECTION_MAX_RAD)
+            {
+                Stop_Session(DETAIL_LIMIT);
+                return;
+            }
+            /* 停稳后最多补正一次，仍使用本次返航的原始期限与限位。 */
+            if (Chassis_Is_Stopped())
+            {
+                if (return_corrected)
+                    Stop_Session(DETAIL_LIMIT);
+                else
+                {
+                    return_corrected = 1U;
+                    return_state = RETURN_RUNNING;
+                }
+                return;
+            }
         }
-        else if ((uint32_t)(now_ms - stop_started_ms) >= MANUAL_PREPARE_TIMEOUT_MS)
+        if ((uint32_t)(now_ms - stop_started_ms) >= MANUAL_PREPARE_TIMEOUT_MS)
             Stop_Session(DETAIL_TIMEOUT);
         return;
     }

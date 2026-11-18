@@ -211,9 +211,9 @@ int Jetson_Link_Send(uint8_t id, const uint8_t *payload, uint8_t len)
 }
 
 /** @brief 初始化独立场景，启用替身外设能力，底盘保持失能。 */
-static void Reset(void)
+static void Reset_At(uint32_t initial_ms)
 {
-    test_tick = 100U;
+    test_tick = initial_ms;
     source_time_ms = 0x00ffff00U; /* 接近协议的 24 位源时钟回绕。 */
     critical_depth = 0U;
     can_arrival_before_snapshot = 0U;
@@ -240,6 +240,8 @@ static void Reset(void)
     Jetson_CAN_Init();
     Jetson_Auto_Init();
 }
+
+static void Reset(void) { Reset_At(100U); }
 
 /** @brief 推进一拍；背景只发既有类型 3/4 坐标帧，不引入心跳类型。 */
 static void Step(void)
@@ -380,9 +382,9 @@ static void Complete_Search_Turn(void)
 }
 
 /* 使能就绪后保存左侧起点，转满半圈才接受新目标。 */
-static void Begin_Target_Test(void)
+static void Begin_Target_Test_At(uint32_t initial_ms)
 {
-    Reset();
+    Reset_At(initial_ms);
     Start_Automatic();
     Wait_For_Count(&turn_count, 1U);
     assert(last_turn_direction == 1 && last_turn_angle == 180.0f);
@@ -393,6 +395,8 @@ static void Begin_Target_Test(void)
     Steps(4U);
     assert(turn_count == 1U && !velocity_requests && !sent_count && enabled);
 }
+
+static void Begin_Target_Test(void) { Begin_Target_Test_At(100U); }
 
 /* 正常无目标周期帧保持会话，但底盘不持续原地旋转。 */
 static void Test_Wait_After_Search_Turn(void)
@@ -485,7 +489,8 @@ static void Test_Approach_Brakes_And_Verifies(void)
     assert(stops == 2U && sent_count == 0U);
 
     assert(sent_count == 0U);
-    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5100, 7400);
+    /* 已入窗后，新图像轻微抖出单侧边缘，仍可确认而不反复启停。 */
+    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5110, 7400);
     Wait_For_Count(&sent_count, 1U);
     Check_Sent(0U, JETSON_CAN_POINT_REACHED_ID, 1U);
 }
@@ -998,6 +1003,27 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
     assert(distance_count == 1U && turn_count == 2U);
 }
 
+static void Test_Return_Recovers_Small_Error(void)
+{
+    Prepare_ROI(1U, 73U);
+    Begin_Return_From_ROI(1U, 73U);
+    Receive_Turn(1U, 73U);
+    Steps(4U);
+    Stop_At_Return_Origin();
+    const unsigned before = return_commands;
+    odom.x_m += 0.025;
+    Steps(2U);
+    assert(enabled && !disables && return_commands == before && sent_count == 2U);
+
+    stopped = 1U;
+    Wait_For_Count(&return_commands, before + 1U);
+    assert(last_vx < 0.0f);
+    Stop_At_Return_Origin();
+    Wait_For_Count(&sent_count, 3U);
+    Check_Sent(2U, JETSON_CAN_TURN_COMPLETED_ID, 73U);
+    assert(enabled && !disables);
+}
+
 static void Test_Return_Distance_Fence(void)
 {
     Prepare_ROI(1U, 73U);
@@ -1052,14 +1078,13 @@ static void Test_Consecutive_Transports(void)
  */
 static void Prepare_Turn_Wait(uint32_t token, uint8_t wrap)
 {
-    Prepare_ROI(2U, token);
+    Begin_Target_Test_At(wrap ? UINT32_MAX - 3250U : 100U);
+    Prepare_ROI_From_Target(2U, token);
     Begin_Return_From_ROI(2U, token);
     Stop_At_Return_Origin();
 
     stopped = 1U;
     tx_ready = 0U;
-    if (wrap)
-        test_tick = UINT32_MAX - 3200U;
     Step();
     assert(sent_count == 2U);
 }
@@ -1610,6 +1635,7 @@ int main(void)
     Test_Transport(1U, 123U, 10U);
     Test_Transport(1U, 123U, 11U);
     Test_Transport(1U, 123U, 12U);
+    Test_Return_Recovers_Small_Error();
     Test_Return_Distance_Fence();
     Test_Distance_Stream_Loss();
     Test_Request_Deadline();

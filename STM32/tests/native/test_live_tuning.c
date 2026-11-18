@@ -89,6 +89,7 @@ void Chassis_Stop(void)
     memset(last_velocity, 0, sizeof(last_velocity));
     memset(chassis_motor_target, 0, sizeof(chassis_motor_target));
 }
+void Chassis_Hold(void) { Chassis_Stop(); }
 void Chassis_Disable(void)
 {
     ++disable_calls;
@@ -308,6 +309,8 @@ static void test_disconnect_and_stop_deadline(void)
     start_move(0.25f, 0.0f, 100U);
     loop(100U, 1U);
     loop(500U, 1U);
+    assert(tuning_error == 0U && disable_calls == 0U);
+    loop(TUNING_RETURN_SETTLE_MS - 500U, 1U);
     assert(tuning_error == 8U && disable_calls == 1U);
     loop(500U, 1U);
     assert(tuning_phase == TUNING_FAULT);
@@ -685,7 +688,7 @@ static void test_odometry_faults_and_deadline(void)
         start_odometry(TUNING_ODOM_DISTANCE, 1, .10f, .05f, 1000U);
         if (fault == 0U) stopped = 1U; /* 提前停稳，不得冒充到位。 */
         if (fault == 1U) odom.valid = 0U;
-        if (fault == 2U) set_progress(.11f);
+        if (fault == 2U) set_progress(.12f);
         if (fault == 3U) enabled = 0U;
         if (fault == 4U) imu_age = 21U;
         if (fault == 5U) motors_ready = 0U;

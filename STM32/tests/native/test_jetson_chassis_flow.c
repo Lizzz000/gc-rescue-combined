@@ -441,7 +441,11 @@ static void Flow_Visual_Recheck(void)
     const unsigned moves = velocity_requests;
     Steps(4U);
     assert(enabled && !stopped && !sent_count && velocity_requests == moves);
+    motion_ready = 0U;
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5101, 7500);
+    Step();
+    assert(!stopped && !sent_count && velocity_requests == moves);
+    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5121, 7500);
     Step();
     assert(!stopped && !sent_count && velocity_requests == moves + 1U);
     Flow_Arrive(JETSON_CAN_TARGET_CENTER_ID, JETSON_CAN_ARRIVAL_ID);

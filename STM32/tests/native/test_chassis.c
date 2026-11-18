@@ -818,8 +818,8 @@ static void test_distance_feedback_tick_race(void)
     confirm_stopped();
 }
 
-/** @brief 定距零目标后仍有滑行，越出容差必须故障，随后静止反馈不能补成成功。 */
-static void test_distance_coast_after_zero(void)
+/** @brief 定距减速后的短暂回退可在容差内接续，大幅滑行仍触发保护。 */
+static void test_distance_coast_after_zero(uint8_t small_rollback)
 {
     reset_case(0U,0U);
     assert(enable_ready());
@@ -835,8 +835,17 @@ static void test_distance_coast_after_zero(void)
     }
     assert(frame < 1000U && !Chassis_Is_Stopped());
     float feedback[3];
-    Motor_Chassis_Inverse(0.4f,0.0f,0.0f,feedback);
+    Motor_Chassis_Inverse(small_rollback ? -0.2f : 0.4f, 0.0f, 0.0f, feedback);
     for (unsigned i = 0U; i < 3U; ++i) feedback[i] = -feedback[i];
+    if (small_rollback)
+    {
+        for (unsigned i = 0U; i < 3U; ++i)
+            feedback_step(10000U, feedback);
+        confirm_stopped();
+        assert(Chassis_Is_Enabled() && disables == 0U);
+        assert(Chassis_Turn_Start(1, 90.0f));
+        return;
+    }
     for (unsigned i = 0U; i < 8U; ++i)
     {
         feedback_step(10000U,feedback);
@@ -1449,6 +1458,15 @@ static void test_turn_braking_and_fine(void)
         }
         near(body[2], direction * -0.12471976f);
         assert(!Chassis_Is_Stopped() && disables == 0U && aborts == 0U);
+
+        yaw_deg = direction * 179.5f;
+        plant_step(10000U, 1.0f, NULL, NULL);
+        yaw_deg = direction * 177.5f;
+        for (unsigned i = 0U; i < 4U; ++i)
+            plant_step(10000U, 1.0f, NULL, NULL);
+        body_target(body);
+        near(body[2], 0.0f);
+        assert(Chassis_Motion_Ready() && disables == 0U);
     }
 }
 
@@ -1906,7 +1924,8 @@ int main(void)
     test_distance_no_progress();
     test_distance_feedback_faults();
     test_distance_feedback_tick_race();
-    test_distance_coast_after_zero();
+    test_distance_coast_after_zero(1U);
+    test_distance_coast_after_zero(0U);
     test_distance_total_timeout();
     test_distance_stop_deadline(0U);
     test_distance_stop_deadline(1U);

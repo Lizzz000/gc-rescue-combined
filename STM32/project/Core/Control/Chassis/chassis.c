@@ -78,6 +78,7 @@ static float turn_requested_deg, turn_accumulated_deg, turn_last_yaw_deg;
 static float turn_speed;
 static uint8_t distance_turn_blend;
 static int8_t turn_direction;
+static uint8_t turn_in_window;
 static uint32_t turn_started_ms;
 
 static uint8_t Send_Chassis_Targets(float vx, float vy, float wz);
@@ -327,6 +328,7 @@ void Chassis_Stop(void)
     mode = IDLE;
     target_speed = ramp_speed = 0.0f;
     turn_speed = 0.0f;
+    turn_in_window = 0U;
     distance_turn_blend = 0U;
     distance_completion_pending = 0U;
     vector_hold_yaw = 0U;
@@ -583,9 +585,8 @@ static void Service_Distance(float dt, uint32_t now_ms)
     const double remaining = distance_goal_m - Distance_Progress();
     if (remaining <= CHASSIS_DISTANCE_STOP_REMAINING_M)
     {
-        Chassis_Stop();
+        Chassis_Hold();
         distance_completion_pending = 1U;
-        distance_stop_ms = now_ms;
         return;
     }
     const float braking_speed = sqrtf(2.0f * CHASSIS_DISTANCE_ACCELERATION_MPS2 * (float)remaining);
@@ -645,7 +646,7 @@ static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw, floa
         Chassis_Stop();
         return 1U;
     }
-    if ((mode == HOLDING && !Chassis_Motors_Ready()) ||
+    if ((mode == HOLDING && (distance_completion_pending || !Chassis_Motors_Ready())) ||
         ((mode == VELOCITY || mode == HOLDING) ? !Read_IMU(&imu) : !Motion_Ready(&imu)))
         return 0U;
     if (mode == HOLDING)
@@ -791,14 +792,16 @@ static float Service_Turn(const INS_control_data_t *imu, float dt)
                                     (float)(fabs(remaining) * CHASSIS_TURN_DEG_TO_RAD));
         wz = copysignf(fminf(CHASSIS_TURN_OUTPUT_LIMIT, braking_speed), (float)remaining);
     }
-    /* 小转角也要产生实测进展；正常到角只收回指令，不等实际角速度回零。 */
-    const uint8_t at_target = fabs(remaining) <=
+    /* 入窗后用稍宽的退出门槛，防止减速时在边缘反复恢复转向。小转角仍须产生实测进展。 */
+    const float window = turn_in_window ?
+        fminf(CHASSIS_TURN_ANGLE_EXIT_DEG, fabsf(turn_requested_deg) * 0.75f) :
         fminf(CHASSIS_TURN_ANGLE_TOLERANCE_DEG, fabsf(turn_requested_deg) * 0.5f);
-    if (at_target)
+    turn_in_window = fabs(remaining) <= window;
+    if (turn_in_window)
         wz = 0.0f;
     float speed_step = CHASSIS_TURN_ACCEL_RAD_S2 * dt;
     turn_speed += fmaxf(-speed_step, fminf(speed_step, wz - turn_speed));
-    if (at_target && turn_speed == 0.0f)
+    if (turn_in_window && turn_speed == 0.0f)
     {
         Chassis_Stop();
         return 0.0f;
@@ -813,10 +816,10 @@ void Chassis_Loop(void)
 {
     const TickType_t now_tick = xTaskGetTickCount();
     const uint32_t now_ms = (uint32_t)now_tick;
-    if (distance_completion_pending &&
+    if (mode == IDLE && distance_completion_pending &&
         (uint32_t)(now_ms - distance_stop_ms) >= TIMED_BRAKE_LIMIT_MS && !Chassis_Is_Stopped())
         Chassis_Disable();
-    if (mode == DISTANCE && run_started &&
+    if ((mode == DISTANCE || (mode == HOLDING && distance_completion_pending)) && run_started &&
         (uint32_t)(now_ms - run_started_ms) >= distance_timeout_ms)
         Begin_Fault_Stop(now_ms);
     if (mode == TRANSLATION && run_started && run_duration_ms != 0U &&
@@ -960,7 +963,12 @@ void Chassis_Loop(void)
         vy = velocity_profile.output[1];
         wz = velocity_profile.output[2];
         if (holding && vx == 0.0f && vy == 0.0f && wz == 0.0f)
+        {
+            const uint8_t completing_distance = distance_completion_pending;
             Chassis_Stop();
+            distance_completion_pending = completing_distance;
+            distance_stop_ms = now_ms;
+        }
     }
     else if (mode == TURN)
         wz = Service_Turn(&imu, dt);

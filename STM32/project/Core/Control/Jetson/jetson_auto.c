@@ -29,7 +29,7 @@ typedef struct
     uint8_t verify_pair;     /**< 发出零速后使用两个新中心核验安全区。 */
 } Image_Window_t;
 
-typedef enum { VISION_FOLLOW, VISION_VERIFY } Vision_Phase_t;
+typedef enum { VISION_FOLLOW, VISION_VERIFY, VISION_REACQUIRE } Vision_Phase_t;
 
 typedef struct
 {
@@ -86,7 +86,8 @@ static const Point_Plan_Config_t return_config = {
 static Chassis_Odometry_t start_pose;
 static Chassis_Odometry_t alignment_origin;
 static Point_Plan_t return_plan;
-static uint8_t start_side, delivery_side;
+static uint8_t start_side, delivery_side, return_corrected;
+static uint32_t return_started_ms;
 #endif
 static uint8_t center_source_valid;
 static uint32_t center_source_boundary;
@@ -291,13 +292,9 @@ static void Navigate(float vx, float vy, float wz, uint32_t now_ms)
  */
 static void Approach_Lost_Center(uint32_t now_ms, uint8_t holding)
 {
-    vision = (Vision_Approach_t){0};
-    if (navigating || holding)
-    {
-        Chassis_Stop();
-        navigating = 0U;
-        navigation_zero_ms = now_ms;
-    }
+    const uint8_t slowing = navigating || holding;
+    Hold_Navigation(now_ms);
+    vision = (Vision_Approach_t){.phase = slowing ? VISION_REACQUIRE : VISION_FOLLOW};
 #if JETSON_AUTO_CHASSIS_TEST
     /* 单趟诊断有固定失去中心时限。正式搬运的安全区对准受独立总时限约束。 */
     if (!safety_lost)
@@ -377,7 +374,7 @@ static uint8_t Approach(const Visual_Observation_t *center, const Image_Window_t
         Halt(now_ms);
         return 0U;
     }
-    if (holding && vision.phase != VISION_VERIFY)
+    if (holding && vision.phase == VISION_FOLLOW)
         return 0U;
     const uint8_t fresh = Visual_Observation_Is_New(center, center_boundary, center_source_valid,
         center_source_boundary, now_ms, JETSON_AUTO_CENTER_TIMEOUT_MS);
@@ -410,7 +407,10 @@ static uint8_t Approach(const Visual_Observation_t *center, const Image_Window_t
 
     if (vision.phase == VISION_VERIFY)
     {
-        if (holding && inside)
+        /* 夹取目标已入窗后，允许复核时的轻微像素抖动；安全区仍用标定窗口和双帧。 */
+        const uint8_t verified_inside = inside ||
+            (!window->verify_pair && fabsf(raw_x_error) <= 1.2f * x_tol && fabsf(raw_y_error) <= 1.2f * y_tol);
+        if (holding && verified_inside)
         {
             /* 滑行时收到的入窗样本不能用于到位确认。窗外新目标可直接重定向斜坡。 */
             vision.previous.valid = 0U;
@@ -433,7 +433,7 @@ static uint8_t Approach(const Visual_Observation_t *center, const Image_Window_t
             /* 再对准时以当前点初始化滤波，停车核验样本不参与速度和积分。 */
             vision.previous.valid = 0U;
         }
-        if (inside)
+        if (verified_inside)
             return 1U;
         vision.phase = VISION_FOLLOW;
     }
@@ -555,13 +555,15 @@ static void Start_Return(uint32_t now_ms)
         Halt(now_ms);
         return;
     }
+    return_started_ms = now_ms;
+    return_corrected = 0U;
     Enter(RETURN_TO_START, now_ms);
 }
 
 static void Service_Return(uint32_t now_ms)
 {
     Chassis_Odometry_t pose;
-    if ((uint32_t)(now_ms - stage_started_ms) >= JETSON_AUTO_RETURN_TIMEOUT_MS ||
+    if ((uint32_t)(now_ms - return_started_ms) >= JETSON_AUTO_RETURN_TIMEOUT_MS ||
         !Chassis_Get_Odometry(&pose) ||
         hypot(pose.x_m - return_plan.start[0], pose.y_m - return_plan.start[1]) > JETSON_AUTO_RETURN_MAX_M)
     {
@@ -620,6 +622,41 @@ static void Begin_Request(uint16_t id, Auto_Stage_t next, uint32_t now_ms)
         request.request_id = next_request_id;
     }
 }
+
+#if JETSON_AUTO_ENABLED
+static void Verify_Return(uint32_t now_ms)
+{
+    Chassis_Odometry_t pose;
+    if ((uint32_t)(now_ms - return_started_ms) >= JETSON_AUTO_RETURN_TIMEOUT_MS ||
+        (uint32_t)(now_ms - stage_started_ms) >= JETSON_AUTO_HOLD_TIMEOUT_MS ||
+        !Chassis_Get_Odometry(&pose) ||
+        hypot(pose.x_m - return_plan.start[0], pose.y_m - return_plan.start[1]) > JETSON_AUTO_RETURN_MAX_M)
+    {
+        Halt(now_ms);
+        return;
+    }
+    if (!Chassis_Motion_Ready())
+        return;
+
+    const double error_m = hypot(pose.x_m - start_pose.x_m, pose.y_m - start_pose.y_m);
+    const float error_rad = fabsf(remainderf(pose.yaw_rad - start_pose.yaw_rad, 6.28318530718f));
+    if (error_m > JETSON_AUTO_RETURN_MAX_M ||
+        error_m > CHASSIS_RETURN_CORRECTION_MAX_M || error_rad > CHASSIS_RETURN_CORRECTION_MAX_RAD)
+        Halt(now_ms);
+    else if (error_m <= CHASSIS_RETURN_POSITION_TOLERANCE_M && error_rad <= CHASSIS_RETURN_YAW_TOLERANCE_RAD)
+        Begin_Request(JETSON_CAN_TURN_COMPLETED_ID, WAIT_TURN_ACK, now_ms);
+    else if (Chassis_Is_Stopped())
+    {
+        if (return_corrected)
+            Halt(now_ms);
+        else
+        {
+            return_corrected = 1U;
+            Enter(RETURN_TO_START, now_ms);
+        }
+    }
+}
+#endif
 
 /** @brief 创建类型 21 动作请求，命令 5 只受理，类型 9 才报告完成。
  * @param[in] point 启动查询、抓取、释放或拒绝后张开。
@@ -830,17 +867,7 @@ static void Service_Stage(const Jetson_CAN_Data_t *data, uint32_t now_ms)
         Service_Return(now_ms);
         break;
     case VERIFY_RETURN_POSE:
-        if (Chassis_Motion_Ready())
-        {
-            Chassis_Odometry_t pose;
-            if (!Chassis_Get_Odometry(&pose) || hypot(pose.x_m - start_pose.x_m, pose.y_m - start_pose.y_m) > 0.02 ||
-                fabsf(remainderf(pose.yaw_rad - start_pose.yaw_rad, 6.28318530718f)) > 0.174532925f)
-                Halt(now_ms);
-            else
-                Begin_Request(JETSON_CAN_TURN_COMPLETED_ID, WAIT_TURN_ACK, now_ms);
-        }
-        else if ((uint32_t)(now_ms - stage_started_ms) >= JETSON_AUTO_HOLD_TIMEOUT_MS)
-            Halt(now_ms);
+        Verify_Return(now_ms);
         break;
 #endif
     case WAIT_TURN_ACK:

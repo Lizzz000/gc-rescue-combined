@@ -23,8 +23,8 @@ uint8_t Chassis_Set_Test_Rotation(float wz);
 #define CHASSIS_DISTANCE_ACCELERATION_MPS2 0.75f
 /* 反馈定距的初始控制参数；容差是软件到位判据，实际精度须实车标定。 */
 #define CHASSIS_DISTANCE_MIN_M 0.010f
-#define CHASSIS_DISTANCE_TOLERANCE_M 0.003f
-/* 在验收容差内侧请求停车，给轮速量化和停车小回退保留余量；验收仍为 3 mm。 */
+#define CHASSIS_DISTANCE_TOLERANCE_M 0.010f
+/* 在验收容差内侧请求停车，给轮速量化与停车滑行保留余量。 */
 #define CHASSIS_DISTANCE_STOP_REMAINING_M 0.0015f
 /* 末段接近速度克服低速死区，仍不得超过用户限速和剩余距离制动上限。 */
 #define CHASSIS_DISTANCE_APPROACH_SPEED_MPS 0.010f
@@ -58,6 +58,12 @@ uint8_t Chassis_Set_Test_Rotation(float wz);
 #define CHASSIS_TURN_ACCEL_RAD_S2 4.0f
 #define CHASSIS_TURN_FINE_ANGLE_DEG 5.0f
 #define CHASSIS_TURN_ANGLE_TOLERANCE_DEG 2.0f
+#define CHASSIS_TURN_ANGLE_EXIT_DEG 3.0f
+/* 返航正常交接窗口和一次微调的最大误差。 */
+#define CHASSIS_RETURN_POSITION_TOLERANCE_M 0.020
+#define CHASSIS_RETURN_YAW_TOLERANCE_RAD 0.174532925f
+#define CHASSIS_RETURN_CORRECTION_MAX_M 0.050
+#define CHASSIS_RETURN_CORRECTION_MAX_RAD 0.261799388f
 #define CHASSIS_TURN_TIMEOUT_MS 15000U
 
 /* 数值与旧车 chassis_translation.h 一致，斜向合速度与正向相同。 */
@@ -199,7 +205,7 @@ uint8_t Chassis_Translation_Start(Chassis_Translation_Direction_t direction,
  *       转向剩余角不超过 5 度时也接受定距衔接，保留原转向终点航向，边走边修偏，
  *       不等待原地精修或停车确认；角速度按转向斜坡接入直行 PID。
  *       其他情况仍须从停车待命启动。进度取轮编码器里程计在锁定方向的有符号投影，
- *       剩余 1.5 mm 时请求停车，零目标提交且在 3 mm 容差内即可衔接；
+ *       剩余 1.5 mm 时进入减速，零目标提交且在 10 mm 交接容差内即可衔接；
  *       末段接近速度仍受请求限速与制动距离约束；断流、过冲、无进展或总超时制动后失能。
  *       轮速里程不能排除打滑，也不提供横向路径闭环，实际距离须实测标定。
  */

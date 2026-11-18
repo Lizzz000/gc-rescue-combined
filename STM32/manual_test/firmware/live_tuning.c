@@ -31,7 +31,7 @@ static float spin_requested_wz;
 static unsigned spin_stage;
 static unsigned spin_turns;
 
-typedef enum { INACTIVE, PREPARE, RUN, STATIC_SETTLE, RETURN_SETTLE, HOLD,
+typedef enum { INACTIVE, PREPARE, RUN, STATIC_SETTLE, RETURN_SETTLE, TIMED_SETTLE, HOLD,
                BRAKE, WAIT_DISABLED, READ_PARAMETER } Work_State;
 static Work_State work;
 static uint32_t last_heartbeat, heartbeat_ms, stage_ms, motion_ms, motion_duration_ms;
@@ -290,7 +290,7 @@ static void Service_Return(uint32_t now_ms, const Chassis_Odometry_t *data)
     }
     if (output.arrived)
     {
-        Chassis_Stop();
+        Chassis_Hold();
         work = RETURN_SETTLE;
         tuning_phase = TUNING_BRAKING;
         stage_ms = now_ms;
@@ -346,7 +346,7 @@ static void Service_Visual(uint32_t now_ms, const Chassis_Odometry_t *data)
             if (visual_filter.accepted_mask == 3U && fabsf(raw[0] - goal[0]) <= tolerance[0] &&
                 fabsf(raw[1] - goal[1]) <= tolerance[1])
             {
-                Chassis_Stop();
+                Chassis_Hold();
                 work = RETURN_SETTLE;
                 tuning_phase = TUNING_BRAKING;
                 stage_ms = now_ms;
@@ -383,7 +383,7 @@ static void Service_Spin(uint32_t now_ms, const Chassis_Odometry_t *data)
     spin_requested_wz = Spin_Test_Speed(spin_observer.yaw_rad, spin_turns, &spin_stage);
     if (spin_requested_wz == 0.0f)
     {
-        Chassis_Stop();
+        Chassis_Hold();
         work = RETURN_SETTLE;
         tuning_phase = TUNING_BRAKING;
         stage_ms = now_ms;
@@ -526,8 +526,8 @@ void Live_Tuning_Loop(void)
         last_heartbeat = tuning_heartbeat;
         heartbeat_ms = now_ms;
     }
-    if ((work == PREPARE || work == RUN || work == STATIC_SETTLE || work == RETURN_SETTLE) &&
-        (uint32_t)(now_ms - heartbeat_ms) >= 300U)
+    if ((work == PREPARE || work == RUN || work == STATIC_SETTLE || work == RETURN_SETTLE ||
+         work == TIMED_SETTLE) && (uint32_t)(now_ms - heartbeat_ms) >= 300U)
         Begin_Brake(now_ms, 5U);
 
     if (active_command == TUNING_SPIN_SWEEP && motion_started &&
@@ -667,9 +667,27 @@ void Live_Tuning_Loop(void)
                 motion_ms = now_ms;
             }
             if (motion_started && (uint32_t)(now_ms - motion_ms) >= motion_duration_ms)
-                Begin_Brake(now_ms, 0U);
+            {
+                Chassis_Hold();
+                work = TIMED_SETTLE;
+                tuning_phase = TUNING_BRAKING;
+                stage_ms = now_ms;
+            }
             else if (!motion_started && (uint32_t)(now_ms - stage_ms) >= 100U)
                 Begin_Brake(now_ms, 4U);
+        }
+    }
+    else if (work == TIMED_SETTLE)
+    {
+        INS_control_data_t imu;
+        if (!Chassis_Is_Enabled() || !Chassis_Motors_Ready() || !Fresh_IMU(now_ms, &imu))
+            Begin_Brake(now_ms, 4U);
+        else if (Chassis_Is_Stopped())
+            Request_Disable(now_ms);
+        else if ((uint32_t)(now_ms - stage_ms) >= TUNING_RETURN_SETTLE_MS)
+        {
+            tuning_error = 8U;
+            Request_Disable(now_ms);
         }
     }
     else if (work == STATIC_SETTLE)
@@ -707,12 +725,12 @@ void Live_Tuning_Loop(void)
         else if (!Chassis_Get_Odometry(&data) || !Return_Fence(&data) ||
                  (active_command == TUNING_SPIN_SWEEP && hypot(data.x_m-origin_x, data.y_m-origin_y) > .35))
             Begin_Brake(now_ms, TUNING_ERROR_ODOMETRY);
-        else if (work == RETURN_SETTLE)
+        else if (work == RETURN_SETTLE && Chassis_Is_Stopped())
         {
-            if (!Return_At_Goal(&data))
-                Begin_Brake(now_ms, TUNING_ERROR_ODOMETRY);
-            else if (Chassis_Is_Stopped())
+            if (Return_At_Goal(&data))
                 Complete_Odometry(now_ms);
+            else
+                Begin_Brake(now_ms, TUNING_ERROR_ODOMETRY);
         }
         /* HOLD始终留在零目标IDLE；不自动纠偏、不因主机结束而重新启动。 */
     }

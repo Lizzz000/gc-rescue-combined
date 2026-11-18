@@ -436,6 +436,37 @@ static void Assert_Braking(uint8_t detail)
     assert(!enabled && disables == 1U && report.state == MANUAL_DISARMED);
 }
 
+static void Test_Return_Recovers_Small_Error(void)
+{
+    Reset(100U);
+    Begin_Return();
+    position.x_m = 0.0;
+    Send(KEEPALIVE, NULL, 0U);
+    Step(100U);
+    assert(report.state == SETTLING);
+
+    position.x_m = 0.025;
+    stopped = 0U;
+    Send(KEEPALIVE, NULL, 0U);
+    Step(100U);
+    assert(report.state == SETTLING && return_vectors == 1U);
+
+    stopped = 1U;
+    Send(KEEPALIVE, NULL, 0U);
+    Step(100U);
+    Send(KEEPALIVE, NULL, 0U);
+    Step(100U);
+    assert(report.state == RETURNING && return_vectors > 1U && last_vx < 0.0f);
+
+    position.x_m = 0.0;
+    Send(KEEPALIVE, NULL, 0U);
+    Step(100U);
+    Send(KEEPALIVE, NULL, 0U);
+    Step(100U);
+    assert(report.state == MANUAL_READY && report.result == DONE && report.id == 3U);
+    assert(enabled && disables == 0U);
+}
+
 static void Test_Return_Protection(void)
 {
     Reset(UINT32_MAX - 450U);
@@ -603,6 +634,7 @@ int main(void)
     Test_Manual_Frames_And_Stop();
     Test_Buffered_Rx_Time();
     Test_Origin_And_Return();
+    Test_Return_Recovers_Small_Error();
     Test_Return_Protection();
     Test_Return_Speed();
     Test_Full_Speed_Diagonal_Return();
