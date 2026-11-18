@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "stm32f4xx_hal.h"
+#include "jetson_link.h"
 
 /* 只替代硬件寄存器和 HAL 调用；下方直接编译真实 USB 回调、任务和协议解析路径。 */
 #define JETSON_AUTO_ENABLED 1
@@ -89,7 +90,7 @@ static uint32_t Test_Rx_Count(PCD_HandleTypeDef *pcd, uint8_t ep)
 #define HAL_PCD_DevDisconnect(...) Test_Hal_Ok(0U, __VA_ARGS__)
 #define HAL_PCD_DevConnect(...) Test_Hal_Ok(0U, __VA_ARGS__)
 
-#include "../../project/Core/Communication/Jetson/usb_link.c"
+#include "../../project/Core/Communication/Common/usb_link.c"
 
 uint32_t test_tick;
 static unsigned critical_depth, critical_entries;

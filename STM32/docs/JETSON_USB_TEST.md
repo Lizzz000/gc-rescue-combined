@@ -10,7 +10,7 @@
 
 CAN1 只收发达妙电机。反馈要求 DLC=8，帧内电机 ID 为 1、2、3。板间帧不进 CAN FIFO。
 
-`test_task` 每 5 ms 处理一次链路快照，底盘每 10 ms 更新三轮 MIT。[标定头文件](../project/Core/Control/Jetson/jetson_auto_config.h)中的 `JETSON_AUTO_ENABLED` 选择两种模式，修改后重新编译。
+`test_task` 每 5 ms 处理一次链路快照，底盘每 10 ms 更新三轮 MIT。用 `JETSON_AUTO_ENABLED` 和 `JETSON_AUTO_CHASSIS_TEST` 选择模式后重新编译。两个宏默认均为 0，可在公共模式头中修改或通过 `CMAKE_C_FLAGS` 传入。CMake 只编入所选的手动或自动控制器与业务协议，USB 和 USART6 共用帧格式。[模式定义](../project/Core/Control/Chassis/chassis_mode.h) · [自动标定参数](../project/Core/Control/Jetson/jetson_auto_config.h)
 
 - `0` 为默认的手动模式，不运行自动流程；CMSIS-DAP 可读取坐标。类型 2 畸形时立即撤销上一条速度。
 - `1` 为上电自动搬运。板间类型 1 已移除。先收到当前 USB 会话中的合法类型 3/4 周期帧，再通过类型 21 查询夹爪张开结果；匹配的类型 7 受理和类型 9 成功结果收齐、通信仍有效时，才使能并检查三轮反馈、姿态和起点位姿。移动由视觉中心和本地动作流程控制，夹爪由 Jetson 驱动。

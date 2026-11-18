@@ -11,7 +11,7 @@
  */
 #include "INS_task.h"
 #include "AHRS.h"
-#include "heading_eskf.h"
+#include "heading_yaw_guard.h"
 #include "pid.h"
 #include "bsp_imu_pwm.h"
 #include "vofa.h"

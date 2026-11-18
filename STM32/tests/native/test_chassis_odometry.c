@@ -312,6 +312,84 @@ static void test_position_invalid_gap_and_source_change(void)
     near(state.data.y_m,before.y_m,0); /* 输入源切换只建新基线。 */
 }
 
+/* 车体速度 (vx,vy)=(.11,-.06)*w，因而即使角速度换向，世界系轨迹也有解析解。 */
+static double reference_yaw(double t, int reversing)
+{
+    return 3.05 + (reversing ? .5*t + .8*sin(1.8*t) : 2.*t);
+}
+
+static double reference_rate(double t, int reversing)
+{
+    return reversing ? .5 + 1.44*cos(1.8*t) : 2.;
+}
+
+static void test_delayed_feedback_arc(int reversing)
+{
+    /* 每行对应连续控制拍。三轮最早/最晚时刻及其对应的轮均会改变。 */
+    static const unsigned wheel_age_ms[][3] = {{2,4,6}, {5,1,3}, {6,7,3}};
+    static const double initial_shaft[3] = {12.49,-12.49,0.3};
+    /* 后、右前、左前轮接地点切线，独立于生产代码的正逆解。 */
+    const double tangent[3][2] = {{0,-1},{sqrt(3.)/2.,.5},{-sqrt(3.)/2.,.5}};
+    const double vx_per_w = .11, vy_per_w = -.06;
+    const double origin_yaw = reference_yaw(-.002, reversing); /* 首组最晚样本。 */
+    Odometry_State_t state;
+    Odometry_Init(&state);
+    double worst_heading_rad = 0., worst_xy_m = 0.;
+    for (unsigned n = 0U; n <= 600U; ++n)
+    {
+        const double control_s = .01*n;
+        const unsigned *age = wheel_age_ms[n % 3U];
+        const uint32_t imu_age_ms = 8U + 10U*(n % 2U); /* 同一帧在奇数拍再次出现。 */
+        const double imu_s = control_s - .001*imu_age_ms;
+        Odometry_Feedback_Timing_t timing;
+        timing.control_time_ms = UINT32_MAX - 4U + 10U*n;
+        timing.imu_time_ms = timing.control_time_ms - imu_age_ms;
+        float positions[3], speeds[3];
+        unsigned oldest_ms = 0U;
+        for (unsigned i = 0U; i < 3U; ++i)
+        {
+            const double wheel_s = control_s - .001*age[i];
+            const double shaft_per_yaw =
+                (tangent[i][0]*vx_per_w + tangent[i][1]*vy_per_w + .0982)/.035;
+            const double delta_yaw = reference_yaw(wheel_s, reversing) - reference_yaw(0., reversing);
+            positions[i] = (float)remainder(initial_shaft[i] + shaft_per_yaw*delta_yaw, 25.);
+            speeds[i] = (float)(shaft_per_yaw*reference_rate(wheel_s, reversing));
+            timing.wheel_time_ms[i] = timing.control_time_ms - age[i];
+            if (age[i] > oldest_ms)
+                oldest_ms = age[i];
+        }
+        /* TIM2 和 RTOS 分别回绕，两者的原点和单位也不同。 */
+        const uint32_t now_us = UINT32_MAX - 32000U + 10000U*n;
+        assert(Odometry_Update_Feedback(&state, positions, speeds, &timing,
+                                        (float)remainder(reference_yaw(imu_s, reversing), 2.*TEST_PI),
+                                        (float)reference_rate(imu_s, reversing), now_us, n % 2U == 0U));
+        assert(state.data.valid && state.data.sample_time_us == now_us);
+        assert(isfinite(state.data.yaw_rad) && isfinite(state.data.x_m) && isfinite(state.data.y_m));
+        if (n % 2U != 0U)
+            assert(state.heading.yaw_gain == 0.f);
+        const double heading_error =
+            fabs(remainder(state.data.yaw_rad - reference_yaw(control_s, reversing), 2.*TEST_PI));
+        worst_heading_rad = fmax(worst_heading_rad, heading_error);
+        if (n == 0U)
+        {
+            near(state.data.x_m, 0., 0.);
+            near(state.data.y_m, 0., 0.);
+            continue;
+        }
+        /* 位置对应三轮都已覆盖的最早时刻；航向对应本次控制拍。 */
+        const double common_yaw = reference_yaw(control_s - .001*oldest_ms, reversing);
+        const double dsin = sin(common_yaw) - sin(origin_yaw);
+        const double dcos = cos(common_yaw) - cos(origin_yaw);
+        const double x = vx_per_w*dsin + vy_per_w*dcos;
+        const double y = -vx_per_w*dcos + vy_per_w*dsin;
+        worst_xy_m = fmax(worst_xy_m, hypot(state.data.x_m - x, state.data.y_m - y));
+    }
+    printf("delayed feedback (%s): max heading %.6f rad, max position %.6f m\n",
+           reversing ? "reversing" : "constant rate", worst_heading_rad, worst_xy_m);
+    assert(worst_heading_rad < (reversing ? .007 : .0002));
+    assert(worst_xy_m < (reversing ? .0015 : .00005));
+}
+
 int main(void)
 {
     test_eight_directions();
@@ -322,6 +400,8 @@ int main(void)
     test_small_angle_and_invalidate();
     test_position_geometry_and_wrap();
     test_position_invalid_gap_and_source_change();
+    test_delayed_feedback_arc(0);
+    test_delayed_feedback_arc(1);
     puts("PASS odometry: measured wheels, IMU heading, eight directions, arcs, timing, invalid data and recovery");
     return 0;
 }

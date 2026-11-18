@@ -35,6 +35,8 @@ int main() {
         executable = Path(temporary) / 'budget.exe'
         subprocess.run([compiler, '-std=c++17', '-Wall', '-Wextra', '-Werror',
                         '-I' + str(root / 'STM32/project/Core/Control/Jetson'),
+                        '-I' + str(root / 'STM32/project/Core/Control/Chassis'),
+                        '-I' + str(root / 'STM32/project/Core/Control/Vision'),
                         '-I' + str(root / 'Jetson/src/bridge_pkg'),
                         str(source), '-o', str(executable)], check=True)
         subprocess.run([str(executable)], check=True)

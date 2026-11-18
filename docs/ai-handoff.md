@@ -2,6 +2,14 @@
 
 更新于 2026-11-18。先读根目录的 [AGENTS.md](../AGENTS.md) 和[项目说明](../README.md)，再根据本轮任务核对 Git 状态和实际板端连接。
 
+## 11 月 18 日里程计对时与 STM32 模块拆分
+
+三轮编码器按 CAN 接收时刻插值到共同时间，INS 航向按源帧时间对齐。平移积分使用轮区间起止航向，对外报告的航向对应控制拍。手动、自动分别编入各自的控制器和 USB 协议适配，公共底盘接口只公开位姿和动作。轮角对时、运动学、航向 ESKF、航向跳点检查、SE(2) 积分、视觉跟踪和视觉速度规划都可独立链接。常规主机回归也会执行模块隔离检查。[里程计实现说明](../STM32/docs/ODOMETRY.md) · [构建与模式](../STM32/docs/JETSON_USB_TEST.md) · [模块隔离检查](../STM32/tests/check_module_boundaries.py)
+
+- 主机通过 35 套原生回归、17 种模式组合和 10 个算法模块隔离构建。手动、完整自动搬运和自动单趟底盘测试分别只使用本侧控制器运行。六种 ARM 固件配置编译通过。
+- 离线对照采用带编码器量化的 10 秒解析轨迹。异步采样下，原地往复转向的假平移峰值由 2.8461 mm 降至 0.0104 mm，变速二维平移的位置误差峰值由 1.1149 mm 降至 0.0138 mm。另一组 6 秒变速换向圆弧同时加入轮反馈错相和 IMU 延迟，最大位置误差由 3.093 mm 降至 0.302 mm。位置按轮反馈共同时间对照，航向按控制拍对照。
+- 上述新版尚未烧录或做外部测距。最近一次已记录的板端验证仍是下节中的 USART6 架空换向测试。
+
 ## 11 月 18 日新推送与底盘换段
 
 已合并远端 `be2aa1a` 和本地 `117ef0e`。自动搬运、USB 手动和 USART6 遥控在三轮零目标提交、使能反馈和姿态有效后可接续运动。视觉入窗后，物资用一张新源帧复核，安全区用连续两张新源帧复核。夹爪仍须返回匹配的成功结果。手动建原点、调参静态验收和故障制动继续检查实际停转。[动作与握手](../STM32/docs/JETSON_USB_TEST.md#机械动作与握手)
@@ -30,7 +38,7 @@
 - `Jetson/src/vision_pkg/field` 负责安全区识别。候选搜索和跟踪在 [field.cpp](../Jetson/src/vision_pkg/field/field.cpp)，边线、内沿与投影在 [geometry.cpp](../Jetson/src/vision_pkg/field/opencv/geometry.cpp)，黑带测量在 [score.cpp](../Jetson/src/vision_pkg/field/opencv/score.cpp)。正式观测由 [ros_convert.hpp](../Jetson/src/vision_pkg/node/ros_convert.hpp) 检查后发布。
 - 常规启动读取 [rescue.yaml](../Jetson/src/bringup_pkg/config/rescue.yaml) 和 [rescue_advanced.yaml](../Jetson/src/bringup_pkg/config/rescue_advanced.yaml)。标准场地外框 660 × 360 mm，内框 600 × 300 mm，平面内缩每侧 30 mm。紫围栏高 20 mm，黑带长 300 mm、宽 20 mm、高 20 mm。11 月 16 日实测的 660 × 640 mm 场地使用当时的[独立配置](../Jetson/outputs/field_trial_20261116/FIELD_PARAMETERS.txt)。
 - 板间通信使用 USB CDC。STM32 通过 CAN1 控制电机。载荷和时序以 [USB 协议](../Jetson/docs/usb-protocol.md) 为准，实际双端联调从对应日期的[现场记录](../Jetson/outputs/field_trial_20261116/COMMUNICATION_CHECK_END.txt)接续。
-- 里程计纯计算在 `STM32/project/Core/Algorithm/Chassis/chassis_odometry.*`，反馈快照、定距闭环与故障停车在 [chassis.c](../STM32/project/Core/Control/Chassis/chassis.c)。正式配置默认关闭自动模式，自动距离为 0，Jetson `gripper.move_s` 留空。现场标定与复测历史见[里程计记录](../STM32/docs/ODOMETRY.md)。
+- 里程计组合入口在 [chassis_odometry.c](../STM32/project/Core/Control/Chassis/chassis_odometry.c)，反馈快照、定距闭环与故障停车在 [chassis.c](../STM32/project/Core/Control/Chassis/chassis.c)。正式配置默认关闭自动模式，自动距离为 0，Jetson `gripper.move_s` 留空。现场标定与复测历史见[里程计记录](../STM32/docs/ODOMETRY.md)。
 - 里程计初次接入时，主机回归 27 套、双端协议互验和四种 ARM 配置编译通过，覆盖慢跟随、堵转、到位后滑行与 CAN 拥塞。[当时的验证结果](../STM32/docs/ODOMETRY.md#2026-11-17-主机验证结果)
 
 ## 安全区当前行为和待验证项

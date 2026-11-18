@@ -39,25 +39,21 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Algorithm/AHRS/AHRS.c
     Core/Algorithm/AHRS/MahonyAHRS.c
     Core/Algorithm/PID/pid.c
-    Core/Algorithm/Vision/adaptive_kalman.c
     Core/Algorithm/Chassis/motor_chassis.c
-    Core/Algorithm/Chassis/chassis_odometry.c
+    Core/Control/Chassis/chassis_odometry.c
+    Core/Algorithm/Chassis/wheel_alignment.c
+    Core/Algorithm/Chassis/planar_odometry.c
+    Core/Algorithm/Chassis/heading_yaw_guard.c
     Core/Algorithm/Chassis/heading_eskf.c
-    Core/Algorithm/Vision/visual_servo.c
-    Core/Algorithm/Chassis/point_plan.c
     Core/Bsp/ADC/bsp_adc.c
     Core/Bsp/Buzzer/bsp_buzzer.c
     Core/Bsp/CAN/bsp_can.c
     Core/Bsp/IMU_PWM/bsp_imu_pwm.c
     Core/Bsp/LED/bsp_led.c
     Core/Communication/VOFA/vofa.c
-    Core/Communication/Jetson/jetson_link.c
-    Core/Communication/Jetson/link_frame.c
-    Core/Communication/Jetson/usb_link.c
-    Core/Communication/Manual/manual_link.c
+    Core/Communication/Common/link_frame.c
+    Core/Communication/Common/usb_link.c
     Core/Control/Chassis/chassis.c
-    Core/Control/Jetson/jetson_auto.c
-    Core/Control/Manual/manual_control.c
     Core/Devices/BMI088/BMI088driver.c
     Core/Devices/BMI088/BMI088Middleware.c
     Core/Devices/IST8310/ist8310driver.c
@@ -82,11 +78,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Bsp/IMU_PWM
     Core/Bsp/LED
     Core/Communication/VOFA
-    Core/Communication/Jetson
-    Core/Communication/Manual
+    Core/Communication/Common
     Core/Control/Chassis
-    Core/Control/Jetson
-    Core/Control/Manual
     Core/Devices/BMI088
     Core/Devices/IST8310
     Core/Devices/DM_Motor
@@ -107,6 +100,41 @@ option(UART6_MANUAL_ENABLED "Build dedicated USART6 chassis remote control firmw
 if(UART6_MANUAL_ENABLED)
     target_sources(${CMAKE_PROJECT_NAME} PRIVATE Core/Control/Manual/uart6_manual.c)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE UART6_MANUAL_ENABLED=1)
+endif()
+
+# 直接使用固件的模式宏（包括已有 -DCMAKE_C_FLAGS=-DJETSON_AUTO_...）。
+# 更改模式头或重新配置编译标志时，重新选择对应的控制器与业务协议源文件。
+include(CheckCSourceCompiles)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS Core/Control/Chassis/chassis_mode.h)
+set(CMAKE_REQUIRED_INCLUDES "${CMAKE_CURRENT_SOURCE_DIR}/Core/Control/Chassis")
+set(CMAKE_REQUIRED_QUIET TRUE)
+set(CMAKE_TRY_COMPILE_CONFIGURATION "${CMAKE_BUILD_TYPE}")
+get_target_property(CMAKE_REQUIRED_DEFINITIONS ${CMAKE_PROJECT_NAME} COMPILE_DEFINITIONS)
+list(TRANSFORM CMAKE_REQUIRED_DEFINITIONS PREPEND "-D")
+unset(BUILD_JETSON_CONTROLLER CACHE)
+check_c_source_compiles("#include \"chassis_mode.h\"
+    #if !JETSON_AUTO_CAN_ENABLED
+    #error Manual controller selected
+    #endif
+    int main(void) { return 0; }" BUILD_JETSON_CONTROLLER)
+if(BUILD_JETSON_CONTROLLER)
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE Core/Communication/Jetson/jetson_link.c
+        Core/Communication/Jetson/jetson_usb.c Core/Control/Jetson/jetson_auto.c)
+    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE Core/Communication/Jetson Core/Control/Jetson)
+else()
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE Core/Communication/Manual/manual_link.c
+        Core/Communication/Manual/manual_usb.c Core/Control/Manual/manual_control.c)
+    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE Core/Communication/Manual Core/Control/Manual)
+endif()
+if(BUILD_JETSON_CONTROLLER OR CHASSIS_TUNING_ENABLED)
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+        Core/Control/Vision/tracked_visual_servo.c
+        Core/Algorithm/Vision/adaptive_kalman.c
+        Core/Algorithm/Vision/visual_servo.c)
+    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE Core/Control/Vision)
+endif()
+if(BUILD_JETSON_CONTROLLER OR CHASSIS_TUNING_ENABLED OR UART6_MANUAL_ENABLED)
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE Core/Algorithm/Chassis/point_plan.c)
 endif()
 option(INS_USE_MAGNETOMETER "Use IST8310 for nine-axis Mahony heading" OFF)
 if(INS_USE_MAGNETOMETER)

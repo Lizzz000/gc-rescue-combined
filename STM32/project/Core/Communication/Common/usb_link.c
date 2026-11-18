@@ -1,13 +1,8 @@
 #include "usb_link.h"
 
-#include "jetson_auto_config.h"
-#include "jetson_link.h"
-#include "link_frame.h"
+#include "usb_link_handler.h"
 #include "usb_rx_buffer.h"
 #include "main.h"
-#if !JETSON_AUTO_CAN_ENABLED
-#include "manual_link.h"
-#endif
 
 #include "FreeRTOS.h"
 #include "cmsis_os.h"
@@ -55,9 +50,7 @@ static void link_offline(void)
     link_state.connected = 0U;
     ++link_state.generation;
     UsbRxBuffer_Reset(&rx_buffer);
-#if JETSON_AUTO_CAN_ENABLED
-    Jetson_CAN_Invalidate_Periodic();
-#endif
+    UsbLink_OnDisconnect();
 }
 
 /** @brief 复制 USB 会话快照；参数与任务约束见头文件。 @return 无。 */
@@ -499,7 +492,7 @@ void OTG_FS_IRQHandler(void)
     HAL_PCD_IRQHandler(&hpcd);
 }
 
-int Jetson_Link_Send(uint8_t type, const uint8_t *data, uint8_t length)
+int UsbLink_Send(uint8_t type, const uint8_t *data, uint8_t length)
 {
     if (!link_state.connected || tx_busy)
     {
@@ -554,14 +547,7 @@ void UsbLink_Task(void const *argument)
                 taskEXIT_CRITICAL();
                 continue;
             }
-#if JETSON_AUTO_CAN_ENABLED
-            Jetson_CAN_Receive(frame.type, frame.data, frame.length);
-#else
-            if (frame.type == MANUAL_CAN_VELOCITY_ID)
-            {
-                Manual_CAN_Receive(frame.data, frame.length);
-            }
-#endif
+            UsbLink_OnFrame(&frame);
             taskEXIT_CRITICAL();
         }
         osDelay(1);

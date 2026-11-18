@@ -14,17 +14,6 @@ static volatile uint8_t expected_action_kind;
 static volatile uint32_t expected_action_id;
 
 /**
- * @brief 逐字节读取小端有符号定点值，不依赖结构体对齐或主机字节序。
- * @param[in] data 至少可读 2 字节。
- * @return int16_t 全范围原始值；缩放由使用方按字段单位处理。
- */
-static int16_t Read_Signed(const uint8_t *data)
-{
-    uint16_t bits = (uint16_t)((uint16_t)data[0] | ((uint16_t)data[1] << 8U));
-    return bits <= INT16_MAX ? (int16_t)bits : (int16_t)((int32_t)bits - 65536);
-}
-
-/**
  * @brief 读取运输握手的小端 token，允许全零及全部 32 位有效。
  * @param[in] data 至少可读 4 字节。
  * @return 0..UINT32_MAX 的原始 token，不额外施加非零约束。
@@ -38,21 +27,13 @@ static uint32_t Read_Token(const uint8_t *data)
 /** @brief 校验速度帧格式；约束见头文件。 */
 uint8_t Jetson_CAN_Is_Velocity_Frame(const uint8_t *data, uint8_t len)
 {
-    return data != NULL && len == JETSON_CAN_VELOCITY_DLC && data[0] <= 1U;
+    return Link_Is_Velocity_Frame(data, len);
 }
 
-/** @brief 解码速度帧；格式错误或 valid=0 时输出全零无效帧。 */
+/** @brief 兼容已有速度解码调用。 */
 void Jetson_CAN_Decode_Velocity(const uint8_t *data, uint8_t len, Jetson_CAN_Velocity_Frame_t *frame)
 {
-    *frame = (Jetson_CAN_Velocity_Frame_t){0};
-    if (!Jetson_CAN_Is_Velocity_Frame(data, len) || data[0] != 1U)
-    {
-        return;
-    }
-    frame->valid = 1U;
-    frame->vx = Read_Signed(data + 1U);
-    frame->vy = Read_Signed(data + 3U);
-    frame->wz = Read_Signed(data + 5U);
+    *frame = Link_Decode_Velocity(data, len);
 }
 
 /** @brief 初始化接收快照；调用时机和返回值见头文件。 */
@@ -98,8 +79,8 @@ void Jetson_CAN_Receive(uint16_t type, const uint8_t *data, uint8_t len)
         if (data != NULL && len == 8U && data[0] == 1U)
         {
             center.valid = 1U;
-            center.x = Read_Signed(data + 1U);
-            center.y = Read_Signed(data + 3U);
+            center.x = Link_Read_I16(data + 1U);
+            center.y = Link_Read_I16(data + 3U);
             center.source_frame = (uint32_t)data[5] | ((uint32_t)data[6] << 8U) |
                                   ((uint32_t)data[7] << 16U);
         }

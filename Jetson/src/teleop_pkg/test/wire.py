@@ -135,10 +135,14 @@ def build_replay():
     if not cc or not stm32_available():
         return None
     out = Path(tempfile.mkdtemp(prefix='gc_manual_replay_')) / 'replay'
-    includes = [STM32_STUBS, STM32_CORE / 'Communication/Jetson', STM32_CORE / 'Communication/Manual',
+    includes = [STM32_STUBS, STM32_CORE / 'Communication/Common', STM32_CORE / 'Communication/Manual',
                 STM32_CORE / 'Control/Manual', STM32_CORE / 'Control/Chassis']
     sources = [REPLAY_SOURCE, STM32_CORE / 'Communication/Manual/manual_link.c',
-               STM32_CORE / 'Communication/Jetson/jetson_link.c', STM32_CORE / 'Control/Manual/manual_control.c']
+               STM32_CORE / 'Control/Manual/manual_control.c']
+    if not (STM32_CORE / 'Communication/Common/link_payload.h').is_file():
+        # GC_RESCUE_STM32_ROOT 也支持旧版冻结夹具，当时速度解码器位于 jetson_link.c。
+        includes.append(STM32_CORE / 'Communication/Jetson')
+        sources.append(STM32_CORE / 'Communication/Jetson/jetson_link.c')
     command = [cc, '-std=c11', '-O1', *[f'-I{p}' for p in includes], *map(str, sources), '-lm', '-o', str(out)]
     subprocess.run(command, check=True, capture_output=True, text=True)
     return out

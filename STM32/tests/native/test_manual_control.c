@@ -2,8 +2,8 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
-#include "jetson_link.h"
 #include "manual_link.h"
+#include "usb_link_handler.h"
 #include "manual_control.h"
 #include "chassis.h"
 #include "motor_chassis.h"
@@ -181,13 +181,13 @@ static void Step(Feedback_Mode_t feedback)
 static void Receive(int16_t vx, int16_t vy, int16_t wz, uint8_t valid, uint8_t len)
 {
     uint16_t bits[3] = {(uint16_t)vx, (uint16_t)vy, (uint16_t)wz};
-    uint8_t data[8] = {valid, 0U, 0U, 0U, 0U, 0U, 0U, 0U};
+    LinkFrame frame = {.type = MANUAL_CAN_VELOCITY_ID, .length = len, .data = {valid}};
     for (unsigned i = 0U; i < 3U; ++i)
     {
-        data[1U + 2U * i] = (uint8_t)bits[i];
-        data[2U + 2U * i] = (uint8_t)(bits[i] >> 8U);
+        frame.data[1U + 2U * i] = (uint8_t)bits[i];
+        frame.data[2U + 2U * i] = (uint8_t)(bits[i] >> 8U);
     }
-    Manual_CAN_Receive(data, len);
+    UsbLink_OnFrame(&frame);
 }
 
 /** @brief 提交一条有效全零速度。 @return 无。 */
@@ -210,7 +210,6 @@ static void Reset(uint32_t milliseconds, uint32_t microseconds)
     memset(motor_velocity, 0, sizeof(motor_velocity));
     memset((void *)dm_motor, 0, sizeof(dm_motor));
     Chassis_Init();
-    Jetson_CAN_Init();
     Manual_CAN_Init();
     Manual_Control_Init();
     assert(!Chassis_Is_Enabled() && manual_control_state == MANUAL_DISARMED);
@@ -606,16 +605,15 @@ static void Test_Ranges(void)
 /** @brief 已删除的类型 1 各种旧载荷都不能影响手动控制。 */
 static void Receive_Heartbeat_Traffic(void)
 {
-    const uint8_t zero[8] = {1U, 0U, 0U, 0U, 0U, 0U, 0U, 0U};
-    const uint8_t moving[8] = {1U, 0U, 0xF4U, 0x01U, 0U, 0U, 0U, 0U};
-    const uint8_t paused[8] = {1U, 1U, 0U, 0U, 0U, 0U, 0U, 0U};
-    const uint8_t malformed[8] = {2U};
-    const uint8_t lost[8] = {0U};
-    Jetson_CAN_Receive(1U, zero, sizeof(zero));
-    Jetson_CAN_Receive(1U, moving, sizeof(moving));
-    Jetson_CAN_Receive(1U, paused, sizeof(paused));
-    Jetson_CAN_Receive(1U, malformed, sizeof(malformed));
-    Jetson_CAN_Receive(1U, lost, sizeof(lost));
+    const LinkFrame frames[] = {
+        {.type = 1U, .length = 8U, .data = {1U}},
+        {.type = 1U, .length = 8U, .data = {1U, 0U, 0xF4U, 0x01U}},
+        {.type = 1U, .length = 8U, .data = {1U, 1U}},
+        {.type = 1U, .length = 8U, .data = {2U}},
+        {.type = 1U, .length = 8U, .data = {0U}},
+    };
+    for (size_t i = 0; i < sizeof(frames) / sizeof(frames[0]); ++i)
+        UsbLink_OnFrame(&frames[i]);
 }
 
 /** @brief 手动固件中 类型 1 不能使能、撤权、停车或续期 类型 2：只看手动快照。 @return 无。 */

@@ -1,29 +1,9 @@
 #ifndef JETSON_AUTO_CONFIG_H
 #define JETSON_AUTO_CONFIG_H
 
-/* 标定后改为 1，上电自动搬运；0 为类型 2 手动遥控固件。夹爪由 Jetson 负责。 */
-#ifndef JETSON_AUTO_ENABLED
-#define JETSON_AUTO_ENABLED 0
-#endif
+#include "chassis_mode.h"
+#include "visual_tracking_config.h"
 
-/* 单次底盘联调：由 SWD 显式启动，物资→规则转向→安全区对准及直行；不执行夹爪。 */
-#ifndef JETSON_AUTO_CHASSIS_TEST
-#define JETSON_AUTO_CHASSIS_TEST 0
-#endif
-#if JETSON_AUTO_ENABLED && JETSON_AUTO_CHASSIS_TEST
-#error "Select either full transport or chassis-only test"
-#endif
-/* 自动搬运或底盘联调固件：USB 收 Jetson 下行并运行自动流程；否则为类型 2 手动固件。 */
-#define JETSON_AUTO_CAN_ENABLED (JETSON_AUTO_ENABLED || JETSON_AUTO_CHASSIS_TEST)
-#if defined(CHASSIS_TUNING_ENABLED) && CHASSIS_TUNING_ENABLED && JETSON_AUTO_CAN_ENABLED
-#error "Chassis tuning cannot share control with Jetson auto or chassis-only test"
-#endif
-#ifndef UART6_MANUAL_ENABLED
-#define UART6_MANUAL_ENABLED 0
-#endif
-#if UART6_MANUAL_ENABLED && (JETSON_AUTO_CAN_ENABLED || (defined(CHASSIS_TUNING_ENABLED) && CHASSIS_TUNING_ENABLED))
-#error "USART6 manual cannot share chassis control with Jetson or SWD tuning"
-#endif
 #define JETSON_AUTO_CHASSIS_TEST_TIMEOUT_MS 90000U
 
 /* 到位窗口为 x、y 设定点及各轴允许误差。单位为原图宽/高的比例，0 待标定。 */
@@ -72,21 +52,41 @@
 #define JETSON_AUTO_ALIGN_TIMEOUT_MS 10000U
 
 /* 符号乘 (设定点 - 实测点)，横向取本次相机安装的实测方向。 */
-#define JETSON_AUTO_X_TO_LEFT (-1)
-#define JETSON_AUTO_Y_TO_FORWARD 1
+#ifndef JETSON_AUTO_X_TO_LEFT
+#define JETSON_AUTO_X_TO_LEFT VISUAL_TRACKING_X_TO_LEFT
+#endif
+#ifndef JETSON_AUTO_Y_TO_FORWARD
+#define JETSON_AUTO_Y_TO_FORWARD VISUAL_TRACKING_Y_TO_FORWARD
+#endif
 /* 视觉速度规划；图像响应是待相机实测的局部初值，不是米制坐标标定。 */
 #define JETSON_AUTO_APPROACH_SPEED_MPS 0.50f
-#define JETSON_AUTO_APPROACH_ACCEL_MPS2 0.40f
-#define JETSON_AUTO_APPROACH_DECEL_MPS2 0.35f
-#define JETSON_AUTO_APPROACH_LATENCY_S 0.12f
-#define JETSON_AUTO_RESPONSE_X_Q_PER_M 10000.0f
-#define JETSON_AUTO_RESPONSE_Y_Q_PER_M 10000.0f
+#ifndef JETSON_AUTO_APPROACH_ACCEL_MPS2
+#define JETSON_AUTO_APPROACH_ACCEL_MPS2 VISUAL_TRACKING_ACCEL_MPS2
+#endif
+#ifndef JETSON_AUTO_APPROACH_DECEL_MPS2
+#define JETSON_AUTO_APPROACH_DECEL_MPS2 VISUAL_TRACKING_DECEL_MPS2
+#endif
+#ifndef JETSON_AUTO_APPROACH_LATENCY_S
+#define JETSON_AUTO_APPROACH_LATENCY_S VISUAL_TRACKING_LATENCY_S
+#endif
+#ifndef JETSON_AUTO_RESPONSE_X_Q_PER_M
+#define JETSON_AUTO_RESPONSE_X_Q_PER_M VISUAL_TRACKING_RESPONSE_X_Q_PER_M
+#endif
+#ifndef JETSON_AUTO_RESPONSE_Y_Q_PER_M
+#define JETSON_AUTO_RESPONSE_Y_Q_PER_M VISUAL_TRACKING_RESPONSE_Y_Q_PER_M
+#endif
 #define JETSON_AUTO_SEARCH_WZ_RAD_S 2.0f
 
 /* 图像位置/加速度标准差，单位 q、q/s²；1 张图宽/高为 10000q。 */
-#define JETSON_AUTO_APPROACH_SIGMA_X_Q 15.0f
-#define JETSON_AUTO_APPROACH_SIGMA_Y_Q 25.0f
-#define JETSON_AUTO_APPROACH_SIGMA_ACCEL_Q_S2 4000.0f
+#ifndef JETSON_AUTO_APPROACH_SIGMA_X_Q
+#define JETSON_AUTO_APPROACH_SIGMA_X_Q VISUAL_TRACKING_SIGMA_X_Q
+#endif
+#ifndef JETSON_AUTO_APPROACH_SIGMA_Y_Q
+#define JETSON_AUTO_APPROACH_SIGMA_Y_Q VISUAL_TRACKING_SIGMA_Y_Q
+#endif
+#ifndef JETSON_AUTO_APPROACH_SIGMA_ACCEL_Q_S2
+#define JETSON_AUTO_APPROACH_SIGMA_ACCEL_Q_S2 VISUAL_TRACKING_SIGMA_ACCEL_Q_S2
+#endif
 
 /* 现有类型 3/4 周期流的断流期限，ms；合法无目标帧也续期，不新增心跳报文。 */
 #define JETSON_AUTO_LINK_TIMEOUT_MS 250U

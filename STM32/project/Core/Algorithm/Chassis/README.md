@@ -1,6 +1,6 @@
 # 三轮里程计的来源与接入
 
-当前正式底盘在 `Control/Chassis/chassis.c` 调用 `Odometry_Update_Position_ESKF()`：三轮编码器角位置增量提供平移，平面 ESKF 融合陀螺、YAW与弱轮角约束提供航向，使用 SE(2) 指数映射累计平面位姿。实现为纯 C，无动态内存、ROS 或 Eigen 依赖。
+正式底盘通过 `Odometry_Update_Feedback()` 更新位姿。控制层负责组合四个可独立链接的算法。轮角对时给出同一时间段的三个编码器增量，三轮运动学把它们换算为车体位移，航向 ESKF 融合陀螺、YAW 和轮角速度，SE(2) 积分器将车体位移累加到世界坐标。手动与自动控制器通过公共底盘接口读取结果。[里程计组合入口](../../Control/Chassis/chassis_odometry.c)
 
 ## 开源实现与论文选择
 

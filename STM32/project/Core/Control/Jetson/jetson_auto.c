@@ -2,8 +2,7 @@
 
 #if JETSON_AUTO_CAN_ENABLED
 #include "chassis.h"
-#include "adaptive_kalman.h"
-#include "visual_servo.h"
+#include "tracked_visual_servo.h"
 #if JETSON_AUTO_ENABLED
 #include "point_plan.h"
 #endif
@@ -455,7 +454,7 @@ static uint8_t Approach(const Jetson_CAN_Center_t *center, const Image_Window_t 
     };
     const float raw[2] = {measurement.x, measurement.y};
     const float goal[2] = {goal_x, goal_y}, tolerance[2] = {x_tol, y_tol};
-    Visual_Servo_Update(&vision.servo, &config, &vision.tracker, raw, goal, tolerance, seconds);
+    Tracked_Visual_Servo_Update(&vision.servo, &config, &vision.tracker, raw, goal, tolerance, seconds);
     Navigate(x_only ? 0.0f : vision.servo.speed[1] * JETSON_AUTO_Y_TO_FORWARD,
              vision.servo.speed[0] * JETSON_AUTO_X_TO_LEFT, 0.0f, now_ms);
     return 0U;

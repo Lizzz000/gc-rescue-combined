@@ -8,11 +8,14 @@
 
 参考官方 ros-controls/ros2_controllers 的 [omni_wheel_drive_controller](https://github.com/ros-controls/ros2_controllers/tree/62af79e4788adaf4718491968c3f8fcc632af265/omni_wheel_drive_controller)，固定提交 `62af79e4788adaf4718491968c3f8fcc632af265`（2026-11-12）。该模块使用轮速反馈正解车体速度，并在平面内积分位姿；[上游实现](https://github.com/ros-controls/ros2_controllers/blob/62af79e4788adaf4718491968c3f8fcc632af265/omni_wheel_drive_controller/src/odometry.cpp)及 [package.xml](https://github.com/ros-controls/ros2_controllers/blob/62af79e4788adaf4718491968c3f8fcc632af265/omni_wheel_drive_controller/package.xml)标注 Apache-2.0，作者 Aarav Gupta。
 
-初版参考上述平面圆弧公式独立实现轮速梯形积分。当前正式入口 `Odometry_Update_Position()` 进一步参考 WPILib v2026.2.2 的编码器位移与陀螺仪里程计，按本车适配纯C：先对三轮25rad周期位置解绕，再复用 `Motor_Chassis_Forward()` 计算车体位移，航向采用已有INS并展开±180°跨界，以SE(2)指数映射累计位姿。固定上游版本、BSD许可、SciSpace论文筛选及本车约束见 [算法说明](../project/Core/Algorithm/Chassis/README.md)。旧 `Odometry_Update()` 仅保留用于对照测试，正式控制不自动切回轮速积分。当前没有EKF或外部绝对位置观测。
+初版使用轮速梯形积分。现行固件通过 `Odometry_Update_Feedback()` 组合轮角对时、三轮运动学、航向 ESKF 和 SE(2) 平面位姿积分。原始 YAW 位置入口和轮速入口供对照测试使用。编码器增量与 SE(2) 积分参考 WPILib v2026.2.2。[算法说明与许可](../project/Core/Algorithm/Chassis/README.md)
 
 | 文件 | 职责 |
 | --- | --- |
-| [chassis_odometry.h](../project/Core/Algorithm/Chassis/chassis_odometry.h)、[chassis_odometry.c](../project/Core/Algorithm/Chassis/chassis_odometry.c) | 纯C编码器增量/IMU位姿积分、回绕与基线管理；保留轮速入口作对照 |
+| [chassis_odometry.c](../project/Core/Control/Chassis/chassis_odometry.c) | 校验反馈、维护时间基线，组合轮角、航向和位姿算法 |
+| [wheel_alignment.c](../project/Core/Algorithm/Chassis/wheel_alignment.c) | 依据每轮接收时刻对齐编码器位置 |
+| [heading_eskf.c](../project/Core/Algorithm/Chassis/heading_eskf.c) | 陀螺预测、YAW 观测与轮角速度弱约束 |
+| [planar_odometry.c](../project/Core/Algorithm/Chassis/planar_odometry.c) | 根据起止航向将车体位移积分到世界坐标系 |
 | [motor_chassis.c](../project/Core/Algorithm/Chassis/motor_chassis.c) | 三轮正逆运动学，ID1 后轮、ID2 右前轮、ID3 左前轮 |
 | [chassis.c](../project/Core/Control/Chassis/chassis.c)、[chassis.h](../project/Core/Control/Chassis/chassis.h) | 一致反馈快照、里程计查询/重置、定距闭环和故障停车 |
 
@@ -33,6 +36,10 @@
 原代码只校正过纵向，横向仍与此布局相反，正逆解互算可以自洽而不能证明物理方向正确。本次同时修正横向逆解、反馈正解和力矩前馈，保留已实测的前进与转向符号：前进的 MIT 符号为 `[0,−,+]`，左移为 `[+,−,−]`，逆时针为 `[−,−,−]`。旧横移及带旋转轨迹的估计结果不能作为修正后模型的标定证据。
 
 底盘任务在短临界区内一次复制三轮的位置、速度、ID、状态、接收时间和序号。只有三轮各自的序号都相对上次接受组更新，才有新的积分组；一轮高频重复上报不能代替另外两轮的新证据。三轮仍非硬件同步采样，临界区只保证读取过程不被CAN接收更新打断。
+
+三轮位置按各自的 CAN 接收时刻分段线性插值。首组以最晚轮反馈时刻建原点，后续每组积分到三轮均已覆盖的最新时刻。每轮保留 64 个毫秒槽，快轮在慢轮追上前发生换向时，过去各段仍按各自的角位移结算。静止编码器配非零速度反馈时，平移保持为零。
+
+发布的航向对应控制拍。新的可信 INS 航向按陀螺与帧龄推到控制拍，平移积分使用轮区间起止时刻的航向。`sample_time_us` 记录接受反馈组的控制拍，运动中的 x/y 会滞后相应的轮反馈年龄。CAN 和 INS 的年龄都在 RTOS 毫秒时钟内计算，控制拍间隔使用 TIM2 微秒时钟。
 
 | 条件 | 处理 |
 | --- | --- |

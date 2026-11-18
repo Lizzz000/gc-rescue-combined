@@ -2,6 +2,7 @@
 #define JETSON_CAN_H
 
 #include <stdint.h>
+#include "link_payload.h"
 
 /* 板间类型号。快照由 USB 任务写入、控制任务临界区读取。
  * received_ms 使用现有 1 kHz FreeRTOS 时基，不是总线事务编号。
@@ -14,7 +15,7 @@
 #define JETSON_CAN_COMMAND_REPLY_ID       7U
 #define JETSON_CAN_TURN_REQUEST_ID        8U
 #define JETSON_CAN_ACTION_RESULT_ID       9U
-#define JETSON_CAN_VELOCITY_DLC           7U
+#define JETSON_CAN_VELOCITY_DLC           LINK_VELOCITY_DLC
 #define JETSON_CAN_ARRIVAL_ID             16U
 #define JETSON_CAN_TURN_COMPLETED_ID      17U
 #define JETSON_CAN_SAFETY_ARRIVED_ID      18U
@@ -29,13 +30,7 @@
 #define JETSON_CAN_POINT_REPLY_COMMAND    5U
 
 /* 手动类型 2 的速度载荷：valid:uint8 + vx/vy/wz:int16 小端，共 7 字节。 */
-typedef struct
-{
-    uint8_t valid;       /**< 格式合法且有效字节为 1。 */
-    int16_t vx; /**< 前向速度，单位 0.001 m/s；无效时为 0。 */
-    int16_t vy; /**< 横向速度，单位 0.001 m/s；无效时为 0。 */
-    int16_t wz; /**< 角速度，单位 0.001 rad/s；无效时为 0。 */
-} Jetson_CAN_Velocity_Frame_t;
+typedef Link_Velocity_Frame_t Jetson_CAN_Velocity_Frame_t;
 
 typedef struct
 {
@@ -108,6 +103,9 @@ typedef struct
  * @return 无；所有有效标记、时间戳及序号清零。
  */
 void Jetson_CAN_Init(void);
+
+/** @brief 通过 USB 向 Jetson 发送一帧；0 已提交，1 忙或离线，2 长度非法。 */
+int Jetson_Link_Send(uint8_t type, const uint8_t *data, uint8_t length);
 
 /**
  * @brief USB 会话中断时撤销周期流标记，旧会话快照不能授权重新启动。

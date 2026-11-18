@@ -23,9 +23,12 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 ALGORITHM = ROOT / "project/Core/Algorithm/Chassis"
-SOURCES = (ALGORITHM / "chassis_odometry.c", ALGORITHM / "motor_chassis.c",
-           ALGORITHM / "chassis_odometry.h", ALGORITHM / "motor_chassis.h",
-           ALGORITHM / "heading_eskf.c", ALGORITHM / "heading_eskf.h")
+CONTROL = ROOT / "project/Core/Control/Chassis"
+SOURCES = tuple(base / (name + extension)
+                for base, name in ((CONTROL, "chassis_odometry"), (ALGORITHM, "motor_chassis"),
+                                   (ALGORITHM, "heading_eskf"), (ALGORITHM, "planar_odometry"),
+                                   (ALGORITHM, "wheel_alignment"))
+                for extension in (".c", ".h")) + (CONTROL / "chassis_pose.h",)
 DT = 0.01
 RADIUS, OFFSET = 0.035, 0.0982
 WRAPPER = r'''
@@ -101,7 +104,7 @@ class NativeOdometry:
         library = build / ("odometry.dll" if os.name == "nt" else "odometry.so")
         env = dict(os.environ, PATH=str(Path(cc).parent) + os.pathsep + os.environ.get("PATH", ""))
         command = [cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-O2", "-shared",
-                   "-fPIC", "-static-libgcc", "-I" + str(ALGORITHM), str(wrapper),
+                   "-fPIC", "-static-libgcc", "-I" + str(ALGORITHM), "-I" + str(CONTROL), str(wrapper),
                    *[str(p) for p in SOURCES if p.suffix == ".c"], "-lm", "-o", str(library)]
         subprocess.run(command, check=True, capture_output=True, text=True, env=env, timeout=30)
         self.provenance["compiler_version"] = subprocess.check_output(

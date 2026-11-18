@@ -1,4 +1,5 @@
 #include "heading_eskf.h"
+#include "heading_yaw_guard.h"
 #include "chassis_odometry.h"
 #include "motor_chassis.h"
 #include <assert.h>
@@ -182,10 +183,156 @@ static void test_encoder_receive_time(void)
     assert(Odometry_Update_Position_ESKF(&odom, zero, zero, 0, 0, 50000U));
 }
 
+/* 解析轨迹从静止出发。编码器按各自的采样时刻生成，独立计算地面真值。 */
+static void trajectory(double t, int pure_turn, double pose[3], double velocity[3])
+{
+    const double shape[3] = {pure_turn ? 0.0 : .21, pure_turn ? 0.0 : .09, pure_turn ? 1.0 : 0.0};
+    const double frequency[3] = {1.7, 1.1, 1.7};
+    for (unsigned axis = 0; axis < 3; ++axis)
+    {
+        pose[axis] = shape[axis] * (1.0 - cos(frequency[axis] * t));
+        velocity[axis] = shape[axis] * frequency[axis] * sin(frequency[axis] * t);
+    }
+}
+
+static float quantize(double value, double span, unsigned codes)
+{
+    return (float)(round((value / span + .5) * codes) * span / codes - .5 * span);
+}
+
+static double asynchronous_rms_mm(int pure_turn, double *peak_mm)
+{
+    const double tangent[3][2] = {{0, -1}, {.8660254037844386, .5}, {-.8660254037844386, .5}};
+    const unsigned steps = 1000U;
+    Odometry_State_t odom;
+    Odometry_Init(&odom);
+    double squares = 0;
+    *peak_mm = 0;
+    for (unsigned i = 0; i <= steps; ++i)
+    {
+        /* 正常收包间隔为 4～16 ms；RTOS ms 和 TIM2 us 分别回绕。 */
+        const unsigned delay[3] = {0, i ? (5 * i + 1) % 7 : 0, i ? (2 * i + 3) % 7 : 0};
+        const unsigned max_delay = delay[1] > delay[2] ? delay[1] : delay[2];
+        uint32_t stamp[3];
+        float position[3], wheel[3];
+        double pose[3], velocity[3];
+        for (unsigned k = 0; k < 3; ++k)
+        {
+            const unsigned ms = 10 * i - delay[k];
+            stamp[k] = UINT32_MAX - 97U + ms;
+            trajectory(.001 * ms, pure_turn, pose, velocity);
+            const double phase = (tangent[k][0] * pose[0] + tangent[k][1] * pose[1] +
+                                  CHASSIS_ROTATION_RADIUS * pose[2]) / CHASSIS_WHEEL_RADIUS;
+            const double rate = (tangent[k][0] * velocity[0] + tangent[k][1] * velocity[1] +
+                                 CHASSIS_ROTATION_RADIUS * velocity[2]) / CHASSIS_WHEEL_RADIUS;
+            /* 初角靠近量程边界，旋转与平移用例都经过 25 rad 编码器回绕。 */
+            position[k] = quantize(remainder(12.45 + phase, 25.0), 25.0, 65535);
+            wheel[k] = quantize(rate, 80.0, 4095);
+        }
+        trajectory(.01 * i, pure_turn, pose, velocity);
+        assert(Odometry_Update_Position_ESKF_Timed(&odom, position, wheel, stamp, (float)pose[2],
+               (float)velocity[2], UINT32_MAX - 49999U + i * 10000U, 1U));
+        trajectory(.001 * (10 * i - max_delay), pure_turn, pose, velocity);
+        const double error_mm = 1000.0 * hypot(odom.data.x_m - pose[0], odom.data.y_m - pose[1]);
+        squares += error_mm * error_mm;
+        *peak_mm = fmax(*peak_mm, error_mm);
+    }
+    return sqrt(squares / (steps + 1U));
+}
+
+static void test_asynchronous_translation(void)
+{
+    double spin_peak, translation_peak;
+    const double spin_rms = asynchronous_rms_mm(1, &spin_peak);
+    const double translation_rms = asynchronous_rms_mm(0, &translation_peak);
+    printf("Asynchronous encoder RMS/peak (mm): pure turn %.4f/%.4f, translation %.4f/%.4f\n",
+           spin_rms, spin_peak, translation_rms, translation_peak);
+    fflush(stdout);
+    assert(spin_rms < .07 && spin_peak < .15);
+    assert(translation_rms < .07 && translation_peak < .15);
+}
+
+static void test_encoder_intervals_without_overlap(void)
+{
+    /* 第二组后，前轮都已越过下一组最慢后轮的时刻。 */
+    const uint32_t stamps[][3] = {{100, 100, 100}, {104, 112, 116}, {106, 116, 121},
+                                  {106, 119, 124}, {110, 123, 129}, {130, 130, 130}};
+    const float bias[3] = {.35f, -.24f, .19f};
+    const float fixed_angle[3] = {-11, 2, 7};
+    const float encoder_code = 25.0f / 65535.0f;
+    const double vx = .18, vy = -.08;
+    float wheel[3];
+    Motor_Chassis_Inverse((float)vx, (float)vy, 0, wheel);
+    Odometry_State_t moving, parked, late_spin;
+    Odometry_Init(&moving);
+    Odometry_Init(&parked);
+    Odometry_Init(&late_spin);
+    for (unsigned i = 0; i < sizeof(stamps) / sizeof(stamps[0]); ++i)
+    {
+        const uint32_t *stamp = stamps[i];
+        const uint32_t now_us = stamp[2] * 1000U;
+        float position[3];
+        for (unsigned k = 0; k < 3; ++k)
+            position[k] = wheel[k] * (.001f * (stamp[k] - 100U));
+        if (i == 3)
+            position[0] += encoder_code; /* 同一毫秒内收到一个新的后轮位置码。 */
+        const double previous_y = moving.data.y_m;
+        assert(Odometry_Update_Position_ESKF_Timed(&moving, position, wheel, stamp, 0, 0, now_us, 1U));
+        assert(Odometry_Update_Position_ESKF_Timed(&parked, fixed_angle, bias, stamp, 0, 0, now_us, 1U));
+        assert(parked.data.x_m == 0 && parked.data.y_m == 0);
+        /* 两前轮在 116 ms 都有静止观测，之后等速纯转；110 ms 前的位姿不应预支这次运动。 */
+        float spin_angle[3], spin_rate[3];
+        for (unsigned k = 0; k < 3; ++k)
+        {
+            spin_angle[k] = stamp[k] > 116U ? .010f * (stamp[k] - 116U) : 0.0f;
+            spin_rate[k] = stamp[k] > 116U ? 10.0f : 0.0f;
+        }
+        const float yaw = spin_angle[2] * CHASSIS_WHEEL_RADIUS / CHASSIS_ROTATION_RADIUS;
+        const float gyro = spin_rate[2] * CHASSIS_WHEEL_RADIUS / CHASSIS_ROTATION_RADIUS;
+        assert(Odometry_Update_Position_ESKF_Timed(&late_spin, spin_angle, spin_rate, stamp, yaw, gyro, now_us, 1U));
+        if (stamp[0] <= 110U)
+            assert(hypot(late_spin.data.x_m, late_spin.data.y_m) < 1e-8);
+        const double duration = .001 * (stamp[0] - 100U);
+        assert(hypot(moving.data.x_m - vx * duration, moving.data.y_m - vy * duration) < .000011);
+        if (i == 3)
+            assert(fabs(moving.data.y_m - previous_y + (2.0 / 3.0) * CHASSIS_WHEEL_RADIUS * encoder_code) < 1e-8);
+    }
+    /* 三轮在 130 ms 再次同步，前面各拍留下的增量应全部结清。 */
+    assert(hypot(moving.data.x_m - .030 * vx, moving.data.y_m - .030 * vy) < 1e-8);
+}
+
+static void test_alignment_reset_and_source_switch(void)
+{
+    const uint32_t first[3] = {100, 100, 100}, skewed[3] = {108, 113, 116};
+    const uint32_t recover[3] = {158, 160, 164}, synced[3] = {172, 172, 172};
+    const uint32_t last[3] = {208, 208, 208};
+    const float zero[3] = {0}, moved[3] = {0, .06f, -.08f};
+    const float new_baseline[3] = {9, -5, -8};
+    Odometry_State_t odom;
+    Odometry_Init(&odom);
+    assert(Odometry_Update_Position_ESKF_Timed(&odom, zero, zero, first, 0, 0, 100000U, 1U));
+    assert(Odometry_Update_Position_ESKF_Timed(&odom, moved, zero, skewed, 0, 0, 116000U, 1U));
+    const double x = odom.data.x_m, y = odom.data.y_m;
+    assert(hypot(x, y) > .0001);
+    Odometry_Invalidate(&odom);
+    assert(!odom.data.valid);
+    assert(Odometry_Update_Position_ESKF_Timed(&odom, new_baseline, zero, recover, 0, 0, 164000U, 1U));
+    assert(Odometry_Update_Position_ESKF_Timed(&odom, new_baseline, zero, synced, 0, 0, 172000U, 1U));
+    assert(odom.data.x_m == x && odom.data.y_m == y);
+    /* 原始位置、同步 ESKF、异步 ESKF 各自重建位置基线。 */
+    assert(Odometry_Update_Position(&odom, zero, zero, 0, 184000U));
+    assert(Odometry_Update_Position_ESKF(&odom, moved, zero, 0, 0, 194000U));
+    assert(Odometry_Update_Position_ESKF_Timed(&odom, new_baseline, zero, last, 0, 0, 208000U, 1U));
+    assert(odom.data.x_m == x && odom.data.y_m == y);
+}
+
 int main(void)
 {
     test_yaw_jump_and_source_time();
     test_encoder_receive_time();
+    test_asynchronous_translation();
+    test_encoder_intervals_without_overlap();
+    test_alignment_reset_and_source_switch();
     test_prediction_and_joseph();test_yaw_priority_and_noise();test_invalid_and_odometry();
     puts("PASS planar ESKF: YAW priority, weak/slipping encoder, gyro bias, noise, PSD, SO(2) wrap and SE(2) integration");
     return 0;

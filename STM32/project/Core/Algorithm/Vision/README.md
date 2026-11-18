@@ -1,6 +1,6 @@
 # 图像滤波与视觉伺服
 
-`adaptive_kalman.c/.h` 对图像x/y分别估计位置和速度，使用源帧实际时间；不估计车体世界位置。宽/高为10000q，速度q/s，加速度标准差q/s²。正式入口是 `Control/Jetson/jetson_auto.c`，其速度规划调用 `visual_servo.c`。
+`adaptive_kalman.c/.h` 按源帧时间分别估计图像两轴的位置和速度。宽度和高度各为 10000 q，速度单位为 q/s，加速度标准差单位为 q/s²。`visual_servo.c/.h` 接收位置、速度和本帧有效轴掩码，可单独编译和调用。自动控制与现场调参通过 `Control/Vision/tracked_visual_servo.c` 将跟踪结果传给速度规划。
 
 ## 本轮改进
 
@@ -12,7 +12,7 @@
 
 `AdaptiveKalman_Init()` 先初始化参数，`AdaptiveKalman_Update()` 每个新源帧调用一次。正式视觉层仍按原始窗口制动、零速下发后用新原始帧核验，不把滤波坐标当外部真值。底盘不再使用视觉积分补偿：`Visual_Servo_Update()` 根据剩余图像误差、响应初值和执行延迟解制动速度上限，限制合速度与加速增量；入窗轴归零，反向先过零。物理逐拍斜坡仍在底盘层。
 
-`JETSON_AUTO_RESPONSE_X/Y_Q_PER_M=10000` 是局部响应试调初值，尚未由真实相机标定。`JETSON_AUTO_APPROACH_LATENCY_S=0.12` 加上本帧间隔作为制动余量。需要实测相机安装、透视深度与端到端延迟后再调整，不能承诺所有工况绝对零过冲。
+自动流程与现场调参共用 `Control/Vision/visual_tracking_config.h` 中的相机轴向、响应初值、延迟和滤波参数。每轴默认响应为 10000 q/m，制动余量默认取 0.12 s 加本帧间隔。上述初值有待真实相机标定。自动流程仍可用 `JETSON_AUTO_RESPONSE_X_Q_PER_M`、`JETSON_AUTO_APPROACH_LATENCY_S` 等已有配置名覆盖。
 
 ## 视觉速度规划
 

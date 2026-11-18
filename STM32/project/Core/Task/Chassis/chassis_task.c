@@ -7,8 +7,9 @@
 #if CHASSIS_TUNING_ENABLED
 #include "live_tuning.h"
 #endif
-#include "jetson_auto.h"
+#include "chassis_mode.h"
 #if JETSON_AUTO_CAN_ENABLED
+#include "jetson_auto.h"
 #include "jetson_link.h"
 #else
 #include "manual_link.h"

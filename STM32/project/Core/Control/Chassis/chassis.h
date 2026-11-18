@@ -2,7 +2,7 @@
 #define CHASSIS_H
 
 #include <stdint.h>
-#include "chassis_odometry.h"
+#include "chassis_pose.h"
 #ifndef CHASSIS_TUNING_ENABLED
 #define CHASSIS_TUNING_ENABLED 0
 #endif

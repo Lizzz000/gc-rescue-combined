@@ -6,7 +6,6 @@
 #include "chassis.h"
 #include "jetson_auto.h"
 #include "jetson_link.h"
-#include "manual_link.h"
 #include "task.h"
 
 /* 真实协议编解码与自主状态机，底盘反馈及 USB 发送结果由本测试控制。 */
@@ -349,7 +348,7 @@ static void Start_Automatic(void)
 {
     const uint8_t ignored[8] = {1U};
     Jetson_CAN_Receive(1U, ignored, sizeof(ignored));
-    Jetson_CAN_Receive(MANUAL_CAN_VELOCITY_ID, ignored, 7U);
+    Jetson_CAN_Receive(2U, ignored, 7U); /* 协议类型 2 为手动速度，自动固件应忽略。 */
     Steps(3U);
     assert(startup_id && startup_queries && !enabled && !enables && !velocity_requests);
     Receive_Command_Ack(1U, 5U, startup_id);

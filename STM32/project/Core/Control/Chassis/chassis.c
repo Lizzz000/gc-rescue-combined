@@ -6,6 +6,7 @@
  * 此间隔不是旧车参数，10 ms 控制节拍、PID 和轮序参数保持不变。
  */
 #include "chassis.h"
+#include "chassis_odometry.h"
 #include "motor_chassis.h"
 #include "dm_motor.h"
 #include "bsp_can.h"
@@ -102,7 +103,7 @@ uint8_t Chassis_Is_Enabled(void)
 static uint8_t Read_IMU(INS_control_data_t *imu)
 {
     return INS_Get_Data(imu) && isfinite(imu->yaw_deg) && isfinite(imu->world_z_rad_s) &&
-           (uint32_t)((uint32_t)xTaskGetTickCount() - imu->sample_time_ms) <= 20U;
+           (uint32_t)((uint32_t)xTaskGetTickCount() - imu->sample_time_ms) <= CHASSIS_ODOMETRY_MAX_IMU_AGE_MS;
 }
 
 /** @brief 根据达妙 CAN1 的接收序号与到达时间确认三轮静止，本车 10 ms 控制适配。
@@ -240,7 +241,7 @@ static void Update_Odometry(uint32_t now_us,
     taskEXIT_CRITICAL();
     uint8_t ready = imu_valid, fresh_group = 1U;
     float wheel[3], position[3];
-    uint32_t wheel_time_ms[3];
+    Odometry_Feedback_Timing_t timing = {.control_time_ms = now_ms};
     for (unsigned i = 0U; i < 3U; ++i)
     {
         if (feedback[i].id != motor_id[i] || feedback[i].state != 1U ||
@@ -252,7 +253,7 @@ static void Update_Odometry(uint32_t now_us,
             fresh_group = 0U;
         wheel[i] = feedback[i].velocity * motor_direction[i] / motor_gear_ratio[i];
         position[i] = feedback[i].position * motor_direction[i] / motor_gear_ratio[i];
-        wheel_time_ms[i] = feedback[i].feedback_time_ms;
+        timing.wheel_time_ms[i] = feedback[i].feedback_time_ms;
     }
     if (!ready)
     {
@@ -267,7 +268,8 @@ static void Update_Odometry(uint32_t now_us,
 #endif
         const uint8_t observe_yaw = !imu->yaw_predicted &&
             (!odometry.initialized || imu->sample_time_ms != odometry_imu_sample_ms);
-        if (Odometry_Update_Position_ESKF_Timed(&odometry, position, wheel, wheel_time_ms,
+        timing.imu_time_ms = imu->sample_time_ms;
+        if (Odometry_Update_Feedback(&odometry, position, wheel, &timing,
                 CHASSIS_STRAIGHT_YAW_SIGN * imu->yaw_deg * DEG_TO_RAD,
                 CHASSIS_STRAIGHT_YAW_SIGN * imu->world_z_rad_s, now_us, observe_yaw) && observe_yaw)
             odometry_imu_sample_ms = imu->sample_time_ms;

@@ -1,9 +1,8 @@
 #include "manual_link.h"
-#include "jetson_link.h"
+#include "link_payload.h"
 #include "FreeRTOS.h"
 #include "task.h"
 
-/* 速度载荷解码复用 jetson_link；本模块只维护手动快照及其事件序号。 */
 static volatile Manual_CAN_Velocity_t manual_velocity;
 
 /** @brief 清空快照；调用时机见头文件。 */
@@ -17,8 +16,7 @@ void Manual_CAN_Init(void)
 /** @brief 解析类型 2 并整体替换快照；输入约束见头文件。 */
 void Manual_CAN_Receive(const uint8_t *data, uint8_t len)
 {
-    Jetson_CAN_Velocity_Frame_t frame;
-    Jetson_CAN_Decode_Velocity(data, len, &frame);
+    const Link_Velocity_Frame_t frame = Link_Decode_Velocity(data, len);
     Manual_CAN_Velocity_t velocity = {
         .valid = frame.valid,
         .vx = frame.vx,

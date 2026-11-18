@@ -4,6 +4,7 @@ import argparse
 import shutil
 import subprocess
 import tempfile
+from check_module_boundaries import check_module_boundaries
 
 
 def check_control_modes(root, cc):
@@ -12,10 +13,10 @@ def check_control_modes(root, cc):
     cases = [None] + [tuple((bits >> i) & 1 for i in range(len(modes))) for bits in range(1 << len(modes))]
     for values in cases:
         command = [cc, "-E", "-P", "-x", "c",
-                   "-I" + str(root / "project/Core/Control/Jetson")]
+                   "-I" + str(root / "project/Core/Control/Chassis")]
         if values is not None:
             command += [f"-D{name}={value}" for name, value in zip(modes, values)]
-        result = subprocess.run(command + ["-"], input='#include "jetson_auto_config.h"\n',
+        result = subprocess.run(command + ["-"], input='#include "chassis_mode.h"\n',
                                 capture_output=True, text=True)
         valid = values is None or sum(values) <= 1
         if valid:
@@ -51,15 +52,14 @@ def main():
                             "project/Core/Algorithm/Vision/adaptive_kalman.c",
                             "tests/native/fixtures/image_tracker.c"],
         "jetson_can": ["tests/native/test_jetson_link.c", "project/Core/Communication/Jetson/jetson_link.c"],
-        "manual_can": ["tests/native/test_manual_link.c", "project/Core/Communication/Manual/manual_link.c",
-                       "project/Core/Communication/Jetson/jetson_link.c"],
-        "manual_control": ["tests/native/test_manual_control.c", "project/Core/Communication/Jetson/jetson_link.c",
+        "manual_can": ["tests/native/test_manual_link.c", "project/Core/Communication/Manual/manual_link.c"],
+        "manual_control": ["tests/native/test_manual_control.c", "project/Core/Communication/Manual/manual_usb.c",
                            "project/Core/Communication/Manual/manual_link.c",
                            "project/Core/Control/Manual/manual_control.c", "project/Core/Control/Chassis/chassis.c",
                            "project/Core/Algorithm/Chassis/motor_chassis.c", "project/Core/Algorithm/PID/pid.c"],
         "uart6_manual": ["tests/native/test_uart6_manual.c", "project/Core/Control/Manual/uart6_manual.c",
                          "project/Core/Control/Manual/manual_control.c", "project/Core/Communication/Manual/manual_link.c",
-                         "project/Core/Communication/Jetson/link_frame.c", "project/Core/Communication/Jetson/jetson_link.c",
+                         "project/Core/Communication/Common/link_frame.c",
                          "project/Core/Algorithm/Chassis/point_plan.c"],
         "can": ["tests/native/test_can.c", "project/Core/Bsp/CAN/bsp_can.c", "project/Core/Devices/DM_Motor/dm_motor.c",
                 "project/Core/Task/Chassis/chassis_task.c"],
@@ -77,12 +77,12 @@ def main():
         "chassis": ["tests/native/test_chassis.c", "project/Core/Algorithm/Chassis/motor_chassis.c",
                     "project/Core/Control/Chassis/chassis.c", "project/Core/Algorithm/PID/pid.c"],
         "chassis_odometry": ["tests/native/test_chassis_odometry.c",
-                             "project/Core/Algorithm/Chassis/chassis_odometry.c",
+                             "project/Core/Control/Chassis/chassis_odometry.c",
                              "project/Core/Algorithm/Chassis/motor_chassis.c"],
         "live_tuning": ["tests/native/test_live_tuning.c", "project/Core/Control/Chassis/live_tuning.c", "project/Core/Algorithm/Vision/adaptive_kalman.c", "project/Core/Algorithm/Vision/visual_servo.c"],
         "can_diag": ["tests/native/test_can_diag.c", "project/Core/Bsp/CAN/bsp_can.c"],
     }
-    suites["sensors"].append("project/Core/Algorithm/Chassis/heading_eskf.c")
+    suites["sensors"].append("project/Core/Algorithm/Chassis/heading_yaw_guard.c")
     suites["sensors_nine_axis"] = suites["sensors"]
     suites["chassis_tuning"] = list(suites["chassis"])
     suites["vofa_tuning"] = list(suites["vofa"])
@@ -108,27 +108,41 @@ def main():
     suites["can_auto"] = suites["can"]
     suites["link_frame"] = [
         "tests/native/test_link_frame.c",
-        "project/Core/Communication/Jetson/link_frame.c",
+        "project/Core/Communication/Common/link_frame.c",
     ]
     suites["usb_rx_buffer"] = ["tests/native/test_usb_rx_buffer.c"]
     suites["usb_link_state"] = [
         "tests/native/test_usb_link_state.c", "project/Core/Communication/Jetson/jetson_link.c",
-        "project/Core/Communication/Jetson/link_frame.c",
+        "project/Core/Communication/Jetson/jetson_usb.c",
+        "project/Core/Communication/Common/link_frame.c",
     ]
-    suites["visual_servo"] = ["tests/native/test_visual_servo.c", "project/Core/Algorithm/Vision/adaptive_kalman.c", "project/Core/Algorithm/Vision/visual_servo.c"]
+    suites["visual_servo"] = ["tests/native/test_visual_servo.c", "project/Core/Algorithm/Vision/visual_servo.c"]
+    suites["tracked_visual_servo"] = ["tests/native/test_tracked_visual_servo.c",
+                                      "project/Core/Control/Vision/tracked_visual_servo.c",
+                                      "project/Core/Algorithm/Vision/adaptive_kalman.c",
+                                      "project/Core/Algorithm/Vision/visual_servo.c"]
     suites["point_plan"] = ["tests/native/test_point_plan.c", "project/Core/Algorithm/Chassis/point_plan.c"]
-    suites["heading_eskf"] = ["tests/native/test_heading_eskf.c", "project/Core/Algorithm/Chassis/heading_eskf.c", "project/Core/Algorithm/Chassis/chassis_odometry.c", "project/Core/Algorithm/Chassis/motor_chassis.c"]
-    for sources in suites.values():
+    suites["heading_eskf"] = ["tests/native/test_heading_eskf.c", "project/Core/Algorithm/Chassis/heading_eskf.c", "project/Core/Control/Chassis/chassis_odometry.c", "project/Core/Algorithm/Chassis/motor_chassis.c"]
+    suites["heading_eskf"].append("project/Core/Algorithm/Chassis/heading_yaw_guard.c")
+    for name in suites:
+        sources = list(suites[name])
+        suites[name] = sources
         if "project/Core/Control/Jetson/jetson_auto.c" in sources and "project/Core/Algorithm/Chassis/point_plan.c" not in sources:
             sources.append("project/Core/Algorithm/Chassis/point_plan.c")
         if "project/Core/Control/Chassis/live_tuning.c" in sources:
             sources.append("project/Core/Algorithm/Chassis/point_plan.c")
             sources += ["project/Core/Control/Chassis/spin_observer.c", "project/Core/Algorithm/Chassis/motor_chassis.c"]
-        if "project/Core/Control/Jetson/jetson_auto.c" in sources and "project/Core/Algorithm/Vision/visual_servo.c" not in sources:
-            sources.append("project/Core/Algorithm/Vision/visual_servo.c")
+        if ("project/Core/Control/Jetson/jetson_auto.c" in sources or
+                "project/Core/Control/Chassis/live_tuning.c" in sources):
+            sources.append("project/Core/Control/Vision/tracked_visual_servo.c")
+            if "project/Core/Algorithm/Vision/visual_servo.c" not in sources:
+                sources.append("project/Core/Algorithm/Vision/visual_servo.c")
         if "project/Core/Control/Chassis/chassis.c" in sources:
-            sources.append("project/Core/Algorithm/Chassis/chassis_odometry.c")
-        if "project/Core/Algorithm/Chassis/chassis_odometry.c" in sources and "project/Core/Algorithm/Chassis/heading_eskf.c" not in sources:
+            sources.append("project/Core/Control/Chassis/chassis_odometry.c")
+        if "project/Core/Control/Chassis/chassis_odometry.c" in sources:
+            sources.extend(["project/Core/Algorithm/Chassis/wheel_alignment.c",
+                            "project/Core/Algorithm/Chassis/planar_odometry.c"])
+        if "project/Core/Control/Chassis/chassis_odometry.c" in sources and "project/Core/Algorithm/Chassis/heading_eskf.c" not in sources:
             sources.append("project/Core/Algorithm/Chassis/heading_eskf.c")
     includes = ["tests/native/stubs", "tests/native/fixtures", "project/Core/Bsp/CAN",
                 "project/Core/Devices/BMI088", "project/Core/Devices/IST8310",
@@ -136,8 +150,8 @@ def main():
                 "project/Core/Algorithm/AHRS", "project/Core/Communication/VOFA", "project/Core/Algorithm/PID",
                 "project/Core/Bsp/IMU_PWM", "project/Core/Bsp/ADC", "project/Core/Bsp/LED", "project/Core/Bsp/Buzzer",
                 "project/Core/Algorithm/Chassis", "project/Core/Control/Chassis",
-                "project/Core/Algorithm/Vision",
-                "project/Core/Communication/Jetson", "project/Core/Communication/Manual",
+                "project/Core/Algorithm/Vision", "project/Core/Control/Vision",
+                "project/Core/Communication/Common", "project/Core/Communication/Jetson", "project/Core/Communication/Manual",
                 "project/Core/Control/Jetson", "project/Core/Control/Manual"]
     with tempfile.TemporaryDirectory(prefix="cboard_native_", dir=args.temp_dir) as build:
         for name, sources in suites.items():
@@ -170,6 +184,7 @@ def main():
             subprocess.run(command, check=True)
             subprocess.run([exe], check=True)
     print(f"PASS: {len(suites)} native test suites")
+    check_module_boundaries(cc, args.temp_dir)
 
 
 if __name__ == "__main__":

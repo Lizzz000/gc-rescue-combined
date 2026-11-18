@@ -9,10 +9,10 @@
 #include "task.h"
 #include "tim.h"
 #include "vofa.h"
-#include "visual_servo.h"
+#include "tracked_visual_servo.h"
 #include "point_plan.h"
 #include "spin_observer.h"
-#include "jetson_auto_config.h"
+#include "visual_tracking_config.h"
 #include <math.h>
 
 volatile uint32_t tuning_request_seq, tuning_command, tuning_heartbeat;
@@ -335,12 +335,12 @@ static void Service_Visual(uint32_t now_ms, const Chassis_Odometry_t *data)
             const float goal[2] = {5000.0f, 7500.0f}, tolerance[2] = {100.0f, 100.0f};
             const Visual_Servo_Config_t config = {
                 .max_speed_mps = return_linear_limit,
-                .acceleration_mps2 = JETSON_AUTO_APPROACH_ACCEL_MPS2,
-                .deceleration_mps2 = JETSON_AUTO_APPROACH_DECEL_MPS2,
-                .latency_s = JETSON_AUTO_APPROACH_LATENCY_S,
-                .response_q_per_m = {JETSON_AUTO_RESPONSE_X_Q_PER_M, JETSON_AUTO_RESPONSE_Y_Q_PER_M},
+                .acceleration_mps2 = VISUAL_TRACKING_ACCEL_MPS2,
+                .deceleration_mps2 = VISUAL_TRACKING_DECEL_MPS2,
+                .latency_s = VISUAL_TRACKING_LATENCY_S,
+                .response_q_per_m = {VISUAL_TRACKING_RESPONSE_X_Q_PER_M, VISUAL_TRACKING_RESPONSE_Y_Q_PER_M},
             };
-            Visual_Servo_Update(&visual_servo, &config, &visual_filter, raw, goal, tolerance, seconds);
+            Tracked_Visual_Servo_Update(&visual_servo, &config, &visual_filter, raw, goal, tolerance, seconds);
             if (visual_filter.accepted_mask == 3U && fabsf(raw[0] - goal[0]) <= tolerance[0] &&
                 fabsf(raw[1] - goal[1]) <= tolerance[1])
             {
@@ -362,8 +362,8 @@ static void Service_Visual(uint32_t now_ms, const Chassis_Odometry_t *data)
     /* 视觉的两轴短暂归零后允许正常停车确认，再继续新帧；不拿尾速当故障。 */
     if (!return_velocity_started && !Chassis_Is_Stopped())
         return;
-    if (Chassis_Set_Velocity(visual_servo.speed[1] * JETSON_AUTO_Y_TO_FORWARD,
-                             visual_servo.speed[0] * JETSON_AUTO_X_TO_LEFT, 0.0f))
+    if (Chassis_Set_Velocity(visual_servo.speed[1] * VISUAL_TRACKING_Y_TO_FORWARD,
+                             visual_servo.speed[0] * VISUAL_TRACKING_X_TO_LEFT, 0.0f))
         return_velocity_started = visual_servo.speed[0] != 0.0f || visual_servo.speed[1] != 0.0f;
     else if (return_velocity_started || (uint32_t)(now_ms - motion_ms) >= TUNING_RETURN_START_MS)
         Begin_Brake(now_ms, 4U);
@@ -443,8 +443,8 @@ static void Accept_Command(uint32_t command, const float args[8], uint32_t now_m
         spin_observer = (Spin_Observer_t){0};
         spin_requested_wz = 0.0f;
         spin_stage = 0U;
-        AdaptiveKalman_Init(&visual_filter, JETSON_AUTO_APPROACH_SIGMA_X_Q,
-                            JETSON_AUTO_APPROACH_SIGMA_Y_Q, JETSON_AUTO_APPROACH_SIGMA_ACCEL_Q_S2);
+        AdaptiveKalman_Init(&visual_filter, VISUAL_TRACKING_SIGMA_X_Q,
+                            VISUAL_TRACKING_SIGMA_Y_Q, VISUAL_TRACKING_SIGMA_ACCEL_Q_S2);
         endpoint = (Chassis_Odometry_t){0};
         origin_x = origin_y = endpoint_progress = 0.0;
         distance_axis_x = distance_axis_y = 0.0f;

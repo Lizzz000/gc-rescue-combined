@@ -33,6 +33,7 @@ uint8_t Chassis_Is_Stopped(void)
     return !moving;
 }
 uint8_t Chassis_Motors_Ready(void) { return enabled; }
+uint8_t Chassis_Motion_Ready(void) { return enabled && (!moving || stop_at != 0U); }
 uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
 {
     if (vx != 0.0f || vy != 0.0f || wz != 0.0f) { moving = 1U; stop_at = 0U; }

@@ -12,45 +12,53 @@ import subprocess
 import tempfile
 
 ROOT=Path(__file__).resolve().parents[2]
-SOURCES=["AHRS/AHRS.c","AHRS/MahonyAHRS.c","PID/pid.c","Vision/adaptive_kalman.c",
-         "Chassis/motor_chassis.c","Chassis/chassis_odometry.c"]
-HEADERS=["AHRS/AHRS.h","AHRS/MahonyAHRS.h","PID/pid.h","Vision/adaptive_kalman.h",
-         "Chassis/motor_chassis.h","Chassis/chassis_odometry.h"]
+CORE = Path("STM32/project/Core")
+# 这些入口跨版本保持兼容；支持 Kalman → Vision 与里程计组合器迁入 Control。
+REQUIRED_UNITS = ("AHRS", "MahonyAHRS", "pid", "adaptive_kalman", "motor_chassis", "chassis_odometry")
+OPTIONAL_UNITS = ("heading_eskf", "wheel_alignment", "planar_odometry")
+
+
+def benchmark_sources(directory, revision=None):
+    """Resolve sources and headers from the same tree so a baseline cannot inherit current definitions."""
+    locations = (CORE / "Algorithm", CORE / "Control/Chassis")
+    if revision:
+        names = subprocess.check_output(["git", "ls-tree", "-r", "--name-only", revision, "--",
+                                         *(p.as_posix() for p in locations)], cwd=ROOT, text=True).splitlines()
+        files = [Path(name) for name in names]
+    else:
+        files = [p.relative_to(ROOT) for location in locations for p in (ROOT / location).rglob("*")]
+
+    sources = [p for p in files if p.suffix == ".c" and p.stem in REQUIRED_UNITS + OPTIONAL_UNITS]
+    for unit in REQUIRED_UNITS:
+        if sum(p.stem == unit for p in sources) != 1:
+            raise RuntimeError(f"{revision or 'working tree'}: expected one {unit}.c for this benchmark")
+    folders = sorted({p.parent for p in sources})
+    if revision:
+        headers = [p for p in files if p.suffix == ".h" and p.parent in folders]
+        for p in sources + headers:
+            target = directory / p
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(subprocess.check_output(["git", "show", f"{revision}:{p.as_posix()}"], cwd=ROOT))
+    return [str(directory / p) for p in sources], ["-I" + str(directory / p) for p in folders]
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("--baseline",default="HEAD")
     p.add_argument("--output",type=Path,required=True)
-    p.add_argument("--cc",default="C:/Program Files/JetBrains/CLion 2026.2.3.1/bin/mingw/bin/gcc.exe")
+    p.add_argument("--cc", default=shutil.which("gcc") or
+                   "C:/Program Files/JetBrains/CLion 2026.2.3.1/bin/mingw/bin/gcc.exe")
     args=p.parse_args()
     base=subprocess.check_output(["git","rev-parse",args.baseline],cwd=ROOT,text=True).strip()
-    source_root=ROOT/"STM32/project/Core/Algorithm"
     collected={"before":{},"after":{}}
     with tempfile.TemporaryDirectory(prefix="stm32_algorithm_bench_") as tmp:
         tmp=Path(tmp)
-        copies=tmp/"baseline";copies.mkdir()
-        # 目录改名前的基线从 Kalman 取源码，临时副本统一放在 Vision。
-        vision_path = f"{base}:STM32/project/Core/Algorithm/Vision/adaptive_kalman.c"
-        has_vision = subprocess.run(["git", "cat-file", "-e", vision_path],
-                                    cwd=ROOT, capture_output=True).returncode == 0
-        optional=[]
-        for path in ("Chassis/heading_eskf.c","Chassis/heading_eskf.h"):
-            exists=subprocess.run(["git","cat-file","-e",f"{base}:STM32/project/Core/Algorithm/{path}"],cwd=ROOT,capture_output=True)
-            if exists.returncode==0:optional.append(path)
-        for path in SOURCES+HEADERS+optional:
-            dest=copies/path;dest.parent.mkdir(parents=True,exist_ok=True)
-            baseline_path = path
-            if not has_vision and path.startswith("Vision/"):
-                baseline_path = "Kalman/" + path.removeprefix("Vision/")
-            dest.write_bytes(subprocess.check_output(["git","show",f"{base}:STM32/project/Core/Algorithm/{baseline_path}"],cwd=ROOT))
         executables={}
-        for name,root in (("before",copies),("after",source_root)):
+        for name, sources_and_includes in (("before", benchmark_sources(tmp/"baseline", base)),
+                                           ("after", benchmark_sources(ROOT))):
             exe=tmp/(name+".exe")
             cmd=[args.cc,"-O2","-std=c11","-Wall","-Wextra","-Werror"]
-            cmd += ["-I"+str(root/folder) for folder in ("AHRS","PID","Vision","Chassis")]
-            cmd += [str(ROOT/"STM32/tests/native/benchmark_algorithms.c")]+[str(root/file) for file in SOURCES]
-            if (root/"Chassis/heading_eskf.c").exists():
-                cmd.append(str(root/"Chassis/heading_eskf.c"))
+            sources, includes = sources_and_includes
+            cmd += includes + [str(ROOT/"STM32/tests/native/benchmark_algorithms.c")] + sources
             subprocess.run(cmd+["-lm","-o",str(exe)],check=True)
             executables[name]=exe
         for repeat in range(7):

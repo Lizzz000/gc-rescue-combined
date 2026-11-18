@@ -3,28 +3,15 @@
 
 #include <stdint.h>
 #include "heading_eskf.h"
+#include "chassis_pose.h"
+#include "wheel_alignment.h"
 
 /* 超过此间隔不外推缺失运动；控制层仍须先检查三轮与 IMU 的反馈时效。 */
 #define CHASSIS_ODOMETRY_MAX_INTERVAL_US 50000U
+#define CHASSIS_ODOMETRY_MAX_IMU_AGE_MS 20U
 /* 本车 MIT 反馈位置量程为 [-12.5,+12.5] rad，齿比均为1；回绕周期不是2*pi。 */
 #define CHASSIS_ODOMETRY_ENCODER_PERIOD_RAD 25.0f
 #define CHASSIS_ODOMETRY_MAX_WHEEL_RAD_S 40.0f
-
-/** @brief 三轮反馈平移与 IMU 航向形成的平面里程计快照。
- * @note 世界坐标的 x/y 轴由 IMU 零航向确定，x 前、y 左、航向逆时针为正。
- *       valid 只表示最近一次算法输入连续有效；反馈年龄由调用方判断。
- */
-typedef struct
-{
-    double x_m;
-    double y_m;
-    float yaw_rad; /* 正式入口为 YAW 主导的 ESKF 航向，[-pi,pi]，rad。 */
-    float vx_mps;  /* 车体纵向反馈速度，m/s。 */
-    float vy_mps;  /* 车体横向反馈速度，m/s。 */
-    float wheel_wz_rad_s;    /* 三轮正解角速度，仅诊断，不覆盖 IMU 航向。 */
-    uint32_t sample_time_us; /* 最近接受样本的微秒时刻，允许 uint32 回绕。 */
-    uint8_t valid;
-} Chassis_Odometry_t;
 
 /** @brief 一个底盘的积分历史；只由同一控制任务更新。 */
 typedef struct
@@ -35,6 +22,8 @@ typedef struct
     float previous_yaw_rad;
     float previous_position_rad[3];
     uint32_t previous_wheel_time_ms[3];
+    Wheel_Alignment_t alignment;
+    float common_yaw_rad;
     Heading_ESKF_t heading;
     uint8_t initialized;
     uint8_t input_mode; /* 内部输入基线类型；切换来源时不跨帧补积分。 */
@@ -82,11 +71,23 @@ uint8_t Odometry_Update_Position_ESKF(Odometry_State_t *state, const float wheel
                                       const float wheel_rad_s[3], float yaw_rad, float gyro_rad_s,
                                       uint32_t now_us);
 
-/* 正式异步轮组入口：轮接收时刻为 RTOS 毫秒，now_us 为控制拍的 TIM2 时刻。
- * yaw 必须来自已检查的 INS 快照；仅新可信样本令 observe_yaw 为 1。 */
+/* 异步轮组简化入口，yaw 和 gyro 对应本组最晚的轮接收时刻。 */
 uint8_t Odometry_Update_Position_ESKF_Timed(Odometry_State_t *state, const float wheel_position_rad[3],
                                             const float wheel_rad_s[3], const uint32_t wheel_time_ms[3],
                                             float yaw_rad, float gyro_rad_s, uint32_t now_us,
                                             uint8_t observe_yaw);
+
+typedef struct
+{
+    uint32_t wheel_time_ms[3];
+    uint32_t imu_time_ms;
+    uint32_t control_time_ms;
+} Odometry_Feedback_Timing_t;
+
+/* 正式底盘入口。三个来源时间均为 RTOS 毫秒，now_us 是独立的 TIM2 控制拍。
+ * x/y 积分至三轮均已覆盖的时刻，yaw 为控制拍估计，仅新可信 INS 帧参与观测更新。 */
+uint8_t Odometry_Update_Feedback(Odometry_State_t *state, const float position[3], const float wheel[3],
+                                 const Odometry_Feedback_Timing_t *timing, float yaw, float gyro,
+                                 uint32_t now_us, uint8_t observe_yaw);
 
 #endif

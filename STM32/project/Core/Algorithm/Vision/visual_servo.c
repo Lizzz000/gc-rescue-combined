@@ -3,15 +3,15 @@
 #include <stddef.h>
 
 void Visual_Servo_Update(Visual_Servo_t *state, const Visual_Servo_Config_t *config,
-                         const AdaptiveKalman *filter, const float raw[2], const float goal[2],
+                         const Visual_Servo_Estimate_t *estimate, const float raw[2], const float goal[2],
                          const float tolerance[2], float seconds)
 {
     if (state == NULL)
     {
         return;
     }
-    if (config == NULL || filter == NULL || raw == NULL || goal == NULL || tolerance == NULL ||
-        !filter->initialized || !isfinite(seconds) || seconds < 0.0f || seconds >= 0.25f ||
+    if (config == NULL || estimate == NULL || raw == NULL || goal == NULL || tolerance == NULL ||
+        !isfinite(seconds) || seconds < 0.0f || seconds >= 0.25f ||
         !isfinite(config->max_speed_mps) || config->max_speed_mps <= 0.0f ||
         !isfinite(config->acceleration_mps2) || config->acceleration_mps2 <= 0.0f ||
         !isfinite(config->deceleration_mps2) || config->deceleration_mps2 <= 0.0f ||
@@ -27,14 +27,14 @@ void Visual_Servo_Update(Visual_Servo_t *state, const Visual_Servo_Config_t *con
     {
         if (!isfinite(raw[axis]) || !isfinite(goal[axis]) || !isfinite(tolerance[axis]) ||
             tolerance[axis] <= 0.0f || !isfinite(config->response_q_per_m[axis]) ||
-            config->response_q_per_m[axis] <= 0.0f || !isfinite(filter->position[axis]) ||
-            !isfinite(filter->velocity[axis]) || !isfinite(state->speed[axis]))
+            config->response_q_per_m[axis] <= 0.0f || !isfinite(estimate->position[axis]) ||
+            !isfinite(estimate->velocity[axis]) || !isfinite(state->speed[axis]))
         {
             *state = (Visual_Servo_t){0};
             return;
         }
         const float previous = state->speed[axis];
-        if (!(filter->accepted_mask & (1U << axis)))
+        if (!(estimate->accepted_mask & (1U << axis)))
         {
             desired[axis] =
                 copysignf(fmaxf(0.0f, fabsf(previous) - config->deceleration_mps2 * dt), previous);
@@ -50,14 +50,14 @@ void Visual_Servo_Update(Visual_Servo_t *state, const Visual_Servo_Config_t *con
         {
             continue; /* 换向先归零，底盘逐拍斜坡负责真实制动。 */
         }
-        const float filtered = direction * (goal[axis] - filter->position[axis]);
+        const float filtered = direction * (goal[axis] - estimate->position[axis]);
         /* 目标取半窗内侧，避免以窗外余量为 P 输入时无限趋近窗沿。 */
         const float remaining = fmaxf(0.0f, fminf(fabsf(error), filtered) - 0.5f * tolerance[axis]);
         float response = config->response_q_per_m[axis];
         if (fabsf(previous) >= 0.03f)
         {
             /* 图像实际收敛更快时提前制动；不降低标定初值，也不把它当标定结果保存。 */
-            const float observed = fmaxf(0.0f, direction * filter->velocity[axis]) / fabsf(previous);
+            const float observed = fmaxf(0.0f, direction * estimate->velocity[axis]) / fabsf(previous);
             response = fmaxf(response, fminf(4.0f * response, observed));
         }
         const float a = config->deceleration_mps2;
