@@ -68,7 +68,8 @@ struct MissionStatus {
   using ConstSharedPtr = std::shared_ptr<const MissionStatus>;
   static constexpr std::uint8_t DEST_NONE=0, DEST_LEFT=1, DEST_RIGHT=2;
   static constexpr std::uint8_t OP_IDLE=0, OP_SWITCHING=2, RESULT_SUCCESS=2, RESULT_ROI_INVALID=6;
-  static constexpr std::uint8_t TRANSPORT_FIRST=0, TRANSPORT_LATER=1, CYCLE_WAITING_TURN=2, CYCLE_FAULT=8;
+  static constexpr std::uint8_t TRANSPORT_FIRST=0, TRANSPORT_LATER=1, CYCLE_WAITING_TURN=2, CYCLE_FAULT=8,
+    CYCLE_LOCALIZING_START=9;
   HostHeader header;
   std::uint8_t destination{0}, operation{0}, outcome{0}, transport_phase{0}, cycle_phase{0};
   std::uint64_t roi_request_id{0}, cycle_generation{0};

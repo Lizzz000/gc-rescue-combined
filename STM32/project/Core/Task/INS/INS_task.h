@@ -31,6 +31,7 @@ typedef struct
 {
     float yaw_deg;            /**< 航向，°，范围 [-180,180]，俯视逆时针为正。 */
     float world_z_rad_s;       /**< 去零偏后世界坐标 Z 轴角速度，rad/s。 */
+    uint8_t yaw_predicted;     /**< 单次跳点期间发布陀螺预测，里程计跳过 YAW 校正。 */
     uint32_t sample_time_ms;   /**< BMI 读取开始的 RTOS 时刻；当前 1 tick = 1 ms。 */
 } INS_control_data_t;
 

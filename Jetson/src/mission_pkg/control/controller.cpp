@@ -116,7 +116,8 @@ MissionCommandResult MissionController::requestCommand(
     (state_.cycle_phase == CyclePhase::SwitchingField ||
     state_.cycle_phase == CyclePhase::NavigatingSafety);
   const bool recorded_arrival = command == MissionCommand::SafetyArrived &&
-    state_.cycle_phase == CyclePhase::WaitingTransfer;
+    (state_.cycle_phase == CyclePhase::WaitingTransfer ||
+    state_.cycle_phase == CyclePhase::LocalizingStart);
   if (matches_route && state_.destination != MissionState::Destination::None &&
     (recorded_turn || recorded_arrival))
   {
@@ -164,17 +165,19 @@ MissionCommandResult MissionController::requestCommand(
       // 先记账再发布；发布失败不回滚已记下的送达。
       delivered_roi_request_id_ = roi_request_id;
       state_.transport_phase = MissionState::Transport::Later;
-      state_.reason = "delivery confirmed for current ROI; waiting for start-search command";
+      state_.cycle_phase = CyclePhase::LocalizingStart;
+      state_.reason = "delivery confirmed for current ROI; localizing the next starting pose";
       result.acted = true;
       out_.publishStatus(state_);
       result.accepted = true;
       result.message = state_.reason;
       return result;
     case MissionCommand::StartSearch:
-      // 调用端须已完成返程，或停车并安全释放；Mission 不核实机械动作。
+      // 调用端须已完成起点定位与再次转向，或停车并安全释放；Mission 不核实机械动作。
       // 205 无趟次身份。只弃路由，不确认或回滚送达。
       if (state_.cycle_phase != CyclePhase::WaitingTransfer &&
         state_.cycle_phase != CyclePhase::NavigatingSafety &&
+        state_.cycle_phase != CyclePhase::LocalizingStart &&
         state_.cycle_phase != CyclePhase::WaitingTurn &&
         state_.cycle_phase != CyclePhase::CheckingRoi &&
         state_.cycle_phase != CyclePhase::RoiFailed &&

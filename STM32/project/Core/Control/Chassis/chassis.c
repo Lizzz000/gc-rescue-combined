@@ -60,6 +60,7 @@ volatile uint32_t chassis_odometry_last_us, chassis_odometry_max_us;
 volatile float chassis_heading_debug[6];
 #endif
 static uint32_t odometry_seq[3];
+static uint32_t odometry_imu_sample_ms;
 static double distance_origin_x, distance_origin_y, distance_goal_m, distance_progress_m;
 static float distance_axis_x, distance_axis_y;
 static uint32_t distance_timeout_ms, distance_progress_ms, distance_stop_ms;
@@ -220,6 +221,7 @@ static void Update_Odometry(uint32_t now_us,
     taskEXIT_CRITICAL();
     uint8_t ready = imu_valid, fresh_group = 1U;
     float wheel[3], position[3];
+    uint32_t wheel_time_ms[3];
     for (unsigned i = 0U; i < 3U; ++i)
     {
         if (feedback[i].id != motor_id[i] || feedback[i].state != 1U ||
@@ -231,17 +233,25 @@ static void Update_Odometry(uint32_t now_us,
             fresh_group = 0U;
         wheel[i] = feedback[i].velocity * motor_direction[i] / motor_gear_ratio[i];
         position[i] = feedback[i].position * motor_direction[i] / motor_gear_ratio[i];
+        wheel_time_ms[i] = feedback[i].feedback_time_ms;
     }
     if (!ready)
+    {
         Odometry_Invalidate(&odometry);
-    else if (!odometry.initialized || fresh_group)
+        for (unsigned i = 0U; i < 3U; ++i)
+            odometry_seq[i] = feedback[i].feedback_seq;
+    }
+    else if (fresh_group)
     {
 #if CHASSIS_TUNING_ENABLED
         const uint32_t algorithm_start_us = __HAL_TIM_GET_COUNTER(&htim2);
 #endif
-        Odometry_Update_Position_ESKF(&odometry, position, wheel,
-            CHASSIS_STRAIGHT_YAW_SIGN * imu->yaw_deg * DEG_TO_RAD,
-            CHASSIS_STRAIGHT_YAW_SIGN * imu->world_z_rad_s, now_us);
+        const uint8_t observe_yaw = !imu->yaw_predicted &&
+            (!odometry.initialized || imu->sample_time_ms != odometry_imu_sample_ms);
+        if (Odometry_Update_Position_ESKF_Timed(&odometry, position, wheel, wheel_time_ms,
+                CHASSIS_STRAIGHT_YAW_SIGN * imu->yaw_deg * DEG_TO_RAD,
+                CHASSIS_STRAIGHT_YAW_SIGN * imu->world_z_rad_s, now_us, observe_yaw) && observe_yaw)
+            odometry_imu_sample_ms = imu->sample_time_ms;
 #if CHASSIS_TUNING_ENABLED
         chassis_odometry_last_us = __HAL_TIM_GET_COUNTER(&htim2) - algorithm_start_us;
         if (chassis_odometry_last_us > chassis_odometry_max_us)

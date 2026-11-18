@@ -7,15 +7,15 @@
 | `AHRS/AHRS_update` | 机体系 IMU → 单位四元数；`get_angle` 输出 rad | INS任务 |
 | `PID/PID_calc` | 离散温控 PID，增益按调用周期标定 | INS温控 |
 | `PID/PID_Step` | 显式dt、测量微分、抗积分饱和 | 底盘锁航向/转向 |
-| `Kalman/AdaptiveKalman_Update` | 图像中心q → 中心q、图像速度q/s | 视觉接近 |
-| `Chassis/Visual_Servo_Update` | 图像误差、图像速度 → 平滑平移速度m/s | 正式自动流程、注入测试 |
+| `Vision/AdaptiveKalman_Update` | 图像中心q → 中心q、图像速度q/s | 视觉接近 |
+| `Vision/Visual_Servo_Update` | 图像误差、图像速度 → 平滑平移速度m/s | 正式自动流程、注入测试 |
 | `Chassis/Motor_Chassis_*` | 车体速度 ↔ 后/右前/左前轮几何速度 | 底盘控制/里程计 |
 | `Chassis/Odometry_Update_Position_ESKF` | 编码器位置差、YAW主导ESKF航向 → 世界位姿m/rad | 正式底盘 |
 | `Chassis/Point_Plan_*` | 世界位姿、目标 → 最短直线与短角度速度指令 | 命令7返航 |
 
 ## 组织与参考
 
-[Kalman说明](Kalman/README.md)、[运动学/里程计/规划说明](Chassis/README.md)、[AHRS说明](AHRS/README.md)、[PID说明](PID/README.md)分别记录单位、边界、来源与验证。现有 GPL/BSD 许可证保留，新增速度/路径规划按本车接口独立实现，没有复制上游完整控制器。
+[视觉算法说明](Vision/README.md)、[运动学/里程计/规划说明](Chassis/README.md)、[AHRS说明](AHRS/README.md)、[PID说明](PID/README.md)分别记录单位、边界、来源与验证。现有 GPL/BSD 许可证保留，新增速度/路径规划按本车接口独立实现，没有复制上游完整控制器。
 
 本车为可侧移的三轮全向底盘。已确认ID1后、ID2右前、ID3左前；车体x前/y左/逆时针正。空旷无障碍空间两点之间直线最短，旋转采用最短角差；当前没有地图或障碍物输入，不能宣称避障或有障碍时的全局最优。
 

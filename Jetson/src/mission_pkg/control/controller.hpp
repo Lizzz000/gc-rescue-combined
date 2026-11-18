@@ -1,7 +1,7 @@
 #pragma once
 
 // 阶段、等待和运输规则。不读时钟、不创建线程。
-// 先看 CyclePhase 的九个阶段，再看 requestRoi 和 requestCommand。
+// 先看 CyclePhase，再看 requestRoi 和 requestCommand。
 // Copyright 2026 li
 // SPDX-License-Identifier: Apache-2.0
 
@@ -21,8 +21,8 @@ struct MissionState
   {None = 0, Pending = 1, Success = 2, Rejected = 3, Timeout = 4,
     RoiRejected = 5, RoiInvalid = 6};
   enum class Transport : std::uint8_t {First = 0, Later = 1};
-  // 物理握手阶段独立于识别模式和服务等待。只有 SearchingTarget / NavigatingSafety
-  // 允许对应坐标；WaitingTurn / WaitingTransfer 等待 STM32，不受服务超时控制。
+  // 物理握手阶段独立于识别模式和服务等待。SearchingTarget 允许目标中心，
+  // NavigatingSafety / LocalizingStart 允许本趟目的区中心。
   enum class CyclePhase : std::uint8_t
   {
     SearchingTarget = 0,  // 寻找目标，允许 arrived 或显式重找。
@@ -30,10 +30,11 @@ struct MissionState
     WaitingTurn = 2,      // ROI 已提交；只等去程转向完成，或显式放弃路由。
     SwitchingField = 3,   // 等待 field 服务与实际阶段双确认。
     NavigatingSafety = 4, // 按已提交目的区导航，等待安全区到达。
-    WaitingTransfer = 5,  // 盲推、送达确认和返程共用此态；由 StartSearch 离开。
+    WaitingTransfer = 5,  // 等待盲推、释放与回撤完成，保持坐标关闭。
     SwitchingSeg = 6,     // seg 双确认成功后清目的区和 ROI 编号，恢复寻找。
     RoiFailed = 7,        // ROI 拒绝、无效或超时，等待显式重找。
-    Fault = 8            // 启动初态或运行故障；仅初态可由首个合法 seg 解除。
+    Fault = 8,           // 启动初态或运行故障；仅初态可由首个合法 seg 解除。
+    LocalizingStart = 9  // 送达确认后按本趟目的区定位，直到显式重找。
   };
 
   // 检测端首个合法 seg 状态到来前保持故障门控，不发布可行驶坐标。
@@ -141,7 +142,7 @@ MissionTransportDecision applyTransportRules(
 enum class MissionCommand : std::uint8_t
 {
   // ROI 授权后的去程转向完成；闭合与检查前后退已在请求 ROI 前结束。
-  // 投送后的返程转向不发此命令，完成后用 StartSearch 开启下一轮。
+  // 投送后的起点定位与再次转向完成后，用 StartSearch 开启下一轮。
   // 首次受理仅 WaitingTurn + 匹配非零完整 ROI 编号；受理后请求 field，目的区保持到双确认。
   TurnCompleted = 1,
   // 首次受理仅 NavigatingSafety + 匹配非零完整 ROI 编号；进入待搬运，不调用检测模式服务。

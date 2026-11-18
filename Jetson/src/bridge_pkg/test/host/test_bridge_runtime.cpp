@@ -31,6 +31,8 @@ struct BridgeRuntimeTestAccess
   static void disconnect(BridgeRuntime & runtime) {runtime.closeSocket("host test disconnect");}
   static bool targetValid(const BridgeRuntime & runtime)
   {return runtime.currentFrame(CanProtocol::TARGET_ID).data[0] != 0;}
+  static bool safetyValid(const BridgeRuntime & runtime)
+  {return runtime.currentFrame(CanProtocol::SAFETY_ID).data[0] != 0;}
 };
 
 namespace {
@@ -66,15 +68,16 @@ struct Fixture
     task();
     mission(10);
   }
-  void task()
+  void task(const char * task_name = "seg")
   {
     auto message = std::make_shared<interface_pkg::msg::TaskState>();
     message->header.stamp = rclcpp::Time(++node.time_ns);
-    message->task = "seg";
+    message->task = task_name;
     runtime->taskCallback(message);
   }
   void mission(std::uint64_t generation, BridgeCyclePhase phase = BridgeCyclePhase::SearchingTarget,
-    BridgeOutcome outcome = BridgeOutcome::Success, std::uint64_t roi_id = 0)
+    BridgeOutcome outcome = BridgeOutcome::Success, std::uint64_t roi_id = 0,
+    std::uint8_t side = 1)
   {
     auto message = std::make_shared<interface_pkg::msg::MissionStatus>();
     message->header.stamp = rclcpp::Time(++node.time_ns);
@@ -83,16 +86,16 @@ struct Fixture
     message->outcome = static_cast<std::uint8_t>(outcome);
     message->operation = phase == BridgeCyclePhase::SwitchingSeg ? 2 : 0;
     message->roi_request_id = roi_id;
-    message->destination = roi_id == 0 ? 0 : 1;
+    message->destination = roi_id == 0 ? 0 : side;
     runtime->missionCallback(message);
   }
   void search(std::uint32_t id) {CHECK(BridgeRuntimeTestAccess::receive(*runtime, 19, id));}
-  bool result(bool success, std::uint32_t id) const
+  bool result(bool success, std::uint32_t id, std::uint8_t command = 3) const
   {
     const auto & frame = BridgeRuntimeTestAccess::reply(*runtime);
     std::uint32_t token = 0;
     for (unsigned i = 0; i < 4; ++i) {token |= std::uint32_t(frame.data[i + 2]) << (8 * i);}
-    return frame.len == 6 && frame.data[0] == success && frame.data[1] == 3 && token == id;
+    return frame.len == 6 && frame.data[0] == success && frame.data[1] == command && token == id;
   }
   void target()
   {
@@ -106,7 +109,72 @@ struct Fixture
     message->detections.push_back(detection);
     runtime->targetCallback(message);
   }
+  void safety(std::uint8_t side)
+  {
+    auto message = std::make_shared<interface_pkg::msg::SafetyTarget>();
+    message->header.stamp = rclcpp::Time(++node.time_ns);
+    message->header.frame_id = "field";
+    message->side = side;
+    message->valid = true;
+    message->x = 0.5;
+    message->y = 0.75;
+    runtime->safetyCallback(message);
+  }
 };
+}
+
+void testDeliveryLocalization()
+{
+  Group group("BridgeRuntime delivery localization");
+  // 两种回执顺序都沿用原路由，重复送达不发起第二条 ROS 请求。
+  for (bool status_first : {false, true}) {
+    Fixture fixture;
+    const auto receive = [&](canid_t type, std::uint32_t id) {
+      CHECK(BridgeRuntimeTestAccess::receive(*fixture.runtime, type, id));
+    };
+    fixture.task("field");
+    fixture.mission(11, BridgeCyclePhase::NavigatingSafety, BridgeOutcome::Success, 77, 2);
+    fixture.safety(2);
+    CHECK(BridgeRuntimeTestAccess::safetyValid(*fixture.runtime));
+    receive(CanProtocol::SAFETY_ARRIVED_ID, 77);
+    CHECK(BridgeRuntimeTestAccess::held(*fixture.runtime));
+    fixture.mission(11, BridgeCyclePhase::WaitingTransfer, BridgeOutcome::Success, 77, 2);
+    fixture.command->reply(0, {true});
+    CHECK(fixture.result(true, 77, CanProtocol::SAFETY_ARRIVED));
+    fixture.safety(2);
+    CHECK(!BridgeRuntimeTestAccess::safetyValid(*fixture.runtime));
+    receive(CanProtocol::DELIVERY_COMPLETED_ID, 76);
+    CHECK(fixture.command->requests.size() == 1);
+    CHECK(fixture.result(false, 76, CanProtocol::DELIVERY_COMPLETED));
+
+    receive(CanProtocol::DELIVERY_COMPLETED_ID, 77);
+    CHECK(fixture.command->requests.size() == 2);
+    if (!status_first) {
+      fixture.command->reply(1, {true});
+      CHECK(fixture.result(true, 77, CanProtocol::DELIVERY_COMPLETED));
+      CHECK(BridgeRuntimeTestAccess::held(*fixture.runtime));
+    }
+    fixture.mission(11, BridgeCyclePhase::LocalizingStart, BridgeOutcome::Success, 77, 2);
+    if (status_first) {fixture.command->reply(1, {true});}
+    CHECK(fixture.result(true, 77, CanProtocol::DELIVERY_COMPLETED));
+    CHECK(!BridgeRuntimeTestAccess::held(*fixture.runtime));
+    CHECK(!BridgeRuntimeTestAccess::safetyValid(*fixture.runtime));
+    receive(CanProtocol::DELIVERY_COMPLETED_ID, 77);
+    CHECK(fixture.command->requests.size() == 2);
+    CHECK(fixture.result(true, 77, CanProtocol::DELIVERY_COMPLETED));
+
+    fixture.safety(1);
+    CHECK(!BridgeRuntimeTestAccess::safetyValid(*fixture.runtime));
+    fixture.safety(2);
+    CHECK(BridgeRuntimeTestAccess::safetyValid(*fixture.runtime));
+    receive(CanProtocol::SAFETY_ARRIVED_ID, 77);
+    CHECK(fixture.command->requests.size() == 2);
+    CHECK(fixture.result(true, 77, CanProtocol::SAFETY_ARRIVED));
+    CHECK(BridgeRuntimeTestAccess::safetyValid(*fixture.runtime));
+    fixture.search(500);
+    fixture.command->reply(2, {true});
+    CHECK(!BridgeRuntimeTestAccess::safetyValid(*fixture.runtime));
+  }
 }
 
 void testBridgeRuntimeSearch()

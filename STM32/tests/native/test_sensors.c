@@ -55,7 +55,7 @@ void test_exit_critical(void) { assert(critical_depth == 1U); --critical_depth; 
 /** @brief 未就绪不覆盖调用者原数据。 */
 static void assert_ins_not_ready(void)
 {
-    INS_control_data_t before = {123.0f, 456.0f, 789U}, after = before;
+    INS_control_data_t before = {.yaw_deg = 123.0f, .world_z_rad_s = 456.0f, .sample_time_ms = 789U}, after = before;
     assert(INS_Get_Data(&after) == 0U);
     assert(memcmp(&before, &after, sizeof(before)) == 0);
     assert(critical_depth == 0U);
@@ -177,13 +177,44 @@ void vofa_send(float roll, float pitch, float yaw)
     assert(fabsf(roll - INS_angle[2] * rad_to_deg) < 0.0001f);
     assert(fabsf(pitch - INS_angle[1] * rad_to_deg) < 0.0001f);
     assert(fabsf(yaw - INS_angle[0] * rad_to_deg) < 0.0001f);
+    static INS_control_data_t previous;
+    static unsigned rejected_run;
     INS_control_data_t snapshot;
-    assert(critical_depth == 0U && INS_Get_Data(&snapshot) == 1U);
-    assert(fabsf(snapshot.yaw_deg - yaw) < 0.0001f);
-    assert(snapshot.sample_time_ms == (uint32_t)(last_bmi_us / 1000U));
-    float expected_world_z = scenario == DYNAMIC_WRAP || (scenario == TILTED_WORLD && vofa_calls > 0U)
-                                 ? 1000.0f * 0.0010652644f : 0.0f;
-    assert(fabsf(snapshot.world_z_rad_s - expected_world_z) < 0.00002f);
+    if (vofa_calls == 0U)
+        rejected_run = 0U;
+    assert(critical_depth == 0U);
+    if (INS_Get_Data(&snapshot))
+    {
+        if (snapshot.yaw_predicted)
+        {
+            assert(vofa_calls > 0U && ++rejected_run <= 2U);
+            const uint32_t elapsed_ms = snapshot.sample_time_ms - previous.sample_time_ms;
+            float expected = previous.yaw_deg;
+            if (elapsed_ms <= 50U)
+                expected += 0.0005f * (float)elapsed_ms *
+                            (previous.world_z_rad_s + snapshot.world_z_rad_s) * rad_to_deg;
+            assert(fabsf(remainderf(snapshot.yaw_deg - expected, 360.0f)) < 0.0001f);
+            assert(fabsf(remainderf(yaw - snapshot.yaw_deg, 360.0f)) > 5.0f);
+        }
+        else
+        {
+            assert(rejected_run <= 2U);
+            rejected_run = 0U;
+            assert(fabsf(snapshot.yaw_deg - yaw) < 0.0001f);
+        }
+        assert(snapshot.sample_time_ms == (uint32_t)(last_bmi_us / 1000U));
+        const float expected_world_z =
+            scenario == DYNAMIC_WRAP || (scenario == TILTED_WORLD && vofa_calls > 0U)
+                ? 1000.0f * 0.0010652644f : 0.0f;
+        assert(fabsf(snapshot.world_z_rad_s - expected_world_z) < 0.00002f);
+        previous = snapshot;
+    }
+    else
+    {
+        /* 九轴夹具注入的磁场突变可持续三帧，原始遥测仍输出，控制快照锁存无效。 */
+        assert(INS_USE_MAGNETOMETER && rejected_run >= 2U);
+        rejected_run = 3U;
+    }
     assert(sampling_waits == calibration_samples);
     assert(accel_reads == calibration_samples + 2U + vofa_calls + runtime_skips);
     assert(mag_reads == (INS_USE_MAGNETOMETER ? calibration_samples + 2U * (vofa_calls + 1U + runtime_skips) : 0U));

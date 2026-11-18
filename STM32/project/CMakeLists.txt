@@ -39,11 +39,11 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Algorithm/AHRS/AHRS.c
     Core/Algorithm/AHRS/MahonyAHRS.c
     Core/Algorithm/PID/pid.c
-    Core/Algorithm/Kalman/adaptive_kalman.c
+    Core/Algorithm/Vision/adaptive_kalman.c
     Core/Algorithm/Chassis/motor_chassis.c
     Core/Algorithm/Chassis/chassis_odometry.c
     Core/Algorithm/Chassis/heading_eskf.c
-    Core/Algorithm/Chassis/visual_servo.c
+    Core/Algorithm/Vision/visual_servo.c
     Core/Algorithm/Chassis/point_plan.c
     Core/Bsp/ADC/bsp_adc.c
     Core/Bsp/Buzzer/bsp_buzzer.c
@@ -74,7 +74,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Algorithm/AHRS
     Core/Algorithm/PID
-    Core/Algorithm/Kalman
+    Core/Algorithm/Vision
     Core/Algorithm/Chassis
     Core/Bsp/ADC
     Core/Bsp/Buzzer
@@ -102,6 +102,11 @@ if(CHASSIS_TUNING_ENABLED)
     target_sources(${CMAKE_PROJECT_NAME} PRIVATE Core/Control/Chassis/live_tuning.c)
     target_sources(${CMAKE_PROJECT_NAME} PRIVATE Core/Control/Chassis/spin_observer.c)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE CHASSIS_TUNING_ENABLED=1 JETSON_AUTO_ENABLED=0)
+endif()
+option(UART6_MANUAL_ENABLED "Build dedicated USART6 chassis remote control firmware" OFF)
+if(UART6_MANUAL_ENABLED)
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE Core/Control/Manual/uart6_manual.c)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE UART6_MANUAL_ENABLED=1)
 endif()
 option(INS_USE_MAGNETOMETER "Use IST8310 for nine-axis Mahony heading" OFF)
 if(INS_USE_MAGNETOMETER)

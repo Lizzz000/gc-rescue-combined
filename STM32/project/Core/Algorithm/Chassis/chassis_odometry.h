@@ -9,7 +9,6 @@
 /* 本车 MIT 反馈位置量程为 [-12.5,+12.5] rad，齿比均为1；回绕周期不是2*pi。 */
 #define CHASSIS_ODOMETRY_ENCODER_PERIOD_RAD 25.0f
 #define CHASSIS_ODOMETRY_MAX_WHEEL_RAD_S 40.0f
-#define CHASSIS_ODOMETRY_MAX_SAMPLE_SKEW_US 30000U
 
 /** @brief 三轮反馈平移与 IMU 航向形成的平面里程计快照。
  * @note 世界坐标的 x/y 轴由 IMU 零航向确定，x 前、y 左、航向逆时针为正。
@@ -35,6 +34,7 @@ typedef struct
     float previous_vy_mps;
     float previous_yaw_rad;
     float previous_position_rad[3];
+    uint32_t previous_wheel_time_ms[3];
     Heading_ESKF_t heading;
     uint8_t initialized;
     uint8_t input_mode; /* 内部输入基线类型；切换来源时不跨帧补积分。 */
@@ -68,7 +68,7 @@ uint8_t Odometry_Update(Odometry_State_t *state, const float wheel_rad_s[3], flo
  * @param[in] now_us 反馈组时间，us；不接受超过50ms的缺测区间。
  * @return 接受返回1；非法、重复、超长间隔或不可实现的位置跳变返回0。
  * @note 参考 WPILib Odometry::Update/Pose2d::Exp，见 README 与 LICENSE-WPILib.txt。
- *       首点/恢复/输入来源切换只建立基线；25rad解绕，跳变界含30ms采样偏斜。
+ *       首点/恢复/输入来源切换只建立基线；25rad解绕，同步入口按组间隔检查跳变。
  *       速度零偏不会形成位移，但轮滑、轮径误差和IMU漂移仍需外部观测校正。
  */
 uint8_t Odometry_Update_Position(Odometry_State_t *state, const float wheel_position_rad[3],
@@ -81,5 +81,12 @@ uint8_t Odometry_Update_Position(Odometry_State_t *state, const float wheel_posi
 uint8_t Odometry_Update_Position_ESKF(Odometry_State_t *state, const float wheel_position_rad[3],
                                       const float wheel_rad_s[3], float yaw_rad, float gyro_rad_s,
                                       uint32_t now_us);
+
+/* 正式异步轮组入口：轮接收时刻为 RTOS 毫秒，now_us 为控制拍的 TIM2 时刻。
+ * yaw 必须来自已检查的 INS 快照；仅新可信样本令 observe_yaw 为 1。 */
+uint8_t Odometry_Update_Position_ESKF_Timed(Odometry_State_t *state, const float wheel_position_rad[3],
+                                            const float wheel_rad_s[3], const uint32_t wheel_time_ms[3],
+                                            float yaw_rad, float gyro_rad_s, uint32_t now_us,
+                                            uint8_t observe_yaw);
 
 #endif

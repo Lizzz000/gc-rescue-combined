@@ -117,8 +117,75 @@ static void test_invalid_and_odometry(void)
     assert(!Odometry_Update_Position_ESKF(&odom,p,wheels,.9f,NAN,us+30000));
 }
 
+
+static void test_yaw_jump_and_source_time(void)
+{
+    Heading_Yaw_Guard_t guard = {0};
+    const float jump = 1.570796327f;
+    assert(Heading_Yaw_Guard_Update(&guard, 0, 0, UINT32_MAX - 9U) == HEADING_YAW_OBSERVED);
+    assert(Heading_Yaw_Guard_Update(&guard, jump, 0, 0U) == HEADING_YAW_PREDICTED);
+    assert(guard.yaw_rad == 0);
+    assert(Heading_Yaw_Guard_Update(&guard, jump, 0, 0U) == HEADING_YAW_PREDICTED);
+    assert(Heading_Yaw_Guard_Update(&guard, jump, 0, UINT32_MAX) == HEADING_YAW_PREDICTED);
+    assert(guard.rejected_run == 1U);
+    assert(Heading_Yaw_Guard_Update(&guard, 0, 0, 10U) == HEADING_YAW_OBSERVED);
+    assert(Heading_Yaw_Guard_Update(&guard, jump, 0, 20U) == HEADING_YAW_PREDICTED);
+    assert(Heading_Yaw_Guard_Update(&guard, jump, 0, 30U) == HEADING_YAW_PREDICTED);
+    assert(Heading_Yaw_Guard_Update(&guard, jump, 0, 40U) == HEADING_YAW_INVALID);
+    assert(Heading_Yaw_Guard_Update(&guard, 0, 0, 50U) == HEADING_YAW_INVALID);
+
+    guard = (Heading_Yaw_Guard_t){0};
+    assert(Heading_Yaw_Guard_Update(&guard, 3.13f, 4, 0U) == HEADING_YAW_OBSERVED);
+    assert(Heading_Yaw_Guard_Update(&guard, -3.1132f, 4, 10U) == HEADING_YAW_OBSERVED);
+    Heading_ESKF_t heading;
+    assert(Heading_ESKF_Init(&heading, 0, 0));
+    assert(Heading_ESKF_Update(&heading, jump, 0, 0, .01f));
+    assert(heading.yaw_rad == 0 && heading.yaw_gain == 0);
+    assert(Heading_ESKF_Update_Observed(&heading, jump, 0, 0, .01f, 0U));
+    assert(heading.yaw_rejected_run == 1U);
+    assert(Heading_ESKF_Update(&heading, jump, 0, 0, .01f));
+    assert(!Heading_ESKF_Update(&heading, jump, 0, 0, .01f));
+}
+
+static void test_encoder_receive_time(void)
+{
+    Odometry_State_t odom;
+    const float zero[3] = {0};
+    const float jumped[3] = {1.5f, 0, 0};
+    const uint32_t first[3] = {UINT32_MAX - 9U, UINT32_MAX - 19U, UINT32_MAX - 9U};
+    const uint32_t second[3] = {0, 0, 0};
+    Odometry_Init(&odom);
+    assert(Odometry_Update_Position_ESKF_Timed(&odom, zero, zero, first, 0, 0, 0, 1U));
+    assert(!Odometry_Update_Position_ESKF_Timed(&odom, jumped, zero, second, 0, 0, 10000U, 1U));
+    assert(!odom.data.valid && odom.data.x_m == 0 && odom.data.y_m == 0);
+
+    /* 恢复首帧重建基线。后轮间隔10ms，右前轮间隔20ms，分别校验。 */
+    assert(Odometry_Update_Position_ESKF_Timed(&odom, zero, zero, first, 0, 0, 20000U, 1U));
+    const float asynchronous[3] = {.430f, .790f, .400f};
+    assert(Odometry_Update_Position_ESKF_Timed(&odom, asynchronous, zero, second, 0, 0, 30000U, 0U));
+    assert(odom.data.valid && odom.heading.yaw_gain == 0);
+
+    Odometry_Init(&odom);
+    assert(Odometry_Update_Position_ESKF(&odom, zero, zero, 0, 0, 0));
+    assert(!Odometry_Update_Position_ESKF(&odom, jumped, zero, 0, 0, 10000U));
+    assert(odom.data.y_m == 0);
+
+    Odometry_Init(&odom);
+    const float yaw_jump = 1.570796327f;
+    assert(Odometry_Update_Position_ESKF(&odom, zero, zero, 0, 0, 0));
+    assert(Odometry_Update_Position_ESKF(&odom, zero, zero, yaw_jump, 0, 10000U));
+    assert(Odometry_Update_Position_ESKF(&odom, zero, zero, yaw_jump, 0, 20000U));
+    assert(!Odometry_Update_Position_ESKF(&odom, zero, zero, yaw_jump, 0, 30000U));
+    assert(!Odometry_Update_Position_ESKF(&odom, zero, zero, 0, 0, 40000U));
+    assert(!odom.data.valid && odom.data.yaw_rad == 0);
+    Odometry_Init(&odom);
+    assert(Odometry_Update_Position_ESKF(&odom, zero, zero, 0, 0, 50000U));
+}
+
 int main(void)
 {
+    test_yaw_jump_and_source_time();
+    test_encoder_receive_time();
     test_prediction_and_joseph();test_yaw_priority_and_noise();test_invalid_and_odometry();
     puts("PASS planar ESKF: YAW priority, weak/slipping encoder, gyro bias, noise, PSD, SO(2) wrap and SE(2) integration");
     return 0;

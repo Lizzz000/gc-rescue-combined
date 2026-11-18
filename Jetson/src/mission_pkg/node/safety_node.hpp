@@ -52,7 +52,7 @@ private:
   void modeCallback(const interface_pkg::msg::TaskState::ConstSharedPtr & msg);
   void clearOutput(const builtin_interfaces::msg::Time & stamp);
   void checkTimeout();
-  // 只有 NavigatingSafety + IDLE/SUCCESS 且有目的区才准备好。
+  // 导航或起点定位阶段、IDLE/SUCCESS 且有目的区时才准备好。
   void destinationCallback(const interface_pkg::msg::MissionStatus::ConstSharedPtr & msg);
   void clearTarget(const builtin_interfaces::msg::Time & stamp);
 

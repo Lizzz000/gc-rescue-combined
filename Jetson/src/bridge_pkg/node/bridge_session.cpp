@@ -89,6 +89,8 @@ static_assert(static_cast<std::uint8_t>(BridgeCyclePhase::WaitingTurn) ==
   interface_pkg::msg::MissionStatus::CYCLE_WAITING_TURN);
 static_assert(static_cast<std::uint8_t>(BridgeCyclePhase::Fault) ==
   interface_pkg::msg::MissionStatus::CYCLE_FAULT);
+static_assert(static_cast<std::uint8_t>(BridgeCyclePhase::LocalizingStart) ==
+  interface_pkg::msg::MissionStatus::CYCLE_LOCALIZING_START);
 static_assert(CanProtocol::TURN_COMPLETED ==
   interface_pkg::srv::MissionCommand::Request::TURN_COMPLETED);
 static_assert(CanProtocol::SAFETY_ARRIVED ==

@@ -162,8 +162,10 @@ bool BridgeRuntime::handleCommand(const can_frame & frame)
   const bool current_route = !route_aborted_ && mission && mission->roi_request_id != 0 &&
     mission->destination != BridgeDestination::None &&
     command.token == static_cast<std::uint32_t>(mission->roi_request_id);
-  const bool current_delivery = current_route &&
-    mission->cycle_phase == BridgeCyclePhase::WaitingTransfer &&
+  const bool transfer_route = current_route &&
+    (mission->cycle_phase == BridgeCyclePhase::WaitingTransfer ||
+    mission->cycle_phase == BridgeCyclePhase::LocalizingStart);
+  const bool current_delivery = transfer_route &&
     mission->operation == BridgeOperation::Idle;
   const bool delivery_query = command.command == CanProtocol::DELIVERY_COMPLETED &&
     !current_delivery && deliveryQueryIdentity(command.token);
@@ -188,8 +190,7 @@ bool BridgeRuntime::handleCommand(const can_frame & frame)
   // 查询不重新保持坐标或建立转向授权；Fault/205/换趟仍由前面的路由门和回复身份撤销。
   const auto phase = state_.cyclePhase();
   if (command.command == CanProtocol::SAFETY_ARRIVED) {
-    if (phase != BridgeCyclePhase::NavigatingSafety &&
-      phase != BridgeCyclePhase::WaitingTransfer) {
+    if (phase != BridgeCyclePhase::NavigatingSafety && !transfer_route) {
       reply(false);
       return true;
     }
@@ -483,9 +484,9 @@ bool BridgeRuntime::commandIdentityCurrent(const CommandIdentity & identity) con
     return mission->cycle_phase == BridgeCyclePhase::SwitchingField ||
            mission->cycle_phase == BridgeCyclePhase::NavigatingSafety;
   }
-  // 盲推与返程共用WaitingTransfer：204/206可补旧收据，203不能作返程确认。
-  // 补回执不授权再次推送或转向；STM32只在对应本地等待步骤消费一次。
-  return mission->cycle_phase == BridgeCyclePhase::WaitingTransfer;
+  // 到达、送达回执可能跨入起点定位阶段，仍须通过上面的完整路由核对。
+  return mission->cycle_phase == BridgeCyclePhase::WaitingTransfer ||
+         mission->cycle_phase == BridgeCyclePhase::LocalizingStart;
 }
 
 bool BridgeRuntime::turnRequestCurrent() const

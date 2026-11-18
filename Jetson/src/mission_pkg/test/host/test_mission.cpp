@@ -132,15 +132,22 @@ void testMissionTrajectory()
   const auto arrived = session.controller.requestCommand(MissionCommand::SafetyArrived, 42);
   CHECK(arrived.accepted && session.controller.state().cycle_phase == Phase::WaitingTransfer);
 
+  CHECK(!session.controller.requestCommand(MissionCommand::DeliveryCompleted, 43).accepted);
+  CHECK(session.controller.state().cycle_phase == Phase::WaitingTransfer);
   const auto delivered = session.controller.requestCommand(MissionCommand::DeliveryCompleted, 42);
   CHECK(delivered.accepted);
   CHECK(session.controller.state().transport_phase == MissionState::Transport::Later);
-  CHECK(session.controller.state().cycle_phase == Phase::WaitingTransfer);
+  CHECK(session.controller.state().cycle_phase == Phase::LocalizingStart);
+  CHECK(session.controller.state().cycle_generation == 1);
+  CHECK(session.controller.state().destination == MissionState::Destination::Left);
+  CHECK(session.controller.state().roi_request_id == 42);
   // 同一编号的再次确认只读回执，不发布、不推进阶段。
   const int statuses = session.out.status_count;
   const auto replay = session.controller.requestCommand(MissionCommand::DeliveryCompleted, 42);
   CHECK(replay.accepted && session.out.status_count == statuses);
-  CHECK(session.controller.state().cycle_phase == Phase::WaitingTransfer);
+  CHECK(session.controller.requestCommand(MissionCommand::SafetyArrived, 42).accepted);
+  CHECK(session.out.status_count == statuses);
+  CHECK(session.controller.state().cycle_phase == Phase::LocalizingStart);
 
   const auto search = session.controller.requestCommand(MissionCommand::StartSearch, 0);
   CHECK(search.accepted && session.controller.state().cycle_phase == Phase::SwitchingSeg);

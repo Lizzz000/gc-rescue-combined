@@ -33,7 +33,7 @@ void validateTimeouts(double input_timeout_s)
 //   没有本地保持，操作是空闲，实际阶段匹配（目标要 seg，安全区要 field），
 //   Mission 阶段也匹配（目标是寻找，安全区是前往安全区且结果成功、左右一致），帧还新鲜。
 // holdCoordinates 清掉两路中心并记住当时的 cycle_generation。
-// releaseCoordinates 要求新代次及可移动阶段；205 放弃后只允许新的寻找阶段解除。
+// releaseCoordinates 等待新代次；送达后的起点定位由同趟状态转换单独授权。
 
 /**
  * @brief 接收一次启动配置并建立空缓存；非法配置在本入口拒绝。
@@ -111,7 +111,7 @@ BridgeStateUpdate BridgeState::mission(
     input.destination > BridgeDestination::Right || input.operation > BridgeOperation::Switching ||
     input.outcome > BridgeOutcome::RoiInvalid ||
     input.transport_phase > BridgeTransportPhase::Later ||
-    input.cycle_phase > BridgeCyclePhase::Fault ||
+    input.cycle_phase > BridgeCyclePhase::LocalizingStart ||
     (mission_ && input.stamp.ns < mission_->stamp.ns)) {return {};}
   const bool restarted = mission_ && input.cycle_generation < mission_->cycle_generation;
   // 源时刻相等仍比较业务字段，因此 PENDING 与 SUCCESS 可以在同刻按接收顺序生效。
@@ -120,8 +120,19 @@ BridgeStateUpdate BridgeState::mission(
     input.outcome != mission_->outcome || input.transport_phase != mission_->transport_phase ||
     input.cycle_phase != mission_->cycle_phase ||
     input.cycle_generation != mission_->cycle_generation;
-  // 业务字段不变的状态心跳只更新 mission 快照，不反复清掉正在接收的中心或抬高 cutoff。
+  // 只有本机已闭锁的同趟投送能在原代次打开定位；重找和重启仍须各自授权。
+  const bool resumes_transfer = coordinates_held_ && !held_until_search_ && !recovery_required_ &&
+    mission_ && mission_->cycle_phase == BridgeCyclePhase::WaitingTransfer &&
+    input.cycle_phase == BridgeCyclePhase::LocalizingStart &&
+    input.cycle_generation == held_generation_ && input.cycle_generation == mission_->cycle_generation &&
+    input.roi_request_id != 0 && input.roi_request_id == mission_->roi_request_id &&
+    input.roi_request_id == held_transfer_roi_ &&
+    input.destination != BridgeDestination::None && input.destination == mission_->destination &&
+    input.destination == held_transfer_side_ &&
+    input.operation == BridgeOperation::Idle && input.outcome == BridgeOutcome::Success;
+  // 业务字段不变的状态心跳只更新 mission 快照，保留已授权的新坐标。
   if (changed) {
+    localization_authorized_ = resumes_transfer;
     target_ = Center{};
     safety_ = Center{};
     safety_hold_ = Center{};
@@ -133,6 +144,9 @@ BridgeStateUpdate BridgeState::mission(
     held_until_search_ = true;
     recovery_required_ = true;
     held_generation_ = input.cycle_generation;
+    resetInputs(current);
+  } else if (resumes_transfer) {
+    coordinates_held_ = false;
     resetInputs(current);
   }
   releaseCoordinates(current);
@@ -190,6 +204,7 @@ bool BridgeState::safety(
   BridgeMonotonicTime arrival, bool socket_open)
 {
   if (!socket_open || !task_ || task_->task != "field" ||
+    (localization_authorized_ && input.stamp.ns <= cutoff_.ns) ||
     !sourceStamp(input.stamp, current, safety_)) {return false;}
   Center center;
   center.have_frame = true;
@@ -250,7 +265,7 @@ BridgeCenterOutput BridgeState::safetyOutput(
 {
   // 场地区域必须与 Mission 已成功提交的目的区同侧；仅有一个有效 SafetyTarget 还不够。
   const bool allowed = !coordinatesHeld() &&
-    mission_->cycle_phase == BridgeCyclePhase::NavigatingSafety &&
+    (mission_->cycle_phase == BridgeCyclePhase::NavigatingSafety || localization_authorized_) &&
     mission_->outcome == BridgeOutcome::Success &&
     mission_->destination != BridgeDestination::None &&
     static_cast<std::uint8_t>(mission_->destination) == safety_hold_.side &&
@@ -265,6 +280,10 @@ void BridgeState::holdCoordinates(BridgeSourceTime current)
   if (coordinates_held_) {return;}
   coordinates_held_ = true;
   held_generation_ = mission_ ? mission_->cycle_generation : 0;
+  // 记下发送安全区到达时的路由；等待期换侧或换 ROI 不能解除本趟闭锁。
+  const bool transfer = mission_ && mission_->cycle_phase == BridgeCyclePhase::NavigatingSafety;
+  held_transfer_roi_ = transfer ? mission_->roi_request_id : 0;
+  held_transfer_side_ = transfer ? mission_->destination : BridgeDestination::None;
   target_ = Center{};
   safety_ = Center{};
   safety_hold_ = Center{};
@@ -291,7 +310,8 @@ bool BridgeState::movingPhase() const
 {
   return mission_ && task_ && idle() &&
          ((mission_->cycle_phase == BridgeCyclePhase::SearchingTarget && task_->task == "seg") ||
-         (mission_->cycle_phase == BridgeCyclePhase::NavigatingSafety && task_->task == "field"));
+          ((mission_->cycle_phase == BridgeCyclePhase::NavigatingSafety || localization_authorized_) &&
+          task_->task == "field"));
 }
 
 bool BridgeState::coordinatesHeld() const

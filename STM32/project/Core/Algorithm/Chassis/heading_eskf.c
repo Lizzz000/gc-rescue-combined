@@ -7,10 +7,55 @@
 #include <stddef.h>
 
 #define TWO_PI 6.28318530717958647692f
+#define YAW_JUMP_LIMIT_RAD 0.0872664626f
+#define YAW_REJECT_LIMIT 3U
 #define YAW_VARIANCE 0.00030461742f   /* 100 Hz 下的航向观测方差：(1°)^2。 */
 #define GYRO_NOISE_DENSITY_SQ 0.0004f /* (0.02 rad/sqrt(s))^2 */
 #define BIAS_WALK_DENSITY_SQ 0.00000025f
 #define BIAS_LIMIT 0.05f /* 单位 rad/s；避免将几何误差吸收为陀螺零偏。 */
+
+Heading_Yaw_Status_t Heading_Yaw_Guard_Update(Heading_Yaw_Guard_t *guard, float yaw_rad,
+                                               float gyro_rad_s, uint32_t sample_time_ms)
+{
+    if (guard == NULL || guard->rejected_run >= YAW_REJECT_LIMIT ||
+        !isfinite(yaw_rad) || !isfinite(gyro_rad_s) || fabsf(gyro_rad_s) > 8.0f)
+        return HEADING_YAW_INVALID;
+
+    yaw_rad = remainderf(yaw_rad, TWO_PI);
+    if (guard->status == HEADING_YAW_INVALID)
+    {
+        guard->yaw_rad = yaw_rad;
+        guard->previous_gyro_rad_s = gyro_rad_s;
+        guard->sample_time_ms = sample_time_ms;
+        guard->status = HEADING_YAW_OBSERVED;
+        return guard->status;
+    }
+
+    const uint32_t elapsed_ms = sample_time_ms - guard->sample_time_ms;
+    if (elapsed_ms == 0U || elapsed_ms > INT32_MAX)
+        return guard->status;
+
+    /* 跳点期间保留陀螺相对航向；缺测的长时间段不外推。 */
+    float predicted_yaw = guard->yaw_rad;
+    if (elapsed_ms <= 50U)
+        predicted_yaw = remainderf(predicted_yaw + 0.0005f * (float)elapsed_ms *
+                                   (guard->previous_gyro_rad_s + gyro_rad_s), TWO_PI);
+    guard->previous_gyro_rad_s = gyro_rad_s;
+    guard->sample_time_ms = sample_time_ms;
+    if (fabsf(remainderf(yaw_rad - predicted_yaw, TWO_PI)) <= YAW_JUMP_LIMIT_RAD)
+    {
+        guard->yaw_rad = yaw_rad;
+        guard->rejected_run = 0U;
+        guard->status = HEADING_YAW_OBSERVED;
+    }
+    else
+    {
+        guard->yaw_rad = predicted_yaw;
+        ++guard->rejected_run;
+        guard->status = guard->rejected_run >= YAW_REJECT_LIMIT ? HEADING_YAW_INVALID : HEADING_YAW_PREDICTED;
+    }
+    return guard->status;
+}
 
 static uint8_t Valid_State(const Heading_ESKF_t *state)
 {
@@ -69,8 +114,8 @@ static float Correct(Heading_ESKF_t *state, float h0, float h1, float residual, 
     return h0 != 0.0f ? yaw_gain : bias_gain;
 }
 
-uint8_t Heading_ESKF_Update(Heading_ESKF_t *state, float yaw_rad, float gyro_rad_s, float wheel_delta_rad,
-                            float dt)
+static uint8_t Update_Heading(Heading_ESKF_t *state, float yaw_rad, float gyro_rad_s,
+                               float wheel_delta_rad, float dt, uint8_t observe_yaw, uint8_t check_jump)
 {
     if (state == NULL)
     {
@@ -108,12 +153,38 @@ uint8_t Heading_ESKF_Update(Heading_ESKF_t *state, float yaw_rad, float gyro_rad
     }
     /* YAW 最后更新，主导最终航向；角差始终取最短弧，跨±pi不突跳。
      * 观测噪声按采样率缩放，避免同源重复观测在高采样率下过度加权。 */
-    const float innovation = remainderf(yaw_rad - state->yaw_rad, TWO_PI);
-    state->yaw_gain = Correct(state, 1.0f, 0.0f, innovation, YAW_VARIANCE * (.01f / dt));
+    state->yaw_gain = 0.0f;
+    if (observe_yaw)
+    {
+        const float innovation = remainderf(yaw_rad - state->yaw_rad, TWO_PI);
+        if (!check_jump || fabsf(innovation) <= YAW_JUMP_LIMIT_RAD)
+        {
+            state->yaw_rejected_run = 0U;
+            state->yaw_gain = Correct(state, 1.0f, 0.0f, innovation, YAW_VARIANCE * (.01f / dt));
+        }
+        else if (++state->yaw_rejected_run >= YAW_REJECT_LIMIT)
+        {
+            state->yaw_fault = 1U;
+            state->initialized = 0U;
+            return 0U;
+        }
+    }
     if (!Valid_State(state))
     {
         state->initialized = 0U;
         return 0U;
     }
     return 1U;
+}
+
+uint8_t Heading_ESKF_Update_Observed(Heading_ESKF_t *state, float yaw_rad, float gyro_rad_s,
+                                     float wheel_delta_rad, float dt, uint8_t observe_yaw)
+{
+    return Update_Heading(state, yaw_rad, gyro_rad_s, wheel_delta_rad, dt, observe_yaw, 0U);
+}
+
+uint8_t Heading_ESKF_Update(Heading_ESKF_t *state, float yaw_rad, float gyro_rad_s, float wheel_delta_rad,
+                            float dt)
+{
+    return Update_Heading(state, yaw_rad, gyro_rad_s, wheel_delta_rad, dt, 1U, 1U);
 }

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="control-token" content="__CONTROL_TOKEN__">
+  <title>USART6 底盘控制</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <main class="console">
+    <header class="masthead">
+      <div>
+        <p class="project-name">GC RESCUE</p>
+        <h1>底盘控制</h1>
+      </div>
+      <div class="state-badge" id="device-state" data-tone="neutral">
+        <span class="state-dot" aria-hidden="true"></span>
+        <span id="state-text">未连接</span>
+      </div>
+    </header>
+
+    <section class="serial panel" aria-labelledby="serial-title">
+      <div class="serial-heading">
+        <h2 id="serial-title">USART6 串口</h2>
+        <p id="serial-caption">115200 · 8N1</p>
+      </div>
+      <div class="serial-actions">
+        <label class="sr-only" for="port-select">串口设备</label>
+        <select id="port-select"><option value="">正在读取串口</option></select>
+        <button type="button" id="refresh-ports" class="button secondary">刷新</button>
+        <button type="button" id="connect" class="button primary" disabled>连接</button>
+      </div>
+    </section>
+
+    <div class="workspace">
+      <section class="panel motion-panel" aria-labelledby="motion-title">
+        <div class="panel-heading">
+          <h2 id="motion-title">运动</h2>
+          <span class="timer" id="timer" aria-label="剩余运行时间">—</span>
+        </div>
+        <div class="mode-switch" role="group" aria-label="控制方式">
+          <button type="button" id="mode-timed" aria-pressed="true">定时运行</button>
+          <button type="button" id="mode-keys" aria-pressed="false">按键遥控</button>
+        </div>
+        <div class="motion-fields">
+          <label class="number-field" for="linear-speed">
+            <span>平移速度</span>
+            <span class="number-input"><input id="linear-speed" type="number" value="0.10" min="0.001" max="0.50" step="0.001" inputmode="decimal" required><span>m/s</span></span>
+          </label>
+          <label class="number-field" for="angular-speed">
+            <span>转向速度</span>
+            <span class="number-input"><input id="angular-speed" type="number" value="0.50" min="0.001" max="2" step="0.001" inputmode="decimal" required><span>rad/s</span></span>
+          </label>
+        </div>
+        <form id="motion-form">
+          <fieldset class="directions">
+            <legend>运行方向</legend>
+            <div class="direction-grid">
+              <label class="direction">
+                <input type="radio" name="direction" value="forward" checked>
+                <span><b aria-hidden="true">↑</b>前进</span>
+              </label>
+              <label class="direction">
+                <input type="radio" name="direction" value="backward">
+                <span><b aria-hidden="true">↓</b>后退</span>
+              </label>
+              <label class="direction">
+                <input type="radio" name="direction" value="left">
+                <span><b aria-hidden="true">←</b>左移</span>
+              </label>
+              <label class="direction">
+                <input type="radio" name="direction" value="right">
+                <span><b aria-hidden="true">→</b>右移</span>
+              </label>
+              <label class="direction">
+                <input type="radio" name="direction" value="ccw">
+                <span><b aria-hidden="true">↺</b>左转</span>
+              </label>
+              <label class="direction">
+                <input type="radio" name="direction" value="cw">
+                <span><b aria-hidden="true">↻</b>右转</span>
+              </label>
+            </div>
+          </fieldset>
+          <label class="number-field duration-field" for="duration">
+            <span>运行时间</span>
+            <span class="number-input"><input id="duration" type="number" value="1.0" min="0.1" step="0.1" inputmode="decimal" required><span>s</span></span>
+          </label>
+          <button type="submit" id="run" class="button primary" disabled>开始运行</button>
+        </form>
+        <div id="key-pad" hidden>
+          <div class="direction-grid" aria-label="按住移动">
+            <button type="button" class="hold-key" data-key="w"><b aria-hidden="true">W</b>前进</button>
+            <button type="button" class="hold-key" data-key="s"><b aria-hidden="true">S</b>后退</button>
+            <button type="button" class="hold-key" data-key="a"><b aria-hidden="true">A</b>左移</button>
+            <button type="button" class="hold-key" data-key="d"><b aria-hidden="true">D</b>右移</button>
+            <button type="button" class="hold-key" data-key="q"><b aria-hidden="true">Q</b>左转</button>
+            <button type="button" class="hold-key" data-key="e"><b aria-hidden="true">E</b>右转</button>
+          </div>
+          <p class="key-hint">按住键盘或按钮即动，松开后发零速并保持使能。同时按两个平移键时，合速度不超过上面的平移速度。</p>
+        </div>
+        <button type="button" id="stop" class="button danger stop-button" aria-keyshortcuts="Space" disabled><span class="stop-square" aria-hidden="true"></span>停车并失能</button>
+      </section>
+
+      <aside class="side-column">
+        <section class="panel control-panel" aria-labelledby="control-title">
+          <div class="panel-heading"><h2 id="control-title">底盘与返航</h2></div>
+          <button type="button" id="arm" class="button secondary arm-button" disabled>使能底盘</button>
+          <button type="button" id="origin" class="button secondary arm-button" disabled>建立原点</button>
+          <div class="return-fields">
+            <label class="number-field" for="return-linear">
+              <span>返航平移</span>
+              <span class="number-input"><input id="return-linear" type="number" value="0.10" min="0.001" max="0.50" step="0.001" inputmode="decimal"><span>m/s</span></span>
+            </label>
+            <label class="number-field" for="return-angular">
+              <span>返航转向</span>
+              <span class="number-input"><input id="return-angular" type="number" value="0.50" min="0.001" max="2" step="0.001" inputmode="decimal"><span>rad/s</span></span>
+            </label>
+          </div>
+          <button type="button" id="return" class="button secondary arm-button" disabled>按上述速度返回原点</button>
+        </section>
+
+        <section class="panel pose-panel" aria-labelledby="pose-title">
+          <div class="panel-heading"><h2 id="pose-title">相对位姿</h2></div>
+          <dl class="pose">
+            <div><dt>X</dt><dd><span id="pose-x">—</span><small>m</small></dd></div>
+            <div><dt>Y</dt><dd><span id="pose-y">—</span><small>m</small></dd></div>
+            <div><dt>航向</dt><dd><span id="pose-yaw">—</span><small>°</small></dd></div>
+          </dl>
+          <div class="pose-status"><span id="odom-status">里程计未就绪</span><span id="origin-status">原点未建立</span></div>
+        </section>
+      </aside>
+    </div>
+
+    <p class="feedback" id="feedback" role="status" aria-live="polite">请选择串口。</p>
+    <noscript><p class="feedback">请启用 JavaScript 后使用底盘控制。</p></noscript>
+  </main>
+</body>
+</html>

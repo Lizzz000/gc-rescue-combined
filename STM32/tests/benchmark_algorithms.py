@@ -12,9 +12,9 @@ import subprocess
 import tempfile
 
 ROOT=Path(__file__).resolve().parents[2]
-SOURCES=["AHRS/AHRS.c","AHRS/MahonyAHRS.c","PID/pid.c","Kalman/adaptive_kalman.c",
+SOURCES=["AHRS/AHRS.c","AHRS/MahonyAHRS.c","PID/pid.c","Vision/adaptive_kalman.c",
          "Chassis/motor_chassis.c","Chassis/chassis_odometry.c"]
-HEADERS=["AHRS/AHRS.h","AHRS/MahonyAHRS.h","PID/pid.h","Kalman/adaptive_kalman.h",
+HEADERS=["AHRS/AHRS.h","AHRS/MahonyAHRS.h","PID/pid.h","Vision/adaptive_kalman.h",
          "Chassis/motor_chassis.h","Chassis/chassis_odometry.h"]
 
 def main():
@@ -29,18 +29,25 @@ def main():
     with tempfile.TemporaryDirectory(prefix="stm32_algorithm_bench_") as tmp:
         tmp=Path(tmp)
         copies=tmp/"baseline";copies.mkdir()
+        # 目录改名前的基线从 Kalman 取源码，临时副本统一放在 Vision。
+        vision_path = f"{base}:STM32/project/Core/Algorithm/Vision/adaptive_kalman.c"
+        has_vision = subprocess.run(["git", "cat-file", "-e", vision_path],
+                                    cwd=ROOT, capture_output=True).returncode == 0
         optional=[]
         for path in ("Chassis/heading_eskf.c","Chassis/heading_eskf.h"):
             exists=subprocess.run(["git","cat-file","-e",f"{base}:STM32/project/Core/Algorithm/{path}"],cwd=ROOT,capture_output=True)
             if exists.returncode==0:optional.append(path)
         for path in SOURCES+HEADERS+optional:
             dest=copies/path;dest.parent.mkdir(parents=True,exist_ok=True)
-            dest.write_bytes(subprocess.check_output(["git","show",f"{base}:STM32/project/Core/Algorithm/{path}"],cwd=ROOT))
+            baseline_path = path
+            if not has_vision and path.startswith("Vision/"):
+                baseline_path = "Kalman/" + path.removeprefix("Vision/")
+            dest.write_bytes(subprocess.check_output(["git","show",f"{base}:STM32/project/Core/Algorithm/{baseline_path}"],cwd=ROOT))
         executables={}
         for name,root in (("before",copies),("after",source_root)):
             exe=tmp/(name+".exe")
             cmd=[args.cc,"-O2","-std=c11","-Wall","-Wextra","-Werror"]
-            cmd += ["-I"+str(root/folder) for folder in ("AHRS","PID","Kalman","Chassis")]
+            cmd += ["-I"+str(root/folder) for folder in ("AHRS","PID","Vision","Chassis")]
             cmd += [str(ROOT/"STM32/tests/native/benchmark_algorithms.c")]+[str(root/file) for file in SOURCES]
             if (root/"Chassis/heading_eskf.c").exists():
                 cmd.append(str(root/"Chassis/heading_eskf.c"))

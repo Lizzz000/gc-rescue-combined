@@ -26,7 +26,7 @@ struct RecognitionValidation
            value.operation <= MissionStatus::OP_SWITCHING &&
            value.outcome <= MissionStatus::RESULT_ROI_INVALID &&
            value.transport_phase <= MissionStatus::TRANSPORT_LATER &&
-           value.cycle_phase <= MissionStatus::CYCLE_FAULT;
+           value.cycle_phase <= MissionStatus::CYCLE_LOCALIZING_START;
   }
 
   static bool sourceTime(

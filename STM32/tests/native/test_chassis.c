@@ -47,6 +47,7 @@ uint32_t test_timer_counter(TIM_HandleTypeDef *timer)
 /** @brief 模拟同一快照；可在复制期间切换RTOS tick，核对读取后判断年龄。 */
 uint8_t INS_Get_Data(INS_control_data_t *data)
 {
+    data->yaw_predicted = 0U;
     assert(data != NULL);
     if (!imu_ready) return 0U;
     if (read_advances_tick) { ++test_tick; read_advances_tick = 0U; }

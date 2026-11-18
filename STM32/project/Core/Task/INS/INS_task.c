@@ -11,6 +11,7 @@
  */
 #include "INS_task.h"
 #include "AHRS.h"
+#include "heading_eskf.h"
 #include "pid.h"
 #include "bsp_imu_pwm.h"
 #include "vofa.h"
@@ -251,6 +252,7 @@ void INS_task(void const *argument)
 {
     (void)argument;
     uint8_t bmi088_read_flag = 0;
+    Heading_Yaw_Guard_t yaw_guard = {0};
 
     taskENTER_CRITICAL();
     INS_control_ready = 0U;
@@ -326,19 +328,24 @@ void INS_task(void const *argument)
             float q0 = INS_quat[0], q1 = INS_quat[1], q2 = INS_quat[2], q3 = INS_quat[3];
             float norm_squared = q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3;
             INS_control_data_t next = {
-                .yaw_deg = INS_angle[INS_YAW_ADDRESS_OFFSET] * 57.295779513f,
                 .world_z_rad_s = (2.0f * (q1 * q3 - q0 * q2) * INS_gyro[0] +
                                   2.0f * (q2 * q3 + q0 * q1) * INS_gyro[1] +
                                   (q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3) * INS_gyro[2]) / norm_squared,
                 .sample_time_ms = sample_time_ms
             };
-            uint8_t ready = isfinite(next.yaw_deg) && isfinite(next.world_z_rad_s);
+            const Heading_Yaw_Status_t heading_status = Heading_Yaw_Guard_Update(
+                &yaw_guard, INS_angle[INS_YAW_ADDRESS_OFFSET], next.world_z_rad_s, sample_time_ms);
+            next.yaw_deg = yaw_guard.yaw_rad * 57.295779513f;
+            next.world_z_rad_s = yaw_guard.previous_gyro_rad_s;
+            next.sample_time_ms = yaw_guard.sample_time_ms;
+            next.yaw_predicted = heading_status == HEADING_YAW_PREDICTED;
+            const uint8_t ready = heading_status != HEADING_YAW_INVALID;
             taskENTER_CRITICAL();
             INS_control_data = next;
             INS_control_ready = ready;
             taskEXIT_CRITICAL();
-#if !CHASSIS_TUNING_ENABLED
-            /* 正常构建由 INS 独占 USART6；现场测试由底盘任务发送完整快照。 */
+#if !CHASSIS_TUNING_ENABLED && !UART6_MANUAL_ENABLED
+            /* 普通构建由 INS 发送姿态；专用控制预设由底盘任务管理 USART6。 */
             /* VOFA 通道顺序为 roll、pitch、yaw，单位由 rad 转换为度。 */
             vofa_send(INS_angle[INS_ROLL_ADDRESS_OFFSET] * 57.295779513f,
                       INS_angle[INS_PITCH_ADDRESS_OFFSET] * 57.295779513f,

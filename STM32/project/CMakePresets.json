@@ -31,6 +31,13 @@
             }
         },
         {
+            "name": "Debug-UART6-Manual",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "UART6_MANUAL_ENABLED": "ON"
+            }
+        },
+        {
             "name": "Release",
             "inherits": "default",
             "cacheVariables": {
@@ -46,6 +53,10 @@
         {
             "name": "Debug-9axis",
             "configurePreset": "Debug-9axis"
+        },
+        {
+            "name": "Debug-UART6-Manual",
+            "configurePreset": "Debug-UART6-Manual"
         },
         {
             "name": "Release",

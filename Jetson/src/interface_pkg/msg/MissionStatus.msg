@@ -28,19 +28,21 @@ uint8 TRANSPORT_FIRST=0
 uint8 TRANSPORT_LATER=1
 # 目的地取值必须与 SafetyTarget.side 同一套。safety_node 的合法性校验和 bridge_node 的中心门控认的就是这组数。
 # 业务握手与识别模式分开：TaskState 仍只报告实际 seg/field。
-# 只有 SEARCHING_TARGET / NAVIGATING_SAFETY 允许对应坐标流。
+# SEARCHING_TARGET 允许目标中心，NAVIGATING_SAFETY 和 LOCALIZING_START 允许本趟目的区中心。
 uint8 CYCLE_SEARCHING_TARGET=0
 uint8 CYCLE_CHECKING_ROI=1
 # 闭合及后退后的 ROI 已提交；等待 STM32 授权后的去程转向完成，仍 seg 且停坐标。
 uint8 CYCLE_WAITING_TURN=2
 uint8 CYCLE_SWITCHING_FIELD=3
 uint8 CYCLE_NAVIGATING_SAFETY=4
-# 等待 STM32 盲推、释放与回撤；记录送达后仍等本地返程转向及显式重找。
+# 等待 STM32 盲推、释放与回撤；期间暂停坐标。
 # 本状态本身不代表已送达，运输进度仍看 transport_phase。
 uint8 CYCLE_WAITING_TRANSFER=5
 uint8 CYCLE_SWITCHING_SEG=6
 uint8 CYCLE_ROI_FAILED=7
 uint8 CYCLE_FAULT=8
+# 送达确认后，维持本趟 field 路由，等待 STM32 用新场地图像更新起点。
+uint8 CYCLE_LOCALIZING_START=9
 uint8 cycle_phase
 # 每次受理模式切换命令递增；即使瞬时中间状态被 QoS 合并，消费者仍识别新的坐标授权。
 # 这是进程内代次，不是 CAN 事务号；不能防止跨进程重启或跨轮总线重放。

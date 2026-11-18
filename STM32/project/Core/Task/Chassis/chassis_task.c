@@ -13,6 +13,9 @@
 #else
 #include "manual_link.h"
 #include "manual_control.h"
+#if UART6_MANUAL_ENABLED
+#include "uart6_manual.h"
+#endif
 #endif
 #include "FreeRTOS.h"
 #include "task.h"
@@ -42,6 +45,9 @@ void test_task(void const *argument)
 #else
     Manual_CAN_Init();
     Manual_Control_Init();
+#if UART6_MANUAL_ENABLED
+    UART6_Manual_Init();
+#endif
 #endif
     can_filter_init();
 #if CHASSIS_TUNING_ENABLED
@@ -56,6 +62,8 @@ void test_task(void const *argument)
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(5U));
 #if CHASSIS_TUNING_ENABLED
         Live_Tuning_Loop();
+#elif UART6_MANUAL_ENABLED
+        UART6_Manual_Loop();
 #elif !JETSON_AUTO_CAN_ENABLED
         Manual_Control_Loop();
 #endif

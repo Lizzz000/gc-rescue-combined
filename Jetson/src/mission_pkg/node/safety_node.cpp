@@ -118,9 +118,10 @@ void SafetyNode::destinationCallback(
   // 不能按源帧去重方式过滤相等时间，否则会丢掉完成确认。
   if (stamp < status_stamp_ns_) {return;}
   status_stamp_ns_ = stamp;
-  // 导航安全区、空闲、成功且目的区非空才放行中心；首趟/后续不参与此处路由选择。
+  // 导航和送达后的起点定位共用本趟目的区，切换阶段时清掉旧中心。
   const bool ready =
-    msg->cycle_phase == interface_pkg::msg::MissionStatus::CYCLE_NAVIGATING_SAFETY &&
+    (msg->cycle_phase == interface_pkg::msg::MissionStatus::CYCLE_NAVIGATING_SAFETY ||
+    msg->cycle_phase == interface_pkg::msg::MissionStatus::CYCLE_LOCALIZING_START) &&
     msg->operation == interface_pkg::msg::MissionStatus::OP_IDLE &&
     msg->outcome == interface_pkg::msg::MissionStatus::RESULT_SUCCESS &&
     msg->destination != interface_pkg::msg::MissionStatus::DEST_NONE;
@@ -188,7 +189,7 @@ interface_pkg::msg::SafetyTarget SafetyNode::makeSafetyTarget(
   target.header = output.header;
   target.side = destination_;
   // 模式切换服务成功不代表几何已就绪。四项必须同时成立才计算中心：
-  // 本帧正式几何有效、任务处于前往安全区且空闲成功、目的区不是未定、源图时间不早于该次状态。
+  // 本帧正式几何有效、导航或起点定位阶段空闲成功、目的区已定、源图时间不早于该次状态。
   // 比较的两端都是 ROS 时间；帧的单调到达时间只用于断流，不参与路由截止。
   // 运输阶段不参与这里。左/右只使用 Mission 已经提交的 destination，本节点不改口。
   if (output.valid && destination_ready_ &&

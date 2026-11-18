@@ -14,7 +14,7 @@
 | 点到点规划 | 新增 `point_plan.*`，无障碍平面直线最短路径与最短角差，平移/旋转同时控制，近段制动限速 |
 | 测试工具 | 命令8注入原始图像坐标，命令7里程计返航；USART6提供坐标生成所需遥测，DAP-Link发送命令/坐标/心跳 |
 
-参考通过用户指定的 GitHub 与 SciSpace 查询核对。具体固定版本、论文链接和许可在 [Kalman](../project/Core/Algorithm/Kalman/README.md)、[Chassis](../project/Core/Algorithm/Chassis/README.md)、[AHRS](../project/Core/Algorithm/AHRS/README.md)、[PID](../project/Core/Algorithm/PID/README.md) 中记录。未移植 ROS、Eigen、MPC/LMI 求解器；未将论文稳定性结论套用到本实现。没有地图输入，直线最短仅适用于已确认的空旷区域。
+参考通过用户指定的 GitHub 与 SciSpace 查询核对。具体固定版本、论文链接和许可在 [Kalman](../project/Core/Algorithm/Vision/README.md)、[Chassis](../project/Core/Algorithm/Chassis/README.md)、[AHRS](../project/Core/Algorithm/AHRS/README.md)、[PID](../project/Core/Algorithm/PID/README.md) 中记录。未移植 ROS、Eigen、MPC/LMI 求解器；未将论文稳定性结论套用到本实现。没有地图输入，直线最短仅适用于已确认的空旷区域。
 
 视觉响应初值为10000q/m，执行延迟余量0.12s另加实际帧间隔；加速0.40m/s²、减速0.35m/s²，底盘原斜坡0.45m/s²。真实相机投影、深度及延迟仍需标定，不能保证所有工况绝对零过冲。
 

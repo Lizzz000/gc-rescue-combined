@@ -231,6 +231,54 @@ void testBridgeState()
   const auto safety_output = safety.safetyOutput(now, arrival);
   CHECK(safety_output.valid && safety_output.x == 2500 && safety_output.y == 5000);
 
+  // 送达后同趟的新帧才可用于起点定位，错侧、旧帧及盲推期间的中心仍无效。
+  for (int mismatch = 0; mismatch < 7; ++mismatch) {
+    auto localization = makeState();
+    localization.task(field_only, now);
+    auto phase = safety_mission;
+    phase.roi_request_id = 77;
+    localization.mission(phase, now);
+    localization.holdCoordinates({now_ns - 900});
+    phase.cycle_phase = BridgeCyclePhase::WaitingTransfer;
+    phase.stamp = {now_ns - 800};
+    if (mismatch == 5) {++phase.roi_request_id;}
+    if (mismatch == 6) {phase.destination = BridgeDestination::Right;}
+    localization.mission(phase, now);
+    auto center = left_side;
+    center.stamp = {now_ns - 700};
+    CHECK(localization.safety(center, now, arrival, true));
+    CHECK(!localization.safetyOutput(now, arrival).valid);
+    phase.cycle_phase = BridgeCyclePhase::LocalizingStart;
+    phase.transport_phase = BridgeTransportPhase::Later;
+    phase.stamp = {now_ns - 600};
+    if (mismatch == 1) {++phase.roi_request_id;}
+    if (mismatch == 2) {++phase.cycle_generation;}
+    if (mismatch == 3) {phase.destination = BridgeDestination::Right;}
+    if (mismatch == 4) {localization.holdForSearch(now, phase.cycle_generation);}
+    CHECK(localization.mission(phase, now).accepted);
+    CHECK(!localization.safetyOutput(now, arrival).valid);
+    if (mismatch != 0) {
+      CHECK(localization.locallyHeld());
+      center.stamp = {now_ns + 1};
+      CHECK(localization.safety(center, {now_ns + 1}, arrival, true));
+      CHECK(!localization.safetyOutput({now_ns + 1}, arrival).valid);
+      continue;
+    }
+    CHECK(!localization.locallyHeld());
+    CHECK(!localization.safety(center, now, arrival, true));
+    center.stamp = {now_ns + 1};
+    center.side = 2;
+    CHECK(localization.safety(center, {now_ns + 1}, arrival, true));
+    CHECK(!localization.safetyOutput({now_ns + 1}, arrival).valid);
+    center.stamp = {now_ns + 2};
+    center.side = 1;
+    CHECK(localization.safety(center, {now_ns + 2}, arrival, true));
+    CHECK(localization.safetyOutput({now_ns + 2}, arrival).valid);
+    phase.stamp = {now_ns + 3};
+    CHECK(!localization.mission(phase, {now_ns + 3}).reset_stream);
+    CHECK(localization.safetyOutput({now_ns + 3}, arrival).valid);
+  }
+
   // 服务等待：忙不刷新代次；恰好到截止不能完成，只能由 expire 收尾。
   BridgeServiceRequest request;
   const auto t0 = std::chrono::steady_clock::time_point{};

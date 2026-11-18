@@ -63,12 +63,12 @@ enum class BridgeOutcome : std::uint8_t
   RoiRejected = 5, RoiInvalid = 6
 };
 enum class BridgeTransportPhase : std::uint8_t {First = 0, Later = 1};
-// 0 到 8 必须与 MissionState::CyclePhase、MissionStatus.msg 的 CYCLE_* 相同。
-// 增加阶段时三处一起改。这里只复制数值，坐标门仍由 SearchingTarget 和 NavigatingSafety 决定。
+// 阶段数值必须与 MissionState::CyclePhase、MissionStatus.msg 的 CYCLE_* 相同。
 enum class BridgeCyclePhase : std::uint8_t
 {
   SearchingTarget = 0, CheckingRoi = 1, WaitingTurn = 2, SwitchingField = 3,
-  NavigatingSafety = 4, WaitingTransfer = 5, SwitchingSeg = 6, RoiFailed = 7, Fault = 8
+  NavigatingSafety = 4, WaitingTransfer = 5, SwitchingSeg = 6, RoiFailed = 7, Fault = 8,
+  LocalizingStart = 9
 };
 
 struct BridgeTaskState
@@ -204,8 +204,11 @@ private:
   std::optional<BridgeMissionState> mission_;
   bool coordinates_held_{false};
   bool held_until_search_{false};
+  bool localization_authorized_{false};
   bool recovery_required_{false};
   std::uint64_t held_generation_{0};
+  std::uint64_t held_transfer_roi_{0};
+  BridgeDestination held_transfer_side_{BridgeDestination::None};
 };
 
 // 管理单个 Bridge 服务请求的代次、编号、命令回显及单调截止，节点执行 ROS 撤单和应答。

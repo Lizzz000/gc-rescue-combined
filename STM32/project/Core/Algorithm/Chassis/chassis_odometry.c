@@ -16,7 +16,8 @@ enum
     ODOMETRY_INPUT_NONE,
     ODOMETRY_INPUT_VELOCITY,
     ODOMETRY_INPUT_POSITION,
-    ODOMETRY_INPUT_POSITION_ESKF
+    ODOMETRY_INPUT_POSITION_ESKF,
+    ODOMETRY_INPUT_POSITION_ESKF_TIMED
 };
 
 #define ODOMETRY_TWO_PI 6.28318530717958647692f
@@ -157,15 +158,16 @@ uint8_t Odometry_Update(Odometry_State_t *state, const float wheel_rad_s[3], flo
 }
 
 static uint8_t Update_Position(Odometry_State_t *state, const float wheel_position_rad[3],
-                               const float wheel_rad_s[3], float yaw_rad, float gyro_rad_s, uint32_t now_us,
-                               uint8_t use_eskf)
+                               const float wheel_rad_s[3], const uint32_t wheel_time_ms[3],
+                               float yaw_rad, float gyro_rad_s, uint32_t now_us,
+                               uint8_t use_eskf, uint8_t observe_yaw)
 {
     if (state == NULL)
     {
         return 0U;
     }
     if (wheel_position_rad == NULL || wheel_rad_s == NULL || !isfinite(yaw_rad) ||
-        (use_eskf && (!isfinite(gyro_rad_s) || fabsf(gyro_rad_s) > 8.0f)))
+        (use_eskf && (state->heading.yaw_fault || !isfinite(gyro_rad_s) || fabsf(gyro_rad_s) > 8.0f)))
     {
         Odometry_Invalidate(state);
         return 0U;
@@ -183,7 +185,9 @@ static uint8_t Update_Position(Odometry_State_t *state, const float wheel_positi
     float body[3];
     Motor_Chassis_Forward(wheel_rad_s, body);
     yaw_rad = remainderf(yaw_rad, ODOMETRY_TWO_PI);
-    const uint8_t input_mode = use_eskf ? ODOMETRY_INPUT_POSITION_ESKF : ODOMETRY_INPUT_POSITION;
+    uint8_t input_mode = ODOMETRY_INPUT_POSITION;
+    if (use_eskf)
+        input_mode = wheel_time_ms ? ODOMETRY_INPUT_POSITION_ESKF_TIMED : ODOMETRY_INPUT_POSITION_ESKF;
     if (state->input_mode != input_mode)
     {
         Odometry_Invalidate(state);
@@ -203,12 +207,22 @@ static uint8_t Update_Position(Odometry_State_t *state, const float wheel_positi
         }
         float delta[3];
         float displacement[3];
-        /* CAN三轮并非同刻采样；跳变界容纳现有30ms新鲜度范围和两码量化误差。 */
-        const float max_delta = CHASSIS_ODOMETRY_MAX_WHEEL_RAD_S *
-                                    (elapsed_us + CHASSIS_ODOMETRY_MAX_SAMPLE_SKEW_US) * 0.000001f +
-                                2.0f * CHASSIS_ODOMETRY_ENCODER_PERIOD_RAD / 65535.0f;
         for (unsigned i = 0U; i < 3U; ++i)
         {
+            float interval_s = elapsed_us * 0.000001f;
+            if (wheel_time_ms != NULL)
+            {
+                const uint32_t wheel_elapsed_ms = wheel_time_ms[i] - state->previous_wheel_time_ms[i];
+                if (wheel_elapsed_ms > CHASSIS_ODOMETRY_MAX_INTERVAL_US / 1000U)
+                {
+                    Odometry_Invalidate(state);
+                    return 0U;
+                }
+                /* 每轮使用自身的接收间隔；补偿毫秒取整和两码位置量化。 */
+                interval_s = (wheel_elapsed_ms + 1U) * 0.001f;
+            }
+            const float max_delta = CHASSIS_ODOMETRY_MAX_WHEEL_RAD_S * interval_s +
+                                    2.0f * CHASSIS_ODOMETRY_ENCODER_PERIOD_RAD / 65535.0f;
             delta[i] = remainderf(wheel_position_rad[i] - state->previous_position_rad[i],
                                   CHASSIS_ODOMETRY_ENCODER_PERIOD_RAD);
             if (fabsf(delta[i]) > max_delta)
@@ -221,8 +235,11 @@ static uint8_t Update_Position(Odometry_State_t *state, const float wheel_positi
         Motor_Chassis_Forward(delta, displacement);
         if (use_eskf)
         {
-            if (!Heading_ESKF_Update(&state->heading, yaw_rad, gyro_rad_s, displacement[2],
-                                     elapsed_us * 0.000001f))
+            const float dt = elapsed_us * 0.000001f;
+            const uint8_t heading_valid = wheel_time_ms != NULL
+                ? Heading_ESKF_Update_Observed(&state->heading, yaw_rad, gyro_rad_s, displacement[2], dt, observe_yaw)
+                : Heading_ESKF_Update(&state->heading, yaw_rad, gyro_rad_s, displacement[2], dt);
+            if (!heading_valid)
             {
                 Odometry_Invalidate(state);
                 return 0U;
@@ -234,7 +251,7 @@ static uint8_t Update_Position(Odometry_State_t *state, const float wheel_positi
             return 0U;
         }
     }
-    else if (use_eskf && !Heading_ESKF_Init(&state->heading, yaw_rad, gyro_rad_s))
+    else if (use_eskf && (!observe_yaw || !Heading_ESKF_Init(&state->heading, yaw_rad, gyro_rad_s)))
     {
         Odometry_Invalidate(state);
         return 0U;
@@ -242,6 +259,8 @@ static uint8_t Update_Position(Odometry_State_t *state, const float wheel_positi
     for (unsigned i = 0U; i < 3U; ++i)
     {
         state->previous_position_rad[i] = wheel_position_rad[i];
+        if (wheel_time_ms != NULL)
+            state->previous_wheel_time_ms[i] = wheel_time_ms[i];
     }
     Accept_Sample(state, body, yaw_rad, now_us);
     return 1U;
@@ -250,11 +269,23 @@ static uint8_t Update_Position(Odometry_State_t *state, const float wheel_positi
 uint8_t Odometry_Update_Position(Odometry_State_t *state, const float position[3], const float wheel[3],
                                  float yaw, uint32_t now_us)
 {
-    return Update_Position(state, position, wheel, yaw, 0.0f, now_us, 0U);
+    return Update_Position(state, position, wheel, NULL, yaw, 0.0f, now_us, 0U, 1U);
 }
 
 uint8_t Odometry_Update_Position_ESKF(Odometry_State_t *state, const float position[3], const float wheel[3],
                                       float yaw, float gyro, uint32_t now_us)
 {
-    return Update_Position(state, position, wheel, yaw, gyro, now_us, 1U);
+    return Update_Position(state, position, wheel, NULL, yaw, gyro, now_us, 1U, 1U);
+}
+
+uint8_t Odometry_Update_Position_ESKF_Timed(Odometry_State_t *state, const float position[3],
+                                            const float wheel[3], const uint32_t wheel_time_ms[3],
+                                            float yaw, float gyro, uint32_t now_us, uint8_t observe_yaw)
+{
+    if (wheel_time_ms == NULL)
+    {
+        Odometry_Invalidate(state);
+        return 0U;
+    }
+    return Update_Position(state, position, wheel, wheel_time_ms, yaw, gyro, now_us, 1U, observe_yaw);
 }

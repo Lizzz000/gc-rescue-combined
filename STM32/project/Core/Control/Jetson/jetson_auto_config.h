@@ -18,6 +18,12 @@
 #if defined(CHASSIS_TUNING_ENABLED) && CHASSIS_TUNING_ENABLED && JETSON_AUTO_CAN_ENABLED
 #error "Chassis tuning cannot share control with Jetson auto or chassis-only test"
 #endif
+#ifndef UART6_MANUAL_ENABLED
+#define UART6_MANUAL_ENABLED 0
+#endif
+#if UART6_MANUAL_ENABLED && (JETSON_AUTO_CAN_ENABLED || (defined(CHASSIS_TUNING_ENABLED) && CHASSIS_TUNING_ENABLED))
+#error "USART6 manual cannot share chassis control with Jetson or SWD tuning"
+#endif
 #define JETSON_AUTO_CHASSIS_TEST_TIMEOUT_MS 90000U
 
 /* 到位窗口为 x、y 设定点及各轴允许误差。单位为原图宽/高的比例，0 待标定。 */
@@ -30,6 +36,28 @@
 #define JETSON_AUTO_SAFETY_Y 0.7500f
 #define JETSON_AUTO_SAFETY_TOL_X 0.0100f
 #define JETSON_AUTO_SAFETY_TOL_Y 0.0100f
+
+/* 左右安全区的实车对准窗口；现场可以分别覆盖。 */
+#ifndef JETSON_AUTO_LEFT_X
+#define JETSON_AUTO_LEFT_X JETSON_AUTO_SAFETY_X
+#define JETSON_AUTO_LEFT_Y JETSON_AUTO_SAFETY_Y
+#define JETSON_AUTO_LEFT_TOL_X JETSON_AUTO_SAFETY_TOL_X
+#define JETSON_AUTO_LEFT_TOL_Y JETSON_AUTO_SAFETY_TOL_Y
+#endif
+#ifndef JETSON_AUTO_RIGHT_X
+#define JETSON_AUTO_RIGHT_X JETSON_AUTO_SAFETY_X
+#define JETSON_AUTO_RIGHT_Y JETSON_AUTO_SAFETY_Y
+#define JETSON_AUTO_RIGHT_TOL_X JETSON_AUTO_SAFETY_TOL_X
+#define JETSON_AUTO_RIGHT_TOL_Y JETSON_AUTO_SAFETY_TOL_Y
+#endif
+
+/* 正式搬运的场地限位，0 表示未标定；前两项均须在清空场地后实测。 */
+#define JETSON_AUTO_RETURN_MAX_M 0.0f
+#define JETSON_AUTO_ALIGN_MAX_M 0.0f
+#define JETSON_AUTO_RETURN_SPEED_MPS 0.12f
+#define JETSON_AUTO_ALIGN_SPEED_MPS 0.10f
+#define JETSON_AUTO_RETURN_TIMEOUT_MS 20000U
+#define JETSON_AUTO_ALIGN_TIMEOUT_MS 10000U
 
 /* 符号乘 (设定点 - 实测点)，横向取本次相机安装的实测方向。 */
 #define JETSON_AUTO_X_TO_LEFT (-1)
@@ -62,7 +90,7 @@
 #define JETSON_AUTO_VERIFY_MARGIN_MS 20U
 #define JETSON_AUTO_VERIFY_WAIT_MS (JETSON_AUTO_CENTER_TIMEOUT_MS + JETSON_AUTO_VERIFY_MARGIN_MS)
 
-/* 对准安全区后锁航向直行；距离是从停稳对准点到安全区到达点，0 待实车标定。 */
+/* 单次底盘联调用：对准安全区后锁航向直行，0 待实车标定。 */
 #define JETSON_AUTO_SAFETY_STRAIGHT_M 0.0f
 /* 安全区直行、检查后退与拒绝恢复共用定距速度。 */
 #define JETSON_AUTO_DISTANCE_SPEED_MPS 0.50f
@@ -71,7 +99,7 @@
 #define JETSON_AUTO_PUSH_SPEED_MPS 0.50f
 #define JETSON_AUTO_PUSH_DURATION_MS 1200U
 #define JETSON_AUTO_RECOVERY_BACK_M 0.0f
-/* 左/右去程分别左/右转；返程方向取反，角度均为 180°。 */
+/* 单次联调按目的区选择转向；正式搬运从出发点原地转 180° 后找目标。 */
 #define JETSON_AUTO_OUT_TURN_DEG 180.0f
 #define JETSON_AUTO_RETURN_TURN_DEG 180.0f
 

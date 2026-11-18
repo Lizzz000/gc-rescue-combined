@@ -52,6 +52,7 @@ uint32_t test_timer_counter(TIM_HandleTypeDef *timer)
  */
 uint8_t INS_Get_Data(INS_control_data_t *data)
 {
+    data->yaw_predicted = 0U;
     assert(data != NULL);
     if (!imu_ready || imu_reads_before_failure == 0)
         return 0U;
