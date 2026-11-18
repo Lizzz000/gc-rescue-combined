@@ -163,8 +163,8 @@ void Manual_Control_Loop(void)
     }
     if (!control_claimed && fresh && zero && velocity.sequence != blocked_sequence)
         control_claimed = 1U;
-    if (control_claimed && (hypotf(vx, vy) > CHASSIS_RUN_SPEED_MPS ||
-                            fabsf(wz) > CHASSIS_RUN_YAW_RATE_RAD_S))
+    if (control_claimed && (hypotf(vx, vy) > CHASSIS_STRAIGHT_MAX_SPEED_MPS ||
+                            fabsf(wz) > CHASSIS_VECTOR_MAX_WZ_RAD_S))
     {
         Begin_Braking(now_ms, 1U);
         return;

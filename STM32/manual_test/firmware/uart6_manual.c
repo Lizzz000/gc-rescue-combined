@@ -190,8 +190,8 @@ static void Service_Request(const LinkFrame *frame, uint32_t now_ms)
         config.linear_limit_mps = linear_milli / 1000.0f;
         config.angular_limit_rad_s = angular_milli / 1000.0f;
         if (linear_milli == 0U || angular_milli == 0U ||
-            config.linear_limit_mps > CHASSIS_RUN_SPEED_MPS ||
-            config.angular_limit_rad_s > CHASSIS_RUN_YAW_RATE_RAD_S)
+            config.linear_limit_mps > CHASSIS_STRAIGHT_MAX_SPEED_MPS ||
+            config.angular_limit_rad_s > CHASSIS_VECTOR_MAX_WZ_RAD_S)
         {
             Reply(UART_RETURN, id, RESULT_REJECTED, DETAIL_LIMIT);
             return;
@@ -206,6 +206,9 @@ static void Service_Request(const LinkFrame *frame, uint32_t now_ms)
         return;
     }
 
+    /* 返航的车体系投影会有浮点误差，给恰好到硬限的合速度留出舍入余量。 */
+    if (config.linear_limit_mps == CHASSIS_STRAIGHT_MAX_SPEED_MPS)
+        config.linear_limit_mps -= 0.000001f;
     return_config = config;
     active_return_id = id;
     return_started_ms = last_valid_ms = now_ms;
@@ -280,8 +283,8 @@ static void Report_Status(uint32_t now_ms)
     if (return_state != RETURN_INACTIVE)
         state = return_state == RETURN_RUNNING ? 5U : 6U;
     const uint8_t status[] = {
-        /* bit2：带电待接管；bit3：支持 0.40 m/s 与 3 rad/s 运行配置。 */
-        state, (uint8_t)(8U | origin_valid | (odom_valid << 1U) |
+        /* bit2：带电待接管；bit3：支持正常归还；bit4：支持 0.50 m/s、4 rad/s。 */
+        state, (uint8_t)(0x18U | origin_valid | (odom_valid << 1U) |
                          ((!session_active && state == MANUAL_READY) << 2U)),
         (uint8_t)reply_id, (uint8_t)(reply_id >> 8U), reply_command, reply_result, reply_detail,
     };

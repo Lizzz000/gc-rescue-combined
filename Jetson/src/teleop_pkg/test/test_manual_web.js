@@ -8,7 +8,7 @@ const html = fs.readFileSync(path.join(__dirname, '../web/index.html'), 'utf8');
 const handlers = new Map(), elements = new Map(), requests = [], intervals = new Map();
 function element(id) {
   if (!elements.has(id)) elements.set(id, {
-    value: id === 'linear' ? '0.25' : id === 'angular' ? '0.5' : '0',
+    value: html.match(new RegExp('<input id="' + id + '"[^>]* value="([^"]*)"'))?.[1] ?? '0',
     textContent: '', classList: {toggle() {}},
     addEventListener(name, action) { handlers.set(`${id}.${name}`, action); },
   });
@@ -34,6 +34,21 @@ const context = vm.createContext({
   fetch: fetchStub,
 });
 vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1], context);
+vm.runInContext(`
+  show({phase: 'waiting', limits: {linear_mps: 0.5, angular_radps: 4, timed_s: 3600},
+        velocity_milli: [0, 0, 0], last_frame: [false, 0, 0, 0]});
+`, context);
+assert.equal(Number(element('linear').value), 0.4);
+assert.equal(Number(element('angular').value), 3);
+assert.equal(Number(element('t_vx').value), 0.4);
+assert.equal(Number(element('linear').max), 0.5);
+assert.equal(Number(element('angular').max), 4);
+vm.runInContext(`
+  show({phase: 'waiting', limits: {linear_mps: 0.25, angular_radps: 0.5, timed_s: 1.5},
+        velocity_milli: [0, 0, 0], last_frame: [false, 0, 0, 0]});
+`, context);
+assert.equal(Number(element('linear').value), 0.25);
+assert.equal(Number(element('angular').value), 0.5);
 context.document.hidden = true;
 handlers.get('blur')();
 handlers.get('visibilitychange')();

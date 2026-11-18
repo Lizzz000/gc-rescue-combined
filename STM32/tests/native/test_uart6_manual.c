@@ -516,7 +516,7 @@ static void Test_Return_Speed(void)
     Step(100U);
     position.x_m = 0.20;
     unsigned vectors = return_vectors;
-    Request_Return_Speed(6U, 401U, 500U);
+    Request_Return_Speed(6U, 501U, 500U);
     Step(100U);
     assert(report.result == REJECTED && report.detail == LIMIT && return_vectors == vectors);
 
@@ -545,10 +545,10 @@ static void Test_Full_Speed_Diagonal_Return(void)
     position.x_m = -cos(0.82);
     position.y_m = -sin(0.82);
     position.yaw_rad = 0.01f;
-    Request_Return_Speed(3U, 400U, 3000U);
+    Request_Return_Speed(3U, 500U, 4000U);
     Step(100U);
     assert(report.state == RETURNING && report.result == ACCEPTED);
-    assert(hypotf(last_vx, last_vy) >= 0.3999f);
+    assert(hypotf(last_vx, last_vy) >= 0.4999f);
 }
 
 static void Test_Uart_Overflow(void)

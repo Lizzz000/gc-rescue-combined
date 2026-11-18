@@ -131,8 +131,8 @@ def stm32_constants():
     control, _ = stm32_manual_sources()
     return {
         'timeout_ms': _define(control / 'manual_control.h', 'MANUAL_VELOCITY_TIMEOUT_MS'),
-        'max_linear_mps': _define(STM32_CORE / 'Control/Chassis/chassis.h', 'CHASSIS_RUN_SPEED_MPS'),
-        'max_angular_radps': _define(STM32_CORE / 'Control/Chassis/chassis.h', 'CHASSIS_RUN_YAW_RATE_RAD_S'),
+        'max_linear_mps': _define(STM32_CORE / 'Control/Chassis/chassis.h', 'CHASSIS_STRAIGHT_MAX_SPEED_MPS'),
+        'max_angular_radps': _define(STM32_CORE / 'Control/Chassis/chassis.h', 'CHASSIS_VECTOR_MAX_WZ_RAD_S'),
         'task_period_ms': float(period.group(1)) if period else None,
     }
 

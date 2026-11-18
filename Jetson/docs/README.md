@@ -92,7 +92,7 @@ ros2 launch bringup_pkg rescue.launch.py run:=all
 python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/manual_control.py --config /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/bringup_pkg/config/rescue.yaml
 ```
 
-上场地前的低速手动控制可追加 `--max-linear-mps 0.25 --max-angular-radps 0.5 --max-timed-s 1.5`。这些限制由后端同时作用于按住和定时接口，网页从 `/api/state` 读取有效范围；平移按合速度限幅，超长定时请求会被拒绝。不传这些参数时仍保留原协议上限。配置中的 USB 路径须与实际设备一致；不使用夹爪时可在现场配置副本中将 `gripper.device` 设为空字符串。
+上场地前的低速手动控制可追加 `--max-linear-mps 0.25 --max-angular-radps 0.5 --max-timed-s 1.5`。这些限制由后端同时作用于按住和定时接口，网页从 `/api/state` 读取有效范围；平移按合速度限幅，超长定时请求会被拒绝。不传这些参数时，平移合速度和转向上限为 0.50 m/s、4.0 rad/s。使用扩展范围前，STM32 USB 手动固件需同步更新。配置中的 USB 路径须与实际设备一致；不使用夹爪时可在现场配置副本中将 `gripper.device` 设为空字符串。
 
 手动运行默认 0.40 m/s、3.0 rad/s。服务启动时等待接管；首次按键先发 0.1 s 有效零速，随后按 100 Hz 发送，速度朝零量化。松键和定时结束都保持有效零速，再次按键可直接起步。显式停车、按住期间丢失续租或活动链路中断会触发撤权保护。
 

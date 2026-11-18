@@ -5,8 +5,8 @@ import math
 import threading
 
 # 与 STM32 手动控制的运行限幅一致，平移按合速度计算。
-MAX_LINEAR_MPS = 0.40
-MAX_ANGULAR_RADPS = 3.0
+MAX_LINEAR_MPS = 0.50
+MAX_ANGULAR_RADPS = 4.0
 # 租约上限须小于 STM32 手动帧 250 ms 超时。
 MAX_LEASE_S = 0.2
 # 首次接管或显式停车后，先发送一段有效零速。持续使能期间的新方向可直接接续。

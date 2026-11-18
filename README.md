@@ -38,7 +38,7 @@ cmake --preset Debug
 cmake --build --preset Debug
 ```
 
-默认 `Debug` 为六轴 USB 手动版，`Debug-UART6-Manual` 用于 COM7 网页遥控，`Debug-Auto` 用于 Jetson 视觉搬运。每个预设只链接对应控制器，产物位于 `STM32/project/build/<预设>/`。正式手动和自动固件在姿态就绪后申请零速使能，正常运行限速为 0.40 m/s、3.0 rad/s。自动搬运出发前还需完成场地标定并收到视觉会话和夹爪授权。九轴手动版使用 `Debug-9axis`。[手动测试入口](STM32/manual_test/README.md) · [STM32 联调说明](STM32/docs/JETSON_USB_TEST.md)
+默认 `Debug` 为六轴 USB 手动版，`Debug-UART6-Manual` 用于 COM7 网页遥控，`Debug-Auto` 用于 Jetson 视觉搬运。每个预设只链接对应控制器，产物位于 `STM32/project/build/<预设>/`。正式手动和自动固件在姿态就绪后申请零速使能，正常运行目标为 0.40 m/s、3.0 rad/s。手动速度上限为 0.50 m/s、4.0 rad/s，起停和换向均经底盘斜坡。自动搬运出发前还需完成场地标定并收到视觉会话和夹爪授权。九轴手动版使用 `Debug-9axis`。[手动测试入口](STM32/manual_test/README.md) · [STM32 联调说明](STM32/docs/JETSON_USB_TEST.md)
 
 主机回归需要 Python 3 与主机 GCC/G++，从仓库根目录运行：
 

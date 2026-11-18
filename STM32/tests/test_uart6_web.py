@@ -175,6 +175,25 @@ class ControllerTests(unittest.TestCase):
             self.control.action("run", {"vx": 0.4, "vy": 0, "wz": 3, "seconds": .1})
         self.assertFalse(self.control.get_state()["can_release"])
 
+    def test_extended_speed_requires_board_support(self):
+        request = {"vx": 0.3, "vy": 0.4, "wz": 4, "seconds": 0.1}
+        self.serial.status(wire.READY, wire.ARM, flags=wire.RUN_PROFILE | 3)
+        self.step(0.20)
+        with self.assertRaises(ValueError):
+            self.control.action("run", request)
+        self.assertEqual(self.control.get_state()["linear_limit"], 0.4)
+
+        self.serial.status(wire.READY, wire.ARM, flags=wire.EXTENDED_SPEED | wire.RUN_PROFILE | 3)
+        self.step(0.21)
+        snapshot = self.control.get_state()
+        self.assertEqual((snapshot["linear_limit"], snapshot["angular_limit"]), (0.5, 4.0))
+        for over_limit in ({"vx": 0.301}, {"wz": 4.001}):
+            with self.assertRaises(ValueError):
+                self.control.action("run", {**request, **over_limit})
+        self.control.action("run", request)
+        payload = struct.pack("<Bhhh", 1, 300, 400, 4000)
+        self.assertEqual(self.serial.writes[-1], wire.frame(wire.VELOCITY, payload))
+
 
 class LocalHttpTests(unittest.TestCase):
     def test_token_and_origin_are_required_for_commands(self):

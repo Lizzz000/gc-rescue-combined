@@ -140,9 +140,12 @@ function render() {
   controls.arm.textContent = state.armed ? "归还控制" : "接管底盘";
   controls.arm.disabled = waiting || stopping || !(state.can_arm || state.can_release) || !idle;
   if (fresh) {
-    for (const input of [controls.angular, controls.returnAngular]) {
-      input.max = state.angular_limit;
-      if (input.valueAsNumber > state.angular_limit) input.value = state.angular_limit;
+    for (const [input, limit] of [
+      [controls.linear, state.linear_limit], [controls.returnLinear, state.linear_limit],
+      [controls.angular, state.angular_limit], [controls.returnAngular, state.angular_limit],
+    ]) {
+      input.max = limit;
+      if (input.valueAsNumber > limit) input.value = limit;
     }
   }
   controls.run.disabled = waiting || stopping || !state.armed || !fresh || ![2, 3].includes(state.state) || !idle;

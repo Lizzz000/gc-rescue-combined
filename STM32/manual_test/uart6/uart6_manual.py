@@ -9,7 +9,8 @@ import struct
 import time
 
 from uart6_protocol import (
-    AVAILABLE, ANGULAR_LIMIT, LINEAR_LIMIT, RELEASE, RUN_PROFILE, angular_limit,
+    AVAILABLE, ANGULAR_LIMIT, DEFAULT_ANGULAR, DEFAULT_LINEAR, LINEAR_LIMIT,
+    RELEASE, RUN_PROFILE, angular_limit, linear_limit,
     ACCEPTED, ARM, BRAKING, DETAIL_NAMES, DISARMED, DONE, FAULT, KEEPALIVE,
     ORIGIN, POSE, PREPARING, READY, REJECTED, RETURN, RUNNING, STATE_NAMES,
     STATUS, STOP, VELOCITY, FrameReader, frame,
@@ -118,7 +119,7 @@ class ManualPanel:
     def send_request(self, request):
         payload = struct.pack("<H", request.number)
         if request.kind == RETURN:
-            payload += struct.pack("<HH", round(self.speed * 1000),
+            payload += struct.pack("<HH", round(min(self.speed, linear_limit(self.flags)) * 1000),
                                    round(min(self.yaw_rate, angular_limit(self.flags)) * 1000))
         self.send(request.kind, payload)
 
@@ -214,7 +215,8 @@ class ManualPanel:
         x = int("w" in self.motion) - int("s" in self.motion)
         y = int("a" in self.motion) - int("d" in self.motion)
         turn = int("q" in self.motion) - int("e" in self.motion)
-        scale = math.floor(self.speed * 1000.0 / max(1.0, math.hypot(x, y)))
+        speed = min(self.speed, linear_limit(self.flags))
+        scale = math.floor(speed * 1000.0 / max(1.0, math.hypot(x, y)))
         yaw = min(self.yaw_rate, angular_limit(self.flags))
         return struct.pack("<Bhhh", 1, x * scale, y * scale, round(turn * yaw * 1000))
 
@@ -336,11 +338,11 @@ class ManualPanel:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", required=True, help="接 USART6 的电脑串口，例如 COM7")
-    parser.add_argument("--speed", type=float, default=LINEAR_LIMIT, help="手动平移速度，m/s")
-    parser.add_argument("--yaw-rate", type=float, default=ANGULAR_LIMIT, help="手动转向速度，rad/s")
+    parser.add_argument("--speed", type=float, default=DEFAULT_LINEAR, help="手动平移速度，m/s")
+    parser.add_argument("--yaw-rate", type=float, default=DEFAULT_ANGULAR, help="手动转向速度，rad/s")
     args = parser.parse_args()
     if not 0.001 <= args.speed <= LINEAR_LIMIT or not 0.001 <= args.yaw_rate <= ANGULAR_LIMIT:
-        parser.error("平移速度须为 0.001–0.40 m/s，转向速度须为 0.001–3.00 rad/s")
+        parser.error(f"平移速度须为 0.001–{LINEAR_LIMIT:.2f} m/s，转向速度须为 0.001–{ANGULAR_LIMIT:.2f} rad/s")
     try:
         import serial
     except ImportError:

@@ -299,26 +299,25 @@ const fixed = (value, digits) => Number(value).toFixed(digits);
 function show(state) {
   if (state.limits && (limits === null || ['linear_mps', 'angular_radps', 'timed_s'].some(
       (key) => state.limits[key] !== limits[key]))) {
-    const first = limits === null;
     limits = state.limits;
     $('linear').min = Math.min(0.02, limits.linear_mps);
     $('angular').min = Math.min(0.1, limits.angular_radps);
     $('linear').max = limits.linear_mps;
     $('angular').max = limits.angular_radps;
-    $('linear').value = first ? limits.linear_mps : Math.min(Number($('linear').value), limits.linear_mps);
-    $('angular').value = first ? limits.angular_radps : Math.min(Number($('angular').value), limits.angular_radps);
+    $('linear').value = Math.min(Number($('linear').value), limits.linear_mps);
+    $('angular').value = Math.min(Number($('angular').value), limits.angular_radps);
     $('linear_v').textContent = $('linear').value + ' m/s';
     $('angular_v').textContent = $('angular').value + ' rad/s';
     for (const id of ['t_vx', 't_vy', 't_wz']) {
       const maximum = id === 't_wz' ? limits.angular_radps : limits.linear_mps;
       $(id).min = -maximum;
       $(id).max = maximum;
-      const value = first && id === 't_vx' ? maximum : Number($(id).value);
+      const value = Number($(id).value);
       if (Number.isFinite(value)) { $(id).value = Math.max(-maximum, Math.min(maximum, value)); }
     }
     $('t_s').min = Math.min(0.1, limits.timed_s);
     $('t_s').max = limits.timed_s;
-    const seconds = first ? 0.8 : Number($('t_s').value);
+    const seconds = Number($('t_s').value);
     if (Number.isFinite(seconds)) { $('t_s').value = Math.min(seconds, limits.timed_s); }
     $('limits').textContent = `${limits.linear_mps} m/s · ${limits.angular_radps} rad/s · 定时 ≤ ${limits.timed_s} s`;
   }

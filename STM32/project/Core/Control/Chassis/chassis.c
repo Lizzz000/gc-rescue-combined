@@ -629,16 +629,16 @@ uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg)
 /** @brief 沿旧连续向量入口保存目标，纯平移开始时记录当前航向。
  * @param[in] vx 前向速度，m/s。
  * @param[in] vy 左向速度，m/s；与 vx 合速度不超过 0.50。
- * @param[in] wz 逆时针角速度，rad/s，正常入口绝对值不超过 3.0。
+ * @param[in] wz 逆时针角速度，rad/s，绝对值不超过 4.0。
  * @return 请求接受返回 1，否则 0；全零请求回零速待命。
  * @note 连续更新平移目标保留航向；显式转向结束后按当前姿态重新锁定，斜坡连续。
  */
-static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw, float wz_limit)
+static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw, float smoothing_s)
 {
     INS_control_data_t imu;
     if (!enabled || !isfinite(vx) || !isfinite(vy) || !isfinite(wz) ||
         hypotf(vx, vy) > CHASSIS_STRAIGHT_MAX_SPEED_MPS ||
-        fabsf(wz) > wz_limit)
+        fabsf(wz) > CHASSIS_VECTOR_MAX_WZ_RAD_S)
         return 0U;
     if (vx == 0.0f && vy == 0.0f && wz == 0.0f)
     {
@@ -661,25 +661,26 @@ static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw, floa
     vector_target[1] = vy;
     vector_target[2] = wz;
     vector_hold_yaw = hold_yaw;
-    vector_smoothing_s = wz_limit > CHASSIS_VECTOR_MAX_WZ_RAD_S ? 0.0f : CHASSIS_VECTOR_SMOOTHING_S;
+    vector_smoothing_s = smoothing_s;
     mode = VELOCITY;
     return 1U;
 }
 
 uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
 {
-    return Set_Velocity(vx, vy, wz, 1U, CHASSIS_VECTOR_MAX_WZ_RAD_S);
+    return Set_Velocity(vx, vy, wz, 1U, CHASSIS_VECTOR_SMOOTHING_S);
 }
 
 uint8_t Chassis_Set_Velocity_Explicit_Yaw(float vx, float vy, float wz)
 {
-    return Set_Velocity(vx, vy, wz, 0U, CHASSIS_VECTOR_MAX_WZ_RAD_S);
+    return Set_Velocity(vx, vy, wz, 0U, CHASSIS_VECTOR_SMOOTHING_S);
 }
 
 #if CHASSIS_TUNING_ENABLED
 uint8_t Chassis_Set_Test_Rotation(float wz)
 {
-    return Set_Velocity(0.0f, 0.0f, wz, 0U, 4.0f);
+    /* 现场专项旋转保留已标定的斜坡响应，不叠加连续遥控的滤波。 */
+    return Set_Velocity(0.0f, 0.0f, wz, 0U, 0.0f);
 }
 #endif
 

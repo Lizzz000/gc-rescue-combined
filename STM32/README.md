@@ -15,19 +15,19 @@
 | 夹爪 | STM32 的 TIM1 舵机驱动 | Jetson 执行夹爪动作，STM32 发送到点请求并等待放行；旧舵机业务已移除 |
 | 视觉靠近 | 固定参数图像跟踪滤波 | 自适应卡尔曼滤波及近窗修正，仍需实车标定 |
 | 底盘保护 | 各控制模块检查反馈 | 共用电机就绪检查，邮箱忙时跳拍，姿态异常先制动，斜坡步长最多 50 ms |
-| 转向上限 | 车体 1.0 rad/s，纯转各轮约 3.09 rad/s | 车体 3.0 rad/s，按 98.2 mm 有效臂长计算，各轮约 8.42 rad/s |
+| 转向上限 | 车体 1.0 rad/s，纯转各轮约 3.09 rad/s | 连续转向上限 4.0 rad/s，定角转向仍用正常值 3.0 rad/s |
 | 姿态与默认模式 | 六轴默认、九轴可选，自动关闭 | 保留相同传感器、温控、VOFA 和默认模式，自动参数完成标定后再启用 |
 
 此次整理精简电机单组过滤器配置，移除 CAN BSP 中的 USB 上行包装，由自动流程直接编码并调用 USB；顶层 CMake 只启用 C/ASM 并删除空配置，同时修正遗留 CAN/舵机说明。CAN2、TIM1 的 CubeMX 初始化配置仍保留，当前没有对应业务启动。
 
 进一步删除 BMI088/IST8310 的四个空初始化接口、BMI088 未使用的 `status/time` 字段和 PID 增量式遗留历史缓存，以及无引用的测试桩和宏。传感器外设仍由 CubeMX 初始化；手动、自动、六轴/九轴、温控和保护逻辑保留，USB 调试记录与旧滤波对照测试保留。
 
-正式运行使用 `CHASSIS_RUN_SPEED_MPS`（0.40 m/s）与 `CHASSIS_RUN_YAW_RATE_RAD_S`（3.0 rad/s）。手动和自动固件各自管理上电零速使能、接管与故障。底盘按实际控制周期规划速度，再换算为三轮 CAN1 目标。自动视觉靠近时随距离减速，安全区精调使用独立的低速参数。正式视觉搬运使用 `Debug-Auto` 预设。
+正式运行使用 `CHASSIS_RUN_SPEED_MPS`（0.40 m/s）与 `CHASSIS_RUN_YAW_RATE_RAD_S`（3.0 rad/s）。手动和自动固件各自管理上电零速使能、接管与故障。手动硬上限为 0.50 m/s 合速度和 4.0 rad/s。连续速度按实测周期限制加减速并经 40 ms 平滑，再换算为三轮 CAN1 目标。自动视觉靠近时随距离减速，安全区精调使用独立的低速参数。正式视觉搬运使用 `Debug-Auto` 预设。
 
 速度配置保留在现有头文件中，修改后需要重新编译：
 
 - `CHASSIS_STRAIGHT_MAX_SPEED_MPS`、`CHASSIS_DISTANCE_MAX_SPEED_MPS`：平移与定距速度上限。
-- `CHASSIS_VECTOR_MAX_WZ_RAD_S`、`CHASSIS_TURN_OUTPUT_LIMIT`：连续转向与定角转向的车体角速度上限。
+- `CHASSIS_VECTOR_MAX_WZ_RAD_S`、`CHASSIS_TURN_OUTPUT_LIMIT`：连续转向硬上限和定角转向正常上限。
 - `JETSON_AUTO_APPROACH_SPEED_MPS`、`JETSON_AUTO_DISTANCE_SPEED_MPS`、`JETSON_AUTO_PUSH_SPEED_MPS`：视觉靠近、定距及盲推/后退的目标速度。
 - `JETSON_AUTO_RETURN_SPEED_MPS`、`JETSON_AUTO_ALIGN_SPEED_MPS` 用于返航和安全区视觉对准。
 

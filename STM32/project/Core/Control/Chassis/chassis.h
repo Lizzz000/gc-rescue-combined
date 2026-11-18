@@ -11,7 +11,7 @@
 uint8_t Chassis_Set_Test_Rotation(float wz);
 #endif
 
-/* 正常业务速度。底层 0.50 m/s 硬限也供已有独立标定工具使用。 */
+/* 正常业务目标与底盘连续速度硬限。 */
 #define CHASSIS_RUN_SPEED_MPS 0.40f
 #define CHASSIS_RUN_YAW_RATE_RAD_S 3.0f
 #define CHASSIS_STRAIGHT_MAX_SPEED_MPS 0.50f
@@ -19,7 +19,7 @@ uint8_t Chassis_Set_Test_Rotation(float wz);
 #define CHASSIS_STRAIGHT_ACCELERATION_MPS2 0.45f
 /* 2026-11-08 前进实测选用中档，ID2/3两前轮加减速度约 18.56 rad/s²。
  * 0.20 m 在约 1.08 s 确认停车，0.50 m 在约 1.74 s；其余方向与负载待复测。 */
-#define CHASSIS_DISTANCE_MAX_SPEED_MPS 0.50f
+#define CHASSIS_DISTANCE_MAX_SPEED_MPS CHASSIS_STRAIGHT_MAX_SPEED_MPS
 #define CHASSIS_DISTANCE_ACCELERATION_MPS2 0.75f
 /* 反馈定距的初始控制参数；容差是软件到位判据，实际精度须实车标定。 */
 #define CHASSIS_DISTANCE_MIN_M 0.010f
@@ -38,7 +38,7 @@ uint8_t Chassis_Set_Test_Rotation(float wz);
 #define CHASSIS_STRAIGHT_YAW_KD 0.25f
 #define CHASSIS_STRAIGHT_YAW_INTEGRAL_LIMIT 0.2f
 #define CHASSIS_STRAIGHT_YAW_OUTPUT_LIMIT 0.8f
-#define CHASSIS_VECTOR_MAX_WZ_RAD_S CHASSIS_RUN_YAW_RATE_RAD_S
+#define CHASSIS_VECTOR_MAX_WZ_RAD_S 4.0f
 #define CHASSIS_VECTOR_ACCEL_RAD_S2 1.6f
 #define CHASSIS_VECTOR_SMOOTHING_S 0.040f
 /* 三轮反馈最大允许年龄，ms；停车确认与电机就绪检查共用。 */
@@ -221,7 +221,7 @@ uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg);
 /** @brief 设置连续车体速度，按线/角加速度联合更新斜坡。
  * @param[in] vx 纵向速度，m/s，前正；与 vy 合速度有限且不超过 0.50。
  * @param[in] vy 横向速度，m/s，左正；与 vx 合速度约束相同。
- * @param[in] wz 角速度，rad/s，逆时针正，有限且绝对值不超过 3.0。
+ * @param[in] wz 角速度，rad/s，逆时针正，有限且绝对值不超过 4.0。
  * @return 零速请求或待命/连续速度模式下接受返回 1；参数或姿态不满足返回 0。
  * @note 三项全零在任一已使能动作中等价 Stop，不依赖姿态就绪；非零目标
  *       从待命起步须有新鲜有效反馈，运行中可直接更新，直至显式 Stop/Disable。

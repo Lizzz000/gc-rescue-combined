@@ -990,16 +990,16 @@ static void test_vector(void)
 
 /* Use the issued motor commands to check ordinary release, retargeting during
  * braking and the zero-frame handoff. Feed fresh encoder frames independently. */
-static void test_smooth_hold_and_redirect(void)
+static void test_smooth_hold_and_redirect(float speed, float yaw_rate)
 {
     float body[3], prior[3];
     reset_case(0U,0U);
     assert(Chassis_Attitude_Ready());
     sample_age = 21U; assert(!Chassis_Attitude_Ready()); sample_age = 0U;
-    assert(enable_ready() && Chassis_Set_Velocity_Explicit_Yaw(.4f,0,3.0f));
-    for (unsigned i=0; i<240U; ++i)
+    assert(enable_ready() && Chassis_Set_Velocity_Explicit_Yaw(speed,0,yaw_rate));
+    for (unsigned i=0; i<320U; ++i)
         plant_step(10000U,1.0f,NULL,NULL);
-    body_target(body); near(body[0],.4f); near(body[2],3.0f);
+    body_target(body); near(body[0],speed); near(body[2],yaw_rate);
 
     Chassis_Hold();
     for (unsigned i=0; i<15U; ++i)
@@ -1014,8 +1014,8 @@ static void test_smooth_hold_and_redirect(void)
     }
     /* A fresh diagonal reverse command can take over the deceleration immediately.
      * Neither a zero frame nor a physical stop is needed in between. */
-    assert(Chassis_Set_Velocity_Explicit_Yaw(-.32f,.24f,-3.0f));
-    for (unsigned i=0; i<410U; ++i)
+    assert(Chassis_Set_Velocity_Explicit_Yaw(-0.8f * speed,0.6f * speed,-yaw_rate));
+    for (unsigned i=0; i<550U; ++i)
     {
         memcpy(prior,body,sizeof(body));
         plant_step(10000U,1.0f,NULL,NULL);
@@ -1024,19 +1024,19 @@ static void test_smooth_hold_and_redirect(void)
         assert(fabsf(body[2]-prior[2]) <= .01601f);
         if (i==0U) assert(body[0] > .2f && body[1] > 0 && body[2] > 1.5f);
     }
-    near(body[0],-.32f); near(body[1],.24f); near(body[2],-3.0f);
+    near(body[0],-0.8f * speed); near(body[1],0.6f * speed); near(body[2],-yaw_rate);
     Chassis_Hold();
     unsigned ticks = 0;
     do
     {
         Chassis_Hold();
         plant_step(10000U,1.0f,NULL,NULL);
-        assert(++ticks < 120U);
+        assert(++ticks < 150U);
     } while (!Chassis_Motion_Ready());
     for (unsigned i=0; i<3; ++i) near(motor_velocity[i],0.0f);
     assert(Chassis_Is_Enabled() && enables == 3U && disables == 0U);
-    printf("HOLD mixed .40 m/s + 3 rad/s: stable zero after %.3f s, no intermediate disable\n",
-           ticks * .010);
+    printf("HOLD mixed %.2f m/s + %.1f rad/s: stable zero after %.3f s, no intermediate disable\n",
+           speed, yaw_rate, ticks * .010);
     assert(Chassis_Set_Velocity(.4f,0,0));
     plant_step(10000U,1.0f,NULL,NULL);
     const float wheel_first = fabsf(motor_velocity[1]);
@@ -1219,7 +1219,7 @@ static void test_vector_explicit_yaw(void)
     float body[3];
     reset_case(0U,0U);
     assert(enable_ready());
-    assert(!Chassis_Set_Velocity_Explicit_Yaw(.1f,0,3.01f));
+    assert(!Chassis_Set_Velocity_Explicit_Yaw(.1f,0,4.001f));
     assert(Chassis_Set_Velocity_Explicit_Yaw(.1f,0,.5f));
     for (unsigned i = 0U; i < 60U; ++i)
     {
@@ -1886,8 +1886,6 @@ int main(void)
 #if CHASSIS_TUNING_ENABLED
     reset_case(0U,0U);
     assert(enable_ready());
-    assert(!Chassis_Set_Velocity(0,0,4));
-    assert(!Chassis_Set_Velocity_Explicit_Yaw(0,0,4));
     assert(!Chassis_Set_Test_Rotation(4.01f));
     assert(!Chassis_Set_Test_Rotation(NAN));
     assert(Chassis_Set_Test_Rotation(4));
@@ -1915,7 +1913,8 @@ int main(void)
     test_distance_overshoot_busy_can();
     test_hold_tx_timeout();
     test_vector();
-    test_smooth_hold_and_redirect();
+    test_smooth_hold_and_redirect(CHASSIS_RUN_SPEED_MPS, CHASSIS_RUN_YAW_RATE_RAD_S);
+    test_smooth_hold_and_redirect(CHASSIS_STRAIGHT_MAX_SPEED_MPS, CHASSIS_VECTOR_MAX_WZ_RAD_S);
     test_motion_start_cadence();
     test_tracking_wheel_cadence();
     test_vector_yaw_hold();

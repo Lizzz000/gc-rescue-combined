@@ -578,10 +578,11 @@ static void Test_Ranges(void)
 {
     const int16_t accepted[][3] = {
         {400, 0, 0}, {-400, 0, 0}, {0, 400, 0}, {0, -400, 0},
-        {0, 0, 3000}, {0, 0, -3000}, {240, 320, 3000}, {-240, -320, -3000}
+        {0, 0, 3000}, {0, 0, -3000}, {240, 320, 3000}, {-240, -320, -3000},
+        {500, 0, 4000}, {0, -500, -4000}, {300, 400, 4000}, {-300, -400, -4000}
     };
     const int16_t rejected[][3] = {
-        {401, 0, 0}, {0, -401, 0}, {0, 0, 3001}, {0, 0, -3001},
+        {501, 0, 0}, {0, -501, 0}, {0, 0, 4001}, {0, 0, -4001},
         {400, 400, 0}, {-400, 400, 0}, {32767, 0, 0}
     };
     for (unsigned i = 0U; i < sizeof(accepted) / sizeof(accepted[0]); ++i)
@@ -613,7 +614,7 @@ static void Test_Fault_Requires_Release(void)
 {
     Reset(0U, 0U);
     Prepare_Ready();
-    Receive(401, 0, 0, 1U, 7U);
+    Receive(501, 0, 0, 1U, 7U);
     Step(QUIET_FEEDBACK);
     assert(manual_control_state == MANUAL_BRAKING);
     for (unsigned i = 0; i < 120U; ++i)

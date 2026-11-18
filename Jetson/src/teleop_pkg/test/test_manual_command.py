@@ -17,8 +17,9 @@ ARM = DEFAULT_ARM_ZERO_S
 class QuantizeTest(unittest.TestCase):
     def test_linear_and_angular_limits(self):
         vx, vy, wz = quantize(1.0, 1.0, -5.0)
-        self.assertLessEqual((vx * vx + vy * vy) ** 0.5, 400)
-        self.assertEqual(wz, -3000)
+        self.assertLessEqual((vx * vx + vy * vy) ** 0.5, 500)
+        self.assertEqual(wz, -4000)
+        self.assertEqual(quantize(0.3, 0.4, 4), (300, 400, 4000))
         self.assertEqual(quantize(0.08, -0.1, 0.2), (80, -100, 200))
 
     def test_rejects_non_finite(self):

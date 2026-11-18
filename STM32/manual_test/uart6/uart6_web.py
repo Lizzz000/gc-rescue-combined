@@ -14,7 +14,7 @@ import time
 import webbrowser
 
 from uart6_protocol import (
-    ANGULAR_LIMIT, AVAILABLE, LINEAR_LIMIT, RELEASE, RUN_PROFILE, angular_limit,
+    ANGULAR_LIMIT, AVAILABLE, LINEAR_LIMIT, RELEASE, RUN_PROFILE, angular_limit, linear_limit,
     ACCEPTED, ARM, BRAKING, DETAIL_NAMES, DISARMED, DONE, FAULT, KEEPALIVE, ORIGIN,
     POSE, READY, REJECTED, RETURN, RUNNING, SETTLING, STATUS, STOP,
     VELOCITY, FrameReader, frame,
@@ -124,6 +124,7 @@ class Controller:
             "armed": self.active, "pending": self.pending is not None, "mode": self.mode,
             "can_arm": fresh and not self.active and self.can_arm(),
             "can_release": fresh and self.can_release(),
+            "linear_limit": linear_limit(self.flags) if fresh else None,
             "angular_limit": angular_limit(self.flags) if fresh else None,
             "remaining": max(0.0, self.end_time - now) if self.end_time is not None else None,
             "message": self.message,
@@ -320,7 +321,7 @@ class Controller:
                 raise ValueError("请等待底盘就绪")
             if self.state not in (READY, RUNNING):
                 raise ValueError("请等待底盘就绪")
-            self.velocity = stick_velocity(data, angular_limit(self.flags))
+            self.velocity = stick_velocity(data, linear_limit(self.flags), angular_limit(self.flags))
             self.last_drive = now
             if self.velocity == ZERO:
                 self.finish_motion("已松开按键，已发零速", now)
@@ -333,7 +334,7 @@ class Controller:
         if not self.active or self.pending or self.mode != "idle":
             raise ValueError("请等待底盘就绪")
         if name == "run" and self.state in (READY, RUNNING):
-            self.velocity, duration = timed_velocity(data, angular_limit(self.flags))
+            self.velocity, duration = timed_velocity(data, linear_limit(self.flags), angular_limit(self.flags))
             self.send(self.velocity)
             self.mode = "timed"
             self.end_time = now + duration
@@ -350,7 +351,7 @@ class Controller:
                 return
             if not self.flags & 1:
                 raise ValueError("请先建立原点")
-            linear = milli_speed(data.get("linear"), LINEAR_LIMIT, "返航平移速度")
+            linear = milli_speed(data.get("linear"), linear_limit(self.flags), "返航平移速度")
             angular = milli_speed(data.get("angular"), angular_limit(self.flags), "返航转向速度")
             self.begin_request(RETURN, now, struct.pack("<HH", linear, angular))
             self.return_id = self.sequence
@@ -376,7 +377,7 @@ def milli_speed(value, limit, label):
     return math.trunc(value * 1000)
 
 
-def stick_velocity(data, yaw_limit=ANGULAR_LIMIT):
+def stick_velocity(data, speed_limit=LINEAR_LIMIT, yaw_limit=ANGULAR_LIMIT):
     """按住的方向合成一帧速度。斜向平移按合速度缩回设定值，松开则为零速。"""
     keys = data.get("keys")
     if not isinstance(keys, list) or any(type(key) is not str or key.lower() not in DRIVE_KEYS for key in keys):
@@ -387,7 +388,7 @@ def stick_velocity(data, yaw_limit=ANGULAR_LIMIT):
     turn = int("q" in held) - int("e" in held)
     if forward == 0 and left == 0 and turn == 0:
         return ZERO
-    linear = milli_speed(data.get("linear"), LINEAR_LIMIT, "平移速度") if forward or left else 0
+    linear = milli_speed(data.get("linear"), speed_limit, "平移速度") if forward or left else 0
     angular = milli_speed(data.get("angular"), yaw_limit, "转向速度") if turn else 0
     if forward or left:
         scale = math.floor(linear / max(1.0, math.hypot(forward, left)))
@@ -398,13 +399,13 @@ def stick_velocity(data, yaw_limit=ANGULAR_LIMIT):
     return frame(VELOCITY, struct.pack("<Bhhh", 1, vx, vy, wz))
 
 
-def timed_velocity(data, yaw_limit=ANGULAR_LIMIT):
+def timed_velocity(data, speed_limit=LINEAR_LIMIT, yaw_limit=ANGULAR_LIMIT):
     values = [data.get(key) for key in ("vx", "vy", "wz", "seconds")]
     if any(type(value) not in (int, float) or abs(value) > 1e100 or not math.isfinite(value)
            for value in values):
         raise ValueError("请填写有效的速度和运行时间")
     vx, vy, wz, duration = values
-    if math.hypot(vx, vy) > LINEAR_LIMIT or abs(wz) > yaw_limit or duration < 0.10:
+    if math.hypot(vx, vy) > speed_limit or abs(wz) > yaw_limit or duration < 0.10:
         raise ValueError("速度超限，或运行时间小于 0.1 秒")
     # 朝零量化，确保斜向速度也在板端支持的合速度范围内。
     fixed = tuple(math.trunc(value * 1000) for value in (vx, vy, wz))
