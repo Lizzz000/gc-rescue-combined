@@ -5,10 +5,12 @@
 #include <string.h>
 
 #define USB_RX_RING_SIZE 1024U
+#define USB_RX_MAX_AGE_MS 100U
 
 /* 写入与重置由 USB 中断执行；任务读取时需屏蔽该中断。 */
 typedef struct
 {
+    uint32_t received_ms[USB_RX_RING_SIZE];
     uint8_t data[USB_RX_RING_SIZE];
     volatile uint16_t head;
     volatile uint16_t tail;
@@ -23,7 +25,8 @@ static inline void UsbRxBuffer_Reset(UsbRxBuffer *buffer)
     ++buffer->generation;
 }
 
-static inline void UsbRxBuffer_Push(UsbRxBuffer *buffer, const uint8_t *data, uint32_t length)
+static inline void UsbRxBuffer_Push(UsbRxBuffer *buffer, const uint8_t *data, uint32_t length,
+                                    uint32_t received_ms)
 {
     if (length == 0U)
     {
@@ -45,16 +48,27 @@ static inline void UsbRxBuffer_Push(UsbRxBuffer *buffer, const uint8_t *data, ui
     {
         memcpy(buffer->data, data + first_chunk_size, length - first_chunk_size);
     }
+    for (uint32_t i = 0U; i < first_chunk_size; ++i)
+        buffer->received_ms[head + i] = received_ms;
+    for (uint32_t i = 0U; i < length - first_chunk_size; ++i)
+        buffer->received_ms[i] = received_ms;
     buffer->head = (uint16_t)((head + length) % USB_RX_RING_SIZE);
 }
 
-static inline uint8_t UsbRxBuffer_Pop(UsbRxBuffer *buffer, uint8_t *byte)
+static inline uint8_t UsbRxBuffer_Expired(uint32_t now_ms, uint32_t received_ms)
+{
+    return (uint32_t)(now_ms - received_ms) >= USB_RX_MAX_AGE_MS;
+}
+
+static inline uint8_t UsbRxBuffer_Pop(UsbRxBuffer *buffer, uint8_t *byte, uint32_t *received_ms)
 {
     if (buffer->head == buffer->tail)
     {
         return 0U;
     }
     *byte = buffer->data[buffer->tail];
+    if (received_ms != NULL)
+        *received_ms = buffer->received_ms[buffer->tail];
     buffer->tail = (uint16_t)((buffer->tail + 1U) % USB_RX_RING_SIZE);
     return 1U;
 }

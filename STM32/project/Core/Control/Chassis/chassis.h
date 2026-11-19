@@ -32,6 +32,16 @@ uint8_t Chassis_Set_Test_Rotation(float wz);
 #define CHASSIS_DISTANCE_TIMEOUT_FACTOR 3.0
 #define CHASSIS_DISTANCE_TIMEOUT_MARGIN_MS 2000U
 #define CHASSIS_DISTANCE_STALL_TIMEOUT_MS 1500U
+/* 定距横向修正沿用当前值；不代表新增实车标定结论。 */
+#define CHASSIS_DISTANCE_CROSS_GAIN_PER_S 1.5f
+#define CHASSIS_DISTANCE_CROSS_SPEED_RATIO 0.25f
+/* 无进展检测取固定距离与目标速度对应时间内位移的较小者，保留 double。 */
+#define CHASSIS_DISTANCE_PROGRESS_MIN_M 0.002
+#define CHASSIS_DISTANCE_PROGRESS_TIME_S 0.1
+/* 平移前馈沿用既有质量、力矩限幅及摩擦平滑速度，不调参数。 */
+#define CHASSIS_FEEDFORWARD_MASS_KG 1.8f
+#define CHASSIS_FEEDFORWARD_LIMIT_NM 0.05f
+#define CHASSIS_FRICTION_SPEED_RAD_S 0.5f
 #define CHASSIS_STRAIGHT_YAW_SIGN 1.0f
 #define CHASSIS_STRAIGHT_YAW_KP 2.0f
 #define CHASSIS_STRAIGHT_YAW_KI 0.0f
@@ -65,6 +75,8 @@ uint8_t Chassis_Set_Test_Rotation(float wz);
 #define CHASSIS_TURN_FINE_ANGLE_DEG 5.0f
 #define CHASSIS_TURN_ANGLE_TOLERANCE_DEG 2.0f
 #define CHASSIS_TURN_ANGLE_EXIT_DEG 3.0f
+#define CHASSIS_TURN_STOP_RATE_RAD_S 0.10f
+#define CHASSIS_TURN_STOP_CONFIRM_MS 20U
 /* 返航正常交接窗口和一次微调的最大误差。 */
 #define CHASSIS_RETURN_POSITION_TOLERANCE_M 0.020
 #define CHASSIS_RETURN_YAW_TOLERANCE_RAD 0.174532925f
@@ -146,6 +158,8 @@ uint8_t Chassis_Enable(void);
  * @return 无；调用后仍需持续调用 Loop 完成失能帧提交。
  */
 void Chassis_Disable(void);
+/** @brief 本次失能指令后是否收到三台电机的新失能反馈。 */
+uint8_t Chassis_Disable_Confirmed(void);
 
 /** @brief 清除动作、斜坡和 PID，保持使能；使能包序结束后周期发送零速度 MIT。
  * @return 无；Kp=0，仅保持旧速度阻尼，不锁定轮子位置。
@@ -213,7 +227,8 @@ uint8_t Chassis_Translation_Start(Chassis_Translation_Direction_t direction,
  *       其他情况仍须从停车待命启动。进度取轮编码器里程计在锁定方向的有符号投影，
  *       剩余 1.5 mm 时进入减速，零目标提交且在 10 mm 交接容差内即可衔接；
  *       末段接近速度仍受请求限速与制动距离约束；断流、过冲、无进展或总超时制动后失能。
- *       轮速里程不能排除打滑，也不提供横向路径闭环，实际距离须实测标定。
+ *       用小幅横移跟住启动时确定的世界方向；终止只检查沿程投影。
+ *       需要二维位置验收时使用点位规划器，轮速里程不能排除打滑。
  */
 uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction,
                                float distance_m, float speed_limit_mps);
@@ -225,7 +240,7 @@ uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction,
  * @note 本次定角参数适配：180 表示半圈，旧整圈可传 CHASSIS_TURN_LEFT_ANGLE_DEG
  *       或 CHASSIS_TURN_RIGHT_ANGLE_DEG；累计角度与 PID 增益沿旧车。
  *       远端按剩余角安排制动，最后 5 度由原 PID 修偏；按 4.0 rad/s² 加减速，
- *       车体角速度上限 3.0 rad/s。进入角度窗口后沿斜坡回零速待命；
+ *       车体角速度上限 3.0 rad/s。进入角度窗口后先回零斜坡，三轮反馈和陀螺确认停稳后才待命；
  *       小转角的完成容差不超过请求角度的一半。显式 Stop/Disable 立即清目标，15 s 超时失能。
  */
 uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg);

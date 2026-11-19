@@ -82,13 +82,13 @@ void test_enter_critical(void)
 /** @brief 验证临界区配对退出。 */
 void test_exit_critical(void) { assert(critical_depth > 0U); --critical_depth; }
 
-/** @brief 模拟软件受理使能，停车反馈由场景单独提供。 @return 1。 */
+/** @brief 模拟静止车辆受理使能，后续运动的停车反馈由场景单独提供。 @return 1。 */
 uint8_t Chassis_Enable(void)
 {
     ++enables;
     if (enable_tx_failure)
         return 0U;
-    enabled = motion_ready = 1U;
+    enabled = motion_ready = stopped = 1U;
     return 1U;
 }
 
@@ -264,14 +264,19 @@ static void Steps(unsigned count)
 /** @brief 注入有效中心。 @param[in] id 目标或安全区 ID。
  * @param[in] x 横向归一化值乘 10000。 @param[in] y 纵向归一化值乘 10000。
  */
-static void Receive_Center_At(uint16_t id, int16_t x, int16_t y, uint32_t source)
+static void Receive_Center_With_Times(uint16_t id, int16_t x, int16_t y, uint32_t source, uint32_t received_ms)
 {
     background_center = id == JETSON_CAN_TARGET_CENTER_ID ?
         JETSON_CAN_SAFETY_CENTER_ID : JETSON_CAN_TARGET_CENTER_ID;
     const uint8_t bytes[] = {1U, (uint8_t)x, (uint8_t)((uint16_t)x >> 8U),
                             (uint8_t)y, (uint8_t)((uint16_t)y >> 8U),
                             (uint8_t)source, (uint8_t)(source >> 8U), (uint8_t)(source >> 16U)};
-    Jetson_CAN_Receive(id, bytes, sizeof(bytes));
+    Jetson_CAN_Receive_At(id, bytes, sizeof(bytes), received_ms);
+}
+
+static void Receive_Center_At(uint16_t id, int16_t x, int16_t y, uint32_t source)
+{
+    Receive_Center_With_Times(id, x, y, source, test_tick);
 }
 
 static void Receive_Center(uint16_t id, int16_t x, int16_t y)
@@ -381,7 +386,7 @@ static void Start_Automatic(void)
 static void Complete_Search_Turn(void)
 {
     odom.yaw_rad = remainderf(odom.yaw_rad + last_turn_direction * 3.141592654f, 6.283185307f);
-    motion_ready = 1U;
+    stopped = motion_ready = 1U;
 }
 
 /* 使能就绪后保存左侧起点，转满半圈才接受新目标。 */
@@ -394,6 +399,10 @@ static void Begin_Target_Test_At(uint32_t initial_ms)
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 4000);
     Steps(3U);
     assert(!velocity_requests && !sent_count);
+    motion_ready = 1U;
+    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 4100);
+    Steps(3U);
+    assert(!velocity_requests && !sent_count); /* 仅提交零速还不能开新目标阶段。 */
     Complete_Search_Turn();
     Steps(4U);
     assert(turn_count == 1U && !velocity_requests && !sent_count && enabled);
@@ -411,20 +420,34 @@ static void Test_Wait_After_Search_Turn(void)
         Jetson_CAN_Receive(JETSON_CAN_TARGET_CENTER_ID, no_target, sizeof(no_target));
         Step();
     }
-    assert(enabled && !stopped && turn_count == 1U && !velocity_requests && !sent_count);
+    assert(enabled && stopped && turn_count == 1U && !velocity_requests && !sent_count);
+
+    /* 较新源号在转完前入队、转完后才解析，也不能启动搜索接近。 */
+    const uint32_t before_turn = test_tick - 4U;
+    Begin_Target_Test_At(before_turn);
+    Receive_Center_With_Times(JETSON_CAN_TARGET_CENTER_ID, 5000, 4000, source_time_ms, before_turn);
+    Step();
+    assert(!velocity_requests && !sent_count);
+    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 4000);
+    Wait_For_Count(&velocity_requests, 1U);
 }
 
 /** @brief 在 CAN 快照前跨一个 RTOS tick，包含计数回绕，保持健康链路和追踪。 */
 static void Test_CAN_Snapshot_Tick_Order(void)
 {
+    uint32_t startup_ms = 0U;
     for (unsigned wrap = 0U; wrap < 2U; ++wrap)
     {
-        Begin_Target_Test();
+        /* 从回绕前启动，保持启动、停稳以及收包的本机时间始终按顺序经过 0。 */
+        const uint32_t initial_ms = wrap ? UINT32_MAX - 10U - startup_ms : 100U;
+        Begin_Target_Test_At(initial_ms);
+        if (!wrap)
+            startup_ms = test_tick - initial_ms;
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 4000);
         Step();
         assert(last_vx > 0.0f && last_wz == 0.0f);
         if (wrap)
-            test_tick = UINT32_MAX - 5U;
+            assert(test_tick == UINT32_MAX - 5U);
         can_arrival_before_snapshot = 1U;
         Step();
         assert(!can_arrival_before_snapshot && (!wrap || test_tick == 0U));
@@ -491,7 +514,16 @@ static void Test_Approach_Brakes_And_Verifies(void)
     Step();
     assert(stops == 2U && sent_count == 0U);
 
-    assert(sent_count == 0U);
+    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5110, 7400);
+    Step();
+    assert(!stopped && sent_count == 0U);
+    stopped = 1U;
+    Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5110, 7400);
+    Step();
+    assert(sent_count == 0U); /* 首次观察到停稳时已有的图像仍不放行。 */
+    Receive_Center_With_Times(JETSON_CAN_TARGET_CENTER_ID, 5110, 7400, source_time_ms, test_tick - 1U);
+    Step();
+    assert(sent_count == 0U); /* 实际入队时间早于停稳，解析后序号更新也不能放行。 */
     /* 已入窗后，新图像轻微抖出单侧边缘，仍可确认而不反复启停。 */
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5110, 7400);
     Wait_For_Count(&sent_count, 1U);
@@ -617,11 +649,13 @@ static void Test_Approach_Requires_New_Frame(void)
         Step();
     }
     assert(enabled && !stopped && !sent_count && stops == 1U);
+    stopped = 1U;
+    Step();
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
     Step();
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
     Steps(2U);
-    assert(sent_count == 1U && !stopped);
+    assert(sent_count == 1U && stopped);
 
     for (unsigned blocked = 0U; blocked < 2U; ++blocked)
     {
@@ -647,10 +681,14 @@ static void Test_Approach_Requires_New_Frame(void)
         {
             motion_ready = 1U;
             Steps(2U);
-            assert(!sent_count); /* 减速阶段的图像不能充当停车后的复核。 */
             Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
             Steps(2U);
-            assert(sent_count == 1U && !stopped);
+            assert(!sent_count); /* 减速阶段的图像不能充当停车后的复核。 */
+            stopped = 1U;
+            Step();
+            Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
+            Steps(2U);
+            assert(sent_count == 1U && stopped);
         }
     }
 }
@@ -670,7 +708,8 @@ static void Prepare_ROI_From_Target(uint8_t destination, uint32_t token)
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 7500);
     Steps(4U);
     assert(stops && sent_count == 0U);
-    assert(sent_count == 0U);
+    stopped = 1U;
+    Step();
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 4900, 7600);
     Wait_For_Count(&sent_count, 1U);
     Check_Sent(0U, JETSON_CAN_POINT_REACHED_ID, 1U);
@@ -819,6 +858,8 @@ static void Align_Safety_And_Confirm(uint8_t destination, uint32_t token)
             assert(last_vx == 0.0f && hard_stops == hard_stops_before_alignment && sent_count == 3U);
         }
         Verify_Safety_Center(center_x, 2000);
+        stopped = 1U;
+        Step();
         Verify_First_Safety_Frame(center_x, 2000, &sent_count);
         Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, center_x, 2000);
     }
@@ -904,10 +945,12 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
     if (stuck == 1U)
     {
         Steps(3U);
-        assert(enabled && !stopped && sent_count == 5U);
-        Check_Sent(4U, JETSON_CAN_POINT_REACHED_ID, 2U);
+        assert(enabled && !stopped && sent_count == 4U);
+        Steps(JETSON_AUTO_HOLD_TIMEOUT_MS / 5U);
+        assert(stops == before_push_stop + 2U && sent_count == 4U);
         return;
     }
+    stopped = 1U;
     Wait_For_Count(&sent_count, 5U);
     Check_Sent(4U, JETSON_CAN_POINT_REACHED_ID, 2U);
     assert(distance_count == 1U);
@@ -937,6 +980,9 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
     assert(stops == before_retract_stop && sent_count == 5U);
     Step();
     assert(stops == before_retract_stop + 1U && sent_count == 5U);
+    Steps(4U);
+    assert(!stopped && sent_count == 5U);
+    stopped = 1U;
     Wait_For_Count(&sent_count, 6U);
     Check_Sent(5U, JETSON_CAN_DELIVERY_COMPLETED_ID, token);
 
@@ -970,6 +1016,8 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
     odom.y_m = destination == 1U ? 0.03 : -0.30;
     odom.yaw_rad += 0.04f;
     Verify_Safety_Center(center_x, center_y);
+    stopped = 1U;
+    Step();
     /* 下发零速后 x 越界两次才微调，期间 y 越界的独立证据不会覆盖 x。 */
     const unsigned before_adjust = velocity_requests;
     Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, center_x + 105, center_y);
@@ -981,6 +1029,10 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
     Step();
     assert(velocity_requests == before_adjust + 1U && last_vy > 0.0f && last_vx == 0.0f);
     Verify_Safety_Center(center_x, center_y);
+    Verify_Safety_Center(center_x, center_y);
+    assert(turn_count == 1U);
+    stopped = 1U;
+    Step();
     Verify_First_Safety_Frame(center_x, center_y, &turn_count);
     Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, center_x, center_y);
     Wait_For_Count(&turn_count, 2U);
@@ -1194,6 +1246,7 @@ static void Test_Reject_And_Resume(void)
         const unsigned before = velocity_requests;
         Steps(3U);
         assert(velocity_requests == before && distance_count == 2U && turn_count == 1U);
+        stopped = 1U;
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 4000);
         Wait_For_Count(&velocity_requests, before + 1U);
         assert(last_vx > 0.0f && last_wz == 0.0f);
@@ -1228,6 +1281,7 @@ static void Test_Search_Request_Identity(void)
         Receive_Command_Ack(1U, 3U, previous_id); /* 不得覆盖首个正确回执。 */
         Step();
         assert(velocity_requests == before_velocity);
+        stopped = 1U;
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 4000);
         Wait_For_Count(&velocity_requests, before_velocity + 1U);
         assert(last_vx > 0.0f && last_wz == 0.0f);
@@ -1238,11 +1292,11 @@ static void Test_Search_Request_Identity(void)
 /** @brief 合法无目标帧保持链路，等待新图像时已删除的类型 1不参与控制。 */
 static void Test_Visual_Timeout_Without_Type1(void)
 {
+    uint32_t startup_elapsed = 0U;
     for (unsigned wrap = 0U; wrap < 2U; ++wrap)
     {
-        Begin_Target_Test();
-        if (wrap)
-            test_tick = UINT32_MAX - 120U;
+        Begin_Target_Test_At(wrap ? UINT32_MAX - 120U - startup_elapsed : 100U);
+        if (!wrap) startup_elapsed = test_tick - 100U;
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 4000);
         Step();
         assert(last_vx > 0.0f);
@@ -1329,12 +1383,12 @@ static void Receive_Nonperiodic_Noise(void)
 /** @brief 250 ms 等号刹停含时钟回绕；一直没有停车反馈时在 500 ms 等号失能。 */
 static void Test_Periodic_Stream_Timeout(void)
 {
+    uint32_t startup_elapsed = 0U;
     for (unsigned wrap = 0U; wrap < 2U; ++wrap)
     {
-        Begin_Target_Test();
+        Begin_Target_Test_At(wrap ? UINT32_MAX - 120U - startup_elapsed : 100U);
+        if (!wrap) startup_elapsed = test_tick - 100U;
         periodic_stream = 0U;
-        if (wrap)
-            test_tick = UINT32_MAX - 120U;
         Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 4000);
         Run_Auto();
         const uint32_t last_periodic_ms = test_tick;

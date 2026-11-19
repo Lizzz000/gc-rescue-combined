@@ -36,6 +36,7 @@ void Manual_CAN_Init(void);
  * @return 无；无效、畸形帧立即覆盖上一条速度。
  */
 void Manual_CAN_Receive(const uint8_t *data, uint8_t len);
+void Manual_CAN_Receive_At(const uint8_t *data, uint8_t len, uint32_t received_ms);
 
 /* USB 中断或屏蔽该中断的任务上下文调用。 */
 void Manual_CAN_Disconnect(void);

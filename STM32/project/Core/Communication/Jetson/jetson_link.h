@@ -130,6 +130,7 @@ void Jetson_CAN_Decode_Velocity(const uint8_t *data, uint8_t len, Jetson_CAN_Vel
  * @return 无；未知类型不改变快照，已知坏帧按对应报文处理。
  */
 void Jetson_CAN_Receive(uint16_t type, const uint8_t *data, uint8_t len);
+void Jetson_CAN_Receive_At(uint16_t type, const uint8_t *data, uint8_t len, uint32_t received_ms);
 
 /**
  * @brief 首次提交命令后设置类型 7 匹配，丢弃前一请求的回执快照。

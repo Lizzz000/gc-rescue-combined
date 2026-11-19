@@ -134,12 +134,25 @@ static void Check_Snapshot(void)
     assert(!cleared.invalid_sequence && !cleared.zero_sequence);
 }
 
+/** @brief 记录 USB 入队时刻，不以当前 tick 覆盖显式接收时间，含回绕。 */
+static void Check_Receive_At(void)
+{
+    Manual_CAN_Init();
+    test_tick = 5U;
+    const uint32_t received_ms = UINT32_MAX - 20U;
+    Manual_CAN_Receive_At(velocity_frame, sizeof(velocity_frame), received_ms);
+    const Manual_CAN_Velocity_t velocity = Snapshot();
+    assert(velocity.valid && velocity.received_ms == received_ms);
+    assert(velocity.vx == -500 && velocity.vy == 250 && velocity.wz == -1000);
+}
+
 /** @brief 运行真实手动速度快照模块的离线边界测试。 @return 全部通过返回 0。 */
 int main(void)
 {
     Check_Velocity();
     Check_Lengths();
     Check_Snapshot();
+    Check_Receive_At();
     puts("PASS Manual link: type 2 decode, revocation events and snapshot isolation");
     return 0;
 }

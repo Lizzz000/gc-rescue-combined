@@ -190,7 +190,7 @@ static void Receive(int16_t vx, int16_t vy, int16_t wz, uint8_t valid, uint8_t l
         frame.data[1U + 2U * i] = (uint8_t)bits[i];
         frame.data[2U + 2U * i] = (uint8_t)(bits[i] >> 8U);
     }
-    UsbLink_OnFrame(&frame);
+    UsbLink_OnFrame(&frame, (uint32_t)xTaskGetTickCount());
 }
 
 /** @brief 提交一条有效全零速度。 @return 无。 */
@@ -732,7 +732,7 @@ static void Receive_Heartbeat_Traffic(void)
         {.type = 1U, .length = 8U, .data = {0U}},
     };
     for (size_t i = 0; i < sizeof(frames) / sizeof(frames[0]); ++i)
-        UsbLink_OnFrame(&frames[i]);
+        UsbLink_OnFrame(&frames[i], (uint32_t)xTaskGetTickCount());
 }
 
 /** @brief 手动固件中 类型 1 不能使能、撤权、停车或续期 类型 2：只看手动快照。 @return 无。 */

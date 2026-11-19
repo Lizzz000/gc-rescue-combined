@@ -179,6 +179,80 @@ def expand_cases(specs):
             for index, ((name, model), speed, sign) in enumerate(product(specs, (0.32, 0.40), (1, -1)))]
 
 
+def training_cases():
+    # delay 的单位为 10 ms 控制拍。disturbance 的单位为 rad/s²。
+    return expand_cases([
+        ("train_nominal", (1.12, .080, 2, .012, 0.0, .008)),
+        ("train_assist", (1.52, .090, 3, .014, 2.0, .012)),
+        ("train_load", (0.95, .120, 3, .025, -1.2, .012)),
+    ])
+
+
+def holdout_cases():
+    holdout = expand_cases([
+        ("fast", (1.66, .060, 2, .008, 2.8, .014)),
+        ("lagged", (1.41, .135, 9, .022, 0.0, .014)),
+        ("loaded", (0.88, .160, 4, .045, -1.8, .014)),
+        ("noisy", (1.28, .085, 3, .018, 1.0, .035)),
+        ("impulse", (1.30, .115, 5, .020, 4.0, .010)),
+    ])
+    rng = Random(281119)
+    for i in range(96):
+        holdout.append(Scenario("spread", (.32, .40)[i % 2], (-1, 1)[i // 2 % 2],
+                                rng.uniform(.80, 1.85), rng.uniform(.05, .17), rng.randrange(1, 10),
+                                rng.uniform(.005, .055), rng.uniform(-3.5, 4.0), rng.uniform(.006, .036), 29100 + i))
+    return holdout
+
+
+def evaluate(cfg, chosen, chosen_p):
+    """用给定参数复算训练和留出指标。不搜索，也不写文件。"""
+    observer_sanity(chosen)
+    training = training_cases()
+    holdout = holdout_cases()
+    training_adrc = stats([compare_run(case, cfg, chosen) for case in training])
+    training_p = stats([compare_run(case, cfg, proportional=chosen_p) for case in training])
+    baseline = [compare_run(case, cfg) for case in holdout]
+    experimental = [compare_run(case, cfg, chosen) for case in holdout]
+    tuned_proportional = [compare_run(case, cfg, proportional=chosen_p) for case in holdout]
+    groups = {}
+    for name in sorted({case.name for case in holdout}):
+        indices = [i for i, case in enumerate(holdout) if case.name == name]
+        groups[name] = {"count": len(indices), "baseline": stats([baseline[i] for i in indices]),
+                        "adrc": stats([experimental[i] for i in indices]),
+                        "retuned_proportional": stats([tuned_proportional[i] for i in indices])}
+    return {
+        "training_count": len(training),
+        "training_adrc": training_adrc,
+        "training_retuned_proportional": training_p,
+        "holdout_count": len(holdout),
+        "holdout_baseline": stats(baseline),
+        "holdout_adrc": stats(experimental),
+        "holdout_retuned_proportional": stats(tuned_proportional),
+        "groups": groups,
+        "cases_with_higher_rmse": sum(a["rmse"] > b["rmse"] + 1e-6 for a, b in zip(experimental, baseline)),
+        "worst_rmse_increase": max(a["rmse"] - b["rmse"] for a, b in zip(experimental, baseline)),
+        "cases_with_higher_rmse_than_retuned_p": sum(a["rmse"] > p["rmse"] + 1e-6
+                                                    for a, p in zip(experimental, tuned_proportional)),
+        "baseline": baseline,
+        "experimental": experimental,
+        "tuned_proportional": tuned_proportional,
+        "holdout": holdout,
+    }
+
+
+def metric_pairs(actual, expected, prefix=""):
+    if isinstance(expected, dict):
+        items = expected.items()
+    else:
+        items = enumerate(expected)
+    for key, value in items:
+        path = f"{prefix}{key}"
+        if isinstance(value, (dict, list)):
+            yield from metric_pairs(actual[key], value, path + ".")
+        elif isinstance(value, (int, float)):
+            yield path, actual[key], value
+
+
 def stats(rows):
     overspeeds = sorted(v for row in rows for v in row["samples"])
     p95 = overspeeds[math.ceil(0.95 * len(overspeeds)) - 1]
@@ -237,15 +311,56 @@ def observer_sanity(tuning):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("repo", type=Path)
-    parser.add_argument("report", type=Path)
+    parser.add_argument("report", type=Path, nargs="?")
+    parser.add_argument("--verify", action="store_true",
+                        help="用 results.json 中的参数复算，不重新搜索，也不改写结果")
     args = parser.parse_args()
+    if not args.verify and args.report is None:
+        parser.error("完整搜索需要提供输出路径")
     cfg = load_config(args.repo)
-    # delay 的单位为 10 ms 控制拍。disturbance 的单位为 rad/s²。
-    training = expand_cases([
-        ("train_nominal", (1.12, .080, 2, .012, 0.0, .008)),
-        ("train_assist", (1.52, .090, 3, .014, 2.0, .012)),
-        ("train_load", (0.95, .120, 3, .025, -1.2, .012)),
-    ])
+    recorded_path = Path(__file__).with_name("results.json")
+    inputs = json.loads(Path(__file__).with_name("replay_inputs.json").read_text(encoding="utf-8"))
+    if args.verify:
+        recorded = json.loads(recorded_path.read_text(encoding="utf-8"))
+        chosen = ObserverTuning(**recorded["tuning"])
+        chosen_p = ProportionalTuning(**recorded["retuned_proportional_tuning"])
+        evaluated = evaluate(cfg, chosen, chosen_p)
+        report = {"sample_rate_hz": 100, "tuning": asdict(chosen),
+                  "training_count": evaluated["training_count"],
+                  "training_adrc": evaluated["training_adrc"],
+                  "holdout_count": evaluated["holdout_count"],
+                  "holdout_baseline": evaluated["holdout_baseline"],
+                  "holdout_adrc": evaluated["holdout_adrc"],
+                  "retuned_proportional_tuning": asdict(chosen_p),
+                  "training_retuned_proportional": evaluated["training_retuned_proportional"],
+                  "holdout_retuned_proportional": evaluated["holdout_retuned_proportional"],
+                  "groups": evaluated["groups"],
+                  "cases_with_higher_rmse": evaluated["cases_with_higher_rmse"],
+                  "worst_rmse_increase": evaluated["worst_rmse_increase"],
+                  "cases_with_higher_rmse_than_retuned_p": evaluated["cases_with_higher_rmse_than_retuned_p"],
+                  "observer_shadow_replay": shadow_replay(inputs["20hz"], chosen),
+                  "observer_shadow_replay_current_kd": shadow_replay(inputs["10hz"], chosen)}
+        mismatches = []
+        for key in ("sample_rate_hz", "tuning", "training_count", "training_adrc", "holdout_count",
+                    "holdout_baseline", "holdout_adrc", "retuned_proportional_tuning",
+                    "training_retuned_proportional", "holdout_retuned_proportional", "groups",
+                    "cases_with_higher_rmse", "worst_rmse_increase",
+                    "cases_with_higher_rmse_than_retuned_p", "observer_shadow_replay",
+                    "observer_shadow_replay_current_kd"):
+            if isinstance(recorded[key], (dict, list)):
+                for path, actual, expected in metric_pairs(
+                        {"v": report[key]}, {"v": recorded[key]}, key + ("." if isinstance(recorded[key], dict) else "[")):
+                    if abs(actual - expected) > 1e-12:
+                        mismatches.append(f"{path}: {actual} != {expected}")
+            elif isinstance(recorded[key], (int, float)) and abs(report[key] - recorded[key]) > 1e-12:
+                mismatches.append(f"{key}: {report[key]} != {recorded[key]}")
+            elif not isinstance(recorded[key], (int, float)) and report[key] != recorded[key]:
+                mismatches.append(f"{key}: {report[key]!r} != {recorded[key]!r}")
+        if mismatches:
+            raise SystemExit("ADRC 复算与 results.json 不一致:\n" + "\n".join(mismatches))
+        print("PASS: recorded ADRC metrics reproduced without retuning")
+        return
+    training = training_cases()
     best = None
     for candidate in map(lambda values: ObserverTuning(*values),
                          product((8.0, 12.0, 18.0, 24.0), (5.0, 8.0, 12.0, 16.0), (9.0, 15.0, 22.0, 30.0))):
@@ -254,7 +369,6 @@ def main():
         if best is None or objective < best[0]:
             best = (objective, candidate, scores)
     _, chosen, fitted = best
-    observer_sanity(chosen)
     best_p = None
     for values in product((0.6, 0.9, 1.4, 2.0, 3.0, 5.0), (0.005, 0.01, 0.025, 0.05),
                           (0.0, 0.0125, 0.025)):
@@ -264,41 +378,23 @@ def main():
         if best_p is None or objective < best_p[0]:
             best_p = (objective, candidate, scores)
     _, chosen_p, fitted_p = best_p
-
-    holdout = expand_cases([
-        ("fast", (1.66, .060, 2, .008, 2.8, .014)),
-        ("lagged", (1.41, .135, 9, .022, 0.0, .014)),
-        ("loaded", (0.88, .160, 4, .045, -1.8, .014)),
-        ("noisy", (1.28, .085, 3, .018, 1.0, .035)),
-        ("impulse", (1.30, .115, 5, .020, 4.0, .010)),
-    ])
-    rng = Random(281119)
-    for i in range(96):
-        holdout.append(Scenario("spread", (.32, .40)[i % 2], (-1, 1)[i // 2 % 2],
-                                rng.uniform(.80, 1.85), rng.uniform(.05, .17), rng.randrange(1, 10),
-                                rng.uniform(.005, .055), rng.uniform(-3.5, 4.0), rng.uniform(.006, .036), 29100 + i))
-
-    baseline = [compare_run(case, cfg) for case in holdout]
-    experimental = [compare_run(case, cfg, chosen) for case in holdout]
-    tuned_proportional = [compare_run(case, cfg, proportional=chosen_p) for case in holdout]
-    groups = {}
-    for name in sorted({case.name for case in holdout}):
-        indices = [i for i, case in enumerate(holdout) if case.name == name]
-        groups[name] = {"count": len(indices), "baseline": stats([baseline[i] for i in indices]),
-                        "adrc": stats([experimental[i] for i in indices]),
-                        "retuned_proportional": stats([tuned_proportional[i] for i in indices])}
-    inputs = json.loads(Path(__file__).with_name("replay_inputs.json").read_text(encoding="utf-8"))
-    report = {"sample_rate_hz": 100, "tuning": asdict(chosen), "training_count": len(training),
-              "training_adrc": fitted, "holdout_count": len(holdout),
-              "holdout_baseline": stats(baseline), "holdout_adrc": stats(experimental),
-              "retuned_proportional_tuning": asdict(chosen_p), "training_retuned_proportional": fitted_p,
-              "holdout_retuned_proportional": stats(tuned_proportional), "groups": groups,
-              "cases_with_higher_rmse": sum(a["rmse"] > b["rmse"] + 1e-6 for a, b in zip(experimental, baseline)),
-              "worst_rmse_increase": max(a["rmse"] - b["rmse"] for a, b in zip(experimental, baseline)),
-              "cases_with_higher_rmse_than_retuned_p": sum(a["rmse"] > p["rmse"] + 1e-6
-                                                          for a, p in zip(experimental, tuned_proportional)),
+    evaluated = evaluate(cfg, chosen, chosen_p)
+    report = {"sample_rate_hz": 100, "tuning": asdict(chosen), "training_count": evaluated["training_count"],
+              "training_adrc": evaluated["training_adrc"], "holdout_count": evaluated["holdout_count"],
+              "holdout_baseline": evaluated["holdout_baseline"], "holdout_adrc": evaluated["holdout_adrc"],
+              "retuned_proportional_tuning": asdict(chosen_p),
+              "training_retuned_proportional": evaluated["training_retuned_proportional"],
+              "holdout_retuned_proportional": evaluated["holdout_retuned_proportional"],
+              "groups": evaluated["groups"],
+              "cases_with_higher_rmse": evaluated["cases_with_higher_rmse"],
+              "worst_rmse_increase": evaluated["worst_rmse_increase"],
+              "cases_with_higher_rmse_than_retuned_p": evaluated["cases_with_higher_rmse_than_retuned_p"],
               "observer_shadow_replay": shadow_replay(inputs["20hz"], chosen),
               "observer_shadow_replay_current_kd": shadow_replay(inputs["10hz"], chosen)}
+    if abs(evaluated["training_adrc"]["mean_rmse"] - fitted["mean_rmse"]) > 1e-15:
+        raise SystemExit("training ADRC stats drifted during evaluation")
+    if abs(evaluated["training_retuned_proportional"]["mean_rmse"] - fitted_p["mean_rmse"]) > 1e-15:
+        raise SystemExit("training proportional stats drifted during evaluation")
     args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=2))
 

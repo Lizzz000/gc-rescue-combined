@@ -29,10 +29,12 @@ float BMI088_GYRO_SEN = BMI088_GYRO_2000_SEN;
 static void BMI088_write_single_reg(uint8_t reg, uint8_t data);
 static void BMI088_read_regs(uint8_t reg, uint8_t *buf, uint8_t len, uint8_t accel_dummy);
 
+#define BMI088_ACCEL_RUNTIME_CONF (BMI088_ACC_NORMAL | BMI088_ACC_800_HZ | BMI088_ACC_CONF_MUST_Set)
+
 static uint8_t write_BMI088_accel_reg_data_error[BMI088_WRITE_ACCEL_REG_NUM][3] = {
     {BMI088_ACC_PWR_CTRL, BMI088_ACC_ENABLE_ACC_ON, BMI088_ACC_PWR_CTRL_ERROR},
     {BMI088_ACC_PWR_CONF, BMI088_ACC_PWR_ACTIVE_MODE, BMI088_ACC_PWR_CONF_ERROR},
-    {BMI088_ACC_CONF, BMI088_ACC_NORMAL | BMI088_ACC_800_HZ | BMI088_ACC_CONF_MUST_Set, BMI088_ACC_CONF_ERROR},
+    {BMI088_ACC_CONF, BMI088_ACCEL_RUNTIME_CONF, BMI088_ACC_CONF_ERROR},
     {BMI088_ACC_RANGE, BMI088_ACC_RANGE_3G, BMI088_ACC_RANGE_ERROR},
     {BMI088_INT1_IO_CTRL, BMI088_ACC_INT1_IO_ENABLE | BMI088_ACC_INT1_GPIO_PP | BMI088_ACC_INT1_GPIO_LOW, BMI088_INT1_IO_CTRL_ERROR},
     {BMI088_INT_MAP_DATA, BMI088_ACC_INT1_DRDY_INTERRUPT, BMI088_INT_MAP_DATA_ERROR}
@@ -55,6 +57,21 @@ uint8_t BMI088_init(void)
     error |= bmi088_accel_init();
     error |= bmi088_gyro_init();
     return error;
+}
+
+uint8_t BMI088_Set_Accel_Calibration_Mode(uint8_t enabled)
+{
+    /* ACC_CONF 的高四位 0x8 为 OSR4。200 Hz 下加速度带宽为 20 Hz。 */
+    const uint8_t config = enabled ? (BMI088_ACC_CONF_MUST_Set | BMI088_ACC_200_HZ)
+                                   : BMI088_ACCEL_RUNTIME_CONF;
+    uint8_t readback = 0U;
+    BMI088_spi_error = 0U;
+    BMI088_accel_write_single_reg(BMI088_ACC_CONF, config);
+    BMI088_delay_us(BMI088_COM_WAIT_SENSOR_TIME);
+    BMI088_accel_read_single_reg(BMI088_ACC_CONF, readback);
+    if (BMI088_spi_error || readback != config)
+        return BMI088_ACC_CONF_ERROR;
+    return BMI088_NO_ERROR;
 }
 
 /** @brief 按教程双读 ID、复位、配置并回读加速度计。 @return 0 成功；非零为 ID 或配置错误。 */

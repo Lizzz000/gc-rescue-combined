@@ -124,6 +124,10 @@ function render() {
     tone = "warning";
   } else if (fresh) {
     stateText = stateLabels[state.state] || "状态未知";
+    if (state.state === 0 && !state.disarm_confirmed) {
+      stateText = "软件失能，待电机确认";
+      tone = "warning";
+    }
     if (state.state === 2) tone = "ready";
     if (state.state === 3 || state.state === 5) tone = "active";
     if (state.state === 4 || state.state === 6) tone = "warning";

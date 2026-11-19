@@ -391,7 +391,13 @@ void HAL_PCD_DataOutStageCallback(PCD_HandleTypeDef *pcd, uint8_t epnum)
         const uint32_t count = HAL_PCD_EP_GetRxCount(pcd, USB_EP_OUT);
         if (link_state.connected)
         {
-            UsbRxBuffer_Push(&rx_buffer, out_buffer, count);
+            const uint32_t generation = rx_buffer.generation;
+            UsbRxBuffer_Push(&rx_buffer, out_buffer, count, (uint32_t)xTaskGetTickCountFromISR());
+            if (generation != rx_buffer.generation)
+            {
+                ++link_state.generation;
+                UsbLink_OnDisconnect();
+            }
         }
         if (configured)
         {
@@ -525,6 +531,7 @@ void UsbLink_Task(void const *argument)
     osDelay(200);
     HAL_PCD_DevConnect(&hpcd);
     uint32_t parsed_generation = rx_buffer.generation;
+    uint32_t frame_started_ms = 0U;
     for (;;)
     {
         for (;;)
@@ -537,17 +544,32 @@ void UsbLink_Task(void const *argument)
                 parser = (LinkParser){0};
                 parsed_generation = rx_buffer.generation;
             }
-            if (!UsbRxBuffer_Pop(&rx_buffer, &byte))
+            uint32_t received_ms;
+            const uint32_t now_ms = (uint32_t)xTaskGetTickCount();
+            const uint8_t has_byte = UsbRxBuffer_Pop(&rx_buffer, &byte, &received_ms);
+            if ((has_byte && UsbRxBuffer_Expired(now_ms, received_ms)) ||
+                (parser.count != 0U && UsbRxBuffer_Expired(now_ms, frame_started_ms)))
+            {
+                /* 丢弃积压并撤销旧业务会话，物理 USB 仍可接收下一个新会话。 */
+                UsbRxBuffer_Reset(&rx_buffer);
+                ++link_state.generation;
+                UsbLink_OnDisconnect();
+                taskEXIT_CRITICAL();
+                break;
+            }
+            if (!has_byte)
             {
                 taskEXIT_CRITICAL();
                 break;
             }
+            if (parser.count == 0U)
+                frame_started_ms = received_ms;
             if (!LinkParser_Feed(&parser, byte, &frame))
             {
                 taskEXIT_CRITICAL();
                 continue;
             }
-            UsbLink_OnFrame(&frame);
+            UsbLink_OnFrame(&frame, frame_started_ms);
             taskEXIT_CRITICAL();
         }
         osDelay(1);

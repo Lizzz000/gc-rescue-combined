@@ -43,7 +43,7 @@ static uint64_t previous_fusion_us;
 static uint32_t magnetic_failures, initial_gravity_checks;
 static HAL_StatusTypeDef next_i2c_status = HAL_OK;
 static enum { STATIC_BIAS, MOVING_MEAN, MOVING_PEAK, BAD_GYRO_ID, DYNAMIC_WRAP, COLD_START,
-              CALI_TEMP_INVALID, RUNTIME_ERROR, TIMING_GAP, TILTED_WORLD, TILTED_AVERAGE, MAGNETIC_READS,
+              CALI_TEMP_INVALID, RUNTIME_ERROR, ROTATING_SPI_GAP, TIMING_GAP, TILTED_WORLD, TILTED_AVERAGE, MAGNETIC_READS,
               START_MAG_RETRY } scenario;
 static jmp_buf task_finished;
 static unsigned critical_depth, critical_entries;
@@ -106,7 +106,7 @@ static void assert_magnetic_update(void)
     float separation = 0.0f;
     for (unsigned i = 0U; i < 4U; ++i)
     {
-        assert(fabsf(INS_quat[i] - (failed ? six_axis[i] : nine_axis[i])) < 0.000002f);
+        assert(fabsf(INS_quat[i] - ((failed || no_new_data) ? six_axis[i] : nine_axis[i])) < 0.000002f);
         separation += fabsf(six_axis[i] - nine_axis[i]);
     }
     assert(separation > 0.0001f); /* 非零磁偏差保证错误分支不会偶然得到同一结果。 */
@@ -179,6 +179,7 @@ void vofa_send(float roll, float pitch, float yaw)
     assert(fabsf(pitch - INS_angle[1] * rad_to_deg) < 0.0001f);
     assert(fabsf(yaw - INS_angle[0] * rad_to_deg) < 0.0001f);
     static INS_control_data_t previous;
+    static uint64_t previous_sample_us;
     static unsigned rejected_run;
     INS_control_data_t snapshot;
     if (vofa_calls == 0U)
@@ -189,11 +190,8 @@ void vofa_send(float roll, float pitch, float yaw)
         if (snapshot.yaw_predicted)
         {
             assert(vofa_calls > 0U && ++rejected_run <= 2U);
-            const uint32_t elapsed_ms = snapshot.sample_time_ms - previous.sample_time_ms;
-            float expected = previous.yaw_deg;
-            if (elapsed_ms <= 50U)
-                expected += 0.0005f * (float)elapsed_ms *
-                            (previous.world_z_rad_s + snapshot.world_z_rad_s) * rad_to_deg;
+            const float dt = (float)(last_bmi_us - previous_sample_us) * 1e-6f;
+            const float expected = previous.yaw_deg + dt * snapshot.world_z_rad_s * rad_to_deg;
             assert(fabsf(remainderf(snapshot.yaw_deg - expected, 360.0f)) < 0.0001f);
             assert(fabsf(remainderf(yaw - snapshot.yaw_deg, 360.0f)) > 5.0f);
         }
@@ -204,11 +202,17 @@ void vofa_send(float roll, float pitch, float yaw)
             assert(fabsf(snapshot.yaw_deg - yaw) < 0.0001f);
         }
         assert(snapshot.sample_time_ms == (uint32_t)(last_bmi_us / 1000U));
-        const float expected_world_z =
-            scenario == DYNAMIC_WRAP || (scenario == TILTED_WORLD && vofa_calls > 0U)
-                ? 1000.0f * 0.0010652644f : 0.0f;
+        float expected_world_z = 0.0f;
+        if (scenario == DYNAMIC_WRAP || (scenario == TILTED_WORLD && vofa_calls > 0U))
+            expected_world_z = 1000.0f * 0.0010652644f;
+        if (scenario == ROTATING_SPI_GAP)
+        {
+            expected_world_z = 3755.0f * 0.0010652644f;
+            assert(!snapshot.yaw_predicted);
+        }
         assert(fabsf(snapshot.world_z_rad_s - expected_world_z) < 0.00002f);
         previous = snapshot;
+        previous_sample_us = last_bmi_us;
     }
     else
     {
@@ -243,7 +247,7 @@ void vofa_send(float roll, float pitch, float yaw)
         assert_averaged_gravity();
     else if (scenario == MAGNETIC_READS)
         assert_magnetic_update();
-    else if (scenario != TILTED_WORLD)
+    else if (scenario != TILTED_WORLD && scenario != ROTATING_SPI_GAP)
     {
         /* 原始gyro有非零偏置，校准后静止姿态不能继续漂移。 */
         assert(fabsf(roll) < 0.001f && fabsf(pitch) < 0.001f);
@@ -277,7 +281,10 @@ static void task_sample(void)
         assert(last_controlled_read == accel_reads - 1U); /* 标定每次都必须温控。 */
     if (accel_reads <= end_calibration + 1U) assert(vofa_calls == 0U);
 
+    /* 标定用窄带宽，姿态运行前恢复原带宽。 */
+    assert(accel_regs[0x40] == (accel_reads <= end_calibration ? 0x89U : 0xABU));
     int16_t gx = 4, gy = -5, gz = 6;
+    if (scenario == ROTATING_SPI_GAP && accel_reads > end_calibration) gz += 3755;
     if (scenario == MOVING_MEAN && cali_index != 0U && cali_index <= EXPECTED_CALI_SAMPLES) gx = 100;
     if (scenario == TILTED_AVERAGE && cali_index != 0U && cali_index <= EXPECTED_CALI_SAMPLES) gx = 100;
     if (scenario == MOVING_PEAK && cali_index == INTERRUPTED_CALI_SAMPLES) gx = 400;
@@ -324,7 +331,8 @@ static void task_sample(void)
     }
     accel_regs[0x22] = (uint16_t)temperature_raw >> 3;
     accel_regs[0x23] = ((uint16_t)temperature_raw & 7U) << 5;
-    if (scenario == RUNTIME_ERROR && run_index == 3U)
+    if ((scenario == RUNTIME_ERROR && run_index == 3U) ||
+        (scenario == ROTATING_SPI_GAP && (run_index == 2U || run_index == 3U)))
     {
         inject_transfer_error = 1U;
         failure_pending = 1U;
@@ -340,13 +348,14 @@ static void task_sample(void)
         error_vofa_count = vofa_calls;
         ++runtime_skips;
     }
-    if (scenario == RUNTIME_ERROR && (run_index == 4U || run_index == 9U))
+    if ((scenario == RUNTIME_ERROR && (run_index == 4U || run_index == 9U)) ||
+        (scenario == ROTATING_SPI_GAP && run_index == 4U))
     {
         recovery_pending = 1U;
         ++runtime_skips; /* 恢复首样本只重建时间基准，不积分整段中断。 */
     }
     if (scenario == DYNAMIC_WRAP && accel_reads == end_calibration)
-        timer_offset = UINT32_MAX - 7000U - (uint32_t)clock_us;
+        timer_offset = UINT32_MAX - 17000U - (uint32_t)clock_us; /* 运行带宽恢复等待后再跨回绕。 */
     if (accel_reads > end_calibration)
     {
         last_bmi_us = clock_us - 1U;
@@ -429,7 +438,8 @@ HAL_StatusTypeDef HAL_SPI_TransmitReceive(SPI_HandleTypeDef *spi, uint8_t *tx,
     }
     if (inject_transfer_error)
     {
-        assert(htim10.Compare[0] > 0U); /* 确认故障确实发生在加热中。 */
+        if (scenario == RUNTIME_ERROR)
+            assert(htim10.Compare[0] > 0U); /* 温控用例要在加热时注入故障。 */
         inject_transfer_error = 0U;
         failed_spi_calls = spi_calls;
         test_delay_ms(2U);
@@ -627,9 +637,13 @@ static void run_ins_case(void)
     assert(cold_heating == 10U && heater_updates >= calibration_samples);
     assert(fabsf(bmi088_real_data.gyro[0] - (scenario == TILTED_WORLD ? -996.0f : 4.0f) * 0.0010652644f) < 0.000001f);
     assert(fabsf(bmi088_real_data.gyro[1] + 5.0f * 0.0010652644f) < 0.000001f);
-    assert(fabsf(bmi088_real_data.gyro[2] - (scenario == DYNAMIC_WRAP ? 1006.0f : 6.0f) * 0.0010652644f) < 0.000001f);
+    int expected_gyro_z = 6;
+    if (scenario == DYNAMIC_WRAP) expected_gyro_z += 1000;
+    if (scenario == ROTATING_SPI_GAP) expected_gyro_z += 3755;
+    assert(fabsf(bmi088_real_data.gyro[2] - expected_gyro_z * 0.0010652644f) < 0.000001f);
     if (scenario == DYNAMIC_WRAP) assert(wrapped);
     if (scenario == RUNTIME_ERROR) assert(runtime_skips == 4U);
+    if (scenario == ROTATING_SPI_GAP) assert(runtime_skips == 3U);
     if (scenario == TILTED_AVERAGE) assert(initial_gravity_checks == 1U);
     if (scenario == MAGNETIC_READS) assert(magnetic_failures == 2U);
 }

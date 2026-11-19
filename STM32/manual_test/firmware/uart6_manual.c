@@ -23,7 +23,7 @@ enum
 
 enum { RESULT_NONE, RESULT_ACCEPTED, RESULT_REJECTED, RESULT_DONE, RESULT_FAULT };
 enum { DETAIL_NONE, DETAIL_STATE, DETAIL_ODOM, DETAIL_NO_ORIGIN, DETAIL_LIMIT,
-       DETAIL_TIMEOUT, DETAIL_LINK, DETAIL_UART, DETAIL_CHASSIS };
+       DETAIL_TIMEOUT, DETAIL_LINK, DETAIL_UART, DETAIL_CHASSIS, DETAIL_RETURN_SPEED };
 enum { RETURN_INACTIVE, RETURN_RUNNING, RETURN_STOPPING };
 
 #define RX_CAPACITY 128U
@@ -209,6 +209,16 @@ static void Service_Request(const LinkFrame *frame, uint32_t now_ms)
     /* 返航的车体系投影会有浮点误差，给恰好到硬限的合速度留出舍入余量。 */
     if (config.linear_limit_mps == CHASSIS_STRAIGHT_MAX_SPEED_MPS)
         config.linear_limit_mps -= 0.000001f;
+    /* 两轴可同时运动。按到内层窗口的理论最短时间拒绝一定无法在期限内完成的请求。 */
+    const double linear_time = fmax(0.0, return_plan.length_m - config.position_tolerance_m) /
+                               config.linear_limit_mps;
+    const double angular_time = fmax(0.0, fabs(return_plan.yaw_delta_rad) - config.yaw_tolerance_rad) /
+                                config.angular_limit_rad_s;
+    if (fmax(linear_time, angular_time) >= RETURN_TIMEOUT_MS * 0.001)
+    {
+        Reply(UART_RETURN, id, RESULT_REJECTED, DETAIL_RETURN_SPEED);
+        return;
+    }
     return_config = config;
     active_return_id = id;
     return_corrected = 0U;
@@ -298,9 +308,11 @@ static void Report_Status(uint32_t now_ms)
     if (return_state != RETURN_INACTIVE)
         state = return_state == RETURN_RUNNING ? 5U : 6U;
     const uint8_t status[] = {
-        /* bit2：带电待接管；bit3：支持正常归还；bit4：支持 0.50 m/s、4 rad/s。 */
+        /* bit2：带电待接管；bit3：支持正常归还；bit4：支持 0.50 m/s、4 rad/s。
+         * bit5：三轮均已回报本次失能。 */
         state, (uint8_t)(0x18U | origin_valid | (odom_valid << 1U) |
-                         ((!session_active && state == MANUAL_READY) << 2U)),
+                         ((!session_active && state == MANUAL_READY) << 2U) |
+                         ((state == MANUAL_DISARMED && Chassis_Disable_Confirmed()) << 5U)),
         (uint8_t)reply_id, (uint8_t)(reply_id >> 8U), reply_command, reply_result, reply_detail,
     };
     uint8_t tx_length = LinkFrame_Encode(UART_STATUS, status, sizeof(status), tx_buffer);
@@ -393,7 +405,7 @@ void UART6_Manual_Loop(void)
                 last_valid_ms = received_ms;
             else if (session_active && return_state == RETURN_INACTIVE && frame.type == MANUAL_CAN_VELOCITY_ID)
             {
-                Manual_CAN_Receive(frame.data, frame.length);
+                Manual_CAN_Receive_At(frame.data, frame.length, received_ms);
                 last_valid_ms = received_ms;
             }
         }

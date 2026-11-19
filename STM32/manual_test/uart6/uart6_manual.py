@@ -11,7 +11,7 @@ import time
 from uart6_protocol import (
     AVAILABLE, ANGULAR_LIMIT, DEFAULT_ANGULAR, DEFAULT_LINEAR, LINEAR_LIMIT,
     RELEASE, RUN_PROFILE, angular_limit, linear_limit,
-    ACCEPTED, ARM, BRAKING, DETAIL_NAMES, DISARMED, DONE, FAULT, KEEPALIVE,
+    ACCEPTED, ARM, BRAKING, DETAIL_NAMES, DISARMED, DISARM_CONFIRMED, DONE, FAULT, KEEPALIVE,
     ORIGIN, POSE, PREPARING, READY, REJECTED, RETURN, RUNNING, STATE_NAMES,
     STATUS, STOP, VELOCITY, FrameReader, frame,
 )
@@ -290,7 +290,10 @@ class ManualPanel:
                 self.label.set("等待有效串口状态")
                 self.pose = None
             else:
-                self.label.set(STATE_NAMES[self.state])
+                if self.state == DISARMED and not self.flags & DISARM_CONFIRMED:
+                    self.label.set("软件失能，待电机确认")
+                else:
+                    self.label.set(STATE_NAMES[self.state])
             if self.active and self.arm_deadline is not None and now >= self.arm_deadline:
                 self.stop("使能等待超时，已请求停车")
             if self.active and self.pending is not None:

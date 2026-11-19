@@ -7,10 +7,11 @@
 #define YAW_REJECT_LIMIT 3U
 
 Heading_Yaw_Status_t Heading_Yaw_Guard_Update(Heading_Yaw_Guard_t *guard, float yaw_rad,
-                                               float gyro_rad_s, uint32_t sample_time_ms)
+                                               float gyro_rad_s, uint32_t sample_time_ms, float dt)
 {
     if (guard == NULL || guard->rejected_run >= YAW_REJECT_LIMIT ||
-        !isfinite(yaw_rad) || !isfinite(gyro_rad_s) || fabsf(gyro_rad_s) > 8.0f)
+        !isfinite(yaw_rad) || !isfinite(gyro_rad_s) || fabsf(gyro_rad_s) > 8.0f ||
+        !isfinite(dt) || dt <= 0.0f || dt > 0.05f)
         return HEADING_YAW_INVALID;
 
     yaw_rad = remainderf(yaw_rad, TWO_PI);
@@ -27,11 +28,8 @@ Heading_Yaw_Status_t Heading_Yaw_Guard_Update(Heading_Yaw_Guard_t *guard, float 
     if (elapsed_ms == 0U || elapsed_ms > INT32_MAX)
         return guard->status;
 
-    /* 跳点期间保留陀螺相对航向；缺测的长时间段不外推。 */
-    float predicted_yaw = guard->yaw_rad;
-    if (elapsed_ms <= 50U)
-        predicted_yaw = remainderf(predicted_yaw + 0.0005f * (float)elapsed_ms *
-                                   (guard->previous_gyro_rad_s + gyro_rad_s), TWO_PI);
+    /* 与 AHRS 同拍使用当前陀螺和积分时长，不能把未积分的缺测间隔算进预测。 */
+    const float predicted_yaw = remainderf(guard->yaw_rad + gyro_rad_s * dt, TWO_PI);
     guard->previous_gyro_rad_s = gyro_rad_s;
     guard->sample_time_ms = sample_time_ms;
     if (fabsf(remainderf(yaw_rad - predicted_yaw, TWO_PI)) <= YAW_JUMP_LIMIT_RAD)

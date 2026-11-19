@@ -1419,7 +1419,9 @@ static void test_turn(void)
             feedback_step(10000U, moving);
         }
         body_target(body); near(body[2],0);
-        assert(!Chassis_Is_Stopped() && Chassis_Motion_Ready());
+        assert(!Chassis_Is_Stopped() && !Chassis_Motion_Ready());
+        yaw_rate = 0.0f;
+        confirm_stopped();
         assert(disables == 0U && Chassis_Straight_Start(0.4f,0U));
     }
     reset_case(0U,UINT32_MAX-5000U);
@@ -1547,7 +1549,8 @@ static void test_turn_braking_and_fine(void)
         yaw_deg = direction * 179.5f;
         plant_step(10000U, 1.0f, NULL, NULL);
         yaw_deg = direction * 177.5f;
-        for (unsigned i = 0U; i < 4U; ++i)
+        yaw_rate = 0.0f;
+        for (unsigned i = 0U; i < 8U; ++i)
             plant_step(10000U, 1.0f, NULL, NULL);
         body_target(body);
         near(body[2], 0.0f);
@@ -1673,7 +1676,7 @@ static void test_turn_distance_handoff(void)
         assert(!Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD,0.5f,0.5f));
         plant_step(5000U,1.0f,NULL,NULL); /* 仍在原来 10 ms 时点发送，接受请求不重置控制时基。 */
         assert(controls == before + 3U);
-        body_target(body); near(body[0],0.0075f); near(body[1],0.0f);
+        body_target(body); near(hypotf(body[0], body[1]), 0.0075f);
         near(body[2],previous - direction * 0.04f);
         previous = body[2];
 
@@ -1718,11 +1721,85 @@ static void test_turn_handoff_half_circle_delta(void)
         yaw_deg = -direction * 180.0f; /* 包角表示刻意选与实际旋向相反的半圈符号。 */
         yaw_rate = direction * (moving ? 0.2f : 0.0f);
         assert(!Chassis_Is_Stopped());
+        Chassis_Odometry_t origin, current;
+        assert(Chassis_Get_Odometry(&origin));
         assert(Chassis_Distance_Start(CHASSIS_TRANSLATION_LEFT,0.5f,0.5f));
         for (unsigned i = 0U; i < 5U; ++i) plant_step(10000U,1.0f,NULL,NULL);
-        body_target(body); near(body[0],0.0f); assert(body[1] > 0.0f);
+        body_target(body);
+        assert(Chassis_Get_Odometry(&current));
+        const float axis_in_body = origin.yaw_rad + 1.570796327f - current.yaw_rad;
+        const float along = cosf(axis_in_body) * body[0] + sinf(axis_in_body) * body[1];
+        assert(along > 0.036f);
         near(body[2],moving ? -direction * 0.05f : 0.0f);
     }
+}
+
+/* 指令归零后实际仍在转。滑出窗口须纠偏，新鲜低速反馈才能结束。 */
+static void test_turn_waits_for_motion_to_settle(void)
+{
+    reset_case(UINT32_MAX - 40000U, UINT32_MAX - 40U);
+    assert(enable_ready() && Chassis_Turn_Start(1, 90.0f));
+    plant_step(10000U, 1.0f, NULL, NULL);
+    yaw_deg = 88.5f;
+    yaw_rate = 1.2f;
+    for (unsigned i = 0U; i < 4U; ++i)
+        stopped_group();
+    float body[3];
+    body_target(body);
+    near(body[2], 0.0f);
+    assert(!Chassis_Motion_Ready());
+
+    yaw_deg = 94.0f;
+    plant_step(10000U, 1.0f, NULL, NULL);
+    body_target(body);
+    assert(body[2] < 0.0f && !Chassis_Motion_Ready());
+
+    yaw_deg = 89.5f;
+    yaw_rate = 0.0f;
+    plant_step(10000U, 1.0f, NULL, NULL);
+    stopped_group();
+    sample_age = 10U;
+    stopped_group(); /* 重复时间戳不可提前累计低角速度的持续时间。 */
+    sample_age = 20U;
+    stopped_group();
+    assert(!Chassis_Motion_Ready());
+    sample_age = 0U;
+    stopped_group();
+    assert(Chassis_Is_Stopped() && Chassis_Motion_Ready());
+}
+
+/* 缺一轮新帧时只补偿航向变化；断流后重建位置不补算运动。 */
+static void test_world_velocity_waits_for_fresh_odometry(void)
+{
+    reset_case(UINT32_MAX - 120000U, UINT32_MAX - 120U);
+    assert(enable_ready() && Chassis_Set_World_Velocity(0.12f, 0.0f, 0.0f));
+    for (unsigned i = 0U; i < 150U; ++i)
+        plant_step(10000U, 1.0f, NULL, NULL);
+    Chassis_Odometry_t before, latest;
+    assert(Chassis_Get_Odometry(&before));
+
+    yaw_rate = 0.8f;
+    step(10000U, 1U);
+    float body[3];
+    body_target(body);
+    assert(body[1] < -0.0008f && body[1] > -0.0011f);
+    assert(Chassis_Get_Odometry(&latest));
+    assert(latest.sample_time_us == before.sample_time_us && latest.x_m == before.x_m);
+
+    step(30000U, 1U);
+    body_target(body);
+    near(body[0], 0.0f);
+    near(body[1], 0.0f);
+    assert(!Chassis_Get_Odometry(&latest));
+
+    yaw_rate = 0.0f;
+    stopped_group();
+    assert(Chassis_Get_Odometry(&latest));
+    assert(latest.x_m == before.x_m && latest.y_m == before.y_m);
+    assert(!Chassis_Motion_Ready());
+    body_target(body);
+    near(body[0], 0.0f);
+    near(body[1], 0.0f);
 }
 
 /** @brief 小于可测范围的请求不抢占转向，最短有效定距按反馈完成并清除衔接。 */
@@ -1748,6 +1825,37 @@ static void test_turn_handoff_short_distance(void)
     step(10000U,1U); body_target(body);
     near(body[2],-0.016f);
     assert(disables == 0U && aborts == 0U);
+}
+
+/* 接续时直接沿终点航向推进。注入横向移动后，限幅修正仍保留沿程速度。 */
+static void test_turn_handoff_tracks_world_line(void)
+{
+    reset_case(0U, 0U);
+    assert(enable_ready() && Chassis_Turn_Start(1, 90.0f));
+    yaw_deg = 85.5f;
+    for (unsigned i = 0U; i < 150U; ++i)
+        stopped_group();
+    sample_age = 20U;
+    yaw_rate = -1.0f;
+    assert(!Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD, 0.5f, 0.10f));
+    sample_age = 0U;
+    yaw_rate = 0.0f;
+    assert(Chassis_Distance_Start(CHASSIS_TRANSLATION_FORWARD, 0.5f, 0.10f));
+    stopped_group();
+    float body[3];
+    body_target(body);
+    assert(body[0] > 0.0074f && body[1] > 0.0004f);
+
+    float wheeled_sideways[3];
+    Motor_Chassis_Inverse(0.0f, 0.20f, 0.0f, wheeled_sideways);
+    for (unsigned wheel = 0U; wheel < 3U; ++wheel)
+        wheeled_sideways[wheel] = -wheeled_sideways[wheel];
+    for (unsigned i = 0U; i < 20U; ++i)
+        feedback_step(10000U, wheeled_sideways);
+    body_target(body);
+    assert(hypotf(body[0], body[1]) <= 0.10001f);
+    assert(body[0] > 0.08f && body[1] < -0.01f);
+    assert(!Chassis_Motion_Ready() && disables == 0U);
 }
 
 /** @brief 理想跟随下左右转向末段边走边修偏，验证不停轮接续及下一段定距终止。
@@ -1989,8 +2097,146 @@ static void test_translation_feedforward_geometry(void)
 }
 
 /** @brief 执行底盘真实源码回归。 @return 成功为0。 */
+static void test_disable_feedback_confirmation(void)
+{
+    reset_case(0U, UINT32_MAX - 50U);
+    assert(enable_ready());
+    for (unsigned i = 0U; i < 3U; ++i)
+        wheel_feedback(i, 0.0f, 0U);
+
+    Chassis_Disable();
+    assert(!Chassis_Is_Enabled() && !Chassis_Disable_Confirmed());
+    step(10000U, 1U);
+    assert(disables == 3U && !Chassis_Disable_Confirmed());
+
+    wheel_feedback(0U, 0.0f, 0U);
+    wheel_feedback(1U, 0.0f, 0U);
+    assert(!Chassis_Disable_Confirmed());
+    step(40000U, 1U);
+    wheel_feedback(2U, 0.0f, 0U);
+    assert(!Chassis_Disable_Confirmed());
+
+    wheel_feedback(0U, 0.0f, 0U);
+    wheel_feedback(1U, 0.0f, 0U);
+    step(10000U, 1U);
+    assert(Chassis_Disable_Confirmed());
+    step(100000U, 1U);
+    assert(Chassis_Disable_Confirmed());
+    wheel_feedback(1U, 0.0f, 1U);
+    assert(!Chassis_Disable_Confirmed());
+}
+
+
+/* 与 ADRC 初测相同的一阶偏航对象：纯滞后、阻力死区、一阶滞后和时段扰动。
+ * 控制器走真实 Chassis_Set_Velocity_Explicit_Yaw 与 Apply_Yaw_Rate_Feedback。
+ * 这是主机无硬件响应测试，不能当成实车表现。 */
+static float yaw_delay_step(float *buffer, unsigned length, float applied)
+{
+    const float delayed = buffer[0];
+    unsigned i;
+    for (i = 0U; i + 1U < length; ++i)
+        buffer[i] = buffer[i + 1U];
+    buffer[length - 1U] = applied;
+    return delayed;
+}
+
+static void test_yaw_rate_first_order_plant(void)
+{
+    const float dt = 0.010f;
+    const float gain = 1.12f;
+    const float lag_s = 0.080f;
+    const float deadband = 0.012f;
+    const float command = 0.40f;
+    const unsigned delay = 2U;
+    float delay_buf[2] = {0.0f, 0.0f};
+    float speed = 0.0f;
+    float body[3];
+    unsigned tick;
+    unsigned settle_ticks = 0U;
+    unsigned ready_ticks = 0U;
+    float plateau_error = 0.0f;
+    unsigned plateau_samples = 0U;
+    float max_slew = 0.0f;
+    float previous = 0.0f;
+
+    reset_case(0U, 0U);
+    assert(enable_ready());
+    assert(Chassis_Set_Velocity_Explicit_Yaw(0.0f, 0.0f, command));
+
+    for (tick = 0U; tick < 500U; ++tick)
+    {
+        const float now = (float)tick * dt;
+        float delayed;
+        float drive;
+        float force = 0.0f;
+        float alpha;
+        if (now >= 2.05f - 0.5f * dt && now < 2.05f + 0.5f * dt)
+            assert(Chassis_Set_Velocity_Explicit_Yaw(0.0f, 0.0f, -command));
+        if (now >= 3.35f - 0.5f * dt && now < 3.35f + 0.5f * dt)
+            Chassis_Hold();
+
+        yaw_rate = speed;
+        plant_step(10000U, 1.0f, NULL, NULL);
+        body_target(body);
+        if (tick > 0U)
+        {
+            const float slew = fabsf(body[2] - previous) / dt;
+            if (slew > max_slew)
+                max_slew = slew;
+        }
+        if (now < 3.35f)
+        {
+            const float requested = now < 2.05f ? command : -command;
+            /* 换向时指令须穿越零；到达新方向后不得反向或超过新指令。 */
+            assert(fabsf(body[2]) <= fabsf(requested) + 1e-4f);
+            assert(fabsf(body[2] - previous) <= CHASSIS_VECTOR_ACCEL_RAD_S2 * dt + 1e-4f);
+            if (previous * requested < 0.0f)
+                assert((requested - previous) * (body[2] - previous) >= -1e-6f);
+            else
+                assert(body[2] * requested >= -1e-6f);
+        }
+        else
+            assert(fabsf(body[2] - previous) <= 0.04001f);
+        previous = body[2];
+
+        delayed = yaw_delay_step(delay_buf, delay, body[2]);
+        drive = copysignf(fmaxf(0.0f, fabsf(delayed) - deadband), delayed);
+        if (now >= 0.95f && now < 1.19f)
+            force = 2.0f;
+        if (now >= 2.92f && now < 3.12f)
+            force = -1.4f;
+        alpha = -expm1f(-dt / lag_s);
+        speed += alpha * (gain * drive + lag_s * force - speed);
+
+        if (now >= 0.70f && now < 2.05f)
+        {
+            const float error = speed - command;
+            plateau_error += error * error;
+            ++plateau_samples;
+        }
+        if (now >= 3.35f)
+        {
+            if (fabsf(speed) <= 0.02f)
+                ++settle_ticks;
+            else
+                settle_ticks = 0U;
+            if (Chassis_Motion_Ready())
+                ++ready_ticks;
+        }
+    }
+
+    assert(plateau_samples > 0U);
+    assert(settle_ticks >= 5U);
+    assert(ready_ticks >= 1U);
+    assert(disables == 0U && Chassis_Is_Enabled());
+    assert(max_slew <= 4.01f);
+    printf("yaw first-order plant (host only): plateau RMSE %.4f rad/s, max slew %.3f rad/s^2, settle/hold ready\n",
+           sqrtf(plateau_error / (float)plateau_samples), max_slew);
+}
+
 int main(void)
 {
+    test_disable_feedback_confirmation();
 #if CHASSIS_TUNING_ENABLED
     reset_case(0U,0U);
     assert(enable_ready());
@@ -2025,7 +2271,9 @@ int main(void)
     test_smooth_hold_and_redirect(CHASSIS_RUN_SPEED_MPS, CHASSIS_RUN_YAW_RATE_RAD_S);
     test_smooth_hold_and_redirect(CHASSIS_STRAIGHT_MAX_SPEED_MPS, CHASSIS_VECTOR_MAX_WZ_RAD_S);
     test_yaw_rate_feedback();
+    test_yaw_rate_first_order_plant();
     test_world_velocity_after_turn();
+    test_world_velocity_waits_for_fresh_odometry();
     test_motion_start_cadence();
     test_tracking_wheel_cadence();
     test_vector_yaw_hold();
@@ -2034,10 +2282,12 @@ int main(void)
     test_turn();
     test_turn_ramp();
     test_turn_braking_and_fine();
+    test_turn_waits_for_motion_to_settle();
     test_turn_closed_loop();
     test_turn_distance_handoff();
     test_turn_handoff_half_circle_delta();
     test_turn_handoff_short_distance();
+    test_turn_handoff_tracks_world_line();
     test_turn_handoff_closed_loop();
     test_fault_stop_is_not_completion();
     test_failure_paths();

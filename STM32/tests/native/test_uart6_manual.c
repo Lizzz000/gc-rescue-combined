@@ -16,7 +16,7 @@ enum
     STATUS = 0x80, POSE
 };
 enum { ACCEPTED = 1, REJECTED, DONE, FAULT };
-enum { STATE = 1, ODOM, NO_ORIGIN, LIMIT, TIMEOUT, LINK, UART };
+enum { STATE = 1, ODOM, NO_ORIGIN, LIMIT, TIMEOUT, LINK, UART, CHASSIS, RETURN_SPEED };
 enum { RETURNING = 5, SETTLING };
 
 uint32_t test_tick;
@@ -74,6 +74,7 @@ uint8_t Chassis_Attitude_Ready(void) { return 1U; }
 uint8_t Chassis_Can_Enable(void) { return !enabled; }
 
 uint8_t Chassis_Is_Enabled(void) { return enabled; }
+uint8_t Chassis_Disable_Confirmed(void) { return !enabled && disables != 0U; }
 uint8_t Chassis_Is_Stopped(void) { return enabled && stopped; }
 uint8_t Chassis_Motion_Ready(void)
 {
@@ -596,6 +597,30 @@ static void Test_Return_Speed(void)
     assert(report.result == REJECTED && report.detail == LIMIT && return_vectors == vectors);
 }
 
+static void Test_Return_Cannot_Fit_Deadline(void)
+{
+    Reset(100U);
+    Arm_And_Confirm(1U);
+    Velocity(0, 0, 0);
+    Request(ORIGIN, 2U);
+    Step(100U);
+
+    position.x_m = 1.40;
+    Velocity(0, 0, 0);
+    Request_Return_Speed(3U, 50U, 100U);
+    Step(100U);
+    assert(report.command == RETURN && report.result == REJECTED && report.detail == RETURN_SPEED);
+    assert(report.state == MANUAL_READY && enabled && return_vectors == 0U);
+
+    position.x_m = 0.0;
+    position.yaw_rad = 3.14159265f;
+    Velocity(0, 0, 0);
+    Request_Return_Speed(4U, 100U, 100U);
+    Step(100U);
+    assert(report.command == RETURN && report.result == REJECTED && report.detail == RETURN_SPEED);
+    assert(report.state == MANUAL_READY && enabled && return_vectors == 0U);
+}
+
 static void Test_Full_Speed_Diagonal_Return(void)
 {
     Reset(100U);
@@ -670,6 +695,7 @@ int main(void)
     Test_Return_Recovers_Small_Error();
     Test_Return_Protection();
     Test_Return_Speed();
+    Test_Return_Cannot_Fit_Deadline();
     Test_Full_Speed_Diagonal_Return();
     Test_Uart_Overflow();
     puts("PASS: USART6 manual framing, origin, return and fault braking");

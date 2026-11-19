@@ -460,9 +460,21 @@ static void Check_Action_Result(void)
     assert(Snapshot().action_result.kind == 0U && Snapshot().action_result.request_id == 9U);
 }
 
-/** @brief 运行实际 Jetson 编解码模块的离线边界测试。 @return 全部通过返回 0。 */
+/** @brief 记录 USB 入队时刻，不以解析时刻覆盖周期帧时间戳。 */
+static void Check_Usb_Receive_Time(void)
+{
+    Jetson_CAN_Init();
+    test_tick = 5U;
+    const uint32_t received_ms = UINT32_MAX - 20U;
+    Jetson_CAN_Receive_At(JETSON_CAN_TARGET_CENTER_ID, center_frame, sizeof(center_frame), received_ms);
+    const Jetson_CAN_Data_t data = Snapshot();
+    assert(data.target.valid && data.target.received_ms == received_ms);
+    assert(data.periodic_received && data.periodic_received_ms == received_ms);
+}
+
 int main(void)
 {
+    Check_Usb_Receive_Time();
     Check_Velocity_Decode();
     Check_Removed_Type();
     Check_Periodic_Reception();

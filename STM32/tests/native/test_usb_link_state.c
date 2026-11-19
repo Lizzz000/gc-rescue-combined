@@ -146,7 +146,7 @@ static void Seed_Old_Session(void)
 {
     const uint8_t absent[8] = {0U};
     Jetson_CAN_Receive(JETSON_CAN_TARGET_CENTER_ID, absent, sizeof(absent));
-    UsbRxBuffer_Push(&rx_buffer, absent, sizeof(absent));
+    UsbRxBuffer_Push(&rx_buffer, absent, sizeof(absent), test_tick);
     assert(Periodic_Seen() && rx_buffer.head != rx_buffer.tail);
 }
 
@@ -157,7 +157,7 @@ static void Check_Offline(uint32_t previous)
     assert(!state.connected && state.generation == previous + 1U);
     assert(!Periodic_Seen() && rx_buffer.head == rx_buffer.tail);
     uint8_t byte;
-    assert(!UsbRxBuffer_Pop(&rx_buffer, &byte));
+    assert(!UsbRxBuffer_Pop(&rx_buffer, &byte, NULL));
 }
 
 /** @brief 验证真实回调：忙不离线、挂起/恢复保留代数、复位/撤销配置/断开清会话。 */
@@ -238,23 +238,23 @@ void test_delay_ms(uint32_t ms)
     switch (task_step++)
     {
     case 0U:
-        UsbRxBuffer_Push(&rx_buffer, task_frame, 5U);
+        UsbRxBuffer_Push(&rx_buffer, task_frame, 5U, test_tick);
         break;
     case 1U:
         assert(parser.count == 5U && !Periodic_Seen());
         HAL_PCD_SuspendCallback(&hpcd);
         HAL_PCD_ResumeCallback(&hpcd);
-        UsbRxBuffer_Push(&rx_buffer, task_frame + 5U, task_frame_length - 5U);
+        UsbRxBuffer_Push(&rx_buffer, task_frame + 5U, task_frame_length - 5U, test_tick);
         break;
     case 2U:
         assert(!Periodic_Seen()); /* 旧会话前缀不能和重连后的后缀拼帧。 */
         task_frame[task_frame_length - 1U] ^= 0x80U;
-        UsbRxBuffer_Push(&rx_buffer, task_frame, task_frame_length);
+        UsbRxBuffer_Push(&rx_buffer, task_frame, task_frame_length, test_tick);
         break;
     case 3U:
         assert(!Periodic_Seen()); /* 坏 CRC 不能续期。 */
         task_frame[task_frame_length - 1U] ^= 0x80U;
-        UsbRxBuffer_Push(&rx_buffer, task_frame, task_frame_length);
+        UsbRxBuffer_Push(&rx_buffer, task_frame, task_frame_length, test_tick);
         break;
     case 4U:
         assert(Periodic_Seen()); /* 新会话完整 valid=0 帧可恢复准入。 */

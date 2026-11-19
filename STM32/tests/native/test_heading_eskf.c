@@ -123,21 +123,21 @@ static void test_yaw_jump_and_source_time(void)
 {
     Heading_Yaw_Guard_t guard = {0};
     const float jump = 1.570796327f;
-    assert(Heading_Yaw_Guard_Update(&guard, 0, 0, UINT32_MAX - 9U) == HEADING_YAW_OBSERVED);
-    assert(Heading_Yaw_Guard_Update(&guard, jump, 0, 0U) == HEADING_YAW_PREDICTED);
+    assert(Heading_Yaw_Guard_Update(&guard, 0, 0, UINT32_MAX - 9U, 0.01f) == HEADING_YAW_OBSERVED);
+    assert(Heading_Yaw_Guard_Update(&guard, jump, 0, 0U, 0.01f) == HEADING_YAW_PREDICTED);
     assert(guard.yaw_rad == 0);
-    assert(Heading_Yaw_Guard_Update(&guard, jump, 0, 0U) == HEADING_YAW_PREDICTED);
-    assert(Heading_Yaw_Guard_Update(&guard, jump, 0, UINT32_MAX) == HEADING_YAW_PREDICTED);
+    assert(Heading_Yaw_Guard_Update(&guard, jump, 0, 0U, 0.01f) == HEADING_YAW_PREDICTED);
+    assert(Heading_Yaw_Guard_Update(&guard, jump, 0, UINT32_MAX, 0.01f) == HEADING_YAW_PREDICTED);
     assert(guard.rejected_run == 1U);
-    assert(Heading_Yaw_Guard_Update(&guard, 0, 0, 10U) == HEADING_YAW_OBSERVED);
-    assert(Heading_Yaw_Guard_Update(&guard, jump, 0, 20U) == HEADING_YAW_PREDICTED);
-    assert(Heading_Yaw_Guard_Update(&guard, jump, 0, 30U) == HEADING_YAW_PREDICTED);
-    assert(Heading_Yaw_Guard_Update(&guard, jump, 0, 40U) == HEADING_YAW_INVALID);
-    assert(Heading_Yaw_Guard_Update(&guard, 0, 0, 50U) == HEADING_YAW_INVALID);
+    assert(Heading_Yaw_Guard_Update(&guard, 0, 0, 10U, 0.01f) == HEADING_YAW_OBSERVED);
+    assert(Heading_Yaw_Guard_Update(&guard, jump, 0, 20U, 0.01f) == HEADING_YAW_PREDICTED);
+    assert(Heading_Yaw_Guard_Update(&guard, jump, 0, 30U, 0.01f) == HEADING_YAW_PREDICTED);
+    assert(Heading_Yaw_Guard_Update(&guard, jump, 0, 40U, 0.01f) == HEADING_YAW_INVALID);
+    assert(Heading_Yaw_Guard_Update(&guard, 0, 0, 50U, 0.01f) == HEADING_YAW_INVALID);
 
     guard = (Heading_Yaw_Guard_t){0};
-    assert(Heading_Yaw_Guard_Update(&guard, 3.13f, 4, 0U) == HEADING_YAW_OBSERVED);
-    assert(Heading_Yaw_Guard_Update(&guard, -3.1132f, 4, 10U) == HEADING_YAW_OBSERVED);
+    assert(Heading_Yaw_Guard_Update(&guard, 3.13f, 4, 0U, 0.01f) == HEADING_YAW_OBSERVED);
+    assert(Heading_Yaw_Guard_Update(&guard, -3.1132f, 4, 10U, 0.01f) == HEADING_YAW_OBSERVED);
     Heading_ESKF_t heading;
     assert(Heading_ESKF_Init(&heading, 0, 0));
     assert(Heading_ESKF_Update(&heading, jump, 0, 0, .01f));

@@ -16,6 +16,11 @@ void Manual_CAN_Init(void)
 /** @brief 解析类型 2 并整体替换快照；输入约束见头文件。 */
 void Manual_CAN_Receive(const uint8_t *data, uint8_t len)
 {
+    Manual_CAN_Receive_At(data, len, (uint32_t)xTaskGetTickCount());
+}
+
+void Manual_CAN_Receive_At(const uint8_t *data, uint8_t len, uint32_t received_ms)
+{
     const Link_Velocity_Frame_t frame = Link_Decode_Velocity(data, len);
     Manual_CAN_Velocity_t velocity = {
         .valid = frame.valid,
@@ -23,7 +28,7 @@ void Manual_CAN_Receive(const uint8_t *data, uint8_t len)
         .vx = frame.vx,
         .vy = frame.vy,
         .wz = frame.wz,
-        .received_ms = (uint32_t)xTaskGetTickCount(),
+        .received_ms = received_ms,
         .sequence = manual_velocity.sequence + 1U,
         .invalid_sequence = manual_velocity.invalid_sequence,
         .zero_sequence = manual_velocity.zero_sequence,

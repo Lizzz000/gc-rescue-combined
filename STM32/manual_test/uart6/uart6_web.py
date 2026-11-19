@@ -15,7 +15,7 @@ import webbrowser
 
 from uart6_protocol import (
     ANGULAR_LIMIT, AVAILABLE, LINEAR_LIMIT, RELEASE, RUN_PROFILE, angular_limit, linear_limit,
-    ACCEPTED, ARM, BRAKING, DETAIL_NAMES, DISARMED, DONE, FAULT, KEEPALIVE, ORIGIN,
+    ACCEPTED, ARM, BRAKING, DETAIL_NAMES, DISARMED, DISARM_CONFIRMED, DONE, FAULT, KEEPALIVE, ORIGIN,
     POSE, READY, REJECTED, RETURN, RUNNING, SETTLING, STATUS, STOP,
     VELOCITY, FrameReader, frame,
 )
@@ -121,6 +121,7 @@ class Controller:
             "connected": self.serial is not None, "port": self.port, "fresh": fresh,
             "state": self.state, "origin": fresh and bool(self.flags & 1),
             "odom": fresh and bool(self.flags & 2), "pose": self.pose if fresh else None,
+            "disarm_confirmed": fresh and self.state == DISARMED and bool(self.flags & DISARM_CONFIRMED),
             "armed": self.active, "pending": self.pending is not None, "mode": self.mode,
             "can_arm": fresh and not self.active and self.can_arm(),
             "can_release": fresh and self.can_release(),

@@ -45,6 +45,8 @@ enum
 
 /** @brief 初始化 BMI088。 @return 两部分初始化错误码的按位或；0 表示成功。 */
 uint8_t BMI088_init(void);
+/* 切换加速度计静止标定带宽，回读失败时返回 BMI088_ACC_CONF_ERROR。 */
+uint8_t BMI088_Set_Accel_Calibration_Mode(uint8_t enabled);
 /** @brief 初始化加速度计。 @return 0 成功；非零为教程的 ID 或配置错误码。 */
 uint8_t bmi088_accel_init(void);
 /** @brief 初始化陀螺仪。 @return 0 成功；非零为教程的 ID 或配置错误码。 */

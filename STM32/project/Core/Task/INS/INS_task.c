@@ -119,7 +119,9 @@ static void imu_temp_control(float temp)
 
 /**
  * @brief 读取教程的 STAT1 和三轴数据，更新最近一次原始磁场。
- * @return 1 表示 HAL 读成功，是否有新样本由教程的 status 就绪位区分；0 表示读取失败。
+ * @return 1 表示 I2C 读取成功且 STAT1 数据就绪位已置位，即有新磁样本；
+ *         0 表示总线读取失败，或读取成功但尚无新样本。
+ * @note 无新磁样本时调用方传入空指针，走既有六轴更新；本函数不改变该分支。
  */
 static uint8_t read_ist8310(void)
 {
@@ -127,7 +129,7 @@ static uint8_t read_ist8310(void)
     if (ist8310_IIC_read_muli_reg(0x02, buffer, sizeof(buffer)))
     {
         ist8310_read_over(buffer, &ist8310_real_data);
-        return 1U;
+        return (ist8310_real_data.status & (1U << IST8310_DATA_READY_BIT)) != 0U;
     }
     ist8310_real_data.status &= ~(1 << IST8310_DATA_READY_BIT);
     return 0U;
@@ -161,7 +163,7 @@ static void Calibrate_MPU_Offset(bmi088_real_data_t *imu_mean, ist8310_real_data
             vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(INS_CALI_PERIOD_MS));
             BMI088_read(bmi088_real_data.gyro, bmi088_real_data.accel, &bmi088_real_data.temp);
             imu_temp_control(bmi088_real_data.temp);
-            if (mag_mean && read_ist8310() && (ist8310_real_data.status & (1U << IST8310_DATA_READY_BIT)))
+            if (mag_mean && read_ist8310())
             {
                 for (uint8_t i = 0; i < 3; i++)
                     mag_sum[i] += ist8310_real_data.mag[i];
@@ -267,7 +269,7 @@ static void update_attitude(float dt, uint32_t sample_time_ms, ist8310_real_data
                                  2.0f * (q2 * q3 + q0 * q1) * INS_gyro[1] +
                                  (q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3) * INS_gyro[2]) / norm_squared;
     const Heading_Yaw_Status_t status = Heading_Yaw_Guard_Update(
-        yaw_guard, INS_angle[INS_YAW_ADDRESS_OFFSET], world_z_rad_s, sample_time_ms);
+        yaw_guard, INS_angle[INS_YAW_ADDRESS_OFFSET], world_z_rad_s, sample_time_ms, dt);
     const INS_control_data_t next = {
         .yaw_deg = yaw_guard->yaw_rad * 57.295779513f,
         .world_z_rad_s = yaw_guard->previous_gyro_rad_s,
@@ -315,6 +317,10 @@ void INS_task(void const *argument)
     imu_temp_pid.min_out = 0.0f; /* 加热器没有负输出，抗积分须使用实际下限。 */
     imu_pwm_set(0);
     HAL_TIM_PWM_Start(&htim10, TIM_CHANNEL_1);
+    /* 静止标定使用板端验证过的 200 Hz / 20 Hz，给新滤波配置留出稳定时间。 */
+    while ((BMI088_error = BMI088_Set_Accel_Calibration_Mode(1U)) != BMI088_NO_ERROR)
+        osDelay(100);
+    osDelay(30);
     bmi088_real_data_t imu_mean = {0};
     ist8310_real_data_t mag_mean = {0};
     ist8310_real_data_t *startup_mag = INS_USE_MAGNETOMETER ? &mag_mean : NULL;
@@ -329,6 +335,13 @@ void INS_task(void const *argument)
         heading_valid = AHRS_init(INS_quat, INS_accel, INS_mag);
     } while (INS_USE_MAGNETOMETER && !heading_valid);
 
+    /* 确认恢复原运行带宽后再建立采样基线，避免新增运行期滤波延迟。 */
+    while ((BMI088_error = BMI088_Set_Accel_Calibration_Mode(0U)) != BMI088_NO_ERROR)
+    {
+        imu_temp_control(NAN);
+        osDelay(100);
+    }
+    osDelay(10);
     uint32_t last_sample_us = __HAL_TIM_GET_COUNTER(&htim2);
     BMI088_read(bmi088_real_data.gyro, bmi088_real_data.accel, &bmi088_real_data.temp);
     imu_temp_control(bmi088_real_data.temp);

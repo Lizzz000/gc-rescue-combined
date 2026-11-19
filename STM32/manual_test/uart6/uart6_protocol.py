@@ -9,13 +9,14 @@ STATUS, POSE = 0x80, 0x81
 AVAILABLE = 0x04  # Status flag: powered, ready, and no UART driving session owns the board.
 RUN_PROFILE = 0x08  # 支持 3 rad/s 和正常归还。
 EXTENDED_SPEED = 0x10  # 支持 0.50 m/s、4 rad/s。
+DISARM_CONFIRMED = 0x20  # 三台电机均已回报本次失能。
 DEFAULT_LINEAR, DEFAULT_ANGULAR = 0.40, 3.00
 LINEAR_LIMIT, ANGULAR_LIMIT = 0.50, 4.00
 DISARMED, PREPARING, READY, RUNNING, BRAKING, RETURNING, SETTLING = range(7)
 ACCEPTED, REJECTED, DONE, FAULT = range(1, 5)
 STATE_NAMES = ("失能", "准备中", "就绪", "遥控中", "制动中", "返航中", "返航到位，提交零速中")
 DETAIL_NAMES = ("", "状态不允许", "里程计失效", "尚未设原点", "超出行程限位",
-                "动作超时", "串口断流", "串口接收错误", "底盘故障")
+                "动作超时", "串口断流", "串口接收错误", "底盘故障", "返航限速过低，无法在时限内到达")
 
 
 def linear_limit(flags):

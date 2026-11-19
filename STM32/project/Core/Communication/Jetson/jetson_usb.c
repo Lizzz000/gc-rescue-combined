@@ -2,9 +2,9 @@
 #include "usb_link.h"
 #include "jetson_link.h"
 
-void UsbLink_OnFrame(const LinkFrame *frame)
+void UsbLink_OnFrame(const LinkFrame *frame, uint32_t received_ms)
 {
-    Jetson_CAN_Receive(frame->type, frame->data, frame->length);
+    Jetson_CAN_Receive_At(frame->type, frame->data, frame->length, received_ms);
 }
 
 void UsbLink_OnDisconnect(void)

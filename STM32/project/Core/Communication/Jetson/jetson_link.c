@@ -61,7 +61,12 @@ void Jetson_CAN_Invalidate_Periodic(void)
  */
 void Jetson_CAN_Receive(uint16_t type, const uint8_t *data, uint8_t len)
 {
-    uint32_t now_ms = (uint32_t)xTaskGetTickCount();
+    Jetson_CAN_Receive_At(type, data, len, (uint32_t)xTaskGetTickCount());
+}
+
+void Jetson_CAN_Receive_At(uint16_t type, const uint8_t *data, uint8_t len, uint32_t received_ms)
+{
+    const uint32_t now_ms = received_ms;
     switch (type)
     {
     case JETSON_CAN_TARGET_CENTER_ID:

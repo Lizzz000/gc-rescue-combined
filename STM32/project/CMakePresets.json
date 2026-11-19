@@ -45,6 +45,20 @@
             }
         },
         {
+            "name": "Debug-Auto-Chassis-Test",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "JETSON_AUTO_CHASSIS_TEST": "ON"
+            }
+        },
+        {
+            "name": "Debug-Tuning",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "CHASSIS_TUNING_ENABLED": "ON"
+            }
+        },
+        {
             "name": "Release",
             "inherits": "default",
             "cacheVariables": {
@@ -68,6 +82,14 @@
         {
             "name": "Debug-UART6-Manual",
             "configurePreset": "Debug-UART6-Manual"
+        },
+        {
+            "name": "Debug-Auto-Chassis-Test",
+            "configurePreset": "Debug-Auto-Chassis-Test"
+        },
+        {
+            "name": "Debug-Tuning",
+            "configurePreset": "Debug-Tuning"
         },
         {
             "name": "Release",

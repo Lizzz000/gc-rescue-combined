@@ -7,6 +7,27 @@ import tempfile
 from check_module_boundaries import check_module_boundaries
 
 
+def run_python_checks(root):
+    """运行不依赖板端硬件的 Python 主机检查；不含需 NumPy/SciPy 的磁标定。"""
+    python = shutil.which("python3") or shutil.which("python")
+    if not python:
+        raise RuntimeError("未找到 python3/python，无法运行主机 Python 检查")
+    repo = root.parent
+    commands = [
+        [python, "-m", "unittest", "discover", "-s", str(root / "tests"),
+         "-p", "test_yaw_adrc_pretest.py", "-v"],
+        [python, str(root / "tests/check_jetson_codec.py"),
+         "--jetson-root", str(repo / "Jetson")],
+        [python, str(root / "tests/check_gripper_budget.py")],
+    ]
+    for command in commands:
+        print("+", " ".join(command))
+        subprocess.run(command, check=True, cwd=str(root))
+    print("PASS: host Python checks (ADRC pretest, Jetson codec, gripper budget)")
+    print("Other host unittest files can be run with: "
+          "python -m unittest discover -s tests -p 'test_*.py'")
+
+
 def check_control_modes(root, cc):
     """预处理全部四开关组合，确保只有一个底盘控制器可被编入固件。"""
     modes = ("CHASSIS_TUNING_ENABLED", "JETSON_AUTO_ENABLED", "JETSON_AUTO_CHASSIS_TEST", "UART6_MANUAL_ENABLED")
@@ -40,12 +61,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cc", help="主机 GCC 路径（不能使用 arm-none-eabi-gcc）")
     parser.add_argument("--temp-dir", type=Path, help="可写临时目录的父目录；默认使用系统临时目录")
+    parser.add_argument("--suite", action="append", dest="suites", metavar="NAME",
+                        help="只编译并运行指定主机套件，可重复；默认全部套件")
+    parser.add_argument("--list-suites", action="store_true", help="列出全部主机套件名称后退出")
+    parser.add_argument("--python", action="store_true",
+                        help="在 native 套件之后运行不依赖硬件的 Python 主机检查")
+    parser.add_argument("--skip-native", action="store_true",
+                        help="跳过 C 主机套件（仍可与 --python 一起使用）")
     args = parser.parse_args()
     fallback = Path("C:/Program Files/JetBrains/CLion 2026.2.3.1/bin/mingw/bin/gcc.exe")
     cc = args.cc or shutil.which("gcc") or (str(fallback) if fallback.exists() else None)
-    if not cc:
+    if args.skip_native and not args.python and not args.list_suites:
+        parser.error("使用 --skip-native 时需要同时指定 --python")
+    if not args.skip_native and not cc and not args.list_suites:
         parser.error("未找到主机 GCC，请通过 --cc 指定")
-    check_control_modes(root, cc)
+    if cc and not args.list_suites and not args.skip_native:
+        check_control_modes(root, cc)
     suites = {
         "adaptive_tracker": ["tests/native/test_kalman_tracking.c", "project/Core/Algorithm/Vision/adaptive_kalman.c"],
         "adaptive_kalman": ["tests/native/test_adaptive_kalman.c",
@@ -148,6 +179,20 @@ def main():
                             "project/Core/Algorithm/Chassis/planar_odometry.c"])
         if "project/Core/Control/Chassis/chassis_odometry.c" in sources and "project/Core/Algorithm/Chassis/heading_eskf.c" not in sources:
             sources.append("project/Core/Algorithm/Chassis/heading_eskf.c")
+    if args.list_suites:
+        print("\n".join(suites))
+        return
+    if args.suites:
+        missing = [name for name in args.suites if name not in suites]
+        if missing:
+            known = ", ".join(suites)
+            raise RuntimeError(f"未知主机套件 {missing}；可选：{known}")
+        suites = {name: suites[name] for name in args.suites}
+    if args.skip_native:
+        if args.python:
+            run_python_checks(root)
+        return
+
     includes = ["tests/native/stubs", "tests/native/fixtures", "project/Core/Bsp/CAN",
                 "project/Core/Devices/BMI088", "project/Core/Devices/IST8310",
                 "project/Core/Devices/DM_Motor", "project/Core/Task/INS", "project/Core/Task/Chassis",
@@ -191,6 +236,8 @@ def main():
             subprocess.run([exe], check=True)
     print(f"PASS: {len(suites)} native test suites")
     check_module_boundaries(cc, args.temp_dir)
+    if args.python:
+        run_python_checks(root)
 
 
 if __name__ == "__main__":
