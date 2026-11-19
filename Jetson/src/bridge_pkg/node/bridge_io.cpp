@@ -53,7 +53,9 @@ void BridgeRuntime::sendPeriodicFrame()
 {
   // 沿用 MissionStatus 有效期；停止周期流让 STM32 识别业务掉线。
   // 正常丢目标及等待/夹爪/转向阶段仍发送 valid=0，不额外增加心跳帧。
-  const auto id = periodic_schedule_.next(mission_watchdog_.alive({Clock::now()}));
+  const auto current = Clock::now();
+  if (motion_lease_suspended_until_ && current < *motion_lease_suspended_until_) {return;}
+  const auto id = periodic_schedule_.next(mission_watchdog_.alive({current}));
   if (!id) {return;}
   const can_frame frame = currentFrame(*id);
   std::string error;

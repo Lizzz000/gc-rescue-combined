@@ -47,6 +47,7 @@ void testArrivalPoint()
   CHECK(!session.complete(false));
   CHECK(resultIs(session.result(0, 1), 0, 1, true));
 
+  CHECK(session.onRequest(1, 2, false) == Decision::Reject);
   CHECK(session.onRequest(1, 2) == Decision::Accept);
   CHECK(session.busy());
   CHECK(session.onRequest(1, 2) == Decision::Resend);
@@ -54,7 +55,7 @@ void testArrivalPoint()
   CHECK(session.onRequest(2, 3) == Decision::Reject);
   CHECK(session.onRequest(1, 3) == Decision::Reject);
   CHECK(resultIs(session.complete(true), 1, 2, true));
-  CHECK(session.onRequest(1, 2) == Decision::Resend);
+  CHECK(session.onRequest(1, 2, false) == Decision::Resend);
 
   // 释放不覆盖夹取结果。旧夹取查询绝不重新执行，即使另一 kind 正在动作。
   CHECK(session.onRequest(2, 3) == Decision::Accept);

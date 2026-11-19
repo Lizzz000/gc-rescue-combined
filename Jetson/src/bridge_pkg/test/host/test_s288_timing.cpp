@@ -17,6 +17,7 @@ std::array<unsigned char, 26> feedback{};
 std::atomic<int> stop_calls{0};
 bool timeout_reply = false;
 bool have_feedback = false;
+unsigned final_fault = 0;
 std::uint32_t crc(const unsigned char *data)
 {
   std::uint32_t value = 0xffffffff;
@@ -45,6 +46,8 @@ ssize_t write(int, const void *raw, std::size_t size)
   feedback[0] = 0xfc;
   feedback[1] = 0xee;
   feedback[2] = packet[2] & 0x7f;
+  if (count == 7 && final_fault == 1) {feedback[14] = 1;}
+  if (count == 7 && final_fault == 2) {feedback[2] |= 0x80;}
   const auto check = crc(feedback.data() + 2);
   for (int i = 0; i < 4; ++i) {feedback[22 + i] = static_cast<unsigned char>(check >> (8 * i));}
   have_feedback = true;
@@ -85,5 +88,22 @@ int main()
   CHECK(elapsed >= s288::kMaxMoveS + 4 * s288::kFeedbackWaitS);
   std::cout << "successful action including feedback retries: " << elapsed << " s\n";
   session.close();
+
+  Group failure_group("S288 final Stop reports hardware error or timeout");
+  for (unsigned fault : {1U, 2U}) {
+    stop_calls = 0;
+    final_fault = fault;
+    s288::Session failing_session(config);
+    CHECK(failing_session.available());
+    CHECK(failing_session.start_close(s288::kMinMoveS));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (failing_session.status() == s288::MotionStatus::Busy &&
+           std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    CHECK(failing_session.status() == s288::MotionStatus::Failed);
+    CHECK(stop_calls == 7);
+    failing_session.close();
+  }
   return finishTests("S288 timing");
 }

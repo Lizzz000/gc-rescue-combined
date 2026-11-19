@@ -18,7 +18,7 @@ class ArrivalPointSession
 {
 public:
   // 构造时的启动张开已在途；kind 0 只能查询它，不能再次开爪。
-  ArrivalPointDecision onRequest(std::uint8_t kind, std::uint32_t request_id)
+  ArrivalPointDecision onRequest(std::uint8_t kind, std::uint32_t request_id, bool authorized = true)
   {
     if (kind > 3 || request_id == 0) {return ArrivalPointDecision::Reject;}
     auto & record = records_[kind];
@@ -31,7 +31,8 @@ public:
       record = {request_id, startup_result_};
       return ArrivalPointDecision::Resend;
     }
-    if (active_ || (kind == 3 && !reject_open_authorized_)) {
+    // 已知编号仍可查询终态，新动作必须属于当前阶段。
+    if (!authorized || active_ || (kind == 3 && !reject_open_authorized_)) {
       return ArrivalPointDecision::Reject;
     }
     record = {request_id, std::nullopt};

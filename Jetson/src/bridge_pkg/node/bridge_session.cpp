@@ -319,6 +319,8 @@ void BridgeRuntime::openSocket()
   last_error_.clear();
   // 撤销旧中心和发送机会，并前移源时间截止；有效周期输出必须收到新输入。
   // 任务、运输阶段和到达保持保留，重连本身不解除握手约束。
+  // Bridge 快速重启时板端可能还保有上一进程的运动租约，先给其断流检测留时间。
+  motion_lease_suspended_until_ = Clock::now() + motion_lease_break_time_;
   queue_.reset();
   state_.resetInputs({now().nanoseconds()});
   RCLCPP_INFO(
@@ -379,6 +381,8 @@ void BridgeRuntime::clearRequests()
 
 void BridgeRuntime::missionRestarted()
 {
+  // STM32 将无效中心也视为在线。重启撤销旧路线时暂停周期流，超过板端 250 ms 断流期限。
+  motion_lease_suspended_until_ = Clock::now() + motion_lease_break_time_;
   // 不调用 finishRoi：旧请求失效不能在新 Mission 会话生成拒绝开爪授权。
   if (const auto cancelled = roi_request_.cancel()) {
     ports_.roi_client->remove_pending_request(cancelled->request_id);
@@ -420,7 +424,14 @@ void BridgeRuntime::handleIoFailure(const std::exception & error)
 
 void BridgeRuntime::handleArrivalPoint(std::uint8_t kind, std::uint32_t request_id)
 {
-  const auto decision = arrival_point_.onRequest(kind, request_id);
+  const auto phase = state_.cyclePhase();
+  const bool motion_lease_open = !motion_lease_suspended_until_ ||
+    Clock::now() >= *motion_lease_suspended_until_;
+  const bool can_grasp = kind == 1 && !route_aborted_ &&
+    phase == BridgeCyclePhase::SearchingTarget && !state_.locallyHeld();
+  const bool can_release = kind == 2 && !route_aborted_ && phase == BridgeCyclePhase::WaitingTransfer;
+  const bool authorized = kind == 0 || (motion_lease_open && (can_grasp || can_release || kind == 3));
+  const auto decision = arrival_point_.onRequest(kind, request_id, authorized);
   armCommandReply(decision != ArrivalPointDecision::Reject, CanProtocol::ARRIVAL_POINT, request_id);
   if (decision == ArrivalPointDecision::Reject) {return;}
   if (decision == ArrivalPointDecision::Resend) {

@@ -171,6 +171,8 @@ private:
   CanPeriodicSchedule periodic_schedule_;
   Clock::time_point next_open_;
   BridgeMissionWatchdog mission_watchdog_;
+  static constexpr auto motion_lease_break_time_ = std::chrono::milliseconds(300);
+  std::optional<Clock::time_point> motion_lease_suspended_until_;
   Config::GripperConfig gripper_config_;
   ArrivalPointSession arrival_point_;
   SearchRequestSession search_request_;

@@ -5,17 +5,19 @@
 // All request dispatch, callbacks, caches, coordinate gates and cancellation below are production code.
 struct BridgeRuntimeTestAccess
 {
-  static bool receive(BridgeRuntime & runtime, canid_t type, std::uint32_t id = 0)
+  static bool receive(
+    BridgeRuntime & runtime, canid_t type, std::uint32_t id = 0, std::uint8_t value = 1)
   {
     can_frame frame{};
     frame.can_id = type;
     frame.len = type == CanProtocol::ARRIVAL_ID ? 1 : 5;
-    frame.data[0] = 1;
+    frame.data[0] = value;
     for (unsigned i = 0; i < 4; ++i) {frame.data[i + 1] = static_cast<std::uint8_t>(id >> (8 * i));}
     return runtime.handleCommand(frame);
   }
   static const can_frame & reply(const BridgeRuntime & runtime)
   {return runtime.replies_.frame(CanProtocol::COMMAND_RESULT_ID);}
+  static void sendPeriodicFrame(BridgeRuntime & runtime) {runtime.sendPeriodicFrame();}
   static bool held(const BridgeRuntime & runtime) {return runtime.state_.locallyHeld();}
   static bool aborted(const BridgeRuntime & runtime) {return runtime.route_aborted_;}
   static bool authorized(const BridgeRuntime & runtime) {return runtime.turnAuthorized();}
@@ -44,7 +46,14 @@ public:
   void close() override {opened = false;}
   bool socketOpen() const override {return opened;}
   ReadResult read(can_frame &, std::string &) override {return ReadResult::EMPTY;}
-  WriteResult write(const can_frame &, std::string &) override {return WriteResult::SENT;}
+  unsigned periodic_writes{0};
+  WriteResult write(const can_frame & frame, std::string &) override
+  {
+    if (frame.can_id == CanProtocol::TARGET_ID || frame.can_id == CanProtocol::SAFETY_ID) {
+      ++periodic_writes;
+    }
+    return WriteResult::SENT;
+  }
 };
 
 struct Fixture
@@ -54,6 +63,7 @@ struct Fixture
     std::make_shared<rclcpp::Client<interface_pkg::srv::CheckRoi>>();
   std::shared_ptr<rclcpp::Client<interface_pkg::srv::MissionCommand>> command =
     std::make_shared<rclcpp::Client<interface_pkg::srv::MissionCommand>>();
+  HostTransport * transport;
   std::unique_ptr<BridgeRuntime> runtime;
 
   Fixture()
@@ -62,9 +72,11 @@ struct Fixture
     config.request_timeout = std::chrono::seconds(1);
     config.tx_queue_timeout = std::chrono::seconds(1);
     config.mission_watchdog_timeout = std::chrono::seconds(60);
+    auto owned_transport = std::make_unique<HostTransport>();
+    transport = owned_transport.get();
     runtime = std::make_unique<BridgeRuntime>(node, config, BridgeRuntime::Ports{
       std::make_shared<rclcpp::Publisher<interface_pkg::msg::BridgeStatus>>(), roi, command},
-      std::make_unique<HostTransport>());
+      std::move(owned_transport));
     task();
     mission(10);
   }
@@ -136,11 +148,15 @@ void testDeliveryLocalization()
     fixture.mission(11, BridgeCyclePhase::NavigatingSafety, BridgeOutcome::Success, 77, 2);
     fixture.safety(2);
     CHECK(BridgeRuntimeTestAccess::safetyValid(*fixture.runtime));
+    CHECK(BridgeRuntimeTestAccess::receive(*fixture.runtime, CanProtocol::ARRIVAL_POINT_ID, 12, 2));
+    CHECK(fixture.result(false, 12, CanProtocol::ARRIVAL_POINT));
     receive(CanProtocol::SAFETY_ARRIVED_ID, 77);
     CHECK(BridgeRuntimeTestAccess::held(*fixture.runtime));
     fixture.mission(11, BridgeCyclePhase::WaitingTransfer, BridgeOutcome::Success, 77, 2);
     fixture.command->reply(0, {true});
     CHECK(fixture.result(true, 77, CanProtocol::SAFETY_ARRIVED));
+    CHECK(BridgeRuntimeTestAccess::receive(*fixture.runtime, CanProtocol::ARRIVAL_POINT_ID, 12, 2));
+    CHECK(fixture.result(true, 12, CanProtocol::ARRIVAL_POINT));
     fixture.safety(2);
     CHECK(!BridgeRuntimeTestAccess::safetyValid(*fixture.runtime));
     receive(CanProtocol::DELIVERY_COMPLETED_ID, 76);
@@ -157,6 +173,10 @@ void testDeliveryLocalization()
     fixture.mission(11, BridgeCyclePhase::LocalizingStart, BridgeOutcome::Success, 77, 2);
     if (status_first) {fixture.command->reply(1, {true});}
     CHECK(fixture.result(true, 77, CanProtocol::DELIVERY_COMPLETED));
+    CHECK(BridgeRuntimeTestAccess::receive(*fixture.runtime, CanProtocol::ARRIVAL_POINT_ID, 12, 2));
+    CHECK(fixture.result(true, 12, CanProtocol::ARRIVAL_POINT));
+    CHECK(BridgeRuntimeTestAccess::receive(*fixture.runtime, CanProtocol::ARRIVAL_POINT_ID, 13, 2));
+    CHECK(fixture.result(false, 13, CanProtocol::ARRIVAL_POINT));
     CHECK(!BridgeRuntimeTestAccess::held(*fixture.runtime));
     CHECK(!BridgeRuntimeTestAccess::safetyValid(*fixture.runtime));
     receive(CanProtocol::DELIVERY_COMPLETED_ID, 77);
@@ -223,7 +243,11 @@ void testBridgeRuntimeSearch()
     fixture.search(99);
     CHECK(fixture.command->requests.size() == 1 && fixture.result(false, 99));
 
-    fixture.mission(0); // Mission alone restarts, STM32 request IDs continue.
+    BridgeRuntimeTestAccess::sendPeriodicFrame(*fixture.runtime);
+    CHECK(fixture.transport->periodic_writes == 1);
+    fixture.mission(0); // Mission 重启不能用合法的空中心续期板端旧动作。
+    BridgeRuntimeTestAccess::sendPeriodicFrame(*fixture.runtime);
+    CHECK(fixture.transport->periodic_writes == 1);
     CHECK(BridgeRuntimeTestAccess::held(*fixture.runtime));
     CHECK(BridgeRuntimeTestAccess::aborted(*fixture.runtime));
     fixture.target();

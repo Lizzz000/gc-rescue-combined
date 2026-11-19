@@ -388,7 +388,11 @@ void Session::run(double target_deg, double seconds)
     auto * link = link_.get();
     const auto initial = link->prepare(config_.kp, config_.kd);
     (void)initial;
-    link->run_to(zero_rad_ + target_deg * M_PI / 180.0, seconds, config_.kp, config_.kd, cancel_);
+    const auto final = link->run_to(
+      zero_rad_ + target_deg * M_PI / 180.0, seconds, config_.kp, config_.kd, cancel_);
+    if (final.error || final.timeout || cancel_.load()) {
+      throw std::runtime_error("舵机动作已取消或停机反馈异常");
+    }
     std::lock_guard<std::mutex> guard(lock_);
     message_ = "已停机";
     status_.store(MotionStatus::Succeeded);
