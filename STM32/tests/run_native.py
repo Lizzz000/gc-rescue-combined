@@ -123,7 +123,8 @@ def main():
                                       "project/Core/Control/Vision/tracked_visual_servo.c",
                                       "project/Core/Algorithm/Vision/adaptive_kalman.c",
                                       "project/Core/Algorithm/Vision/visual_servo.c"]
-    suites["point_plan"] = ["tests/native/test_point_plan.c", "project/Core/Algorithm/Chassis/point_plan.c"]
+    suites["point_plan"] = ["tests/native/test_point_plan.c", "project/Core/Algorithm/Chassis/point_plan.c",
+                            "project/Core/Algorithm/Chassis/velocity_profile.c"]
     suites["heading_eskf"] = ["tests/native/test_heading_eskf.c", "project/Core/Algorithm/Chassis/heading_eskf.c", "project/Core/Control/Chassis/chassis_odometry.c", "project/Core/Algorithm/Chassis/motor_chassis.c"]
     suites["heading_eskf"].append("project/Core/Algorithm/Chassis/heading_yaw_guard.c")
     for name in suites:

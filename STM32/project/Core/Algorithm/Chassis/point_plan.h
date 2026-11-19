@@ -10,7 +10,9 @@ typedef struct
     double length_m;
     float goal_yaw_rad;
     float yaw_delta_rad;
+    float remaining_yaw_rad;
     uint8_t valid;
+    uint8_t yaw_started;
 } Point_Plan_t;
 
 typedef struct
@@ -26,7 +28,7 @@ typedef struct
 
 typedef struct
 {
-    float vx_mps;
+    float vx_mps; /* 世界 x/y 平移速度；角速度逆时针为正。 */
     float vy_mps;
     float wz_rad_s;
     double remaining_m;
@@ -36,10 +38,10 @@ typedef struct
 
 /* 无障碍平面内最短欧氏直线，航向取[-pi,pi]最短转角；不假设轮式车必须沿车头方向。
  * start/goal=[世界x(m),世界y(m),航向(rad)]；length 是路径下界，不是实走里程。
- * 不做避障、地图搜索或盲目按时间推进。每拍用有效里程计重算到目标的最短剩余线段。
+ * 每拍以世界位姿重算剩余路线，并用车体系实测速度 [vx,vy,wz] 抑制侧滑和超速接近。
  */
 uint8_t Point_Plan_Init(Point_Plan_t *plan, const double start[3], const double goal[3]);
-uint8_t Point_Plan_Step(const Point_Plan_t *plan, const Point_Plan_Config_t *config, const double pose[3],
-                        Point_Plan_Output_t *output);
+uint8_t Point_Plan_Step(Point_Plan_t *plan, const Point_Plan_Config_t *config, const double pose[3],
+                        const float measured_body[3], Point_Plan_Output_t *output);
 
 #endif

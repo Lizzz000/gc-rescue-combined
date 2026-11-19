@@ -1,62 +1,124 @@
 #include "point_plan.h"
+#include "velocity_profile.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
 
-static const Point_Plan_Config_t cfg={.2f,.5f,.3f,.8f,.12f,.01f,.06981317f};
-static void Plant(unsigned axis)
+static const double pi = 3.14159265358979323846;
+static const Point_Plan_Config_t config = {0.2f, 0.5f, 0.3f, 0.8f, 0.12f, 0.01f, 0.06981317f};
+
+static void Plant(unsigned axis, uint8_t half_turn)
 {
-    const double angle=axis*3.141592653589793/4;
-    double pose[3]={.31,-.27,2.8}, start[3]={.31,-.27,2.8};
-    double goal[3]={start[0]+1.2*cos(angle),start[1]+1.2*sin(angle),-2.2};
-    Point_Plan_t plan;
-    assert(Point_Plan_Init(&plan,start,goal));
-    assert(fabs(plan.length_m-1.2)<1e-9 && fabs(plan.yaw_delta_rad)<3.141593);
-    double velocity[3]={0}, traveled=0, turn=0, worst_cross=0;
-    unsigned stopped=0, at=0;
-    for (unsigned step=0;step<4000;++step)
+    const double direction = axis * pi / 4.0;
+    const double start[3] = {0.31, -0.27, half_turn ? pi - 0.01 : 2.8};
+    const double goal[3] = {start[0] + 1.2 * cos(direction), start[1] + 1.2 * sin(direction), half_turn ? 0.0 : -2.2};
+    double pose[3] = {start[0], start[1], start[2]};
+    Point_Plan_Config_t cfg = config;
+    if (half_turn)
     {
-        Point_Plan_Output_t output;
-        assert(Point_Plan_Step(&plan,&cfg,pose,&output));
-        assert(hypot(output.vx_mps,output.vy_mps)<=.200001 && fabs(output.wz_rad_s)<=.500001);
-        if(output.arrived && !stopped) {stopped=1;at=step;}
-        double target[3]={cos(pose[2])*output.vx_mps-sin(pose[2])*output.vy_mps,
-                          sin(pose[2])*output.vx_mps+cos(pose[2])*output.vy_mps,output.wz_rad_s};
-        if(stopped) target[0]=target[1]=target[2]=0;
-        for(unsigned i=0;i<3;++i)
-        {
-            double increment=(target[i]-velocity[i])*.005/.06;
-            double limit=(i==2?1.5:.45)*.005;
-            velocity[i]+=fmax(-limit,fmin(limit,increment));
-            pose[i]+=velocity[i]*.005;
-        }
-        traveled+=hypot(velocity[0],velocity[1])*.005;
-        turn+=fabs(velocity[2])*.005;
-        worst_cross=fmax(worst_cross,fabs((pose[0]-start[0])*sin(angle)-(pose[1]-start[1])*cos(angle)));
-        if(stopped && step>at+200) break;
+        cfg.linear_limit_mps = 0.4f;
+        cfg.angular_limit_rad_s = 3.0f;
     }
-    double error=hypot(goal[0]-pose[0],goal[1]-pose[1]);
-    printf("path axis=%u straight=%.3fm traveled=%.4fm error=%.4fm time=%.3fs turn=%.3frad\n",
-           axis,plan.length_m,traveled,error,at*.005,turn);
-    assert(stopped && at*.005<9.0 && error<.02 && worst_cross<.005);
-    assert(traveled>=1.18 && traveled<=1.22 && turn<=fabs(plan.yaw_delta_rad)+.08);
+    Point_Plan_t plan;
+    assert(Point_Plan_Init(&plan, start, goal));
+    assert(fabs(plan.length_m - 1.2) < 1e-9 && fabs(plan.yaw_delta_rad) < pi);
+    Velocity_Profile_t profile = {0};
+    double traveled = 0.0, turn = 0.0, worst_cross = 0.0;
+    unsigned at = 0;
+    for (unsigned step = 1; step < 1600; ++step)
+    {
+        const double cosine = cos(pose[2]), sine = sin(pose[2]);
+        const float measured[3] = {
+            (float)(cosine * profile.output[0] + sine * profile.output[1]),
+            (float)(-sine * profile.output[0] + cosine * profile.output[1]),
+            profile.output[2]
+        };
+        Point_Plan_Output_t output;
+        assert(Point_Plan_Step(&plan, &cfg, pose, measured, &output));
+        assert(hypotf(output.vx_mps, output.vy_mps) <= cfg.linear_limit_mps + 1e-6f);
+        assert(fabsf(output.wz_rad_s) <= cfg.angular_limit_rad_s + 1e-6f);
+        if (output.arrived && !at)
+            at = step;
+        const float target[3] = {at ? 0.0f : output.vx_mps,
+                                 at ? 0.0f : output.vy_mps, at ? 0.0f : output.wz_rad_s};
+        const float dt = 0.01f;
+        Velocity_Profile_Step(&profile, target, at ? 0.75f : 0.45f, at ? 4.0f : 1.6f, 0.04f, dt);
+        pose[0] += profile.output[0] * dt;
+        pose[1] += profile.output[1] * dt;
+        pose[2] = remainder(pose[2] + profile.output[2] * dt, 2.0 * pi);
+        traveled += hypot(profile.output[0], profile.output[1]) * dt;
+        turn += fabs(profile.output[2]) * dt;
+        const double cross = (pose[0] - start[0]) * sin(direction) - (pose[1] - start[1]) * cos(direction);
+        worst_cross = fmax(worst_cross, fabs(cross));
+        if (at && step > at + 100U)
+            break;
+    }
+    const double error = hypot(goal[0] - pose[0], goal[1] - pose[1]);
+    printf("axis=%u half_turn=%u path=%.4fm lateral=%.4fm error=%.4fm time=%.3fs turn=%.3frad\n",
+           axis, half_turn, traveled, worst_cross, error, at * 0.01, turn);
+    assert(at && at * 0.01 < 9.0 && error < 0.02 && worst_cross < 0.005);
+    assert(traveled >= 1.18 && traveled <= 1.22 && turn <= fabs(plan.yaw_delta_rad) + 0.08);
 }
+
+static void Test_Damping(void)
+{
+    double pose[3] = {0.0, 0.0, pi / 2};
+    const double goal[3] = {0.03, 0.0, pi / 2 + 0.12};
+    Point_Plan_t plan;
+    assert(Point_Plan_Init(&plan, pose, goal));
+    Point_Plan_Output_t base, damped;
+    const float resting[3] = {0}, moving[3] = {0.15f, -0.24f, 0.8f};
+    assert(Point_Plan_Step(&plan, &config, pose, resting, &base));
+    assert(Point_Plan_Step(&plan, &config, pose, moving, &damped));
+    /* 车头朝世界 +y，车体侧向速度为 -y 时正朝世界 +x 接近。 */
+    assert(damped.vx_mps > 0.0f && damped.vx_mps < base.vx_mps);
+    assert(damped.vy_mps < -0.06f && fabsf(base.vy_mps) < 1e-6f);
+    assert(damped.wz_rad_s > 0.0f && damped.wz_rad_s < base.wz_rad_s);
+}
+
+static void Test_Half_Turn(void)
+{
+    double pose[3] = {0.0, 0.0, pi - 0.01};
+    const double goal[3] = {0.0, 0.0, 0.0};
+    for (unsigned moving = 0; moving < 2; ++moving)
+    {
+        pose[2] = pi - 0.01;
+        Point_Plan_t plan;
+        Point_Plan_Output_t output;
+        const float feedback[3] = {0.0f, 0.0f, moving ? 0.5f : 0.0f};
+        const float expected_sign = moving ? 1.0f : -1.0f;
+        assert(Point_Plan_Init(&plan, pose, goal));
+        for (unsigned index = 0; index < 5; ++index)
+        {
+            assert(Point_Plan_Step(&plan, &config, pose, feedback, &output));
+            assert(expected_sign * output.wz_rad_s > 0.0f);
+            pose[2] = -pose[2];
+        }
+    }
+}
+
 int main(void)
 {
-    for(unsigned i=0;i<8;++i) Plant(i);
-    Point_Plan_t p;
-    double start[3]={0,0,3.124139361}, goal[3]={1.2,.6,-3.124139361};
-    assert(Point_Plan_Init(&p,start,goal));
-    assert(fabs(p.length_m-sqrt(1.8))<1e-9 && fabs(p.yaw_delta_rad-.034906585)<1e-6);
+    for (unsigned axis = 0; axis < 8; ++axis)
+        Plant(axis, 0U);
+    Plant(0U, 1U);
+    Plant(1U, 1U);
+    Test_Damping();
+    Test_Half_Turn();
+
+    Point_Plan_t plan;
+    double start[3] = {0, 0, 3.124139361}, goal[3] = {1.2, 0.6, -3.124139361};
+    assert(Point_Plan_Init(&plan, start, goal));
+    assert(fabs(plan.length_m - sqrt(1.8)) < 1e-9 && fabs(plan.yaw_delta_rad - 0.034906585) < 1e-6);
     Point_Plan_Output_t out;
-    double displaced[3]={.2,-.1,1.1};
-    assert(Point_Plan_Step(&p,&cfg,displaced,&out));
-    double wx=cos(displaced[2])*out.vx_mps-sin(displaced[2])*out.vy_mps;
-    double wy=sin(displaced[2])*out.vx_mps+cos(displaced[2])*out.vy_mps;
-    assert(fabs(wx*.7-wy*1.0)<1e-7); /* 偏离后仍取当前点到目标的最短直线。 */
-    goal[0]=NAN;
-    assert(!Point_Plan_Init(&p,start,goal));
-    assert(!Point_Plan_Step(&p,&cfg,displaced,&out) && out.vx_mps==0 && out.wz_rad_s==0);
-    puts("PASS point plan: shortest line/angle, 8 closed-loop directions, braking and invalid input");
+    const double displaced[3] = {0.2, -0.1, 1.1};
+    const float resting[3] = {0.0f}, invalid[3] = {NAN, 0.0f, 0.0f};
+    assert(Point_Plan_Step(&plan, &config, displaced, resting, &out));
+    assert(fabs(out.vx_mps * 0.7 - out.vy_mps * 1.0) < 1e-7);
+    assert(!Point_Plan_Step(&plan, &config, displaced, invalid, &out) && out.vx_mps == 0 && out.wz_rad_s == 0);
+    goal[0] = NAN;
+    assert(!Point_Plan_Init(&plan, start, goal));
+    assert(!Point_Plan_Step(&plan, &config, displaced, resting, &out));
+    puts("PASS point plan: world-frame ramp, half-turn continuity, damping and invalid input");
     return 0;
 }

@@ -156,7 +156,7 @@ static void Service_Request(const LinkFrame *frame, uint32_t now_ms)
 
     if (!session_active || return_state != RETURN_INACTIVE ||
         manual_control_state != MANUAL_READY ||
-        (frame->type == UART_ORIGIN ? !Chassis_Is_Stopped() : !Chassis_Motion_Ready()))
+        (frame->type == UART_ORIGIN ? !Chassis_Is_Stopped() : !Chassis_Can_Release()))
     {
         Reply(frame->type, id, RESULT_REJECTED, DETAIL_STATE);
         return;
@@ -280,9 +280,10 @@ static void Service_Return(uint32_t now_ms)
     }
 
     const double pose[3] = {position.x_m, position.y_m, position.yaw_rad};
+    const float measured[3] = {position.vx_mps, position.vy_mps, position.yaw_rate_rad_s};
     Point_Plan_Output_t output;
     /* 减速度、滞后和到位窗口仍用统一配置，只替换本次命令的速度上限。 */
-    if (!Point_Plan_Step(&return_plan, &return_config, pose, &output))
+    if (!Point_Plan_Step(&return_plan, &return_config, pose, measured, &output))
         Stop_Session(DETAIL_ODOM);
     else if (output.arrived)
     {
@@ -290,7 +291,7 @@ static void Service_Return(uint32_t now_ms)
         stop_started_ms = now_ms;
         return_state = RETURN_STOPPING;
     }
-    else if (!Chassis_Set_Velocity_Explicit_Yaw(output.vx_mps, output.vy_mps, output.wz_rad_s))
+    else if (!Chassis_Set_World_Velocity(output.vx_mps, output.vy_mps, output.wz_rad_s))
         Stop_Session(DETAIL_CHASSIS);
 }
 

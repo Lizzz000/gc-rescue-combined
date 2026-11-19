@@ -571,8 +571,9 @@ static void Service_Return(uint32_t now_ms)
         return;
     }
     const double current[3] = {pose.x_m, pose.y_m, pose.yaw_rad};
+    const float measured[3] = {pose.vx_mps, pose.vy_mps, pose.yaw_rate_rad_s};
     Point_Plan_Output_t motion;
-    if (!Point_Plan_Step(&return_plan, &return_config, current, &motion) ||
+    if (!Point_Plan_Step(&return_plan, &return_config, current, measured, &motion) ||
         motion.remaining_m > JETSON_AUTO_RETURN_MAX_M)
         Halt(now_ms);
     else if (motion.arrived)
@@ -580,7 +581,7 @@ static void Service_Return(uint32_t now_ms)
         Chassis_Hold();
         Enter(VERIFY_RETURN_POSE, now_ms);
     }
-    else if (!Chassis_Set_Velocity_Explicit_Yaw(motion.vx_mps, motion.vy_mps, motion.wz_rad_s))
+    else if (!Chassis_Set_World_Velocity(motion.vx_mps, motion.vy_mps, motion.wz_rad_s))
         Halt(now_ms);
 }
 

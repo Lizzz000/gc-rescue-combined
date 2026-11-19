@@ -242,6 +242,9 @@ uint8_t Chassis_Set_Velocity(float vx, float vy, float wz);
  */
 uint8_t Chassis_Set_Velocity_Explicit_Yaw(float vx, float vy, float wz);
 
+/* 世界系速度入口：平移在固定坐标系内走斜坡，每拍按有效里程计航向换算为车体系。 */
+uint8_t Chassis_Set_World_Velocity(float vx, float vy, float wz);
+
 /** @brief 在现有 5 ms 任务内服务底盘，每 10 ms 更新一次控制，TIM2 实测 dt。
  * @return 无。
  * @note TIM2 为已启动的 1 MHz 计数器；RTOS tick 为 1 ms。运动依赖 20 ms 内的

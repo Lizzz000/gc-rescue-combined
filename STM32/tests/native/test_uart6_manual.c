@@ -24,7 +24,7 @@ UART_HandleTypeDef huart6;
 static uint8_t *uart_rx_byte;
 static unsigned critical_depth, uart_aborts, enables, disables, stops;
 static unsigned manual_vectors, return_vectors;
-static uint8_t enabled, stopped, motors_ready, odom_valid;
+static uint8_t enabled, stopped, motors_ready, odom_valid, reducing_turn;
 static Chassis_Odometry_t position;
 static float last_vx, last_vy, last_wz;
 
@@ -77,10 +77,10 @@ uint8_t Chassis_Is_Enabled(void) { return enabled; }
 uint8_t Chassis_Is_Stopped(void) { return enabled && stopped; }
 uint8_t Chassis_Motion_Ready(void)
 {
-    return enabled && motors_ready && last_vx == 0.0f && last_vy == 0.0f && last_wz == 0.0f;
+    return enabled && motors_ready && !reducing_turn && last_vx == 0.0f && last_vy == 0.0f && last_wz == 0.0f;
 }
 uint8_t Chassis_Motors_Ready(void) { return motors_ready; }
-uint8_t Chassis_Can_Release(void) { return Chassis_Motion_Ready(); }
+uint8_t Chassis_Can_Release(void) { return Chassis_Motion_Ready() || (reducing_turn && enabled && motors_ready); }
 
 uint8_t Chassis_Get_Odometry(Chassis_Odometry_t *out)
 {
@@ -101,8 +101,11 @@ uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
     return 1U;
 }
 
-uint8_t Chassis_Set_Velocity_Explicit_Yaw(float vx, float vy, float wz)
+uint8_t Chassis_Set_World_Velocity(float x, float y, float wz)
 {
+    const float cosine = cosf(position.yaw_rad), sine = sinf(position.yaw_rad);
+    const float vx = cosine * x + sine * y;
+    const float vy = -sine * x + cosine * y;
     assert(critical_depth == 0U && enabled && motors_ready);
     assert(isfinite(vx) && isfinite(vy) && isfinite(wz));
     assert(hypotf(vx, vy) <= CHASSIS_STRAIGHT_MAX_SPEED_MPS &&
@@ -234,7 +237,7 @@ static void Reset(uint32_t initial_ms)
     test_tick = initial_ms;
     critical_depth = uart_aborts = enables = disables = stops = 0U;
     manual_vectors = return_vectors = 0U;
-    enabled = stopped = 0U;
+    enabled = stopped = reducing_turn = 0U;
     motors_ready = odom_valid = 1U;
     position = (Chassis_Odometry_t){0};
     last_vx = last_vy = last_wz = 0.0f;
@@ -436,6 +439,30 @@ static void Assert_Braking(uint8_t detail)
     assert(!enabled && disables == 1U && report.state == MANUAL_DISARMED);
 }
 
+static void Test_Return_During_Turn_Deceleration(void)
+{
+    Reset(100U);
+    Arm_And_Confirm(1U);
+    Velocity(0, 0, 0);
+    Request(ORIGIN, 2U);
+    Step(100U);
+    assert(report.command == ORIGIN && report.result == DONE);
+    Velocity(0, 0, 600);
+    Step(100U);
+    assert(report.state == MANUAL_RUNNING);
+
+    Velocity(0, 0, 0);
+    Step(100U);
+    reducing_turn = 1U;
+    position.x_m = 0.20;
+    position.yaw_rad = 3.13f;
+    position.yaw_rate_rad_s = 0.35f;
+    Request(RETURN, 3U);
+    Step(100U);
+    assert(report.state == RETURNING && report.result == ACCEPTED);
+    assert(last_vx > 0.0f && last_wz > 0.0f && disables == 0U);
+}
+
 static void Test_Return_Recovers_Small_Error(void)
 {
     Reset(100U);
@@ -634,6 +661,7 @@ int main(void)
     Test_Manual_Frames_And_Stop();
     Test_Buffered_Rx_Time();
     Test_Origin_And_Return();
+    Test_Return_During_Turn_Deceleration();
     Test_Return_Recovers_Small_Error();
     Test_Return_Protection();
     Test_Return_Speed();

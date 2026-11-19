@@ -144,8 +144,11 @@ uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
     return 1U;
 }
 
-uint8_t Chassis_Set_Velocity_Explicit_Yaw(float vx, float vy, float wz)
+uint8_t Chassis_Set_World_Velocity(float x, float y, float wz)
 {
+    const float cosine = cosf(odom.yaw_rad), sine = sinf(odom.yaw_rad);
+    const float vx = cosine * x + sine * y;
+    const float vy = -sine * x + cosine * y;
     ++return_commands;
     return Chassis_Set_Velocity(vx, vy, wz);
 }

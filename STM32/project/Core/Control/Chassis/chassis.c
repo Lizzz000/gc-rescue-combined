@@ -43,7 +43,8 @@ float chassis_motor_target[3], chassis_motor_ff[3];
 static float last_body_target[3];
 static float ff_control_interval_s;
 static uint32_t ff_previous_us;
-static uint8_t ff_history_valid;
+static float ff_previous_yaw_rad;
+static uint8_t ff_history_valid, ff_yaw_valid;
 static pid_type_def yaw_pid, turn_pid;
 static uint8_t enabled, pending_disable, pending_enable;
 static uint8_t waiting_for_mailboxes;
@@ -73,7 +74,7 @@ static uint32_t distance_timeout_ms, distance_progress_ms, distance_stop_ms;
 static uint8_t distance_completion_pending;
 static float vector_target[3], vector_smoothing_s;
 static Velocity_Profile_t velocity_profile;
-static uint8_t vector_hold_yaw;
+static uint8_t vector_hold_yaw, vector_world_frame;
 static float turn_requested_deg, turn_accumulated_deg, turn_last_yaw_deg;
 static float turn_speed;
 static uint8_t distance_turn_blend;
@@ -234,6 +235,7 @@ uint8_t Chassis_Get_Odometry(Chassis_Odometry_t *data)
         (uint32_t)(__HAL_TIM_GET_COUNTER(&htim2) - data->sample_time_us) <=
             CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS * 1000U &&
         Chassis_Motors_Ready() && Read_IMU(&imu);
+    data->yaw_rate_rad_s = data->valid ? CHASSIS_STRAIGHT_YAW_SIGN * imu.world_z_rad_s : 0.0f;
     return data->valid;
 }
 
@@ -331,7 +333,7 @@ void Chassis_Stop(void)
     turn_in_window = 0U;
     distance_turn_blend = 0U;
     distance_completion_pending = 0U;
-    vector_hold_yaw = 0U;
+    vector_hold_yaw = vector_world_frame = 0U;
     run_duration_ms = 0U;
     run_started = 0U;
     Velocity_Profile_Seed(&velocity_profile, 0.0f, 0.0f, 0.0f);
@@ -349,7 +351,11 @@ void Chassis_Hold(void)
 {
     if (mode == IDLE || mode == HOLDING)
         return;
-    Velocity_Profile_Seed(&velocity_profile, last_body_target[0], last_body_target[1], last_body_target[2]);
+    if (mode == VELOCITY && vector_world_frame)
+        Velocity_Profile_Seed(&velocity_profile, velocity_profile.output[0],
+                              velocity_profile.output[1], velocity_profile.output[2]);
+    else
+        Velocity_Profile_Seed(&velocity_profile, last_body_target[0], last_body_target[1], last_body_target[2]);
     for (unsigned i = 0; i < 3; ++i)
         vector_target[i] = 0.0f;
     vector_hold_yaw = 0U;
@@ -634,7 +640,8 @@ uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg)
  * @return 请求接受返回 1，否则 0；全零请求回零速待命。
  * @note 连续更新平移目标保留航向；显式转向结束后按当前姿态重新锁定，斜坡连续。
  */
-static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw, float smoothing_s)
+static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw, uint8_t world_frame,
+                            float smoothing_s)
 {
     INS_control_data_t imu;
     if (!enabled || !isfinite(vx) || !isfinite(vy) || !isfinite(wz) ||
@@ -649,7 +656,22 @@ static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw, floa
     if ((mode == HOLDING && (distance_completion_pending || !Chassis_Motors_Ready())) ||
         ((mode == VELOCITY || mode == HOLDING) ? !Read_IMU(&imu) : !Motion_Ready(&imu)))
         return 0U;
-    if (mode == HOLDING)
+    Chassis_Odometry_t pose;
+    if (world_frame && !Chassis_Get_Odometry(&pose))
+        return 0U;
+    if (world_frame != vector_world_frame)
+    {
+        float x = last_body_target[0], y = last_body_target[1];
+        if (world_frame)
+        {
+            const float yaw = ff_history_valid && ff_yaw_valid ? ff_previous_yaw_rad : pose.yaw_rad;
+            const float cosine = cosf(yaw), sine = sinf(yaw);
+            x = cosine * last_body_target[0] - sine * last_body_target[1];
+            y = sine * last_body_target[0] + cosine * last_body_target[1];
+        }
+        Velocity_Profile_Seed(&velocity_profile, x, y, last_body_target[2]);
+    }
+    else if (mode == HOLDING && !world_frame)
         Velocity_Profile_Seed(&velocity_profile, last_body_target[0], last_body_target[1], last_body_target[2]);
     if (mode == IDLE)
         step_start_us = __HAL_TIM_GET_COUNTER(&htim2);
@@ -662,6 +684,7 @@ static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw, floa
     vector_target[1] = vy;
     vector_target[2] = wz;
     vector_hold_yaw = hold_yaw;
+    vector_world_frame = world_frame;
     vector_smoothing_s = smoothing_s;
     mode = VELOCITY;
     return 1U;
@@ -669,19 +692,24 @@ static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw, floa
 
 uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
 {
-    return Set_Velocity(vx, vy, wz, 1U, CHASSIS_VECTOR_SMOOTHING_S);
+    return Set_Velocity(vx, vy, wz, 1U, 0U, CHASSIS_VECTOR_SMOOTHING_S);
 }
 
 uint8_t Chassis_Set_Velocity_Explicit_Yaw(float vx, float vy, float wz)
 {
-    return Set_Velocity(vx, vy, wz, 0U, CHASSIS_VECTOR_SMOOTHING_S);
+    return Set_Velocity(vx, vy, wz, 0U, 0U, CHASSIS_VECTOR_SMOOTHING_S);
+}
+
+uint8_t Chassis_Set_World_Velocity(float vx, float vy, float wz)
+{
+    return Set_Velocity(vx, vy, wz, 0U, 1U, CHASSIS_VECTOR_SMOOTHING_S);
 }
 
 #if CHASSIS_TUNING_ENABLED
 uint8_t Chassis_Set_Test_Rotation(float wz)
 {
     /* 现场专项旋转保留已标定的斜坡响应，不叠加连续遥控的滤波。 */
-    return Set_Velocity(0.0f, 0.0f, wz, 0U, 0.0f);
+    return Set_Velocity(0.0f, 0.0f, wz, 0U, 0U, 0.0f);
 }
 #endif
 
@@ -710,8 +738,17 @@ static uint8_t Send_Chassis_Targets(float vx, float vy, float wz)
     float fx = 0.0f, fy = 0.0f;
     if (mode != IDLE && ff_dt > 0.0f && ff_dt <= 0.05f)
     {
-        float ax = (vx * scale - last_body_target[0]) / ff_dt;
-        float ay = (vy * scale - last_body_target[1]) / ff_dt;
+        float previous_x = last_body_target[0], previous_y = last_body_target[1];
+        if (vector_world_frame && ff_history_valid && ff_yaw_valid)
+        {
+            /* 用同一车体系求导，车身旋转造成的分量变化不计作平移加速度。 */
+            const float angle = odometry.data.yaw_rad - ff_previous_yaw_rad;
+            const float cosine = cosf(angle), sine = sinf(angle);
+            previous_x = cosine * last_body_target[0] + sine * last_body_target[1];
+            previous_y = -sine * last_body_target[0] + cosine * last_body_target[1];
+        }
+        float ax = (vx * scale - previous_x) / ff_dt;
+        float ay = (vy * scale - previous_y) / ff_dt;
         const float acceleration = hypotf(ax, ay);
         if (acceleration > CHASSIS_DISTANCE_ACCELERATION_MPS2)
         {
@@ -752,6 +789,8 @@ static uint8_t Send_Chassis_Targets(float vx, float vy, float wz)
     last_body_target[1] = vy * scale;
     last_body_target[2] = wz * scale;
     ff_previous_us = ff_now_us;
+    ff_previous_yaw_rad = odometry.data.yaw_rad;
+    ff_yaw_valid = odometry.data.valid;
     ff_history_valid = mode != IDLE;
     return 1U;
 }
@@ -843,7 +882,8 @@ void Chassis_Loop(void)
     INS_control_data_t imu;
     const uint8_t imu_valid = Read_IMU(&imu);
     Update_Odometry(now_us, &imu, imu_valid);
-    if (mode == HOLDING && (!imu_valid || !Chassis_Motors_Ready()))
+    if ((mode == HOLDING && (!imu_valid || !Chassis_Motors_Ready())) ||
+        (vector_world_frame && !odometry.data.valid))
         Begin_Fault_Stop(now_ms);
     /* 里程计与故障判断先于邮箱检查：总线忙不能把过期反馈继续当作有效位置。
      * 到位后的滑行也须留在容差内，不能仅因发送过零速就报告成功。 */
@@ -962,6 +1002,12 @@ void Chassis_Loop(void)
         vx = velocity_profile.output[0];
         vy = velocity_profile.output[1];
         wz = velocity_profile.output[2];
+        if (vector_world_frame)
+        {
+            const float cosine = cosf(odometry.data.yaw_rad), sine = sinf(odometry.data.yaw_rad);
+            vx = cosine * velocity_profile.output[0] + sine * velocity_profile.output[1];
+            vy = -sine * velocity_profile.output[0] + cosine * velocity_profile.output[1];
+        }
         if (holding && vx == 0.0f && vy == 0.0f && wz == 0.0f)
         {
             const uint8_t completing_distance = distance_completion_pending;

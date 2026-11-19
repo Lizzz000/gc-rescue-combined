@@ -4,6 +4,7 @@
 
 #define TWO_PI 6.28318530717958647692
 #define PI 3.14159265358979323846
+#define VELOCITY_DAMPING 0.5f
 
 /* 正常INS航向无需调用软件double余数，跨边界只加减一圈。 */
 static float Wrap(double angle)
@@ -54,6 +55,7 @@ uint8_t Point_Plan_Init(Point_Plan_t *plan, const double start[3], const double 
     plan->length_m = length;
     plan->goal_yaw_rad = Wrap(goal[2]);
     plan->yaw_delta_rad = Wrap((double)Wrap(goal[2]) - Wrap(start[2]));
+    plan->remaining_yaw_rad = plan->yaw_delta_rad;
     plan->valid = 1U;
     return 1U;
 }
@@ -71,15 +73,21 @@ static float Brake_Speed(double distance, float acceleration, float latency, flo
     return fminf(limit, twice_ad / (sqrtf(at * at + twice_ad) + at + 1e-12f));
 }
 
-uint8_t Point_Plan_Step(const Point_Plan_t *plan, const Point_Plan_Config_t *config, const double pose[3],
-                        Point_Plan_Output_t *output)
+/* 速度反馈只削减已经偏快的接近速度，保留低速前进量以跨过摩擦死区。 */
+static float Damp_Approach(float reference, float approaching)
+{
+    return fmaxf(0.25f * reference, reference - VELOCITY_DAMPING * fmaxf(0.0f, approaching - reference));
+}
+
+uint8_t Point_Plan_Step(Point_Plan_t *plan, const Point_Plan_Config_t *config, const double pose[3],
+                        const float measured_body[3], Point_Plan_Output_t *output)
 {
     if (output == NULL)
     {
         return 0U;
     }
     *output = (Point_Plan_Output_t){0};
-    if (plan == NULL || !plan->valid || config == NULL || pose == NULL)
+    if (plan == NULL || !plan->valid || config == NULL || pose == NULL || measured_body == NULL)
     {
         return 0U;
     }
@@ -104,7 +112,7 @@ uint8_t Point_Plan_Step(const Point_Plan_t *plan, const Point_Plan_Config_t *con
     }
     for (unsigned i = 0U; i < 3U; ++i)
     {
-        if (!isfinite(pose[i]))
+        if (!isfinite(pose[i]) || !isfinite(measured_body[i]))
         {
             return 0U;
         }
@@ -117,7 +125,15 @@ uint8_t Point_Plan_Step(const Point_Plan_t *plan, const Point_Plan_Config_t *con
         return 0U;
     }
     const float yaw = Wrap(pose[2]);
-    const float error = Wrap((double)plan->goal_yaw_rad - yaw);
+    const float wrapped_error = Wrap((double)plan->goal_yaw_rad - yaw);
+    /* 半圈附近取与上一拍相邻的角度，避免噪声让方向在正负 180° 之间跳。 */
+    float error = plan->remaining_yaw_rad + Wrap((double)wrapped_error - plan->remaining_yaw_rad);
+    /* 半圈附近两侧路程几乎一样，已有角速度时沿当前方向接入。 */
+    if (!plan->yaw_started && fabsf(error) > (float)PI - 0.08726646f &&
+        fabsf(measured_body[2]) > 0.15f && error * measured_body[2] < 0.0f)
+        error += copysignf((float)TWO_PI, measured_body[2]);
+    plan->remaining_yaw_rad = error;
+    plan->yaw_started = 1U;
     output->remaining_m = distance;
     output->yaw_error_rad = error;
     output->arrived = distance <= config->position_tolerance_m && fabsf(error) <= config->yaw_tolerance_rad;
@@ -130,15 +146,29 @@ uint8_t Point_Plan_Step(const Point_Plan_t *plan, const Point_Plan_Config_t *con
         const float sine = sinf(yaw);
         const float direction_x = (float)(dx / distance);
         const float direction_y = (float)(dy / distance);
-        output->vx_mps = (cosine * direction_x + sine * direction_y) * speed;
-        output->vy_mps = (-sine * direction_x + cosine * direction_y) * speed;
+        const float measured_x = cosine * measured_body[0] - sine * measured_body[1];
+        const float measured_y = sine * measured_body[0] + cosine * measured_body[1];
+        const float along = Damp_Approach(speed, direction_x * measured_x + direction_y * measured_y);
+        const float cross = -VELOCITY_DAMPING * (-direction_y * measured_x + direction_x * measured_y);
+        float vx = direction_x * along - direction_y * cross;
+        float vy = direction_y * along + direction_x * cross;
+        const float norm = hypotf(vx, vy);
+        if (norm > config->linear_limit_mps)
+        {
+            const float scale = nextafterf(config->linear_limit_mps, 0.0f) / norm;
+            vx *= scale;
+            vy *= scale;
+        }
+        output->vx_mps = vx;
+        output->vy_mps = vy;
     }
     if (fabsf(error) > config->yaw_tolerance_rad)
     {
-        output->wz_rad_s = copysignf(Brake_Speed(fabsf(error) - 0.5f * config->yaw_tolerance_rad,
-                                                 config->angular_deceleration_rad_s2, config->latency_s,
-                                                 config->angular_limit_rad_s),
-                                     error);
+        const float speed = Brake_Speed(fabsf(error) - 0.5f * config->yaw_tolerance_rad,
+                                        config->angular_deceleration_rad_s2, config->latency_s,
+                                        config->angular_limit_rad_s);
+        const float direction = copysignf(1.0f, error);
+        output->wz_rad_s = direction * Damp_Approach(speed, direction * measured_body[2]);
     }
     return 1U;
 }

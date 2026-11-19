@@ -11,7 +11,7 @@
 | `Vision/Visual_Servo_Update` | 图像误差、图像速度 → 平滑平移速度m/s | 正式自动流程、注入测试 |
 | `Chassis/Motor_Chassis_*` | 车体速度 ↔ 后/右前/左前轮几何速度 | 底盘控制/里程计 |
 | `Chassis/Odometry_Update_Position_ESKF` | 编码器位置差、YAW主导ESKF航向 → 世界位姿m/rad | 正式底盘 |
-| `Chassis/Point_Plan_*` | 世界位姿、目标 → 最短直线与短角度速度指令 | 命令7返航 |
+| `Chassis/Point_Plan_*` | 世界位姿、目标、实测速度 → 世界系平移与连续航向指令 | 自动、USART6、SWD 返航 |
 
 ## 组织与参考
 

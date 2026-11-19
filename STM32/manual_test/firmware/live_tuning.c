@@ -282,8 +282,9 @@ static void Service_Return(uint32_t now_ms, const Chassis_Odometry_t *data)
         .yaw_tolerance_rad = TUNING_RETURN_STOP_YAW_RAD,
     };
     const double pose[3] = {data->x_m, data->y_m, data->yaw_rad};
+    const float measured[3] = {data->vx_mps, data->vy_mps, data->yaw_rate_rad_s};
     Point_Plan_Output_t output;
-    if (!Point_Plan_Step(&return_plan, &config, pose, &output))
+    if (!Point_Plan_Step(&return_plan, &config, pose, measured, &output))
     {
         Begin_Brake(now_ms, TUNING_ERROR_ODOMETRY);
         return;
@@ -296,7 +297,7 @@ static void Service_Return(uint32_t now_ms, const Chassis_Odometry_t *data)
         stage_ms = now_ms;
         return;
     }
-    if (Chassis_Set_Velocity_Explicit_Yaw(output.vx_mps, output.vy_mps, output.wz_rad_s))
+    if (Chassis_Set_World_Velocity(output.vx_mps, output.vy_mps, output.wz_rad_s))
         return_velocity_started = 1U;
     else if (return_velocity_started || (uint32_t)(now_ms - motion_ms) >= TUNING_RETURN_START_MS)
         Begin_Brake(now_ms, 4U);

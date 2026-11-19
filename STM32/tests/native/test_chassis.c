@@ -1067,6 +1067,53 @@ static void test_smooth_hold_and_redirect(float speed, float yaw_rate)
 }
 
 /** @brief 待命中的新动作沿用三轮发帧节拍，首拍只累计接单后的时间。 */
+static void test_world_velocity_after_turn(void)
+{
+    reset_case(0U, 0U);
+    tuning_test = 1U;
+    const float kd[3] = {0.2f, 0.25f, 0.2f}, no_friction[3] = {0.0f};
+    assert(Chassis_Set_Tuning(kd, 1.0f, no_friction));
+    assert(enable_ready() && Chassis_Set_Velocity(0.0f, 0.0f, 1.0f));
+
+    float body[3];
+    for (unsigned tick = 0; tick < 60; ++tick)
+    {
+        body_target(body);
+        yaw_rate = body[2];
+        yaw_deg += yaw_rate * 0.01f * (180.0f / 3.14159265f);
+        plant_step(10000U, 1.0f, NULL, NULL);
+    }
+    Chassis_Hold();
+    assert(!Chassis_Motion_Ready() && Chassis_Can_Release());
+    assert(Chassis_Set_World_Velocity(-0.20f, 0.12f, 1.2f));
+
+    for (unsigned tick = 0; tick < 210; ++tick)
+    {
+        body_target(body);
+        yaw_rate = body[2];
+        yaw_deg = remainderf(yaw_deg + yaw_rate * 0.01f * (180.0f / 3.14159265f), 360.0f);
+        plant_step(10000U, 1.0f, NULL, NULL);
+        if (tick >= 140U)
+        {
+            Chassis_Odometry_t pose;
+            assert(Chassis_Get_Odometry(&pose));
+            const float cosine = cosf(pose.yaw_rad), sine = sinf(pose.yaw_rad);
+            body_target(body);
+            near(cosine * body[0] - sine * body[1], -0.20f);
+            near(sine * body[0] + cosine * body[1], 0.12f);
+            near(body[2], 1.2f);
+            for (unsigned wheel = 0; wheel < 3; ++wheel)
+                near(chassis_motor_ff[wheel], 0.0f);
+        }
+    }
+
+    /* 返航失去有效里程计仍进入保护。 */
+    imu_ready = 0U;
+    for (unsigned tick = 0; tick < 65U && Chassis_Is_Enabled(); ++tick)
+        plant_step(10000U, 1.0f, NULL, NULL);
+    assert(!Chassis_Is_Enabled() && disables == 3U);
+}
+
 static void test_motion_start_cadence(void)
 {
     const uint32_t accepted_us[] = {2000U, 5000U, 10000U};
@@ -1934,6 +1981,7 @@ int main(void)
     test_vector();
     test_smooth_hold_and_redirect(CHASSIS_RUN_SPEED_MPS, CHASSIS_RUN_YAW_RATE_RAD_S);
     test_smooth_hold_and_redirect(CHASSIS_STRAIGHT_MAX_SPEED_MPS, CHASSIS_VECTOR_MAX_WZ_RAD_S);
+    test_world_velocity_after_turn();
     test_motion_start_cadence();
     test_tracking_wheel_cadence();
     test_vector_yaw_hold();
