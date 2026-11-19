@@ -2,7 +2,7 @@
 
 `project/` 是 STM32F407 CubeMX/CMake 工程，`tests/` 包含主机回归，`docs/` 包含硬件配置、板间 USB 和电机 CAN1 联调说明，`LICENSES/` 保留第三方许可。
 
-在具备 ARM GNU 工具链、CMake 和 Ninja 的环境中，进入 `project/` 后运行 `cmake --preset Debug` 和 `cmake --build --preset Debug`。主机测试在本目录运行 `python tests/run_native.py`；协议互验运行 `python tests/check_jetson_codec.py --jetson-root ../Jetson`；夹爪总时间预算互验运行 `python tests/check_gripper_budget.py`（使用主机 g++）。
+在具备 ARM GNU 工具链、CMake 和 Ninja 的环境中，进入 `project/` 后运行 `cmake --preset Debug` 和 `cmake --build --preset Debug`。可用预设还有 `Debug-9axis`、`Debug-Auto`、`Debug-Auto-Chassis-Test`（无夹爪的底盘联调）、`Debug-UART6-Manual`、`Debug-Tuning`（SWD 显式调参）和 `Release`。主机测试在本目录运行 `python tests/run_native.py`；可用 `--suite` 筛选套件、`--list-suites` 列出名称，`--python` 在 native 之后追加偏航 ADRC 初测复算、协议互验和夹爪总时间预算检查。也可单独运行 `python tests/check_jetson_codec.py --jetson-root ../Jetson` 和 `python tests/check_gripper_budget.py`（使用主机 g++）。
 
 默认使用六轴姿态且自动搬运关闭。启用自动模式前需按 [联调说明](docs/JETSON_USB_TEST.md) 完成 Jetson 夹爪联调、运动参数标定和板端验证。
 
@@ -22,7 +22,7 @@
 
 进一步删除 BMI088/IST8310 的四个空初始化接口、BMI088 未使用的 `status/time` 字段和 PID 增量式遗留历史缓存，以及无引用的测试桩和宏。传感器外设仍由 CubeMX 初始化；手动、自动、六轴/九轴、温控和保护逻辑保留，USB 调试记录与旧滤波对照测试保留。
 
-正式运行使用 `CHASSIS_RUN_SPEED_MPS`（0.40 m/s）与 `CHASSIS_RUN_YAW_RATE_RAD_S`（3.0 rad/s）。手动和自动固件各自管理上电零速使能、接管与故障。手动硬上限为 0.50 m/s 合速度和 4.0 rad/s。连续速度按实测周期限制加减速并经 40 ms 平滑，再换算为三轮 CAN1 目标。自动视觉靠近时随距离减速，安全区精调使用独立的低速参数。正式视觉搬运使用 `Debug-Auto` 预设。
+正式运行使用 `CHASSIS_RUN_SPEED_MPS`（0.40 m/s）与 `CHASSIS_RUN_YAW_RATE_RAD_S`（3.0 rad/s）。手动和自动固件各自管理上电零速使能、接管与故障。手动硬上限为 0.50 m/s 合速度和 4.0 rad/s。连续速度按实测周期限制加减速并经 40 ms 平滑，再换算为三轮 CAN1 目标。自动视觉靠近时随距离减速，安全区精调使用独立的低速参数。正式视觉搬运使用 `Debug-Auto` 预设；单次底盘联调用 `Debug-Auto-Chassis-Test`。
 
 速度配置保留在现有头文件中，修改后需要重新编译：
 

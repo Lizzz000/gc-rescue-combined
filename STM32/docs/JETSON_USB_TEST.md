@@ -10,7 +10,7 @@
 
 CAN1 只收发达妙电机。反馈要求 DLC=8，帧内电机 ID 为 1、2、3。板间帧不进 CAN FIFO。
 
-`test_task` 每 5 ms 处理一次链路快照，底盘每 10 ms 更新三轮 MIT。`Debug`、`Debug-Auto` 和 `Debug-UART6-Manual` 分别构建 USB 手动、USB 自动搬运和 USART6 手动固件。每种构建只链接本模式的控制器与协议适配。手动和正式自动固件均在上电取得有效姿态后申请使能，等待阶段保持零速。[模式定义](../project/Core/Control/Chassis/chassis_mode.h) · [自动标定参数](../project/Core/Control/Jetson/jetson_auto_config.h)
+`test_task` 每 5 ms 处理一次链路快照，底盘每 10 ms 更新三轮 MIT。`Debug`、`Debug-Auto`、`Debug-Auto-Chassis-Test` 和 `Debug-UART6-Manual` 分别构建 USB 手动、USB 自动搬运、无夹爪底盘联调和 USART6 手动固件。每种构建只链接本模式的控制器与协议适配。手动和正式自动固件均在上电取得有效姿态后申请使能，等待阶段保持零速。[模式定义](../project/Core/Control/Chassis/chassis_mode.h) · [自动标定参数](../project/Core/Control/Jetson/jetson_auto_config.h)
 
 - USB 手动只接收类型 2 速度帧，使用有效零速接管。正式自动只接收视觉和搬运握手。
 - 正式自动等三轮零目标、使能反馈及里程计就绪后核对场地标定。参数齐全、当前 USB 会话收到合法类型 3/4 周期流后，才用类型 21 查询开爪。收到匹配的类型 7 受理和类型 9 成功结果后保存当前起点，开始首次 180° 转向。未标定或视觉尚未上线时保持零速。单趟底盘诊断另有显式启动开关和完成失能流程。

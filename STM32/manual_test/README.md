@@ -6,7 +6,7 @@
 | `uart6/` | USART6 桌面遥控、网页、串口协议。 |
 | [live_tuning/](live_tuning/README.md) | SWD 调参、旋转、模拟搬运及返航测试。 |
 
-在 [STM32 工程目录](../project) 构建固件。USB 手动使用 `Debug`，串口遥控使用 `Debug-UART6-Manual`，SWD 联调使用 `-DCHASSIS_TUNING_ENABLED=ON`。相关回归仍由 [STM32 主机测试](../tests/run_native.py) 和 `STM32/tests` 下的工具测试运行。
+在 [STM32 工程目录](../project) 构建固件。USB 手动使用 `Debug`，串口遥控使用 `Debug-UART6-Manual`，SWD 联调使用 `Debug-Tuning`（等同 `-DCHASSIS_TUNING_ENABLED=ON`），底盘联调用 `Debug-Auto-Chassis-Test`。相关回归仍由 [STM32 主机测试](../tests/run_native.py) 和 `STM32/tests` 下的工具测试运行。
 
 ## USART6 底盘遥控
 
@@ -47,7 +47,7 @@ J29 使用 3.3 V USB–TTL，共地。模块 TX 接 PG9/RX，模块 RX 接 PG14/
 python STM32/manual_test/uart6/uart6_web.py
 ```
 
-网页默认打开 `http://127.0.0.1:8765`。选择实际串口（本次场测为 COM7），连接后先观察板端状态。接管就绪后可以定时运行或按键遥控。
+网页默认打开 `http://127.0.0.1:8765`。选择实际串口（本次场测为 COM7），连接后先观察板端状态。接管就绪后可以定时运行或按键遥控。停车请求后，页面在收到三轮本次失能反馈前显示“软件失能，待电机确认”。返航使用 20 秒总时限，限速无法在时限内到达时会拒绝请求。
 
 定时运行先选方向，再设平移或转向速度和秒数。到时发送零速并保持使能。按键遥控用 W/S、A/D、Q/E，或按住页面上的按钮。松键后也发零速。两种模式都可立即下达下一条运动指令。斜向同时按时，合速度缩回设定的平移速度。返航平移和转向在页面上单独填写，经长度 6 的 `0x43` 发给板端。运行和返航默认填写 0.40 m/s、3.0 rad/s，支持扩展速度的固件可选至 0.50 m/s、4.0 rad/s。所有速度都经过底盘现有加减速和平滑斜坡。
 
