@@ -1,0 +1,158 @@
+{
+  "diag-heater-off": {
+    "counts": {
+      "samples": 696,
+      "windows_started": 139,
+      "temperature_or_read_invalid": 0,
+      "nonfinite_vectors": 0,
+      "acceleration_range_rejected": 138,
+      "gyro_range_rejected": 0,
+      "full_windows": 0,
+      "mean_gravity_rejected": 0,
+      "mean_gyro_rejected": 0,
+      "accepted": 0,
+      "spi_transport_errors": 0
+    },
+    "values": {
+      "accelerometer_norm_min_mps2": 8.857930183410645,
+      "accelerometer_norm_max_mps2": 10.485624313354492,
+      "temperature_min_c": 42.5,
+      "temperature_max_c": 44.0,
+      "max_accel_window_range_mps2": 1.485884666442871,
+      "max_gyro_window_range_rad_s": 0.023435818031430244
+    },
+    "status": {
+      "imu_ready": 0,
+      "bmi088_init_error": 0,
+      "chassis_enabled": 0
+    },
+    "raw_acceleration": [
+      0.21269230544567108,
+      0.04038461297750473,
+      9.574743270874023
+    ],
+    "raw_temperature": 42.5,
+    "raw_gyro": [
+      0.003195793367922306,
+      0.003195793367922306,
+      -0.002130528911948204
+    ]
+  },
+  "diag-low-bandwidth": {
+    "counts": {
+      "samples": 48,
+      "windows_started": 1,
+      "temperature_or_read_invalid": 0,
+      "nonfinite_vectors": 0,
+      "acceleration_range_rejected": 0,
+      "gyro_range_rejected": 0,
+      "full_windows": 1,
+      "mean_gravity_rejected": 0,
+      "mean_gyro_rejected": 0,
+      "accepted": 1,
+      "spi_transport_errors": 0
+    },
+    "values": {
+      "accelerometer_norm_min_mps2": 9.701700210571289,
+      "accelerometer_norm_max_mps2": 9.773490905761719,
+      "temperature_min_c": 40.0,
+      "temperature_max_c": 40.0,
+      "max_accel_window_range_mps2": 0.07179069519042969,
+      "max_gyro_window_range_rad_s": 0.02130528911948204
+    },
+    "status": {
+      "imu_ready": 1,
+      "bmi088_init_error": 0,
+      "chassis_enabled": 0
+    },
+    "raw_acceleration": [
+      0.27551281452178955,
+      0.06820512562990189,
+      9.705768585205078
+    ],
+    "raw_temperature": 43.5,
+    "raw_gyro": [
+      -0.001065264455974102,
+      -0.003195793367922306,
+      0.002130528911948204
+    ]
+  },
+  "diag-original-a": {
+    "counts": {
+      "samples": 695,
+      "windows_started": 156,
+      "temperature_or_read_invalid": 0,
+      "nonfinite_vectors": 0,
+      "acceleration_range_rejected": 155,
+      "gyro_range_rejected": 0,
+      "full_windows": 0,
+      "mean_gravity_rejected": 0,
+      "mean_gyro_rejected": 0,
+      "accepted": 0,
+      "spi_transport_errors": 0
+    },
+    "values": {
+      "accelerometer_norm_min_mps2": 8.919927597045898,
+      "accelerometer_norm_max_mps2": 10.43497085571289,
+      "temperature_min_c": 42.875,
+      "temperature_max_c": 45.125,
+      "max_accel_window_range_mps2": 1.2422456741333008,
+      "max_gyro_window_range_rad_s": 0.02556634694337845
+    },
+    "status": {
+      "imu_ready": 0,
+      "bmi088_init_error": 0,
+      "chassis_enabled": 0
+    },
+    "raw_acceleration": [
+      0.7107692360877991,
+      0.11307691782712936,
+      10.009102821350098
+    ],
+    "raw_temperature": 45.125,
+    "raw_gyro": [
+      0.002130528911948204,
+      -0.002130528911948204,
+      0.007456851191818714
+    ]
+  },
+  "diag-original-b": {
+    "counts": {
+      "samples": 695,
+      "windows_started": 150,
+      "temperature_or_read_invalid": 0,
+      "nonfinite_vectors": 0,
+      "acceleration_range_rejected": 149,
+      "gyro_range_rejected": 0,
+      "full_windows": 0,
+      "mean_gravity_rejected": 0,
+      "mean_gyro_rejected": 0,
+      "accepted": 0,
+      "spi_transport_errors": 0
+    },
+    "values": {
+      "accelerometer_norm_min_mps2": 8.861367225646973,
+      "accelerometer_norm_max_mps2": 10.555329322814941,
+      "temperature_min_c": 44.0,
+      "temperature_max_c": 44.5,
+      "max_accel_window_range_mps2": 1.359360694885254,
+      "max_gyro_window_range_rad_s": 0.024501081556081772
+    },
+    "status": {
+      "imu_ready": 0,
+      "bmi088_init_error": 0,
+      "chassis_enabled": 0
+    },
+    "raw_acceleration": [
+      0.14358973503112793,
+      -0.048461537808179855,
+      9.475128173828125
+    ],
+    "raw_temperature": 44.5,
+    "raw_gyro": [
+      0.003195793367922306,
+      0.006391586735844612,
+      -0.003195793367922306
+    ]
+  }
+}

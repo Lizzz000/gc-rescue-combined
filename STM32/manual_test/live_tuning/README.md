@@ -52,6 +52,8 @@ JSONL 包含请求、参数回执、轮位置/速度/估计力矩、IMU、温度
 
 验证入口：`python STM32/tests/run_native.py` 及 `python -m unittest discover -s STM32/tests -p test_swd_session.py`。实车测试后应将经过对照确认的参数写入正式源码，重新构建并校验正常手动固件；不得将未完成测试写成已标定。
 
+偏航 ADRC 的离线对照、实车日志回放和 IMU 启动诊断见 [ADRC 初测](adrc/README.md)。
+
 ## 单独里程计测试
 
 同一专用构建增加命令 5（有限时静态采样）与 6（前后定距闭环）。两者均先使能、确认停车、清平移原点，再等待新的有效里程计基线。命令 6 调用正式 `Chassis_Distance_Start`，按反馈位移完成；到期、反馈失效和提前停车均报错。动作之后仍须确认停车及三台新失能回执。不要并行运行多个控制脚本。
