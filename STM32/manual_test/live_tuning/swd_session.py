@@ -568,7 +568,7 @@ def arguments(argv=None):
     parser.add_argument("--rate", type=float, default=25.0)
     parser.add_argument("--timeout", type=float, default=6.0)
     parser.add_argument("--reg", type=int, default=1)
-    parser.add_argument("--kd", type=float, nargs=3, default=[0.2, 0.25, 0.2])
+    parser.add_argument("--kd", type=float, nargs=3, default=[0.22, 0.27, 0.22])
     parser.add_argument("--ff-gain", type=float, default=0.0)
     parser.add_argument("--friction", type=float, nargs=3, default=[0.0, 0.0, 0.0])
     parser.add_argument("--vx", type=float, default=0.0)

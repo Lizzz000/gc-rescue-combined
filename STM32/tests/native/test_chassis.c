@@ -1927,12 +1927,17 @@ static void test_default_tuning_profile(void)
     reset_case(0U, 0U);
     Chassis_Init();
     tuning_test = 1U;
+    const float expected_kd[3] = {0.22f, 0.27f, 0.22f};
     near(chassis_tuning_ff_gain, 1.0f);
     near(chassis_tuning_friction[0], 0.0f);
     near(chassis_tuning_friction[1], 0.015f);
     near(chassis_tuning_friction[2], 0.015f);
     assert(enable_ready());
-    for (unsigned i = 0; i < 3U; ++i) near(captured_torque[i], 0.0f);
+    for (unsigned i = 0; i < 3U; ++i)
+    {
+        near(captured_kd[i], expected_kd[i]);
+        near(captured_torque[i], 0.0f);
+    }
     assert(Chassis_Set_Velocity(0.25f, 0.0f, 0.0f));
     step(10000U, 1U);
     assert(captured_torque[1] < -.00328f && captured_torque[2] > .00328f);

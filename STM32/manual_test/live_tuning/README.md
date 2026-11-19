@@ -25,10 +25,10 @@ python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Li
 
 ## 调参和短动作
 
-每次只比较一个变量。先记录原 Kd、零前馈的前进/后退和双向旋转，再比较 Kd，最后比较前馈；每段运动结束都确认停稳并失能。
+每次只比较一个变量。比较 Kd 时，各组使用相同的前馈和运动设定，分别记录前进、后退和双向旋转；每段运动结束都确认停稳并失能。
 
 ```sh
-python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 3 --kd 0.20 0.25 0.20 --ff-gain 0 --friction 0 0 0
+python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 3 --kd 0.22 0.27 0.22 --ff-gain 1 --friction 0 0.015 0.015
 python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 4 --vx 0.25 --duration-ms 800
 python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 4 --vx -0.25 --duration-ms 800
 python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Live-Tuning/project.elf --command 4 --wz 0.5 --duration-ms 800
@@ -41,6 +41,8 @@ python STM32/manual_test/live_tuning/swd_session.py --elf STM32/project/build/Li
 平移惯性项采用 `F=1.8*a`，按三轮几何分配为轮端力矩；例如前进加速度 0.45 m/s² 时，电机 ID1/2/3 为 `0/-0.01637/+0.01637 N·m`。摩擦项只用于平移并平滑过零，纯旋转前馈为零，总前馈限幅 ±0.05 N·m。MIT 已接受 N·m，不再乘除 Kt。显式停车、失能和故障清零前馈。
 
 2026-11-16 落地对照后默认值为 Kd `0.20/0.25/0.20`、惯性比例 `1`、摩擦系数 `0/0.015/0.015 N·m`。三台 Kt 均读为0并保持原值。最终配置重复两组前进、后退、左转、右转，均确认停稳失能，用户确认前后与旋转平顺。测试目标为0.25 m/s、0.5 rad/s，未改变现有公开接口上限。数据见 `STM32/outputs/live_tuning_20261116/`。
+
+2026-11-19 保持惯性和摩擦前馈，复测低速前后与双向旋转，将默认 Kd 更新为 `0.22/0.27/0.22`。同场对照数值及组合返航结果见 [底盘控制参数](../../docs/DJI_C_CUBEMX.md)。
 
 主机每 100 ms 更新心跳，板端 300 ms 超时制动；动作仍有独立时限。启程需要原有三轮新鲜静止反馈；停车先确认三组新反馈，再失能并确认三台新的 state=0 回复。制动或失能确认超时会报错，不把软件失能当实车停车证明。异常退出发送 STOP，TCP 失败只允许重连停止，不重试运动。
 

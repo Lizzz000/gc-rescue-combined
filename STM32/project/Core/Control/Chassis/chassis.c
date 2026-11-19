@@ -31,7 +31,7 @@ typedef enum { IDLE, TRANSLATION, DISTANCE, VELOCITY, TURN, HOLDING } Chassis_Mo
 static const uint16_t motor_id[3] = {1U, 2U, 3U};
 static const float motor_direction[3] = {-1.0f, -1.0f, -1.0f};
 static const float motor_gear_ratio[3] = {1.0f, 1.0f, 1.0f};
-static const float motor_kd_default[3] = {0.2f, 0.25f, 0.2f};
+static const float motor_kd_default[3] = {0.22f, 0.27f, 0.22f};
 /* 2026-11-16：1.8 kg、0.25 m/s 前后与双向旋转复测。摩擦项只用于平移。 */
 static const float motor_friction_default[3] = {0.0f, 0.015f, 0.015f};
 static const float motor_vmax[3] = {40.0f, 40.0f, 40.0f};

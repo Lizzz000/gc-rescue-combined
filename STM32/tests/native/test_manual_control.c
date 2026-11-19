@@ -74,13 +74,13 @@ uint32_t HAL_CAN_GetTxMailboxesFreeLevel(CAN_HandleTypeDef *can)
 /** @brief 捕获实际底盘提交的 MIT 目标；每帧只占用一个模拟邮箱。
  * @param[in] can CAN1。 @param[in] id 电机 1～3。
  * @param[in] position 位置 rad。 @param[in] velocity 电机轮轴速度 rad/s。
- * @param[in] kp 位置增益。 @param[in] kd 原车速度阻尼。 @param[in] torque 扭矩 N·m。
+ * @param[in] kp 位置增益。 @param[in] kd 默认速度阻尼。 @param[in] torque 扭矩 N·m。
  * @return HAL_OK，仅代表模拟入队。
  */
 HAL_StatusTypeDef ctrl_motor(CAN_HandleTypeDef *can, uint16_t id, float position,
                             float velocity, float kp, float kd, float torque)
 {
-    const float expected_kd[3] = {0.2f, 0.25f, 0.2f};
+    const float expected_kd[3] = {0.22f, 0.27f, 0.22f};
     assert(can == &hcan1 && id >= 1U && id <= 3U && free_mailboxes > 0U && !abort_pending);
     assert(position == 0.0f && kp == 0.0f && isfinite(torque) && fabsf(torque) <= 0.05f &&
            kd == expected_kd[id - 1U]);
