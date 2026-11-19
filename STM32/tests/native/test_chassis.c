@@ -1067,6 +1067,43 @@ static void test_smooth_hold_and_redirect(float speed, float yaw_rate)
 }
 
 /** @brief 待命中的新动作沿用三轮发帧节拍，首拍只累计接单后的时间。 */
+static void test_yaw_rate_feedback(void)
+{
+    for (int direction = -1; direction <= 1; direction += 2)
+    {
+        reset_case(0U, 0U);
+        assert(enable_ready() && Chassis_Set_Velocity(0.0f, 0.0f, direction * 0.40f));
+        for (unsigned tick = 0; tick < 100U; ++tick)
+            plant_step(10000U, 1.0f, NULL, NULL);
+        float body[3];
+        body_target(body);
+        near(body[2], direction * 0.40f);
+
+        /* 模拟实测角速度超过指令，不允许推高输出、反转或突破角加速度。 */
+        yaw_rate = direction * 0.65f;
+        for (unsigned tick = 0; tick < 100U; ++tick)
+        {
+            const float previous = body[2];
+            plant_step(10000U, 1.0f, NULL, NULL);
+            body_target(body);
+            assert(direction * body[2] >= 0.0f && fabsf(body[2]) <= 0.40001f);
+            assert(fabsf(body[2] - previous) <= 0.01601f);
+        }
+        near(body[2], direction * 0.24f);
+
+        Chassis_Hold();
+        for (unsigned tick = 0; tick < 85U; ++tick)
+        {
+            const float previous = body[2];
+            plant_step(10000U, 1.0f, NULL, NULL);
+            body_target(body);
+            assert(direction * body[2] >= 0.0f && fabsf(body[2] - previous) <= 0.04001f);
+        }
+        near(body[2], 0.0f);
+        assert(Chassis_Motion_Ready() && disables == 0U);
+    }
+}
+
 static void test_world_velocity_after_turn(void)
 {
     reset_case(0U, 0U);
@@ -1240,6 +1277,7 @@ static void test_vector_yaw_hold(void)
     body_target(body); near(body[1], 0.08f);
     near(body[2], -0.16981317f); /* 保留 179° 目标，按 -2° 和实测角速度修偏。 */
 
+    yaw_rate = 0.0f;
     assert(Chassis_Set_Velocity(0.0f, 0.0f, 0.20f));
     step(10000U, 1U);
     body_target(body); near(body[2], -0.16661317f);
@@ -1285,7 +1323,7 @@ static void test_vector_explicit_yaw(void)
         body_target(body);
         assert(body[2] >= 0.0f && body[2] <= .50001f);
     }
-    near(body[2],.5f);
+    near(body[2],.3f); /* 实测 1 rad/s 触发最大 40% 降幅。 */
     assert(Chassis_Set_Velocity_Explicit_Yaw(.1f,0,0));
     for (unsigned i = 0U; i < 60U; ++i)
     {
@@ -1981,6 +2019,7 @@ int main(void)
     test_vector();
     test_smooth_hold_and_redirect(CHASSIS_RUN_SPEED_MPS, CHASSIS_RUN_YAW_RATE_RAD_S);
     test_smooth_hold_and_redirect(CHASSIS_STRAIGHT_MAX_SPEED_MPS, CHASSIS_VECTOR_MAX_WZ_RAD_S);
+    test_yaw_rate_feedback();
     test_world_velocity_after_turn();
     test_motion_start_cadence();
     test_tracking_wheel_cadence();

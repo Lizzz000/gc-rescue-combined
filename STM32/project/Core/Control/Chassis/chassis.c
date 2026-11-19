@@ -75,6 +75,11 @@ static uint8_t distance_completion_pending;
 static float vector_target[3], vector_smoothing_s;
 static Velocity_Profile_t velocity_profile;
 static uint8_t vector_hold_yaw, vector_world_frame;
+static float yaw_rate_filtered;
+static uint8_t yaw_rate_filter_valid;
+#if CHASSIS_TUNING_ENABLED
+static uint8_t vector_calibration_spin;
+#endif
 static float turn_requested_deg, turn_accumulated_deg, turn_last_yaw_deg;
 static float turn_speed;
 static uint8_t distance_turn_blend;
@@ -334,6 +339,10 @@ void Chassis_Stop(void)
     distance_turn_blend = 0U;
     distance_completion_pending = 0U;
     vector_hold_yaw = vector_world_frame = 0U;
+    yaw_rate_filter_valid = 0U;
+#if CHASSIS_TUNING_ENABLED
+    vector_calibration_spin = 0U;
+#endif
     run_duration_ms = 0U;
     run_started = 0U;
     Velocity_Profile_Seed(&velocity_profile, 0.0f, 0.0f, 0.0f);
@@ -545,7 +554,7 @@ uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction,
         float remaining = turn_requested_deg - turn_accumulated_deg - delta;
         if (fabsf(remaining) > CHASSIS_TURN_FINE_ANGLE_DEG)
             return 0U;
-        float previous_speed = turn_speed;
+        float previous_speed = last_body_target[2];
         Chassis_Stop();
         translation_direction = direction;
         target_yaw_deg = remainderf(yaw + remaining, 360.0f);
@@ -686,6 +695,9 @@ static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw, uint
     vector_hold_yaw = hold_yaw;
     vector_world_frame = world_frame;
     vector_smoothing_s = smoothing_s;
+#if CHASSIS_TUNING_ENABLED
+    vector_calibration_spin = 0U;
+#endif
     mode = VELOCITY;
     return 1U;
 }
@@ -708,8 +720,11 @@ uint8_t Chassis_Set_World_Velocity(float vx, float vy, float wz)
 #if CHASSIS_TUNING_ENABLED
 uint8_t Chassis_Set_Test_Rotation(float wz)
 {
-    /* 现场专项旋转保留已标定的斜坡响应，不叠加连续遥控的滤波。 */
-    return Set_Velocity(0.0f, 0.0f, wz, 0U, 0U, 0.0f);
+    /* 专项标定需要直接观察速度指令与实际响应。 */
+    if (!Set_Velocity(0.0f, 0.0f, wz, 0U, 0U, 0.0f))
+        return 0U;
+    vector_calibration_spin = wz != 0.0f;
+    return 1U;
 }
 #endif
 
@@ -793,6 +808,29 @@ static uint8_t Send_Chassis_Targets(float vx, float vy, float wz)
     ff_yaw_valid = odometry.data.valid;
     ff_history_valid = mode != IDLE;
     return 1U;
+}
+
+/* 用陀螺反馈收回超速量。参考方向和原斜坡限制优先，零参考仍直接归零。 */
+static float Apply_Yaw_Rate_Feedback(float reference, float measured, float dt, float max_acceleration)
+{
+    if (!yaw_rate_filter_valid)
+    {
+        yaw_rate_filtered = measured;
+        yaw_rate_filter_valid = 1U;
+    }
+    else
+        yaw_rate_filtered += dt / (CHASSIS_YAW_RATE_FILTER_S + dt) * (measured - yaw_rate_filtered);
+
+    const float direction = copysignf(1.0f, reference);
+    const float requested = fabsf(reference);
+    const float excess = direction * yaw_rate_filtered - requested - CHASSIS_YAW_RATE_DEADBAND_RAD_S;
+    const float reduction_limit = fminf(CHASSIS_YAW_RATE_MAX_REDUCTION_RAD_S,
+                                         CHASSIS_YAW_RATE_MAX_REDUCTION_RATIO * requested);
+    const float reduction = fminf(reduction_limit, CHASSIS_YAW_RATE_FEEDBACK_KP * fmaxf(excess, 0.0f));
+    const float previous = direction * last_body_target[2];
+    const float step = max_acceleration * dt;
+    const float applied = previous + fmaxf(-step, fminf(step, requested - reduction - previous));
+    return direction * fmaxf(0.0f, fminf(requested, applied));
 }
 
 /** @brief 沿用定向平移的航向 PID 计算修正角速度。
@@ -1018,6 +1056,21 @@ void Chassis_Loop(void)
     }
     else if (mode == TURN)
         wz = Service_Turn(&imu, dt);
+
+    /* 定向平移已经有陀螺阻尼；这里只修正显式旋转、定角转向及其正常收速。 */
+    uint8_t use_rate_feedback = mode == TURN || mode == HOLDING ||
+        (mode == VELOCITY && (!vector_hold_yaw || vector_target[2] != 0.0f));
+#if CHASSIS_TUNING_ENABLED
+    use_rate_feedback = use_rate_feedback && !vector_calibration_spin;
+#endif
+    if (use_rate_feedback && imu_valid && wz != 0.0f)
+    {
+        const float acceleration = mode == TURN || mode == HOLDING ?
+            CHASSIS_TURN_ACCEL_RAD_S2 : CHASSIS_VECTOR_ACCEL_RAD_S2;
+        wz = Apply_Yaw_Rate_Feedback(wz, CHASSIS_STRAIGHT_YAW_SIGN * imu.world_z_rad_s, dt, acceleration);
+    }
+    else
+        yaw_rate_filter_valid = 0U;
 
     if (!Send_Chassis_Targets(vx, vy, wz))
         return;

@@ -41,6 +41,12 @@ uint8_t Chassis_Set_Test_Rotation(float wz);
 #define CHASSIS_VECTOR_MAX_WZ_RAD_S 4.0f
 #define CHASSIS_VECTOR_ACCEL_RAD_S2 1.6f
 #define CHASSIS_VECTOR_SMOOTHING_S 0.040f
+/* IMU 角速度单边反馈：抑制超速，不提高低速换向时的电机指令。 */
+#define CHASSIS_YAW_RATE_FEEDBACK_KP 0.90f
+#define CHASSIS_YAW_RATE_FILTER_S 0.025f
+#define CHASSIS_YAW_RATE_DEADBAND_RAD_S 0.025f
+#define CHASSIS_YAW_RATE_MAX_REDUCTION_RAD_S 0.30f
+#define CHASSIS_YAW_RATE_MAX_REDUCTION_RATIO 0.40f
 /* 三轮反馈最大允许年龄，ms；停车确认与电机就绪检查共用。 */
 #define CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS 30U
 /* 即使接收端仍在刷新，持续无法提交完整速度组也必须中止旧运动。 */
