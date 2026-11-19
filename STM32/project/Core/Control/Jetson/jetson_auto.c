@@ -636,7 +636,7 @@ static void Verify_Return(uint32_t now_ms)
         Halt(now_ms);
         return;
     }
-    if (!Chassis_Motion_Ready())
+    if (!Chassis_Is_Stopped())
         return;
 
     const double error_m = hypot(pose.x_m - start_pose.x_m, pose.y_m - start_pose.y_m);
@@ -646,15 +646,12 @@ static void Verify_Return(uint32_t now_ms)
         Halt(now_ms);
     else if (error_m <= CHASSIS_RETURN_POSITION_TOLERANCE_M && error_rad <= CHASSIS_RETURN_YAW_TOLERANCE_RAD)
         Begin_Request(JETSON_CAN_TURN_COMPLETED_ID, WAIT_TURN_ACK, now_ms);
-    else if (Chassis_Is_Stopped())
+    else if (return_corrected)
+        Halt(now_ms);
+    else
     {
-        if (return_corrected)
-            Halt(now_ms);
-        else
-        {
-            return_corrected = 1U;
-            Enter(RETURN_TO_START, now_ms);
-        }
+        return_corrected = 1U;
+        Enter(RETURN_TO_START, now_ms);
     }
 }
 #endif

@@ -76,6 +76,21 @@ static void Test_Damping(void)
     assert(damped.wz_rad_s > 0.0f && damped.wz_rad_s < base.wz_rad_s);
 }
 
+static void Test_Approach_Braking_Envelope(void)
+{
+    const double pose[3] = {0.0, 0.0, pi / 2.0};
+    const double goal[3] = {0.011, 0.0, pi / 2.0};
+    const float sliding[3] = {0.40f, 0.0f, 0.0f};
+    Point_Plan_t plan;
+    Point_Plan_Output_t output;
+    assert(Point_Plan_Init(&plan, pose, goal));
+    assert(Point_Plan_Step(&plan, &config, pose, sliding, &output));
+    const double speed = hypot(output.vx_mps, output.vy_mps);
+    const double brake_distance = speed * config.latency_s + speed * speed / (2.0 * config.linear_deceleration_mps2);
+    assert(!output.arrived && output.vx_mps > 0.02f && output.vy_mps < -0.02f);
+    assert(brake_distance <= goal[0] - 0.5 * config.position_tolerance_m + 1e-7);
+}
+
 static void Test_Half_Turn(void)
 {
     double pose[3] = {0.0, 0.0, pi - 0.01};
@@ -104,6 +119,7 @@ int main(void)
     Plant(0U, 1U);
     Plant(1U, 1U);
     Test_Damping();
+    Test_Approach_Braking_Envelope();
     Test_Half_Turn();
 
     Point_Plan_t plan;

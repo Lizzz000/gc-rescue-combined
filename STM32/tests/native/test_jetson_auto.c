@@ -764,7 +764,8 @@ static void Stop_At_Return_Origin(void)
     const unsigned stops_before = stops;
     odom = expected_origin;
     Wait_For_Count(&stops, stops_before + 1U);
-    assert(!stopped && sent_count == 2U);
+    Step();
+    assert(Chassis_Motion_Ready() && !stopped && sent_count == 2U);
 }
 
 static void Verify_Safety_Center(int16_t x, int16_t y)
@@ -858,6 +859,7 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
         assert(!enabled && disables == 1U && sent_count == 2U);
         return;
     }
+    stopped = 1U;
     Wait_For_Count(&sent_count, 3U);
     Check_Sent(2U, JETSON_CAN_TURN_COMPLETED_ID, token);
     Align_Safety_And_Confirm(destination, token);
@@ -1022,6 +1024,7 @@ static void Test_Return_Recovers_Small_Error(void)
     Wait_For_Count(&return_commands, before + 1U);
     assert(last_vx < 0.0f);
     Stop_At_Return_Origin();
+    stopped = 1U;
     Wait_For_Count(&sent_count, 3U);
     Check_Sent(2U, JETSON_CAN_TURN_COMPLETED_ID, 73U);
     assert(enabled && !disables);

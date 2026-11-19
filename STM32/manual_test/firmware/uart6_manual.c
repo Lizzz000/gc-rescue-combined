@@ -245,7 +245,7 @@ static void Service_Return(uint32_t now_ms)
     if (return_state == RETURN_STOPPING)
     {
         const float yaw_error = fabsf(remainderf(position.yaw_rad - origin.yaw_rad, TWO_PI));
-        if (Chassis_Motion_Ready())
+        if (Chassis_Is_Stopped())
         {
             if (remaining <= CHASSIS_RETURN_POSITION_TOLERANCE_M &&
                 yaw_error <= CHASSIS_RETURN_YAW_TOLERANCE_RAD)
@@ -254,25 +254,17 @@ static void Service_Return(uint32_t now_ms)
                 Manual_CAN_Receive(zero, sizeof(zero));
                 Reply(UART_RETURN, active_return_id, RESULT_DONE, DETAIL_NONE);
                 return_state = RETURN_INACTIVE;
-                return;
             }
-            if (remaining > CHASSIS_RETURN_CORRECTION_MAX_M || yaw_error > CHASSIS_RETURN_CORRECTION_MAX_RAD)
-            {
+            else if (return_corrected || remaining > CHASSIS_RETURN_CORRECTION_MAX_M ||
+                     yaw_error > CHASSIS_RETURN_CORRECTION_MAX_RAD)
                 Stop_Session(DETAIL_LIMIT);
-                return;
-            }
-            /* 停稳后最多补正一次，仍使用本次返航的原始期限与限位。 */
-            if (Chassis_Is_Stopped())
+            else
             {
-                if (return_corrected)
-                    Stop_Session(DETAIL_LIMIT);
-                else
-                {
-                    return_corrected = 1U;
-                    return_state = RETURN_RUNNING;
-                }
-                return;
+                /* 停稳后最多补正一次，仍使用本次返航的原始期限与限位。 */
+                return_corrected = 1U;
+                return_state = RETURN_RUNNING;
             }
+            return;
         }
         if ((uint32_t)(now_ms - stop_started_ms) >= MANUAL_PREPARE_TIMEOUT_MS)
             Stop_Session(DETAIL_TIMEOUT);

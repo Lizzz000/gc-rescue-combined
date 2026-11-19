@@ -364,7 +364,7 @@ static void Test_Origin_And_Return(void)
     assert(report.state == RETURNING && report.result == ACCEPTED && report.id == 0x0203U);
     assert(last_vx < 0.0f && last_vy > 0.0f && last_wz < 0.0f);
     assert(hypotf(last_vx, last_vy) <= 0.40001f && fabsf(last_wz) <= 3.00001f);
-    /* 闭环模型把返回命令转换成世界位姿，轮速未归零仍可确认到位。 */
+    /* 闭环模型把返回命令转换成世界位姿，停车反馈由测试单独注入。 */
     unsigned iterations = 0U;
     while (report.state == RETURNING && iterations++ < 150U)
     {
@@ -380,6 +380,10 @@ static void Test_Origin_And_Return(void)
     assert(report.state == SETTLING && manual_vectors == 0U && return_vectors > 1U);
     assert(stops == 1U && last_vx == 0.0f && last_vy == 0.0f && last_wz == 0.0f);
     assert(!Chassis_Is_Stopped());
+    Send(KEEPALIVE, NULL, 0U);
+    Step(100U);
+    assert(report.state == SETTLING && report.result == ACCEPTED);
+    stopped = 1U;
     Send(KEEPALIVE, NULL, 0U);
     Step(100U);
     assert(report.state == MANUAL_READY && report.result == DONE && report.id == 0x0203U);
@@ -488,6 +492,7 @@ static void Test_Return_Recovers_Small_Error(void)
     position.x_m = 0.0;
     Send(KEEPALIVE, NULL, 0U);
     Step(100U);
+    stopped = 1U;
     Send(KEEPALIVE, NULL, 0U);
     Step(100U);
     assert(report.state == MANUAL_READY && report.result == DONE && report.id == 3U);

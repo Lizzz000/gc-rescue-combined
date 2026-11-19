@@ -149,13 +149,15 @@ uint8_t Point_Plan_Step(Point_Plan_t *plan, const Point_Plan_Config_t *config, c
         const float measured_x = cosine * measured_body[0] - sine * measured_body[1];
         const float measured_y = sine * measured_body[0] + cosine * measured_body[1];
         const float along = Damp_Approach(speed, direction_x * measured_x + direction_y * measured_y);
-        const float cross = -VELOCITY_DAMPING * (-direction_y * measured_x + direction_x * measured_y);
+        const float lateral = -VELOCITY_DAMPING * (-direction_y * measured_x + direction_x * measured_y);
+        /* 横向阻尼与前进共享余程制动包络。先限制横向分量，避免侧滑吞掉前进量。 */
+        const float cross = fmaxf(-speed, fminf(speed, lateral));
         float vx = direction_x * along - direction_y * cross;
         float vy = direction_y * along + direction_x * cross;
         const float norm = hypotf(vx, vy);
-        if (norm > config->linear_limit_mps)
+        if (norm > speed)
         {
-            const float scale = nextafterf(config->linear_limit_mps, 0.0f) / norm;
+            const float scale = nextafterf(speed, 0.0f) / norm;
             vx *= scale;
             vy *= scale;
         }

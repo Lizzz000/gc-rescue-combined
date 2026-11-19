@@ -39,6 +39,7 @@ typedef struct
 /* 无障碍平面内最短欧氏直线，航向取[-pi,pi]最短转角；不假设轮式车必须沿车头方向。
  * start/goal=[世界x(m),世界y(m),航向(rad)]；length 是路径下界，不是实走里程。
  * 每拍以世界位姿重算剩余路线，并用车体系实测速度 [vx,vy,wz] 抑制侧滑和超速接近。
+ * 平移合速度服从余程制动限速。arrived 表示进入位姿窗口，调用方应另行确认停车。
  */
 uint8_t Point_Plan_Init(Point_Plan_t *plan, const double start[3], const double goal[3]);
 uint8_t Point_Plan_Step(Point_Plan_t *plan, const Point_Plan_Config_t *config, const double pose[3],
