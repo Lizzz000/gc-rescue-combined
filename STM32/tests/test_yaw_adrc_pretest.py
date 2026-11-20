@@ -107,10 +107,17 @@ class YawAdrcPretestTests(unittest.TestCase):
                          RECORDED["cases_with_higher_rmse_than_retuned_p"])
         for key in ("training_adrc", "training_retuned_proportional", "holdout_baseline",
                     "holdout_adrc", "holdout_retuned_proportional"):
-            for path, actual, expected in adrc.metric_pairs(evaluated[key], RECORDED[key]):
-                self.assertAlmostEqual(actual, expected, delta=1e-12, msg=f"{key}.{path}")
+            self.assertEqual(list(adrc.metric_mismatches(evaluated[key], RECORDED[key], key)), [])
         self.assertAlmostEqual(evaluated["worst_rmse_increase"],
                                RECORDED["worst_rmse_increase"], delta=1e-12)
+
+    def test_verify_detects_changed_or_incomplete_replay(self):
+        actual = [{"leg": "cw", "rmse": 0.25}]
+        for recorded in ([], [{"leg": "cw"}], [{"leg": "ccw", "rmse": 0.25}],
+                         [{"leg": "cw", "rmse": float("nan")}]):
+            with self.subTest(recorded=recorded):
+                self.assertTrue(list(adrc.metric_mismatches(actual, recorded)))
+        self.assertEqual(list(adrc.metric_mismatches(actual, [{"leg": "cw", "rmse": 0.25 + 1e-13}])), [])
 
 
 if __name__ == "__main__":

@@ -3,15 +3,14 @@ from pathlib import Path
 import argparse
 import shutil
 import subprocess
+import sys
 import tempfile
 from check_module_boundaries import check_module_boundaries
 
 
 def run_python_checks(root):
     """运行不依赖板端硬件的 Python 主机检查；不含需 NumPy/SciPy 的磁标定。"""
-    python = shutil.which("python3") or shutil.which("python")
-    if not python:
-        raise RuntimeError("未找到 python3/python，无法运行主机 Python 检查")
+    python = sys.executable
     repo = root.parent
     commands = [
         [python, "-m", "unittest", "discover", "-s", str(root / "tests"),

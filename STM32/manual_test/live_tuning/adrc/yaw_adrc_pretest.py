@@ -240,17 +240,22 @@ def evaluate(cfg, chosen, chosen_p):
     }
 
 
-def metric_pairs(actual, expected, prefix=""):
-    if isinstance(expected, dict):
-        items = expected.items()
-    else:
-        items = enumerate(expected)
-    for key, value in items:
-        path = f"{prefix}{key}"
-        if isinstance(value, (dict, list)):
-            yield from metric_pairs(actual[key], value, path + ".")
-        elif isinstance(value, (int, float)):
-            yield path, actual[key], value
+def metric_mismatches(actual, recorded, path="report"):
+    if isinstance(actual, dict) and isinstance(recorded, dict):
+        for key in sorted(actual.keys() ^ recorded.keys()):
+            yield f"{path}.{key}: missing from {'record' if key in actual else 'computed report'}"
+        for key in sorted(actual.keys() & recorded.keys()):
+            yield from metric_mismatches(actual[key], recorded[key], f"{path}.{key}")
+    elif isinstance(actual, list) and isinstance(recorded, list):
+        if len(actual) != len(recorded):
+            yield f"{path}: length {len(actual)} != {len(recorded)}"
+        for index, (value, reference) in enumerate(zip(actual, recorded)):
+            yield from metric_mismatches(value, reference, f"{path}[{index}]")
+    elif type(actual) in (int, float) and type(recorded) in (int, float):
+        if not abs(actual - recorded) <= 1e-12:
+            yield f"{path}: {actual} != {recorded}"
+    elif type(actual) is not type(recorded) or actual != recorded:
+        yield f"{path}: {actual!r} != {recorded!r}"
 
 
 def stats(rows):
@@ -340,22 +345,7 @@ def main():
                   "cases_with_higher_rmse_than_retuned_p": evaluated["cases_with_higher_rmse_than_retuned_p"],
                   "observer_shadow_replay": shadow_replay(inputs["20hz"], chosen),
                   "observer_shadow_replay_current_kd": shadow_replay(inputs["10hz"], chosen)}
-        mismatches = []
-        for key in ("sample_rate_hz", "tuning", "training_count", "training_adrc", "holdout_count",
-                    "holdout_baseline", "holdout_adrc", "retuned_proportional_tuning",
-                    "training_retuned_proportional", "holdout_retuned_proportional", "groups",
-                    "cases_with_higher_rmse", "worst_rmse_increase",
-                    "cases_with_higher_rmse_than_retuned_p", "observer_shadow_replay",
-                    "observer_shadow_replay_current_kd"):
-            if isinstance(recorded[key], (dict, list)):
-                for path, actual, expected in metric_pairs(
-                        {"v": report[key]}, {"v": recorded[key]}, key + ("." if isinstance(recorded[key], dict) else "[")):
-                    if abs(actual - expected) > 1e-12:
-                        mismatches.append(f"{path}: {actual} != {expected}")
-            elif isinstance(recorded[key], (int, float)) and abs(report[key] - recorded[key]) > 1e-12:
-                mismatches.append(f"{key}: {report[key]} != {recorded[key]}")
-            elif not isinstance(recorded[key], (int, float)) and report[key] != recorded[key]:
-                mismatches.append(f"{key}: {report[key]!r} != {recorded[key]!r}")
+        mismatches = list(metric_mismatches(report, recorded))
         if mismatches:
             raise SystemExit("ADRC 复算与 results.json 不一致:\n" + "\n".join(mismatches))
         print("PASS: recorded ADRC metrics reproduced without retuning")

@@ -22,7 +22,7 @@ volatile dm_motor_t dm_motor[3];
 uint32_t test_tick;
 static uint32_t counter_us, free_mailboxes, nonzero_controls, zero_controls, disable_frames;
 static unsigned critical_depth;
-static float imu_yaw;
+static float imu_yaw, imu_yaw_rate;
 static uint32_t imu_age_ms;
 static uint8_t imu_valid;
 static float last_wheels[3], last_command[3];
@@ -48,7 +48,8 @@ uint32_t test_timer_counter(TIM_HandleTypeDef *timer)
 
 uint8_t INS_Get_Data(INS_control_data_t *data)
 {
-    *data = (INS_control_data_t){.yaw_deg = imu_yaw, .sample_time_ms = test_tick - imu_age_ms};
+    *data = (INS_control_data_t){.yaw_deg = imu_yaw, .world_z_rad_s = imu_yaw_rate,
+                                 .sample_time_ms = test_tick - imu_age_ms};
     return imu_valid;
 }
 
@@ -140,6 +141,23 @@ static void Step(float feedback_speed)
     Step_Wheels(feedback);
 }
 
+/* 以同一条两端静止的转动轨迹生成 IMU 航向、瞬时角速度和各轮区间位移。 */
+static void Rotate_Feedback_To(float end_deg, unsigned steps)
+{
+    const double start_deg = imu_yaw;
+    const double delta_deg = end_deg - start_deg;
+    const double deg_to_rad = 0.017453292519943295;
+    for (unsigned i = 1U; i <= steps; ++i)
+    {
+        const double t = (double)i / steps;
+        const float yaw = (float)(start_deg + delta_deg * t * t * (3.0 - 2.0 * t));
+        const float mean_rate = (float)((yaw - imu_yaw) * deg_to_rad / 0.005);
+        imu_yaw_rate = (float)(delta_deg * deg_to_rad * 6.0 * t * (1.0 - t) / (steps * 0.005));
+        imu_yaw = yaw;
+        Step(-mean_rate * CHASSIS_ROTATION_RADIUS / CHASSIS_WHEEL_RADIUS);
+    }
+}
+
 /** @brief 上一拍目标按给定比例实际跟随，独立累计启动航向上的地面位移。 */
 static void Step_Follow(float gain)
 {
@@ -192,6 +210,7 @@ static void Start_Safety_Approach(void)
     nonzero_controls = critical_depth = 0U;
     zero_controls = disable_frames = 0U;
     imu_yaw = 0.0f;
+    imu_yaw_rate = 0.0f;
     imu_age_ms = 0U;
     imu_valid = 1U;
     memset(last_wheels, 0, sizeof(last_wheels));
@@ -233,8 +252,7 @@ static void Start_Safety_Approach(void)
     Jetson_CAN_Receive(JETSON_CAN_ROI_REPLY_ID, roi, sizeof(roi));
     Jetson_CAN_Receive(JETSON_CAN_TURN_REQUEST_ID, turn, sizeof(turn));
     Step(0.0f);
-    /* 为真实定角控制提供终点姿态；转向到位和零目标发送均由底盘执行。 */
-    imu_yaw = 180.0f;
+    Rotate_Feedback_To(180.0f, 450U);
     for (unsigned i = 0U; i < 200U && last_uplink != JETSON_CAN_TURN_COMPLETED_ID; ++i)
         Step(0.0f);
     assert(last_uplink == JETSON_CAN_TURN_COMPLETED_ID && last_argument == route_token);
@@ -284,7 +302,7 @@ static void Test_Safety_Edge_Recovery(unsigned axis)
 static void Start_Safety_Straight(void)
 {
     Start_Safety_Approach();
-    imu_yaw = 176.0f;
+    Rotate_Feedback_To(176.0f, 80U);
     for (unsigned i = 0U; i < 200U && Chassis_Motion_Ready(); ++i)
     {
         Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, 5000, 7500);

@@ -4,6 +4,7 @@ import math
 import struct
 import threading
 import unittest
+from unittest.mock import patch
 
 from servo.s288 import (
     FEEDBACK_BYTES, FEEDBACK_MARK, ServoBusy, ServoSession, _take_feedback,
@@ -65,6 +66,19 @@ class FakeLink:
 
 
 class SessionTest(unittest.TestCase):
+    def test_faulted_startup_stop_cannot_establish_absolute_zero(self):
+        for error, timeout in ((1, False), (0, True)):
+            with self.subTest(error=error, timeout=timeout), patch('servo.s288.ServoLink') as link:
+                link.return_value.stop.return_value = {
+                    'position': 0.25, 'error': error, 'timeout': timeout}
+                session = ServoSession('/dev/mock', 0, 1.0, 0.05, open_deg=40)
+                self.assertIsNone(session.position_deg)
+                session.start_open(0.2)
+                with self.assertRaisesRegex(RuntimeError, '尚未记录上电零点'):
+                    session.wait(timeout=2)
+                link.return_value.goto_degrees.assert_not_called()
+                session.close()
+
     def test_without_device_rejects_motion(self):
         session = ServoSession('', 0, 1.0, 0.05)
         self.assertFalse(session.available)

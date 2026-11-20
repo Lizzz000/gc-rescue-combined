@@ -117,22 +117,22 @@ static void imu_temp_control(float temp)
     imu_pwm_set((uint16_t)imu_temp_pid.out);
 }
 
+typedef enum { MAG_READ_ERROR, MAG_NO_DATA, MAG_NEW_SAMPLE } Mag_Read_Result_t;
+
 /**
  * @brief 读取教程的 STAT1 和三轴数据，更新最近一次原始磁场。
- * @return 1 表示 I2C 读取成功且 STAT1 数据就绪位已置位，即有新磁样本；
- *         0 表示总线读取失败，或读取成功但尚无新样本。
- * @note 无新磁样本时调用方传入空指针，走既有六轴更新；本函数不改变该分支。
+ * @return 区分总线异常、无新数据和已取得新样本。
  */
-static uint8_t read_ist8310(void)
+static Mag_Read_Result_t read_ist8310(void)
 {
     uint8_t buffer[7];
     if (ist8310_IIC_read_muli_reg(0x02, buffer, sizeof(buffer)))
     {
         ist8310_read_over(buffer, &ist8310_real_data);
-        return (ist8310_real_data.status & (1U << IST8310_DATA_READY_BIT)) != 0U;
+        return (ist8310_real_data.status & (1U << IST8310_DATA_READY_BIT)) ? MAG_NEW_SAMPLE : MAG_NO_DATA;
     }
     ist8310_real_data.status &= ~(1 << IST8310_DATA_READY_BIT);
-    return 0U;
+    return MAG_READ_ERROR;
 }
 
 /**
@@ -163,7 +163,7 @@ static void Calibrate_MPU_Offset(bmi088_real_data_t *imu_mean, ist8310_real_data
             vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(INS_CALI_PERIOD_MS));
             BMI088_read(bmi088_real_data.gyro, bmi088_real_data.accel, &bmi088_real_data.temp);
             imu_temp_control(bmi088_real_data.temp);
-            if (mag_mean && read_ist8310())
+            if (mag_mean && read_ist8310() == MAG_NEW_SAMPLE)
             {
                 for (uint8_t i = 0; i < 3; i++)
                     mag_sum[i] += ist8310_real_data.mag[i];
@@ -347,6 +347,7 @@ void INS_task(void const *argument)
     imu_temp_control(bmi088_real_data.temp);
 
     TickType_t last_wake_time = xTaskGetTickCount();
+    ist8310_real_data_t *pending_mag = NULL;
     while (1)
     {
         vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(5));
@@ -365,11 +366,21 @@ void INS_task(void const *argument)
             if (!isfinite(bmi088_real_data.temp))
                 invalidate_control_data();
         }
-        ist8310_real_data_t *mag = NULL;
-        if (INS_USE_MAGNETOMETER && read_ist8310())
-            mag = &ist8310_real_data;
-        if (bmi088_read_flag && isfinite(bmi088_real_data.temp))
-            update_attitude(dt, sample_time_ms, mag, &yaw_guard);
+        if (INS_USE_MAGNETOMETER)
+        {
+            /* 磁场每 5 ms 读取一次。无新数据时保留本次 10 ms 融合窗口中已读的样本。 */
+            const Mag_Read_Result_t result = read_ist8310();
+            if (result == MAG_NEW_SAMPLE)
+                pending_mag = &ist8310_real_data;
+            else if (result == MAG_READ_ERROR)
+                pending_mag = NULL;
+        }
+        if (bmi088_read_flag)
+        {
+            if (isfinite(bmi088_real_data.temp))
+                update_attitude(dt, sample_time_ms, pending_mag, &yaw_guard);
+            pending_mag = NULL;
+        }
         bmi088_read_flag = !bmi088_read_flag;
     }
 }

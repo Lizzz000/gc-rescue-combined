@@ -82,8 +82,8 @@ static void assert_averaged_gravity(void)
  */
 static void assert_magnetic_update(void)
 {
-    const uint8_t failed = vofa_calls == 1U;
-    const uint8_t no_new_data = vofa_calls == 2U;
+    const uint8_t no_new_data = vofa_calls == 1U;
+    const uint8_t failed = vofa_calls == 2U;
     const float field[3] = {30.0f, vofa_calls < 3U ? 30.0f : -45.0f,
                             vofa_calls < 3U ? 0.0f : 6.0f};
     const float corrected[2][3] = {
@@ -94,7 +94,8 @@ static void assert_magnetic_update(void)
     /* 原始物理量保持不变；融合对照会检出遗漏校正、重复扣偏或矩阵顺序错误。 */
     for (unsigned i = 0U; i < 3U; ++i)
         assert(fabsf(ist8310_real_data.mag[i] - field[i]) < 0.00001f);
-    assert(!!(ist8310_real_data.status & (1U << IST8310_DATA_READY_BIT)) == !(failed || no_new_data));
+    /* 首个新样本在两次 BMI 读取之间到达，融合拍的 STAT1 已清零。 */
+    assert(!!(ist8310_real_data.status & (1U << IST8310_DATA_READY_BIT)) == (vofa_calls == 3U));
     assert(twoKi == 0.0f); /* 两条参考入口不共享非零积分历史。 */
     float six_axis[4], nine_axis[4];
     memcpy(six_axis, last_quat, sizeof(six_axis));
@@ -500,15 +501,16 @@ HAL_StatusTypeDef HAL_I2C_Mem_Read(I2C_HandleTypeDef *i2c, uint16_t address, uin
         else if (task_mode)
         {
             const uint32_t run_read = mag_reads - calibration_samples;
-            if (run_read == 3U || run_read == 4U)
+            /* 四个融合窗口依次覆盖中间拍有样本、两拍均无、先有后出错、出错后恢复。 */
+            if (run_read == 6U || run_read == 7U)
             {
                 ++magnetic_failures;
-                return run_read == 3U ? HAL_TIMEOUT : HAL_ERROR;
+                return run_read == 6U ? HAL_TIMEOUT : HAL_ERROR;
             }
-            mag_regs[2] = run_read == 5U || run_read == 6U ? 0U : 1U;
+            mag_regs[2] = run_read == 1U || run_read == 5U || run_read == 8U;
             raw16(&mag_regs[3], mag_regs[2] ? 100 : -300);
-            raw16(&mag_regs[5], mag_regs[2] ? (run_read <= 2U ? 100 : -150) : 500);
-            raw16(&mag_regs[7], mag_regs[2] ? (run_read <= 2U ? 0 : 20) : 100);
+            raw16(&mag_regs[5], mag_regs[2] ? (run_read == 8U ? -150 : 100) : 500);
+            raw16(&mag_regs[7], mag_regs[2] ? (run_read == 8U ? 20 : 0) : 100);
         }
     }
     memcpy(data,&mag_regs[reg],length);

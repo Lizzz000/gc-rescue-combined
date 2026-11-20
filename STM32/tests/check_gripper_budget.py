@@ -20,7 +20,7 @@ def main():
         source.write_text('''
 #include "jetson_auto_config.h"
 #include "gripper/s288_servo.hpp"
-#include <iostream>
+#include <cstdio>
 // prepare Stop + last motion exchange + final Stop + final period + link/retry margin.
 constexpr double total_ms = 1000 * (s288::kMaxMoveS +
     (2 * s288::kStopAttempts + 1) * s288::kFeedbackWaitS + s288::kCommandPeriodS) +
@@ -28,8 +28,8 @@ constexpr double total_ms = 1000 * (s288::kMaxMoveS +
 static_assert(JETSON_AUTO_ACTION_TIMEOUT_MS >= total_ms,
               "STM32 action deadline does not cover the full S288 action");
 int main() {
-    std::cout << "PASS: S288 maximum budget " << total_ms << " ms <= STM32 "
-              << JETSON_AUTO_ACTION_TIMEOUT_MS << " ms\\n";
+    std::printf("PASS: S288 maximum budget %g ms <= STM32 %u ms\\n",
+                total_ms, static_cast<unsigned>(JETSON_AUTO_ACTION_TIMEOUT_MS));
 }
 ''', encoding='utf-8')
         executable = Path(temporary) / 'budget.exe'

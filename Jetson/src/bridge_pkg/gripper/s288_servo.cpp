@@ -278,9 +278,8 @@ public:
     throw std::runtime_error("已发送停机命令，但未确认 Stop 模式");
   }
 
-  Feedback prepare(double kp, double kd)
+  Feedback prepare()
   {
-    control_packet(motor_id_, kModeRun, 1, 0, 0, 0, kp, kd);
     auto initial = stop();
     if (initial.error || initial.timeout) {
       throw std::runtime_error("舵机反馈有错误或超时，未开始转动");
@@ -335,7 +334,7 @@ Session::Session(SessionConfig config)
     return;
   }
   try {
-    const auto feedback = link_->stop();
+    const auto feedback = link_->prepare();
     zero_rad_ = feedback.position;
     have_zero_ = true;
     message_ = "已连接，上电零点已记录";
@@ -386,8 +385,7 @@ void Session::run(double target_deg, double seconds)
   try {
     if (!have_zero_) {throw std::runtime_error("尚未记录上电零点");}
     auto * link = link_.get();
-    const auto initial = link->prepare(config_.kp, config_.kd);
-    (void)initial;
+    link->prepare();
     const auto final = link->run_to(
       zero_rad_ + target_deg * M_PI / 180.0, seconds, config_.kp, config_.kd, cancel_);
     if (final.error || final.timeout || cancel_.load()) {

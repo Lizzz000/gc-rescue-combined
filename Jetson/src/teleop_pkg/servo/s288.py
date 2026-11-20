@@ -289,6 +289,8 @@ class ServoSession:
             return
         try:
             feedback = self._link.stop()
+            if feedback['error'] or feedback['timeout']:
+                raise RuntimeError('舵机反馈有错误或超时')
         except (OSError, TimeoutError, RuntimeError) as error:
             self.message = f'已打开串口，但未能记录上电零点：{error}'
             return

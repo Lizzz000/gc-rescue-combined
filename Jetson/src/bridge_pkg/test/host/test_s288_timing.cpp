@@ -17,7 +17,8 @@ std::array<unsigned char, 26> feedback{};
 std::atomic<int> stop_calls{0};
 bool timeout_reply = false;
 bool have_feedback = false;
-unsigned final_fault = 0;
+int fault_stop_call = 7;
+unsigned stop_fault = 0;
 std::uint32_t crc(const unsigned char *data)
 {
   std::uint32_t value = 0xffffffff;
@@ -40,14 +41,14 @@ ssize_t write(int, const void *raw, std::size_t size)
   const auto *packet = static_cast<const unsigned char *>(raw);
   const auto mode = (packet[2] >> 4) & 7;
   const int count = mode == 0 ? ++stop_calls : 0;
-  // Constructor Stop succeeds. Prepare and final Stop each fail twice then succeed.
+  // Prepare and final Stop each time out twice before receiving feedback.
   timeout_reply = count == 2 || count == 3 || count == 5 || count == 6;
   feedback.fill(0);
   feedback[0] = 0xfc;
   feedback[1] = 0xee;
   feedback[2] = packet[2] & 0x7f;
-  if (count == 7 && final_fault == 1) {feedback[14] = 1;}
-  if (count == 7 && final_fault == 2) {feedback[2] |= 0x80;}
+  if (count == fault_stop_call && stop_fault == 1) {feedback[14] = 1;}
+  if (count == fault_stop_call && stop_fault == 2) {feedback[2] |= 0x80;}
   const auto check = crc(feedback.data() + 2);
   for (int i = 0; i < 4; ++i) {feedback[22 + i] = static_cast<unsigned char>(check >> (8 * i));}
   have_feedback = true;
@@ -92,7 +93,7 @@ int main()
   Group failure_group("S288 final Stop reports hardware error or timeout");
   for (unsigned fault : {1U, 2U}) {
     stop_calls = 0;
-    final_fault = fault;
+    stop_fault = fault;
     s288::Session failing_session(config);
     CHECK(failing_session.available());
     CHECK(failing_session.start_close(s288::kMinMoveS));
@@ -104,6 +105,15 @@ int main()
     CHECK(failing_session.status() == s288::MotionStatus::Failed);
     CHECK(stop_calls == 7);
     failing_session.close();
+  }
+  Group zero_group("S288 rejects a faulted power-on zero");
+  fault_stop_call = 1;
+  for (unsigned fault : {1U, 2U}) {
+    stop_calls = 0;
+    stop_fault = fault;
+    s288::Session failing_session(config);
+    CHECK(!failing_session.available());
+    CHECK(!failing_session.start_open(s288::kMinMoveS));
   }
   return finishTests("S288 timing");
 }
