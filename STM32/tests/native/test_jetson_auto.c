@@ -15,9 +15,9 @@ static uint32_t source_time_ms;
 static unsigned critical_depth;
 static uint8_t can_arrival_before_snapshot;
 static uint8_t enabled, stopped, motion_ready, can_enable, enable_tx_failure;
-static unsigned enables, stops, hard_stops, disables, velocity_requests;
+static unsigned enables, stops, hard_stops, disables, velocity_requests, timed_velocity_requests;
 static uint8_t tx_ready, tx_error;
-static unsigned distance_count, turn_count, sent_count;
+static unsigned distance_count, fast_distance_count, turn_count, sent_count;
 static Chassis_Translation_Direction_t last_translation;
 static float last_distance;
 static int8_t last_turn_direction;
@@ -27,7 +27,7 @@ static Chassis_Odometry_t odom;
 static unsigned return_commands;
 #ifdef TEST_JETSON_AUTO_CONFIGURED
 static Chassis_Odometry_t expected_origin;
-static uint8_t expected_side;
+static float expected_return_yaw_rad;
 #endif
 static uint32_t startup_id;
 static unsigned startup_queries;
@@ -128,10 +128,8 @@ uint8_t INS_Get_Data(INS_control_data_t *data)
     return 1U;
 }
 
-/** @brief 捕获自动导航速度。 @return 模拟受理为 1。
- * @param[in] vx 前向 m/s。 @param[in] vy 左向 m/s。 @param[in] wz 左转 rad/s。
- */
-uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
+/* 测试记录名义车体速度，停车资格仍由场景提供。 */
+static uint8_t Record_Velocity(float vx, float vy, float wz)
 {
     assert(enabled && isfinite(vx) && isfinite(vy) && isfinite(wz));
     ++velocity_requests;
@@ -144,13 +142,28 @@ uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
     return 1U;
 }
 
-uint8_t Chassis_Set_World_Velocity(float x, float y, float wz)
+uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
 {
+    assert(wz == 0.0f);
+    if (vy != 0.0f)
+        assert(vx == 0.0f && fabsf(vy) == JETSON_AUTO_LATERAL_SPEED_MPS);
+    else
+        assert(vx == JETSON_AUTO_PUSH_SPEED_MPS || vx == -JETSON_AUTO_RETRACT_SPEED_MPS);
+    ++timed_velocity_requests;
+    return Record_Velocity(vx, vy, wz);
+}
+
+uint8_t Chassis_Set_Navigation_Velocity(float x, float y, float wz, uint8_t world_frame)
+{
+    assert(world_frame <= 1U);
+    if (!world_frame)
+        return Record_Velocity(x, y, wz);
+
     const float cosine = cosf(odom.yaw_rad), sine = sinf(odom.yaw_rad);
     const float vx = cosine * x + sine * y;
     const float vy = -sine * x + cosine * y;
     ++return_commands;
-    return Chassis_Set_Velocity(vx, vy, wz);
+    return Record_Velocity(vx, vy, wz);
 }
 
 /** @brief 捕获定距请求，清除先前停车反馈。 @return 模拟受理为 1。
@@ -158,12 +171,23 @@ uint8_t Chassis_Set_World_Velocity(float x, float y, float wz)
  */
 uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction, float distance, float speed)
 {
-    assert(Chassis_Motion_Ready() && distance > 0.0f && speed == JETSON_AUTO_DISTANCE_SPEED_MPS);
+    assert(direction == CHASSIS_TRANSLATION_BACKWARD);
+    assert(Chassis_Motion_Ready() && distance > 0.0f);
+    assert(speed == JETSON_AUTO_DISTANCE_SPEED_MPS);
     last_translation = direction;
     last_distance = distance;
     ++distance_count;
     stopped = motion_ready = 0U;
     return 1U;
+}
+
+uint8_t Chassis_Distance_Start_Fast(Chassis_Translation_Direction_t direction, float distance, float speed)
+{
+    (void)direction;
+    (void)distance;
+    (void)speed;
+    ++fast_distance_count;
+    return 0U;
 }
 
 /** @brief 捕获定角请求，清除先前停车反馈。 @return 模拟受理为 1。
@@ -223,12 +247,12 @@ static void Reset_At(uint32_t initial_ms)
     enabled = stopped = motion_ready = 0U;
     can_enable = 1U;
     enable_tx_failure = 0U;
-    enables = stops = hard_stops = disables = velocity_requests = 0U;
-    distance_count = turn_count = sent_count = return_commands = 0U;
+    enables = stops = hard_stops = disables = velocity_requests = timed_velocity_requests = 0U;
+    distance_count = fast_distance_count = turn_count = sent_count = return_commands = 0U;
     odom = (Chassis_Odometry_t){.valid = 1U};
 #ifdef TEST_JETSON_AUTO_CONFIGURED
     expected_origin = odom;
-    expected_side = 1U;
+    expected_return_yaw_rad = odom.yaw_rad;
 #endif
     imu_age_ms = startup_id = startup_queries = 0U;
     tx_ready = motors_ready = 1U;
@@ -389,10 +413,12 @@ static void Complete_Search_Turn(void)
     stopped = motion_ready = 1U;
 }
 
-/* 使能就绪后保存左侧起点，转满半圈才接受新目标。 */
-static void Begin_Target_Test_At(uint32_t initial_ms)
+/* 使能就绪后保存全区中心起点，转满半圈才接受新目标。 */
+static void Begin_Target_Test_At_Heading(uint32_t initial_ms, float yaw_rad)
 {
     Reset_At(initial_ms);
+    expected_origin.yaw_rad = yaw_rad;
+    expected_return_yaw_rad = yaw_rad;
     Start_Automatic();
     Wait_For_Count(&turn_count, 1U);
     assert(last_turn_direction == 1 && last_turn_angle == 180.0f);
@@ -408,6 +434,7 @@ static void Begin_Target_Test_At(uint32_t initial_ms)
     assert(turn_count == 1U && !velocity_requests && !sent_count && enabled);
 }
 
+static void Begin_Target_Test_At(uint32_t initial_ms) { Begin_Target_Test_At_Heading(initial_ms, 0.0f); }
 static void Begin_Target_Test(void) { Begin_Target_Test_At(100U); }
 
 /* 正常无目标周期帧保持会话，但底盘不持续原地旋转。 */
@@ -588,6 +615,7 @@ static void Test_Approach_Axis_Window_Continuity(void)
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5050, 7000);
     Step();
     assert(last_vx > 0.0f && last_vy == 0.0f && stops == 0U);
+    assert(timed_velocity_requests == 0U && return_commands == 0U);
 }
 
 /** @brief 固定窗外点不会无限累加速度；靠近与换向不携带旧积分。 */
@@ -780,7 +808,7 @@ static void Test_Distance_Stream_Loss(void)
     Check_Moving_Stream_Loss();
 }
 
-/* 握手授权后从夹取位置返航。当前位置位于本趟起点前方，且偏转约11度。 */
+/* 从新起点的前方返航，当前航向比启动时面向坡区的航向大约 11°。 */
 static void Begin_Return_From_ROI(uint8_t destination, uint32_t token)
 {
     const unsigned turns_before = turn_count;
@@ -791,7 +819,7 @@ static void Begin_Return_From_ROI(uint8_t destination, uint32_t token)
     assert(return_commands == before && turn_count == turns_before);
     odom = expected_origin;
     odom.x_m += 0.25;
-    odom.yaw_rad += 0.20f;
+    odom.yaw_rad = expected_return_yaw_rad + 0.20f;
     Receive_Roi(1U, destination);
     Wait_For_Count(&return_commands, before + 1U);
     assert(last_vx < 0.0f && last_wz < 0.0f && turn_count == turns_before);
@@ -802,6 +830,7 @@ static void Stop_At_Return_Origin(void)
 {
     const unsigned stops_before = stops;
     odom = expected_origin;
+    odom.yaw_rad = expected_return_yaw_rad;
     Wait_For_Count(&stops, stops_before + 1U);
     Step();
     assert(Chassis_Motion_Ready() && !stopped && sent_count == 2U);
@@ -826,43 +855,49 @@ static void Verify_First_Safety_Frame(int16_t x, int16_t y, const unsigned *coun
     assert(*counter == count);
 }
 
-static void Align_Safety_And_Confirm(uint8_t destination, uint32_t token)
+static void Begin_Timed_Lateral(uint8_t destination, uint32_t token)
 {
+    const unsigned before = timed_velocity_requests;
     Receive_Command_Ack(1U, 1U, token ^ 1U);
     Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, 5000, 7500);
     Steps(4U);
-    assert(sent_count == 3U && distance_count == 1U);
+    assert(sent_count == 3U && distance_count == 1U && timed_velocity_requests == before);
+
+    /* 横移只依赖匹配回执，不依赖有效图像。 */
+    const uint8_t invisible[8] = {0};
+    Jetson_CAN_Receive(JETSON_CAN_SAFETY_CENTER_ID, invisible, sizeof(invisible));
     Receive_Command_Ack(1U, 1U, token);
-    /* 命令、身份、结果或格式错误的帧不能抹掉本拍已经收到的匹配受理。 */
+    /* 错误帧不能抹掉本拍已经收到的匹配回执。 */
     Receive_Command_Ack(1U, 2U, token);
     Receive_Command_Ack(1U, 1U, token ^ 1U);
     Receive_Command_Ack(0U, 1U, token);
     Jetson_CAN_Receive(JETSON_CAN_COMMAND_REPLY_ID, NULL, 0U);
     Step();
 
-    if (destination != expected_side)
-    {
-        const int16_t center_x = destination == 1U ? 5000 : 5200;
-        const int16_t outside_x = center_x + (destination == 1U ? 800 : -800);
-        const unsigned velocity_before = velocity_requests;
-        assert(sent_count == 3U);
-        Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, outside_x, 2000);
-        Wait_For_Count(&velocity_requests, velocity_before + 1U);
-        assert(last_vx == 0.0f && last_wz == 0.0f && last_vy != 0.0f);
-        const unsigned hard_stops_before_alignment = hard_stops;
-        for (unsigned i = 0U; i < 4U; ++i)
-        {
-            const int16_t offset = (i % 2U == 0U ? 101 : 99) * (destination == 1U ? 1 : -1);
-            Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, center_x + offset, 2000);
-            Steps(4U);
-            assert(last_vx == 0.0f && hard_stops == hard_stops_before_alignment && sent_count == 3U);
-        }
-        Verify_Safety_Center(center_x, 2000);
-        stopped = 1U;
-        Step();
-        Verify_First_Safety_Frame(center_x, 2000, &sent_count);
-        Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, center_x, 2000);
-    }
+    const float lateral = destination == 1U ? JETSON_AUTO_LATERAL_SPEED_MPS : -JETSON_AUTO_LATERAL_SPEED_MPS;
+    assert(timed_velocity_requests == before + 1U && !stopped);
+    assert(last_vx == 0.0f && last_vy == lateral && last_wz == 0.0f);
+}
+
+static void Complete_Timed_Lateral(uint8_t destination, uint32_t token)
+{
+    const unsigned before_stops = stops;
+    const unsigned before_velocity = velocity_requests;
+    const double moved_lateral = destination == 1U ? 0.12 : -0.12;
+    odom.x_m -= moved_lateral * sin(odom.yaw_rad);
+    odom.y_m += moved_lateral * cos(odom.yaw_rad);
+
+    /* 横移中出现的新像素中心不能改变先前提交的动作。 */
+    Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, 9000, 2000);
+    Steps(JETSON_AUTO_LATERAL_DURATION_MS / 5U - 1U);
+    assert(stops == before_stops && velocity_requests == before_velocity && sent_count == 3U);
+    Step();
+    assert(stops == before_stops + 1U && sent_count == 3U);
+    assert(last_vx == 0.0f && last_vy == 0.0f && last_wz == 0.0f);
+    Steps(3U);
+    assert(!stopped && sent_count == 3U);
+
+    stopped = 1U;
     Wait_For_Count(&sent_count, 4U);
     Check_Sent(3U, JETSON_CAN_SAFETY_ARRIVED_ID, token);
     assert(distance_count == 1U);
@@ -871,6 +906,7 @@ static void Align_Safety_And_Confirm(uint8_t destination, uint32_t token)
 /* 从待 ROI 阶段完成一趟，按场景确认运动、夹爪或返航失效均能停车。 */
 static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuck)
 {
+    const unsigned before_fast_distance = fast_distance_count;
     Begin_Return_From_ROI(destination, token);
     if (stuck == 3U)
     {
@@ -903,10 +939,29 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
     stopped = 1U;
     Wait_For_Count(&sent_count, 3U);
     Check_Sent(2U, JETSON_CAN_TURN_COMPLETED_ID, token);
-    Align_Safety_And_Confirm(destination, token);
+    Begin_Timed_Lateral(destination, token);
+    if (stuck == 13U)
+    {
+        const unsigned before = stops;
+        odom.x_m += JETSON_AUTO_ALIGN_MAX_M + 0.10;
+        Step();
+        assert(stops == before + 1U && sent_count == 3U);
+        stopped = 1U;
+        Step();
+        assert(!enabled && disables == 1U && distance_count == 1U);
+        return;
+    }
+    if (stuck == 14U)
+    {
+        Check_Moving_Stream_Loss();
+        return;
+    }
+    Complete_Timed_Lateral(destination, token);
     Receive_Command_Ack(1U, 2U, token);
     const unsigned before_push = velocity_requests;
+    const unsigned timed_before_push = timed_velocity_requests;
     Wait_For_Count(&velocity_requests, before_push + 1U);
+    assert(timed_velocity_requests == timed_before_push + 1U);
     assert(fabsf(last_vx - JETSON_AUTO_PUSH_SPEED_MPS) < 1e-6f && last_vy == 0.0f && last_wz == 0.0f);
     if (stuck == 4U)
     {
@@ -969,14 +1024,15 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
     }
     Complete_Last_Action();
     Wait_For_Count(&velocity_requests, before_retract + 1U);
-    assert(fabsf(last_vx + JETSON_AUTO_PUSH_SPEED_MPS) < 1e-6f && last_vy == 0.0f && last_wz == 0.0f);
+    assert(timed_velocity_requests == timed_before_push + 2U);
+    assert(fabsf(last_vx + JETSON_AUTO_RETRACT_SPEED_MPS) < 1e-6f && last_vy == 0.0f && last_wz == 0.0f);
     if (stuck == 5U)
     {
         Check_Moving_Stream_Loss();
         return;
     }
     const unsigned before_retract_stop = stops;
-    Steps(JETSON_AUTO_PUSH_DURATION_MS / 5U - 1U);
+    Steps(JETSON_AUTO_RETRACT_DURATION_MS / 5U - 1U);
     assert(stops == before_retract_stop && sent_count == 5U);
     Step();
     assert(stops == before_retract_stop + 1U && sent_count == 5U);
@@ -992,13 +1048,19 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
     assert(sent_count == 7U);
     Check_Sent(6U, JETSON_CAN_DELIVERY_COMPLETED_ID, token);
 
-    const int16_t center_x = destination == 1U ? 5000 : 5200;
-    const int16_t center_y = destination == 1U ? 7500 : 7300;
+    const int16_t center_x = (int16_t)lroundf(JETSON_AUTO_LOCALIZE_X * 10000.0f);
+    const int16_t center_y = (int16_t)lroundf(JETSON_AUTO_LOCALIZE_Y * 10000.0f);
     const unsigned before_localizing = velocity_requests;
+    assert(fast_distance_count == before_fast_distance);
+    /* ACK 前缓存的全区中心不能用于建立新起点。 */
+    const uint32_t stale_source = source_time_ms;
     Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, center_x, center_y);
     Receive_Command_Ack(1U, 4U, token);
+    Step();
+    Receive_Center_At(JETSON_CAN_SAFETY_CENTER_ID, center_x, center_y, stale_source);
     Steps(3U);
     assert(velocity_requests == before_localizing && turn_count == 1U && sent_count == 7U);
+    assert(distance_count == 1U && fast_distance_count == before_fast_distance);
     if (stuck == 11U)
     {
         Steps(JETSON_AUTO_CENTER_TIMEOUT_MS / 5U + JETSON_AUTO_BRAKE_TIMEOUT_MS / 5U);
@@ -1011,10 +1073,11 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
     Wait_For_Count(&velocity_requests, before_localizing + 1U);
     assert(last_vx > 0.0f && last_vy == 0.0f && last_wz == 0.0f);
 
-    /* 左右都以复核时的新位姿建起点，下一趟返航不能沿用上次 x/y。 */
-    odom.x_m += 0.06;
+    /* 左右投送都重新以全区中心复核时的位姿建起点。 */
+    odom.x_m += 0.11;
     odom.y_m = destination == 1U ? 0.03 : -0.30;
-    odom.yaw_rad += 0.04f;
+    /* 打滑后复定位允许带角度误差，下一趟仍须用开机时面向坡区的参考航向。 */
+    odom.yaw_rad += 0.80f;
     Verify_Safety_Center(center_x, center_y);
     stopped = 1U;
     Step();
@@ -1038,7 +1101,6 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
     Wait_For_Count(&turn_count, 2U);
     assert(last_turn_angle == 180.0f && sent_count == 7U);
     expected_origin = odom;
-    expected_side = destination;
     Steps(3U);
     assert(sent_count == 7U);
     Complete_Search_Turn();
@@ -1058,6 +1120,7 @@ static void Transport_From_ROI(uint8_t destination, uint32_t token, uint8_t stuc
     Wait_For_Count(&velocity_requests, velocities_before + 1U);
     assert(last_vx > 0.0f && last_wz == 0.0f);
     assert(distance_count == 1U && turn_count == 2U);
+    assert(fast_distance_count == before_fast_distance);
 }
 
 static void Test_Return_Recovers_Small_Error(void)
@@ -1082,16 +1145,24 @@ static void Test_Return_Recovers_Small_Error(void)
     assert(enabled && !disables);
 }
 
-static void Test_Return_Distance_Fence(void)
+static void Test_Long_Return(void)
 {
     Prepare_ROI(1U, 73U);
-    odom.x_m = expected_origin.x_m + JETSON_AUTO_RETURN_MAX_M + 0.10;
-    stopped = 1U; /* 故障制动可以在下一拍失能。 */
+    odom = expected_origin;
+    odom.x_m += 1.60;
+    odom.yaw_rad = expected_return_yaw_rad;
     Receive_Arrival_Ack(1U);
     Receive_Roi(1U, 1U);
     Receive_Turn(1U, 73U);
-    Steps(3U);
-    assert(!enabled && !return_commands && disables == 1U && sent_count == 2U);
+    const unsigned before = return_commands;
+    Wait_For_Count(&return_commands, before + 1U);
+    assert(enabled && !disables && last_vx < 0.0f && sent_count == 2U);
+
+    Stop_At_Return_Origin();
+    stopped = 1U;
+    Wait_For_Count(&sent_count, 3U);
+    Check_Sent(2U, JETSON_CAN_TURN_COMPLETED_ID, 73U);
+    assert(enabled && !disables);
 }
 
 static void Test_Transport(uint8_t destination, uint32_t token, uint8_t stuck)
@@ -1103,7 +1174,11 @@ static void Test_Transport(uint8_t destination, uint32_t token, uint8_t stuck)
 /** @brief 一次初始化连续完成左、右、左三趟，核对新起点和请求身份。 */
 static void Test_Consecutive_Transports(void)
 {
-    Test_Transport(1U, 0x89ABCDEFU, 0U);
+    Begin_Target_Test_At_Heading(100U, 0.37f);
+    Prepare_ROI_From_Target(1U, 0x89ABCDEFU);
+    Transport_From_ROI(1U, 0x89ABCDEFU, 0U);
+    assert(expected_origin.yaw_rad > expected_return_yaw_rad + 0.70f);
+    assert(hypot(expected_origin.x_m, expected_origin.y_m) > CHASSIS_RETURN_CORRECTION_MAX_M);
     const uint32_t first_grasp = sent[0].request_id;
     const uint32_t first_release = sent[4].request_id;
     const uint32_t first_search = sent[7].token;
@@ -1121,13 +1196,13 @@ static void Test_Consecutive_Transports(void)
     assert(sent[4].request_id != first_release && sent[7].token != first_search);
     assert(enabled && enables == 1U && disables == 0U && startup_id == first_startup &&
            startup_queries == first_startup_queries);
-    /* 右侧完成后从右侧直接出发，这一趟向左侧横移再投送。 */
+    /* 每趟在全区中心建起点，所以向左投送仍有自己的定时横移。 */
     stops = velocity_requests = distance_count = sent_count = return_commands = 0U;
     turn_count = 1U;
     Prepare_ROI_From_Target(1U, 0x98765432U);
     Transport_From_ROI(1U, 0x98765432U, 0U);
     assert(startup_id == first_startup && startup_queries == first_startup_queries);
-    puts("PASS: same-side left delivery, left-to-right and right-to-left with refreshed origins");
+    puts("PASS: left/right timed deliveries with refreshed common-center origins");
 }
 
 /** @brief 进入转向完成握手并暂时阻塞发送邮箱。
@@ -1197,13 +1272,13 @@ static void Test_Request_Deadline(void)
             Receive_Command_Ack(1U, 1U, token);
             if (scenario == 3U)
                 ++test_tick;
+            const unsigned before_velocity = velocity_requests;
             Run_Auto();
             assert(sent_count == before_final);
-            const unsigned before_velocity = velocity_requests;
-            Receive_Center(JETSON_CAN_SAFETY_CENTER_ID, 5600, 7000);
             Step();
             if (scenario == 0U)
-                assert(enabled && stops == stops_before_reply && velocity_requests == before_velocity + 1U);
+                assert(enabled && stops == stops_before_reply && velocity_requests == before_velocity + 1U &&
+                       last_vx == 0.0f && last_vy == -JETSON_AUTO_LATERAL_SPEED_MPS);
             else
                 assert(!enabled && stops == stops_before_reply + 1U && velocity_requests == before_velocity);
         }
@@ -1695,8 +1770,10 @@ int main(void)
     Test_Transport(1U, 123U, 10U);
     Test_Transport(1U, 123U, 11U);
     Test_Transport(1U, 123U, 12U);
+    Test_Transport(2U, 123U, 13U);
+    Test_Transport(1U, 123U, 14U);
     Test_Return_Recovers_Small_Error();
-    Test_Return_Distance_Fence();
+    Test_Long_Return();
     Test_Distance_Stream_Loss();
     Test_Request_Deadline();
     Test_USB_Send_Error();

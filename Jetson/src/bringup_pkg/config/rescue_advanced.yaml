@@ -236,14 +236,14 @@ bridge:
   mission_status_topic: /mission_node/status
   roi_service: /mission_node/arrived
   command_service: /mission_node/command
-# 夹爪控制参数。刚度按现值填写；开合角为相对上电位置的已定默认值。
+# 夹爪控制参数。开合角相对桥接会话连接时记录的位置。
 gripper:
   # 输出位置刚度 / 速度刚度，待实车标定。
   kp: 1.0
   kd: 0.05
-  # 相对上电位置的闭合角、张开角（度）。待实车核对（装配姿态需板端验证）。
-  closed_deg: -40
-  open_deg: 40
-  # 自动开或合一次的动作时长（秒）；待实车标定。
-  move_s:
+  # 连接时将夹爪置于张开位。以此为零点，闭合转 -50°，张开返回零点。
+  closed_deg: -50
+  open_deg: 0
+  # 自动开或合一次的驱动时长（秒）。
+  move_s: 1.0
 

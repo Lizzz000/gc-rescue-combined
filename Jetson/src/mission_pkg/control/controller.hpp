@@ -21,7 +21,7 @@ struct MissionState
     RoiRejected = 5, RoiInvalid = 6};
   enum class Transport : std::uint8_t {First = 0, Later = 1};
   // 物理握手阶段独立于识别模式和服务等待。SearchingTarget 允许目标中心，
-  // NavigatingSafety / LocalizingStart 允许本趟目的区中心。
+  // NavigatingSafety / LocalizingStart 沿用本趟目的区身份。
   enum class CyclePhase : std::uint8_t
   {
     SearchingTarget = 0,  // 寻找目标，允许 arrived 或显式重找。
@@ -33,7 +33,7 @@ struct MissionState
     SwitchingSeg = 6,     // seg 双确认成功后清目的区和 ROI 编号，恢复寻找。
     RoiFailed = 7,        // ROI 拒绝、无效或超时，等待显式重找。
     Fault = 8,           // 启动初态或运行故障；仅初态可由首个合法 seg 解除。
-    LocalizingStart = 9  // 送达确认后按本趟目的区定位，直到显式重找。
+    LocalizingStart = 9  // 送达确认后按整块安全区中心定位，直到显式重找。
   };
 
   // 检测端首个合法 seg 状态到来前保持故障门控，不发布可行驶坐标。

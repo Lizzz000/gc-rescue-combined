@@ -92,9 +92,9 @@ uint8_t INS_Get_Data(INS_control_data_t *data)
 /** @brief 捕获自动导航速度。 @return 模拟受理为 1。
  * @param[in] vx 前向 m/s。 @param[in] vy 左向 m/s。 @param[in] wz 左转 rad/s。
  */
-uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
+uint8_t Chassis_Set_Navigation_Velocity(float vx, float vy, float wz, uint8_t world_frame)
 {
-    assert(enabled && isfinite(vx) && isfinite(vy) && isfinite(wz));
+    assert(!world_frame && enabled && isfinite(vx) && isfinite(vy) && isfinite(wz));
     ++velocity_requests;
     last_vx = vx;
     last_vy = vy;
@@ -103,6 +103,16 @@ uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
     if (!motion_ready)
         stopped = 0U;
     return 1U;
+}
+
+/* 单趟底盘联调结束于对准及定距，不进入限时盲推或退出。 */
+uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
+{
+    (void)vx;
+    (void)vy;
+    (void)wz;
+    assert(0 && "unexpected timed delivery movement");
+    return 0U;
 }
 
 /** @brief 捕获定距请求，清除先前停车反馈。 @return 模拟受理为 1。

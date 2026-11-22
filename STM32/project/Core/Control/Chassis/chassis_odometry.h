@@ -19,6 +19,10 @@ typedef struct
     Wheel_Alignment_t alignment;
     float common_yaw_rad;
     Heading_ESKF_t heading;
+    uint32_t wheel_yaw_imu_time_ms;
+    float wheel_yaw_gyro_rad_s;
+    uint8_t wheel_yaw_rejected; /* 轮角与陀螺持续不一致，暂不采用轮角弱观测。 */
+    uint8_t wheel_yaw_streak;
     uint8_t initialized;
     uint8_t input_mode; /* 内部输入基线类型；切换来源时不跨帧补积分。 */
 } Odometry_State_t;

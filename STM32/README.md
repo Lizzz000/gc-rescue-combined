@@ -22,22 +22,22 @@
 
 进一步删除 BMI088/IST8310 的四个空初始化接口、BMI088 未使用的 `status/time` 字段和 PID 增量式遗留历史缓存，以及无引用的测试桩和宏。传感器外设仍由 CubeMX 初始化；手动、自动、六轴/九轴、温控和保护逻辑保留，USB 调试记录与旧滤波对照测试保留。
 
-正式运行使用 `CHASSIS_RUN_SPEED_MPS`（0.40 m/s）与 `CHASSIS_RUN_YAW_RATE_RAD_S`（3.0 rad/s）。手动和自动固件各自管理上电零速使能、接管与故障。手动硬上限为 0.50 m/s 合速度和 4.0 rad/s。连续速度按实测周期限制加减速并经 40 ms 平滑，再换算为三轮 CAN1 目标。自动视觉靠近时随距离减速，安全区精调使用独立的低速参数。正式视觉搬运使用 `Debug-Auto` 预设；单次底盘联调用 `Debug-Auto-Chassis-Test`。
+通用平移目标为 `CHASSIS_RUN_SPEED_MPS`（0.40 m/s），正常转向目标为 `CHASSIS_RUN_YAW_RATE_RAD_S`（3.0 rad/s）。手动和自动固件各自管理上电零速使能、接管与故障。手动硬上限为 0.50 m/s 合速度和 4.0 rad/s。连续速度按实测周期限制加减速并经 40 ms 平滑，再换算为三轮 CAN1 目标。正式搬运的视觉靠近和里程计返航限速 0.50 m/s，整块安全区视觉复定位限速 0.33 m/s。正式视觉搬运使用 `Debug-Auto` 预设；单次底盘联调用 `Debug-Auto-Chassis-Test`。
 
 底盘的周期、超时、限速和控制增益集中在 [chassis_config.h](project/Core/Control/Chassis/chassis_config.h)，各轮 ID、方向、齿比和默认电机参数集中在 [chassis_config.c](project/Core/Control/Chassis/chassis_config.c)。自动流程的场地和视觉参数由 [jetson_auto_config.h](project/Core/Control/Jetson/jetson_auto_config.h) 管理。修改固件参数后需重新编译。常用速度配置如下。
 
 - `CHASSIS_STRAIGHT_MAX_SPEED_MPS`、`CHASSIS_DISTANCE_MAX_SPEED_MPS`：平移与定距速度上限。
 - `CHASSIS_VECTOR_MAX_WZ_RAD_S`、`CHASSIS_TURN_OUTPUT_LIMIT`：连续转向硬上限和定角转向正常上限。
-- `JETSON_AUTO_APPROACH_SPEED_MPS`、`JETSON_AUTO_DISTANCE_SPEED_MPS`、`JETSON_AUTO_PUSH_SPEED_MPS`：视觉靠近、定距及盲推/后退的目标速度。
-- `JETSON_AUTO_RETURN_SPEED_MPS`、`JETSON_AUTO_ALIGN_SPEED_MPS` 用于返航和安全区视觉对准。
+- `JETSON_AUTO_APPROACH_SPEED_MPS`、`JETSON_AUTO_DISTANCE_SPEED_MPS`、`JETSON_AUTO_PUSH_SPEED_MPS`：视觉靠近、定距及盲推的目标速度。
+- `CHASSIS_NAV_TRAVEL_SPEED_MPS`、`CHASSIS_NAV_ALIGN_SPEED_MPS` 和 `CHASSIS_NAV_ACCELERATION_MPS2` 统一设置正式自动导航。左右横移、盲推及直线退出的速度和时长由 `JETSON_AUTO_LATERAL_*`、`JETSON_AUTO_PUSH_*`、`JETSON_AUTO_RETRACT_*` 分别设置。
 
-目标速度不得超过对应上限；换算和加减速在底盘控制层执行。类型 3、4 是中心帧，须与 Jetson 同时部署。MissionStatus 过期时 bridge 停发周期流并撤销业务准入，因此独立运行 bridge 也需要配套 Mission 节点。板间类型 1 已删除，夹爪完成通过类型 9 回执。`gripper.move_s` 仍是待标定空值，不要填数字。
+目标速度不得超过对应上限；换算和加减速在底盘控制层执行。类型 3、4 是中心帧，须与 Jetson 同时部署。MissionStatus 过期时 bridge 停发周期流并撤销业务准入，因此独立运行 bridge 也需要配套 Mission 节点。板间类型 1 已删除，夹爪完成通过类型 9 回执。Jetson 配置的夹爪闭合目标为相对会话零点 −50°，张开目标 0°，每次驱动 1 s。
 
 自动流程不增加心跳，复用合法类型 3/4 的接收时效：USB 离线、会话改变或周期流断开达到 250 ms 后触发制动，确认停稳或制动达到 500 ms 后请求失能；故障锁存到显式重新初始化，恢复连接不会自动续跑。启动前须先收到当前 USB 会话的周期帧。正常丢目标仍发送 `valid=0` ，底盘停车等待，夹爪、转向和等待期间也持续发送。250 ms 是断流判定期限，实际停车仍受控制节拍和机械减速影响；Mission 掉线还先经过 Jetson 的 500 ms 状态有效期。
 
 自动靠近使用 [Algorithm/Vision](project/Core/Algorithm/Vision/README.md) 的自适应图像坐标滤波；参数和实际跟踪效果仍需实车验证与标定。
 
-自动搬运首次从左侧起点出发，先原地转 180°。夹取和 ROI 通过后按里程计返回起点；异侧才使用类型 4 横向对准。盲推进退使用锁航向的限时速度。退出并确认送达后，车在本次目的区视觉复核并保存下一趟起点。单次底盘联调仍使用 `JETSON_AUTO_SAFETY_STRAIGHT_M`。详见 [动作与握手](docs/JETSON_USB_TEST.md#机械动作与握手) 和 [里程计与定距控制](docs/ODOMETRY.md)。
+正式搬运首次从整块安全区中心对应的起点出发，先原地转 180°。夹取和 ROI 通过后按里程计返回起点，按目的区定时向左或右横移，再盲推、松爪、直线退出。确认送达后用类型 4 的整区中心视觉复核并保存下一趟起点。单次底盘联调仍使用 `JETSON_AUTO_SAFETY_STRAIGHT_M`。详见 [动作与握手](docs/JETSON_USB_TEST.md#机械动作与握手) 和 [里程计与定距控制](docs/ODOMETRY.md)。
 
 2026-11-17 里程计采用纯 C 模块 `chassis_odometry`，沿用现有三轮几何、轮序、方向、齿比和航向 PID。参考 ros2_controllers 的平面圆弧积分思路，正式入口使用三轮位置增量、平面 ESKF 航向和 SE(2) 积分，不依赖 ROS/Eigen。`Chassis_Get_Odometry` 用于读取估计状态，`Chassis_Reset_Odometry` 仅允许失能或已确认停车时调用。反馈丢失期间不补积分，恢复首组仅重建基线；10 mm 定距交接容差是软件判据，轮滑和航向漂移仍需实车测量。
 

@@ -31,7 +31,7 @@
 
 ## 11 月 18 日运行速度、上电使能与视觉接入
 
-COM7 手动固件使用 `Debug-UART6-Manual`，Jetson 自动搬运固件使用 `Debug-Auto`。两者采用 0.40 m/s 平移、3.0 rad/s 转向的正常目标。手动连续速度可显式提高到 0.50 m/s、4.0 rad/s，起停和换向按原斜坡运行。安全区精对准使用 0.10 m/s。上电取得有效姿态后申请使能，三轮提交零目标并通过反馈检查后就绪。普通松键、换向、自动等待及动作衔接保持使能。COM7 在底盘接下零速目标后即可归还控制，余下减速由板端完成。急停、已接管时断流、姿态或驱动故障进入保护。[操作与协议](../STM32/docs/JETSON_USB_TEST.md) · [COM7 操控](../STM32/manual_test/README.md#usart6-底盘遥控)
+COM7 手动固件使用 `Debug-UART6-Manual`，Jetson 自动搬运固件使用 `Debug-Auto`。通用平移与转向目标分别是 0.40 m/s 和 3.0 rad/s。手动连续速度可显式提高到 0.50 m/s、4.0 rad/s，起停和换向按原斜坡运行。正式自动搬运的目标靠近、返航限速 0.50 m/s，整块安全区视觉复定位限速 0.33 m/s。正式左右横移目标 0.40 m/s，计时 0.70 s。上电取得有效姿态后申请使能，三轮提交零目标并通过反馈检查后就绪。普通松键、换向、自动等待及动作衔接保持使能。COM7 在底盘接下零速目标后即可归还控制，余下减速由板端完成。急停、已接管时断流、姿态或驱动故障进入保护。[操作与协议](../STM32/docs/JETSON_USB_TEST.md) · [COM7 操控](../STM32/manual_test/README.md#usart6-底盘遥控)
 
 自动流程通过 `Visual_Observation_t` 接收物资或安全区中心、有效位、源帧时刻和板端接收信息。新视觉源沿用类型 3/4，重复或乱序源帧不能推进到位确认。当前场地限位仍待标定，自动版上电后可以零速待命。开始搬运还需场地参数、视觉周期流及匹配的开爪回执。[视觉协议](../Jetson/docs/usb-protocol.md) · [自动标定参数](../STM32/project/Core/Control/Jetson/jetson_auto_config.h)
 
@@ -75,7 +75,7 @@ COM7 手动固件使用 `Debug-UART6-Manual`，Jetson 自动搬运固件使用 `
 - `Jetson/src/vision_pkg/field` 负责安全区识别。候选搜索和跟踪在 [field.cpp](../Jetson/src/vision_pkg/field/field.cpp)，边线、内沿与投影在 [geometry.cpp](../Jetson/src/vision_pkg/field/opencv/geometry.cpp)，黑带测量在 [score.cpp](../Jetson/src/vision_pkg/field/opencv/score.cpp)。正式观测由 [ros_convert.hpp](../Jetson/src/vision_pkg/node/ros_convert.hpp) 检查后发布。
 - 常规启动读取 [rescue.yaml](../Jetson/src/bringup_pkg/config/rescue.yaml) 和 [rescue_advanced.yaml](../Jetson/src/bringup_pkg/config/rescue_advanced.yaml)。标准场地外框 660 × 360 mm，内框 600 × 300 mm，平面内缩每侧 30 mm。紫围栏高 20 mm，黑带长 300 mm、宽 20 mm、高 20 mm。11 月 16 日实测的 660 × 640 mm 场地使用当时的[独立配置](../Jetson/outputs/field_trial_20261116/FIELD_PARAMETERS.txt)。
 - 板间通信使用 USB CDC。STM32 通过 CAN1 控制电机。载荷和时序以 [USB 协议](../Jetson/docs/usb-protocol.md) 为准，实际双端联调从对应日期的[现场记录](../Jetson/outputs/field_trial_20261116/COMMUNICATION_CHECK_END.txt)接续。
-- 里程计组合入口在 [chassis_odometry.c](../STM32/project/Core/Control/Chassis/chassis_odometry.c)，反馈快照、定距闭环与故障停车在 [chassis.c](../STM32/project/Core/Control/Chassis/chassis.c)。正式配置默认关闭自动模式，自动距离为 0，Jetson `gripper.move_s` 留空。现场标定与复测历史见[里程计记录](../STM32/docs/ODOMETRY.md)。
+- 里程计组合入口在 [chassis_odometry.c](../STM32/project/Core/Control/Chassis/chassis_odometry.c)，反馈快照、定距闭环与故障停车在 [chassis.c](../STM32/project/Core/Control/Chassis/chassis.c)。默认固件为手动模式。正式搬运还需标定横移及复定位上限、ROI 检查退距和拒绝恢复退距。Jetson 夹爪以张开位置作为会话零点，闭合到 −50°，张开回到 0°，驱动时间为 1 s。现场标定与复测历史见[里程计记录](../STM32/docs/ODOMETRY.md)。
 - 里程计初次接入时，主机回归 27 套、双端协议互验和四种 ARM 配置编译通过，覆盖慢跟随、堵转、到位后滑行与 CAN 拥塞。[当时的验证结果](../STM32/docs/ODOMETRY.md#2026-11-17-主机验证结果)
 
 ## 安全区当前行为和待验证项

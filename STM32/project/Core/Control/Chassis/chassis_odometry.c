@@ -26,6 +26,12 @@ _Static_assert(CHASSIS_ODOMETRY_MAX_INTERVAL_MS < WHEEL_ALIGNMENT_HISTORY_MS,
                "alignment history must cover all valid wheel timestamps");
 
 #define ODOMETRY_TWO_PI 6.28318530717958647692f
+#define WHEEL_YAW_MAX_ENDPOINT_SKEW_MS 10
+#define WHEEL_YAW_REJECT_RAD_S 0.45f
+#define WHEEL_YAW_RESTORE_RAD_S 0.25f
+#define WHEEL_YAW_RATE_FRACTION 0.10f
+#define WHEEL_YAW_REJECT_SAMPLES 3U
+#define WHEEL_YAW_RESTORE_SAMPLES 5U
 
 /** @brief 初始化独立里程计；不触发传感器采样或电机动作。 */
 void Odometry_Init(Odometry_State_t *state)
@@ -47,6 +53,8 @@ void Odometry_Invalidate(Odometry_State_t *state)
     state->initialized = 0U;
     state->data.valid = 0U;
     state->heading.initialized = 0U;
+    state->wheel_yaw_rejected = 0U;
+    state->wheel_yaw_streak = 0U;
     state->data.wheel_wz_rad_s = 0.0f;
     state->data.vy_mps = 0.0f;
     state->data.vx_mps = 0.0f;
@@ -157,6 +165,52 @@ static uint8_t Get_Wheel_Deltas(const Odometry_State_t *state, const float posit
     return 1U;
 }
 
+/* 只用新 IMU 样本，比较公共轮角区间的平均旋转速度。 */
+static void Update_Wheel_Yaw_Gate(Odometry_State_t *state, uint32_t imu_time_ms,
+                                  float gyro_rad_s, uint32_t wheel_interval_ms,
+                                  float wheel_delta_rad)
+{
+    const int32_t imu_interval_ms = (int32_t)(imu_time_ms - state->wheel_yaw_imu_time_ms);
+    if (imu_interval_ms <= 0)
+        return;
+
+    const uint32_t wheel_end_ms = state->alignment.common_time_ms;
+    const int32_t wheel_end_from_imu_ms = (int32_t)(wheel_end_ms - state->wheel_yaw_imu_time_ms);
+    const int32_t wheel_start_from_imu_ms =
+        (int32_t)(wheel_end_ms - wheel_interval_ms - state->wheel_yaw_imu_time_ms);
+    const float previous_gyro_rad_s = state->wheel_yaw_gyro_rad_s;
+    state->wheel_yaw_imu_time_ms = imu_time_ms;
+    state->wheel_yaw_gyro_rad_s = gyro_rad_s;
+
+    if (wheel_interval_ms == 0U || imu_interval_ms > (int32_t)CHASSIS_ODOMETRY_MAX_IMU_AGE_MS ||
+        wheel_start_from_imu_ms < -WHEEL_YAW_MAX_ENDPOINT_SKEW_MS ||
+        wheel_end_from_imu_ms > imu_interval_ms + WHEEL_YAW_MAX_ENDPOINT_SKEW_MS)
+    {
+        state->wheel_yaw_streak = 0U;
+        return;
+    }
+
+    /* 对齐轮区间中点；小幅超出 IMU 时间窗时延用最近实测值。 */
+    const float midpoint_ms = 0.5f * (wheel_start_from_imu_ms + wheel_end_from_imu_ms);
+    const float fraction = fmaxf(0.0f, fminf(1.0f, midpoint_ms / (float)imu_interval_ms));
+    const float gyro_at_wheels_rad_s = previous_gyro_rad_s +
+        (gyro_rad_s - previous_gyro_rad_s) * fraction - state->heading.bias_rad_s;
+    const float wheel_rad_s = wheel_delta_rad / (0.001f * wheel_interval_ms);
+    const float disagreement_rad_s = fabsf(wheel_rad_s - gyro_at_wheels_rad_s);
+    const float rate_allowance_rad_s = WHEEL_YAW_RATE_FRACTION * fabsf(gyro_at_wheels_rad_s);
+    const uint8_t rejected = state->wheel_yaw_rejected;
+    const uint8_t change = rejected ?
+        disagreement_rad_s <= WHEEL_YAW_RESTORE_RAD_S + rate_allowance_rad_s :
+        disagreement_rad_s >= WHEEL_YAW_REJECT_RAD_S + rate_allowance_rad_s;
+    if (!change)
+        state->wheel_yaw_streak = 0U;
+    else if (++state->wheel_yaw_streak >= (rejected ? WHEEL_YAW_RESTORE_SAMPLES : WHEEL_YAW_REJECT_SAMPLES))
+    {
+        state->wheel_yaw_rejected = !rejected;
+        state->wheel_yaw_streak = 0U;
+    }
+}
+
 static uint8_t Update_Position(Odometry_State_t *state, const float wheel_position_rad[3],
                                const float wheel_rad_s[3], const Odometry_Feedback_Timing_t *timing,
                                float yaw_rad, float gyro_rad_s, uint32_t now_us,
@@ -245,8 +299,11 @@ static uint8_t Update_Position(Odometry_State_t *state, const float wheel_positi
         if (use_eskf)
         {
             const float dt = elapsed_us * 0.000001f;
+            if (timing != NULL && observe_yaw)
+                Update_Wheel_Yaw_Gate(state, timing->imu_time_ms, gyro_rad_s, advance_ms, displacement[2]);
             /* ESKF 的预测周期属于控制拍，轮角速度属于两个公共时刻之间的区间。 */
-            const float wheel_turn = advance_ms > 0 ? displacement[2] * (dt / (0.001f * advance_ms)) : NAN;
+            const float wheel_turn = advance_ms > 0U && !state->wheel_yaw_rejected ?
+                displacement[2] * (dt / (0.001f * advance_ms)) : NAN;
             const uint8_t heading_valid = timing != NULL
                 ? Heading_ESKF_Update_Observed(&state->heading, yaw_rad, gyro_rad_s, wheel_turn, dt, observe_yaw)
                 : Heading_ESKF_Update(&state->heading, yaw_rad, gyro_rad_s, displacement[2], dt);
@@ -283,6 +340,8 @@ static uint8_t Update_Position(Odometry_State_t *state, const float wheel_positi
         Wheel_Alignment_Reset(&state->alignment, wheel_position_rad, timing->wheel_time_ms,
                              timing->control_time_ms - newest_age_ms);
         state->common_yaw_rad = yaw_rad - gyro_rad_s * (0.001f * newest_age_ms);
+        state->wheel_yaw_imu_time_ms = timing->imu_time_ms;
+        state->wheel_yaw_gyro_rad_s = gyro_rad_s;
     }
     for (unsigned i = 0U; i < 3U; ++i)
     {

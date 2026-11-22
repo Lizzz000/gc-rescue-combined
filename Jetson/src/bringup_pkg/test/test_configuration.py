@@ -1,4 +1,4 @@
-"""配置入口：自动路径在 bridge 角色下拒绝未标定的夹爪键；其它角色不受影响。"""
+"""验证正式启动配置的夹爪参数及缺失时的启动检查。"""
 import sys
 import tempfile
 import unittest
@@ -52,19 +52,35 @@ class AutoGripperConfigTest(unittest.TestCase):
         self.assertEqual(snapshot['values']['vision.field.black_width_m'], 0.020)
         self.assertEqual(snapshot['nodes']['detect_node']['field.black_width_m'], 0.020)
 
-    def test_official_yaml_rejects_empty_move_s_when_bridge_enabled(self):
-        with self.assertRaises(ConfigurationError) as raised:
-            load_configuration(OFFICIAL, run='all', package_resolver=_resolver, require_assets=False)
-        self.assertIn('gripper.move_s', str(raised.exception))
-        self.assertIn('待实车标定', str(raised.exception))
-        with self.assertRaises(ConfigurationError) as raised_bridge:
-            load_configuration(OFFICIAL, run='bridge', package_resolver=_resolver, require_assets=False)
-        self.assertIn('gripper.move_s', str(raised_bridge.exception))
+    def test_official_yaml_passes_gripper_preset_to_bridge(self):
+        for role in ('all', 'bridge'):
+            with self.subTest(role=role):
+                snapshot = load_configuration(OFFICIAL, run=role, package_resolver=_resolver,
+                                              require_assets=False)
+                bridge = snapshot['nodes']['bridge_node']
+                self.assertEqual(bridge['gripper_closed_deg'], -50.0)
+                self.assertEqual(bridge['gripper_open_deg'], 0.0)
+                self.assertEqual(bridge['gripper_move_s'], 1.0)
+
+    def test_empty_move_s_rejected_when_bridge_enabled(self):
+        config = read_configuration(OFFICIAL, package_resolver=_resolver)
+        config['gripper']['move_s'] = None
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'config.yaml'
+            path.write_text(yaml.safe_dump(config, sort_keys=False), encoding='utf-8')
+            for role in ('all', 'bridge'):
+                with self.subTest(role=role):
+                    with self.assertRaises(ConfigurationError) as raised:
+                        load_configuration(path, run=role, package_resolver=_resolver, require_assets=False)
+                    self.assertIn('gripper.move_s', str(raised.exception))
+                    self.assertIn('待实车标定', str(raised.exception))
+            snapshot = load_configuration(path, run='vision', package_resolver=_resolver,
+                                          require_assets=False)
+            self.assertIsNone(snapshot['values']['gripper.move_s'])
 
     def test_official_yaml_loads_when_bridge_is_not_selected(self):
         snapshot = load_configuration(OFFICIAL, run='vision', package_resolver=_resolver,
                                       require_assets=False)
-        self.assertIsNone(snapshot['values']['gripper.move_s'])
         self.assertNotIn('bridge_node', snapshot['nodes'])
 
 

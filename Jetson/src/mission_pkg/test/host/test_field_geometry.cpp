@@ -80,6 +80,10 @@ void testFieldGeometry()
   const Observation valid{true, true, region(h, 0, 1), region(h, 0, 0.5), region(h, 0.5, 1),
                           {project(h, 0.5, 0), project(h, 0.5, 1)}, 640, 480};
   CHECK(FieldGeometry::validObservation(valid));
+  CHECK(&FieldGeometry::targetPolygon(valid, false, true) == &valid.left_region);
+  CHECK(&FieldGeometry::targetPolygon(valid, false, false) == &valid.right_region);
+  CHECK(&FieldGeometry::targetPolygon(valid, true, true) == &valid.corners);
+  CHECK(&FieldGeometry::targetPolygon(valid, true, false) == &valid.corners);
   auto bad = valid;
   bad.valid = false;
   CHECK(!FieldGeometry::validObservation(bad));

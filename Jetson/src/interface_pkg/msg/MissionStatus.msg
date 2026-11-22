@@ -1,7 +1,7 @@
 # Copyright 2026 li
 # SPDX-License-Identifier: Apache-2.0
 # 任务状态：目的地、异步操作、运输轮次与 STM32 握手阶段。不是运动速度命令。
-# mission_node 发布到 /mission_node/status。safety_node 用目的地选左右区，bridge_node 用它做中心门控。
+# mission_node 发布到 /mission_node/status。safety_node 按阶段选几何，bridge_node 按目的地核对路由。
 # 目的地和结果的取值要与 safety_node、bridge_node 用的是同一套，不能另编。
 
 # header.stamp 是本机状态发布时间；同一个时刻可先后出现 PENDING/SUCCESS，消费者不能按帧时间去重。
@@ -28,7 +28,7 @@ uint8 TRANSPORT_FIRST=0
 uint8 TRANSPORT_LATER=1
 # 目的地取值必须与 SafetyTarget.side 同一套。safety_node 的合法性校验和 bridge_node 的中心门控认的就是这组数。
 # 业务握手与识别模式分开：TaskState 仍只报告实际 seg/field。
-# SEARCHING_TARGET 允许目标中心，NAVIGATING_SAFETY 和 LOCALIZING_START 允许本趟目的区中心。
+# SEARCHING_TARGET 允许目标中心。NAVIGATING_SAFETY 允许目的区中心，LOCALIZING_START 允许完整内框中心。
 uint8 CYCLE_SEARCHING_TARGET=0
 uint8 CYCLE_CHECKING_ROI=1
 # 闭合及后退后的 ROI 已提交；等待 STM32 授权后的去程转向完成，仍 seg 且停坐标。

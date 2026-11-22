@@ -4,7 +4,7 @@
 
 // ---- 任务节点实现 ----
 // 阅读：只在 Mission 已提交目的区、且实际阶段是 field 时计算中心。
-// 左还是右只看 MissionStatus，本文件不改口。
+// 投送前按 MissionStatus 选左右区，送达后取整块安全区。
 // 四边形是否可用在 field/field_geometry.hpp。
 // Copyright 2026 li
 // SPDX-License-Identifier: Apache-2.0
@@ -23,7 +23,7 @@
 
 // ---- SafetyNode：构造与参数 ----
 
-// 接收场地观测，按 Mission 已提交的目的区计算透视中心；坐标不裁剪。
+// 接收场地观测，按任务阶段计算透视中心，坐标不裁剪。
 
 SafetyNode::SafetyNode(const rclcpp::NodeOptions & options)
 : Node("safety_node", options), settings_(loadParameters())
@@ -118,7 +118,7 @@ void SafetyNode::destinationCallback(
   // 不能按源帧去重方式过滤相等时间，否则会丢掉完成确认。
   if (stamp < status_stamp_ns_) {return;}
   status_stamp_ns_ = stamp;
-  // 导航和送达后的起点定位共用本趟目的区，切换阶段时清掉旧中心。
+  // 两个阶段沿用本趟路由身份，切换阶段时清掉旧中心。
   const bool ready =
     (msg->cycle_phase == interface_pkg::msg::MissionStatus::CYCLE_NAVIGATING_SAFETY ||
     msg->cycle_phase == interface_pkg::msg::MissionStatus::CYCLE_LOCALIZING_START) &&
@@ -191,13 +191,15 @@ interface_pkg::msg::SafetyTarget SafetyNode::makeSafetyTarget(
   // 模式切换服务成功不代表几何已就绪。四项必须同时成立才计算中心：
   // 本帧正式几何有效、导航或起点定位阶段空闲成功、目的区已定、源图时间不早于该次状态。
   // 比较的两端都是 ROS 时间；帧的单调到达时间只用于断流，不参与路由截止。
-  // 运输阶段不参与这里。左/右只使用 Mission 已经提交的 destination，本节点不改口。
+  // 保留本趟目的区作为授权身份，几何范围由流程阶段决定。
   if (output.valid && destination_ready_ &&
     destination_ != interface_pkg::msg::MissionStatus::DEST_NONE &&
     stamp >= destination_cutoff_ns_)
   {
-    const auto & points = destination_ == interface_pkg::msg::MissionStatus::DEST_LEFT ?
-      output.left_region : output.right_region;
+    const bool localizing_start =
+      cycle_phase_ == interface_pkg::msg::MissionStatus::CYCLE_LOCALIZING_START;
+    const bool left_destination = destination_ == interface_pkg::msg::MissionStatus::DEST_LEFT;
+    const auto & points = FieldGeometry::targetPolygon(output, localizing_start, left_destination);
     target.valid = FieldGeometry::detail::normalizedCenter(
       points, settings_.image_width, settings_.image_height, target.x, target.y);
   }

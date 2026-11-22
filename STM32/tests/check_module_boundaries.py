@@ -37,15 +37,18 @@ def build(cc, folder, units, headers=(), test=None, flags=()):
 def check_module_boundaries(cc, temp_dir=None):
     with tempfile.TemporaryDirectory(prefix="stm32_boundaries_", dir=temp_dir) as tmp:
         work = Path(tmp).resolve()
-        # AHRS 的公共入口和 Mahony 后端共同实现姿态解算，其余算法独立链接。
+        # 仅给组合模块提供直接依赖，其余算法继续单独链接。
         ahrs = ALGORITHM / "AHRS/AHRS"
         mahony = ALGORITHM / "AHRS/MahonyAHRS"
+        velocity_profile = ALGORITHM / "Chassis/velocity_profile"
+        navigation_speed = ALGORITHM / "Chassis/navigation_speed"
         build(cc, work / "ahrs", [ahrs, mahony])
+        build(cc, work / "velocity_profile", [velocity_profile, navigation_speed])
         leaves = [p.with_suffix("") for p in sorted(ALGORITHM.rglob("*.c"))
-                  if p.with_suffix("") not in (ahrs, mahony)]
+                  if p.with_suffix("") not in (ahrs, mahony, velocity_profile)]
         for unit in leaves:
             build(cc, work / unit.name, [unit])
-        print(f"PASS: {1 + len(leaves)} isolated algorithm modules", flush=True)
+        print(f"PASS: {2 + len(leaves)} isolated algorithm modules", flush=True)
 
         # 两侧各自使用真实控制器及源文件，只提供一组公共底盘/链路值接口与硬件替身。
         common_headers = [CORE / name for name in ("Control/Chassis/chassis.h",

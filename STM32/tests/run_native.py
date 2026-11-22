@@ -153,6 +153,8 @@ def main():
                                       "project/Core/Control/Vision/tracked_visual_servo.c",
                                       "project/Core/Algorithm/Vision/adaptive_kalman.c",
                                       "project/Core/Algorithm/Vision/visual_servo.c"]
+    suites["navigation_speed"] = ["tests/native/test_navigation_speed.c",
+                                  "project/Core/Algorithm/Chassis/navigation_speed.c"]
     suites["point_plan"] = ["tests/native/test_point_plan.c", "project/Core/Algorithm/Chassis/point_plan.c",
                             "project/Core/Algorithm/Chassis/velocity_profile.c"]
     suites["heading_eskf"] = ["tests/native/test_heading_eskf.c", "project/Core/Algorithm/Chassis/heading_eskf.c", "project/Core/Control/Chassis/chassis_odometry.c", "project/Core/Algorithm/Chassis/motor_chassis.c"]
@@ -174,6 +176,8 @@ def main():
             sources.append("project/Core/Control/Chassis/chassis_config.c")
             sources.append("project/Core/Control/Chassis/chassis_odometry.c")
             sources.append("project/Core/Algorithm/Chassis/velocity_profile.c")
+        if "project/Core/Algorithm/Chassis/velocity_profile.c" in sources:
+            sources.append("project/Core/Algorithm/Chassis/navigation_speed.c")
         if "project/Core/Control/Chassis/chassis_odometry.c" in sources:
             sources.extend(["project/Core/Algorithm/Chassis/wheel_alignment.c",
                             "project/Core/Algorithm/Chassis/planar_odometry.c"])

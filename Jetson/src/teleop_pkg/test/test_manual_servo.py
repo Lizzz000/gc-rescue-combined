@@ -90,11 +90,12 @@ class ManualConfigTest(unittest.TestCase):
         self.assertEqual(config['closed_deg'], -40)
         self.assertEqual(config['open_deg'], 40)
 
-    def test_official_yaml_empty_move_s_still_loads(self):
-        # 官方 yaml 的 move_s 为空只约束自动路径；手动入口忽略该键。
+    def test_official_yaml_loads_gripper_positions(self):
         path = Path(__file__).resolve().parents[2] / 'bringup_pkg/config/rescue.yaml'
         config = manual_control.load_manual_config(path)
         self.assertTrue(config['gripper_device'].startswith('/dev/'))
+        self.assertEqual(config['closed_deg'], -50.0)
+        self.assertEqual(config['open_deg'], 0.0)
 
     def test_config_required_and_old_flags_rejected(self):
         with tempfile.TemporaryDirectory() as folder:

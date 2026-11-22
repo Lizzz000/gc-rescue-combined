@@ -232,6 +232,7 @@ static double asynchronous_rms_mm(int pure_turn, double *peak_mm)
         trajectory(.01 * i, pure_turn, pose, velocity);
         assert(Odometry_Update_Position_ESKF_Timed(&odom, position, wheel, stamp, (float)pose[2],
                (float)velocity[2], UINT32_MAX - 49999U + i * 10000U, 1U));
+        assert(!odom.wheel_yaw_rejected);
         trajectory(.001 * (10 * i - max_delay), pure_turn, pose, velocity);
         const double error_mm = 1000.0 * hypot(odom.data.x_m - pose[0], odom.data.y_m - pose[1]);
         squares += error_mm * error_mm;
@@ -326,6 +327,66 @@ static void test_alignment_reset_and_source_switch(void)
     assert(odom.data.x_m == x && odom.data.y_m == y);
 }
 
+static void test_timed_wheel_yaw_rejection(void)
+{
+    Odometry_State_t odom;
+    Odometry_Init(&odom);
+    const uint32_t first_ms = UINT32_MAX - 25U;
+    const uint32_t first_us = UINT32_MAX - 35000U;
+    float position[3] = {0.0f};
+    const float stationary[3] = {0.0f};
+    const float asymmetric_slip[3] = {8.0f, 0.0f, 0.0f};
+    Odometry_Feedback_Timing_t timing = {
+        .wheel_time_ms = {first_ms, first_ms, first_ms},
+        .imu_time_ms = first_ms,
+        .control_time_ms = first_ms,
+    };
+    assert(Odometry_Update_Feedback(&odom, position, stationary, &timing, 0, 0, first_us, 1U));
+
+    for (unsigned frame = 1U; frame <= 9U; ++frame)
+    {
+        const float *wheel = frame <= 4U ? asymmetric_slip : stationary;
+        timing.control_time_ms = first_ms + frame * 10U;
+        for (unsigned i = 0U; i < 3U; ++i)
+        {
+            timing.wheel_time_ms[i] = timing.control_time_ms;
+            position[i] += wheel[i] * 0.01f;
+        }
+
+        /* 重复和乱序 IMU 不能计入连续证据。 */
+        const uint8_t observe_yaw = frame != 2U;
+        if (frame == 9U)
+            timing.imu_time_ms = timing.control_time_ms - 15U;
+        else if (observe_yaw)
+            timing.imu_time_ms = timing.control_time_ms;
+        assert(Odometry_Update_Feedback(&odom, position, wheel, &timing, 0, 0,
+                                        first_us + frame * 10000U, observe_yaw));
+        assert(odom.data.valid);
+
+        if (frame < 4U)
+        {
+            assert(!odom.wheel_yaw_rejected);
+            assert(odom.heading.wheel_bias_gain > 0.0f);
+        }
+        else
+        {
+            assert(odom.wheel_yaw_rejected);
+            assert(odom.heading.wheel_bias_gain == 0.0f);
+        }
+    }
+    assert(odom.data.y_m < 0.0); /* 门控只关闭轮角弱观测，保留平移积分。 */
+
+    timing.control_time_ms += 10U;
+    timing.imu_time_ms = timing.control_time_ms;
+    for (unsigned i = 0U; i < 3U; ++i)
+        timing.wheel_time_ms[i] = timing.control_time_ms;
+    assert(Odometry_Update_Feedback(&odom, position, stationary, &timing, 0, 0, first_us + 100000U, 1U));
+    assert(!odom.wheel_yaw_rejected && odom.heading.wheel_bias_gain > 0.0f);
+
+    Odometry_Invalidate(&odom);
+    assert(!odom.wheel_yaw_rejected && !odom.wheel_yaw_streak && !odom.data.valid);
+}
+
 int main(void)
 {
     test_yaw_jump_and_source_time();
@@ -333,6 +394,7 @@ int main(void)
     test_asynchronous_translation();
     test_encoder_intervals_without_overlap();
     test_alignment_reset_and_source_switch();
+    test_timed_wheel_yaw_rejection();
     test_prediction_and_joseph();test_yaw_priority_and_noise();test_invalid_and_odometry();
     puts("PASS planar ESKF: YAW priority, weak/slipping encoder, gyro bias, noise, PSD, SO(2) wrap and SE(2) integration");
     return 0;

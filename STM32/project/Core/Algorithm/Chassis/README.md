@@ -50,3 +50,13 @@ AHRS YAW与gyro来自同一IMU，有相关性。噪声与方差下限是工程�
 参考 [Solà的ESKF推导，§5–6](https://arxiv.org/html/1711.02508v1)（[SciSpace检索记录](https://scispace.com/papers/quaternion-kinematics-for-the-error-state-kalman-filter-4h3c1yi2bu)）的误差预测、注入和复位流程；对照阅读 [OpenVINS StateHelper固定版本](https://github.com/rpng/open_vins/blob/74a63cf758f595cc280f2165e5a6576e7ef8521d/ov_msckf/src/state/StateHelper.cpp)的误差状态更新组织。按本车二维模型独立编写C实现，没有复制OpenVINS的GPL C++/Eigen源码。
 
 旋转校准和同向30圈复测见 [YAW/ESKF板端记录](../../../../docs/SPIN_YAW_20261117.md)。
+
+## 自动导航速度实验
+
+自动导航的沿程速度目标仍由视觉制动包络和里程计点位规划给出。控制拍内只在需要增加平移速度时使用实验方法。三个候选共享现有合加速度上限，最后一步限制在目标速度内，反向平移先过零。
+
+- MPC 每拍枚举 7 个加速度候选，用一阶速度响应预测 8 拍，比较跟踪误差、动作幅值和动作变化代价，仅执行首拍。
+- SMC 以沿速度差方向的反馈误差为滑模变量，通过 0.025 m/s 的边界层连续地限制输出。
+- ADRC 用二阶扩张状态观测器估计平移速度和总扰动，使用上一拍限幅后的指令增量，并在同一加速度包络内补偿。
+
+方法取自有限时域滚动控制、滑模边界层和扩张状态观测器的通用结构。这里的模型及初值是本车的主机实验配置。 [OSQP 的 MPC 示例](https://osqp.org/docs/examples/mpc.html) · [移动机器人 SMC 和 ADRC 研究](https://scispace.com/papers/robust-tracking-control-of-wheeled-mobile-robot-based-on-1j8jfdp1ea)

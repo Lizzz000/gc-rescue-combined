@@ -41,6 +41,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Algorithm/PID/pid.c
     Core/Algorithm/Chassis/motor_chassis.c
     Core/Algorithm/Chassis/velocity_profile.c
+    Core/Algorithm/Chassis/navigation_speed.c
     Core/Control/Chassis/chassis_odometry.c
     Core/Algorithm/Chassis/wheel_alignment.c
     Core/Algorithm/Chassis/planar_odometry.c
@@ -89,6 +90,15 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 )
 
 # Add project symbols (macros)
+set(CHASSIS_NAV_SPEED_CONTROLLER "0" CACHE STRING "Navigation speed controller: 0=baseline, 1=MPC, 2=SMC, 3=ADRC")
+set_property(CACHE CHASSIS_NAV_SPEED_CONTROLLER PROPERTY STRINGS 0 1 2 3)
+if(NOT CHASSIS_NAV_SPEED_CONTROLLER MATCHES "^[0-3]$")
+    message(FATAL_ERROR "CHASSIS_NAV_SPEED_CONTROLLER must be 0, 1, 2 or 3")
+endif()
+if(NOT CHASSIS_NAV_SPEED_CONTROLLER STREQUAL "0")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE CHASSIS_NAV_SPEED_CONTROLLER=${CHASSIS_NAV_SPEED_CONTROLLER})
+endif()
+
 # 与 hal_conf.h 的空宏一致，避免重定义告警；Cube 重新生成注释掉它时仍启用 PCD。
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAL_PCD_MODULE_ENABLED=)
 option(CHASSIS_TUNING_ENABLED "Build explicit-command SWD chassis tuning firmware" OFF)

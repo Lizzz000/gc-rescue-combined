@@ -6,7 +6,13 @@
 #undef JETSON_AUTO_SAFETY_STRAIGHT_M
 #define JETSON_AUTO_SAFETY_STRAIGHT_M 0.4f
 
-/* 只在主机反例中清空视觉容差，其余全部使用真实部署宏。 */
+/* 合成帧使用固定中心，现场相机标定不参与单趟联调回归。 */
+#undef JETSON_AUTO_TARGET_X
+#undef JETSON_AUTO_TARGET_Y
+#define JETSON_AUTO_TARGET_X 0.50f
+#define JETSON_AUTO_TARGET_Y 0.75f
+
+/* 主机反例在合成窗口的基础上清空横向容差。 */
 #ifdef TEST_JETSON_CHASSIS_BAD_WINDOW
 #undef JETSON_AUTO_TARGET_TOL_X
 #define JETSON_AUTO_TARGET_TOL_X 0.0f

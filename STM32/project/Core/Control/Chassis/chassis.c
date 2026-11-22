@@ -18,6 +18,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include <math.h>
+#include <stddef.h>
 
 #define DEG_TO_RAD 0.01745329251994329577f
 #define CHASSIS_TURN_DEG_TO_RAD 0.01745329251994329577
@@ -59,12 +60,24 @@ volatile float chassis_heading_debug[6];
 static uint32_t odometry_seq[3];
 static uint32_t odometry_imu_sample_ms;
 static double distance_origin_x, distance_origin_y, distance_goal_m, distance_progress_m;
-static float distance_axis_x, distance_axis_y, distance_cross_speed;
+static float distance_axis_x, distance_axis_y, distance_cross_speed, distance_position_kp;
 static uint32_t distance_timeout_ms, distance_progress_ms, distance_stop_ms;
 static uint8_t distance_completion_pending;
 static float vector_target[3], vector_smoothing_s;
 static Velocity_Profile_t velocity_profile;
-static uint8_t vector_hold_yaw, vector_world_frame;
+static Navigation_Speed_State_t navigation_speed_state;
+_Static_assert(CHASSIS_NAV_SPEED_CONTROLLER >= NAV_SPEED_BASELINE &&
+               CHASSIS_NAV_SPEED_CONTROLLER <= NAV_SPEED_ADRC, "invalid navigation speed controller");
+static const Velocity_Navigation_Config_t navigation_config = {
+    .start_accel_mps2 = CHASSIS_NAV_START_ACCEL_MPS2,
+    .linear_accel_mps2 = CHASSIS_NAV_ACCELERATION_MPS2,
+    .linear_decel_mps2 = CHASSIS_NAV_DECELERATION_MPS2,
+    .reversal_decel_mps2 = CHASSIS_NAV_REVERSAL_DECELERATION_MPS2,
+    .full_accel_speed_mps = CHASSIS_NAV_FULL_ACCEL_SPEED_MPS,
+    .angular_accel_rad_s2 = CHASSIS_VECTOR_ACCEL_RAD_S2,
+    .speed_mode = CHASSIS_NAV_SPEED_CONTROLLER,
+};
+static uint8_t vector_hold_yaw, vector_world_frame, vector_navigation;
 static float command_yaw_rad;
 static float yaw_rate_filtered;
 static uint8_t yaw_rate_filter_valid;
@@ -327,7 +340,8 @@ void Chassis_Stop(void)
     turn_in_window = turn_zero_submitted = turn_imu_quiet = 0U;
     distance_turn_blend = 0U;
     distance_completion_pending = 0U;
-    vector_hold_yaw = vector_world_frame = 0U;
+    vector_hold_yaw = vector_world_frame = vector_navigation = 0U;
+    navigation_speed_state = (Navigation_Speed_State_t){0};
     yaw_rate_filter_valid = 0U;
 #if CHASSIS_TUNING_ENABLED
     vector_calibration_spin = 0U;
@@ -357,6 +371,7 @@ void Chassis_Hold(void)
         vy = sine * last_body_target[0] + cosine * last_body_target[1];
     }
     Velocity_Profile_Seed(&velocity_profile, vx, vy, last_body_target[2]);
+    navigation_speed_state = (Navigation_Speed_State_t){0};
     for (unsigned i = 0; i < 3; ++i)
         vector_target[i] = 0.0f;
     vector_hold_yaw = 0U;
@@ -553,8 +568,8 @@ uint8_t Chassis_Translation_Start(Chassis_Translation_Direction_t direction,
  *       本车连续往返适配：转向剩余 5 度内允许接入定距，保留原转向终点航向，
  *       由原直行 PID 在行驶中修偏；角速度沿原斜坡接管，不经过停车状态。
  */
-uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction,
-                               float distance_m, float speed_limit_mps)
+static uint8_t Start_Distance(Chassis_Translation_Direction_t direction,
+                              float distance_m, float speed_limit_mps, float position_kp)
 {
     if (!isfinite(distance_m) || distance_m < CHASSIS_DISTANCE_MIN_M || !isfinite(speed_limit_mps) ||
         speed_limit_mps <= 0.0f || speed_limit_mps > CHASSIS_DISTANCE_MAX_SPEED_MPS)
@@ -601,6 +616,7 @@ uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction,
     else if (!Prepare_Translation(direction))
         return 0U;
     distance_goal_m = distance_m;
+    distance_position_kp = position_kp;
     distance_origin_x = origin.x_m;
     distance_origin_y = origin.y_m;
     float ux, uy;
@@ -613,6 +629,18 @@ uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction,
     vector_world_frame = 1U;
     mode = DISTANCE;
     return 1U;
+}
+
+uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction,
+                               float distance_m, float speed_limit_mps)
+{
+    return Start_Distance(direction, distance_m, speed_limit_mps, CHASSIS_DISTANCE_POSITION_KP);
+}
+
+uint8_t Chassis_Distance_Start_Fast(Chassis_Translation_Direction_t direction,
+                                    float distance_m, float speed_limit_mps)
+{
+    return Start_Distance(direction, distance_m, speed_limit_mps, CHASSIS_DISTANCE_FAST_POSITION_KP);
 }
 
 /** @brief 返回实测位移在锁定方向的有符号投影；横移、绕圈不能冒充前进。 */
@@ -641,7 +669,7 @@ static void Service_Distance(float dt, uint32_t now_ms)
         return;
     }
     const float braking_speed = sqrtf(2.0f * CHASSIS_DISTANCE_ACCELERATION_MPS2 * (float)remaining);
-    const float approach_speed = fmaxf(CHASSIS_DISTANCE_POSITION_KP * (float)remaining,
+    const float approach_speed = fmaxf(distance_position_kp * (float)remaining,
                                       CHASSIS_DISTANCE_APPROACH_SPEED_MPS);
     const float desired_speed = fminf(target_speed,
         fminf(braking_speed, approach_speed));
@@ -706,7 +734,7 @@ uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg)
  * @note 连续更新平移目标保留航向；显式转向结束后按当前姿态重新锁定，斜坡连续。
  */
 static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw, uint8_t world_frame,
-                            float smoothing_s)
+                            float smoothing_s, uint8_t navigation)
 {
     INS_control_data_t imu;
     if (!enabled || !isfinite(vx) || !isfinite(vy) || !isfinite(wz) ||
@@ -715,7 +743,10 @@ static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw, uint
         return 0U;
     if (vx == 0.0f && vy == 0.0f && wz == 0.0f)
     {
-        Chassis_Stop();
+        if (navigation)
+            Chassis_Hold();
+        else
+            Chassis_Stop();
         return 1U;
     }
     if ((mode == HOLDING && (distance_completion_pending || !Chassis_Motors_Ready())) ||
@@ -724,7 +755,9 @@ static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw, uint
     Chassis_Odometry_t pose;
     if (world_frame && !Chassis_Get_Odometry(&pose))
         return 0U;
-    if (world_frame != vector_world_frame)
+    if (world_frame != vector_world_frame || navigation != vector_navigation)
+        navigation_speed_state = (Navigation_Speed_State_t){0};
+    if (world_frame != vector_world_frame || (navigation && (mode == HOLDING || !vector_navigation)))
     {
         float x = last_body_target[0], y = last_body_target[1];
         if (world_frame)
@@ -750,6 +783,7 @@ static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw, uint
     vector_target[2] = wz;
     vector_hold_yaw = hold_yaw;
     vector_world_frame = world_frame;
+    vector_navigation = navigation;
     vector_smoothing_s = smoothing_s;
 #if CHASSIS_TUNING_ENABLED
     vector_calibration_spin = 0U;
@@ -760,24 +794,29 @@ static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw, uint
 
 uint8_t Chassis_Set_Velocity(float vx, float vy, float wz)
 {
-    return Set_Velocity(vx, vy, wz, 1U, 0U, CHASSIS_VECTOR_SMOOTHING_S);
+    return Set_Velocity(vx, vy, wz, 1U, 0U, CHASSIS_VECTOR_SMOOTHING_S, 0U);
 }
 
 uint8_t Chassis_Set_Velocity_Explicit_Yaw(float vx, float vy, float wz)
 {
-    return Set_Velocity(vx, vy, wz, 0U, 0U, CHASSIS_VECTOR_SMOOTHING_S);
+    return Set_Velocity(vx, vy, wz, 0U, 0U, CHASSIS_VECTOR_SMOOTHING_S, 0U);
 }
 
 uint8_t Chassis_Set_World_Velocity(float vx, float vy, float wz)
 {
-    return Set_Velocity(vx, vy, wz, 0U, 1U, CHASSIS_VECTOR_SMOOTHING_S);
+    return Set_Velocity(vx, vy, wz, 0U, 1U, CHASSIS_VECTOR_SMOOTHING_S, 0U);
+}
+
+uint8_t Chassis_Set_Navigation_Velocity(float vx, float vy, float wz, uint8_t world_frame)
+{
+    return Set_Velocity(vx, vy, wz, !world_frame, world_frame, CHASSIS_VECTOR_SMOOTHING_S, 1U);
 }
 
 #if CHASSIS_TUNING_ENABLED
 uint8_t Chassis_Set_Test_Rotation(float wz)
 {
     /* 专项标定需要直接观察速度指令与实际响应。 */
-    if (!Set_Velocity(0.0f, 0.0f, wz, 0U, 0U, 0.0f))
+    if (!Set_Velocity(0.0f, 0.0f, wz, 0U, 0U, 0.0f, 0U))
         return 0U;
     vector_calibration_spin = wz != 0.0f;
     return 1U;
@@ -1131,10 +1170,33 @@ void Chassis_Loop(void)
         const float target_wz = vector_hold_yaw && vector_target[2] == 0.0f ?
             Hold_Yaw(&imu, dt) : vector_target[2];
         const float target[3] = {vector_target[0], vector_target[1], target_wz};
-        Velocity_Profile_Step(&velocity_profile, target,
-                              holding ? CHASSIS_DISTANCE_ACCELERATION_MPS2 : CHASSIS_STRAIGHT_ACCELERATION_MPS2,
-                              holding ? CHASSIS_TURN_ACCEL_RAD_S2 : CHASSIS_VECTOR_ACCEL_RAD_S2,
-                              vector_smoothing_s, dt);
+        if (!holding && vector_navigation)
+        {
+            const float *measured = NULL;
+#if CHASSIS_NAV_SPEED_CONTROLLER != 0
+            float feedback[2];
+            /* 只使用本控制拍刚接受的三轮反馈组；可疑轮角时取消实验补偿。 */
+            if (odometry.data.valid && odometry.data.sample_time_us == now_us && !odometry.wheel_yaw_rejected)
+            {
+                feedback[0] = odometry.data.vx_mps;
+                feedback[1] = odometry.data.vy_mps;
+                if (vector_world_frame)
+                {
+                    const float cosine = cosf(command_yaw_rad), sine = sinf(command_yaw_rad);
+                    feedback[0] = cosine * odometry.data.vx_mps - sine * odometry.data.vy_mps;
+                    feedback[1] = sine * odometry.data.vx_mps + cosine * odometry.data.vy_mps;
+                }
+                measured = feedback;
+            }
+#endif
+            Velocity_Profile_Step_Navigation(&velocity_profile, target, &navigation_config,
+                                             &navigation_speed_state, measured, dt);
+        }
+        else
+            Velocity_Profile_Step(&velocity_profile, target,
+                                  holding ? CHASSIS_DISTANCE_ACCELERATION_MPS2 : CHASSIS_STRAIGHT_ACCELERATION_MPS2,
+                                  holding ? CHASSIS_TURN_ACCEL_RAD_S2 : CHASSIS_VECTOR_ACCEL_RAD_S2,
+                                  vector_smoothing_s, dt);
         vx = velocity_profile.output[0];
         vy = velocity_profile.output[1];
         wz = velocity_profile.output[2];

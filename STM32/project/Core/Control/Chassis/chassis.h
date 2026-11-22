@@ -161,6 +161,10 @@ uint8_t Chassis_Translation_Start(Chassis_Translation_Direction_t direction,
 uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction,
                                float distance_m, float speed_limit_mps);
 
+/* 退坡后的短距离复位使用较高的位置增益，沿用定距制动包络、容差及故障保护。 */
+uint8_t Chassis_Distance_Start_Fast(Chassis_Translation_Direction_t direction,
+                                   float distance_m, float speed_limit_mps);
+
 /** @brief 从零速待命启动相对定角转向，跨越 ±180 度累计转角。
  * @param[in] direction +1 左转，-1 右转。
  * @param[in] angle_deg 相对转角，度，有限且 (0,360]。
@@ -193,6 +197,9 @@ uint8_t Chassis_Set_Velocity_Explicit_Yaw(float vx, float vy, float wz);
 
 /* 世界系速度入口：平移在固定坐标系内走斜坡，每拍按有效里程计航向换算为车体系。 */
 uint8_t Chassis_Set_World_Velocity(float vx, float vy, float wz);
+
+/* 导航速度使用逐拍起步，车体系纯平移锁航向，世界系由上层给定转速。全零请求平滑停车。 */
+uint8_t Chassis_Set_Navigation_Velocity(float vx, float vy, float wz, uint8_t world_frame);
 
 /** @brief 在现有 5 ms 任务内服务底盘，每 10 ms 更新一次控制，TIM2 实测 dt。
  * @return 无。

@@ -35,7 +35,7 @@
 
 ## 一次运输
 
-相机帧进入 `detect_node`。seg 阶段发布检测，`track_node` 维持轨迹，`select_node` 选出一个目标。到达后 `mission_node` 调用 `target_node` 做 ROI。首趟只接受一个绿色；通过后目的地为左或右，并停在等待转向。命令 1 切到 field，服务成功且任务状态也变成 field 之后进入安全区导航。`safety_node` 计算对应区域对角线的交点，再除以画幅宽高，得到透视中心。`bridge_node` 把目标中心、安全区中心和握手报文送到 USB。命令 4 把 `transport_phase` 记为 Later，阶段仍是等待送达。命令 3 切回 seg 并重新寻找，此时黑色和橙色也可以被选中。
+相机帧进入 `detect_node`。seg 阶段发布检测，`track_node` 维持轨迹，`select_node` 选择目标。`mission_node` 调用 `target_node` 做 ROI 检查，首趟只接受一个绿色目标，通过后确定左或右目的区。STM32 返航停稳后发送类型 17，命令 1 切到 field，服务成功且任务状态确认后进入投送阶段。STM32 按目的区定时横移，再盲推、松爪并退出。送达后，命令 4 将 `transport_phase` 记为 Later，任务进入 `LocalizingStart`。`safety_node` 取整块安全区内框的对角线交点并归一化，`bridge_node` 通过 USB 发送新中心，保留本趟目的区和 token。STM32 复核并记录新起点后通过命令 3 切回 seg，后续也可选择黑色和橙色目标。
 
 ## 阅读顺序
 
@@ -127,9 +127,9 @@ ros2 launch bringup_pkg rescue.launch.py run:=all
 
 当前现场固定光照下，亮度 150 在远景和近景的短时采样均保持有效，无安全区画面的采样没有误报；这是识别有效率，不代表位置已按真实坐标标定。使用旧版完整配置快照时，需要补充 `vision.detect.camera_brightness` 字段。
 
-此前搬运实测中，车辆横向对准安全区后连续 796 帧未得到有效场地观测。当前 STM32 流程已改为：视觉接近并对准后，锁定当时航向，按配置距离直行，此段不再依赖后续视觉；通信与底盘故障制动仍生效。2026-11-17 起定距由三轮反馈与 IMU 航向估计位移，按本段目标方向的有符号投影闭环控制。`JETSON_AUTO_SAFETY_STRAIGHT_M` 保持为 0，需实车标定到至少 10 mm 后才能启用自动流程。位姿留在 STM32 本地，USB 类型和载荷保持原协议；里程计失效、无进展或超时不能作为到达放行。轮滑误差仍需尺量复核，本轮尚未烧录或复测车辆运动。详见 [里程计与定距控制](../../STM32/docs/ODOMETRY.md)。
+此前搬运实测中，车辆横向对准安全区后连续 796 帧未得到有效场地观测。当前 STM32 正式流程的横移、盲推和直线退出使用锁航向的定时动作，各段停稳后才交接。退出并确认送达后，用整区中心重新定位。返航采用 20 s 总时限，停稳后复核位姿。正式搬运须标定 `JETSON_AUTO_ALIGN_MAX_M`、`JETSON_AUTO_ROI_BACK_M`、`JETSON_AUTO_RECOVERY_BACK_M`。`JETSON_AUTO_SAFETY_STRAIGHT_M` 只在单次底盘联调中标定。位姿留在 STM32 本地，USB 类型和载荷沿用原协议，通信与底盘故障制动继续生效。轮滑和实际行程须在现场复核。详见 [里程计与定距控制](../../STM32/docs/ODOMETRY.md)。
 
-手动网页通过 `--config` 读取顶层 `link.device` 与 `gripper.*`。`link.device` 是 STM32 的 USB OTG FS 设备，`gripper.device` 仍是 S288。`gripper.move_s` 仍是待标定空值，不要填数字。相对转角动作结束后舵机进入 Stop 模式，不再主动保持夹持力；该手动功能未接入自动搬运状态机。实际夹持、松爪位置和力矩须在现场确认。
+手动网页通过 `--config` 读取顶层 `link.device` 与 `gripper.*`。`link.device` 是 STM32 的 USB OTG FS 设备，`gripper.device` 是 S288 串口。启动自动桥前将夹爪摆到张开位置，桥接会话会将连接时的角度记为零点。自动闭合目标为 −50°，张开目标为 0°，开合各驱动 1.0 s，随后等待 Stop 回执。Stop 后舵机停止主动施力。实际夹持和松爪位置须上车确认。
 
 `run:=vision` 只启动检测和图传。`run:=all` 启动上一节的 7 个进程。图传地址和端口来自 `rescue.yaml` 的 `stream_address`、`stream_port`，当前是 `0.0.0.0:8080`。
 

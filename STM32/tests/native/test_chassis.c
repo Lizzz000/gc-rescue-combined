@@ -1011,6 +1011,122 @@ static void test_vector(void)
     assert(disables == 0U);
 }
 
+/* 通过真实下发的三轮指令验证不等拍起步和大小目标的到达时间。 */
+static void test_auto_navigation_startup(void)
+{
+    const uint32_t intervals_us[] = {10000U, 17500U, 13000U, 21000U};
+    const float goals[] = {0.020f, 0.320f};
+    uint32_t arrival_us[2] = {0U};
+
+    for (unsigned trial = 0U; trial < 2U; ++trial)
+    {
+        reset_case(UINT32_MAX - 130000U, UINT32_MAX - 130U);
+        assert(enable_ready());
+
+        float body[3] = {0.0f};
+        float initial_acceleration = 0.0f, peak_acceleration = 0.0f;
+        uint32_t elapsed_us = 0U;
+        for (unsigned sample = 0U; sample < 250U; ++sample)
+        {
+            const uint32_t interval = intervals_us[sample % 4U];
+            const float dt = interval * 0.000001f;
+            const uint32_t previous_controls = controls;
+            const float previous_vx = body[0];
+            assert(Chassis_Set_Navigation_Velocity(goals[trial], 0.0f, 0.0f, 0U));
+            plant_step(interval, 1.0f, NULL, NULL);
+            elapsed_us += interval;
+            body_target(body);
+
+            assert(controls == previous_controls + 3U);
+            assert(body[0] >= previous_vx - 1e-6f && body[0] <= goals[trial] + 1e-6f);
+            const float acceleration = (body[0] - previous_vx) / dt;
+            assert(acceleration <= CHASSIS_NAV_ACCELERATION_MPS2 + 0.001f);
+            if (sample == 0U)
+            {
+                initial_acceleration = acceleration;
+                assert(initial_acceleration > 0.0f &&
+                       initial_acceleration < CHASSIS_NAV_ACCELERATION_MPS2 * 0.5f);
+            }
+            peak_acceleration = fmaxf(peak_acceleration, acceleration);
+            near(body[1], 0.0f);
+            near(body[2], 0.0f);
+            if (fabsf(body[0] - goals[trial]) < 1e-6f)
+            {
+                arrival_us[trial] = elapsed_us;
+                break;
+            }
+        }
+        assert(arrival_us[trial] > 0U);
+        if (trial == 1U)
+            assert(peak_acceleration > 2.0f * initial_acceleration);
+        assert(Chassis_Is_Enabled() && enables == 3U && disables == 0U);
+    }
+    assert(arrival_us[1] > 2U * arrival_us[0]);
+
+    reset_case(0U, 0U);
+    yaw_deg = 90.0f;
+    assert(enable_ready());
+    assert(Chassis_Set_Navigation_Velocity(0.05f, 0.0f, 0.0f, 1U));
+    plant_step(10000U, 1.0f, NULL, NULL);
+    float body[3];
+    body_target(body);
+    near(body[0], 0.0f);
+    assert(body[1] < 0.0f);
+}
+
+/* 停车途中可接管速度，反向先发零速，姿态故障直接进入原零速保护。 */
+static void test_auto_navigation_restart_and_reverse(void)
+{
+    reset_case(0U, 0U);
+    assert(enable_ready());
+    assert(Chassis_Set_Navigation_Velocity(0.24f, 0.0f, 0.0f, 0U));
+    for (unsigned sample = 0U; sample < 50U; ++sample)
+        plant_step(10000U, 1.0f, NULL, NULL);
+    float body[3];
+    body_target(body);
+    const float before_hold = body[0];
+    assert(before_hold > 0.05f);
+
+    Chassis_Hold();
+    for (unsigned sample = 0U; sample < 5U; ++sample)
+        plant_step(10000U, 1.0f, NULL, NULL);
+    body_target(body);
+    const float holding_speed = body[0];
+    assert(holding_speed > 0.0f && holding_speed < before_hold);
+    assert(!Chassis_Is_Stopped());
+
+    assert(Chassis_Set_Navigation_Velocity(0.24f, 0.0f, 0.0f, 0U));
+    plant_step(17000U, 1.0f, NULL, NULL);
+    body_target(body);
+    assert(body[0] > holding_speed);
+    assert(body[0] - holding_speed <= CHASSIS_NAV_ACCELERATION_MPS2 * 0.017f + 1e-6f);
+
+    uint8_t zero_sent = 0U;
+    for (unsigned sample = 0U; sample < 100U; ++sample)
+    {
+        const float previous_vx = body[0];
+        assert(Chassis_Set_Navigation_Velocity(-0.18f, 0.0f, 0.0f, 0U));
+        plant_step(12000U, 1.0f, NULL, NULL);
+        body_target(body);
+        assert(body[0] <= previous_vx + 1e-6f);
+        if (body[0] < 0.0f)
+        {
+            assert(zero_sent);
+            assert(-body[0] <= CHASSIS_NAV_START_ACCEL_MPS2 * 0.012f + 1e-6f);
+            break;
+        }
+        assert(previous_vx - body[0] <= CHASSIS_NAV_REVERSAL_DECELERATION_MPS2 * 0.012f + 1e-6f);
+        if (body[0] == 0.0f)
+            zero_sent = 1U;
+    }
+    assert(body[0] < 0.0f && Chassis_Is_Enabled() && enables == 3U && disables == 0U);
+
+    imu_ready = 0U;
+    plant_step(10000U, 1.0f, NULL, NULL);
+    for (unsigned wheel = 0U; wheel < 3U; ++wheel)
+        assert(motor_velocity[wheel] == 0.0f);
+}
+
 /* Use the issued motor commands to check ordinary release, retargeting during
  * braking and the zero-frame handoff. Feed fresh encoder frames independently. */
 static void test_smooth_hold_and_redirect(float speed, float yaw_rate)
@@ -2283,6 +2399,8 @@ int main(void)
     test_distance_overshoot_busy_can();
     test_hold_tx_timeout();
     test_vector();
+    test_auto_navigation_startup();
+    test_auto_navigation_restart_and_reverse();
     test_smooth_hold_and_redirect(CHASSIS_RUN_SPEED_MPS, CHASSIS_RUN_YAW_RATE_RAD_S);
     test_smooth_hold_and_redirect(CHASSIS_STRAIGHT_MAX_SPEED_MPS, CHASSIS_VECTOR_MAX_WZ_RAD_S);
     test_yaw_rate_feedback();

@@ -39,6 +39,14 @@ bool validObservation(const Observation & value)
   return true;
 }
 
+// 送达后使用完整内框重新定位，投送前按已提交的左右区选择目标。
+template<class Observation>
+const auto & targetPolygon(const Observation & value, bool localizing_start, bool left_destination)
+{
+  if (localizing_start) {return value.corners;}
+  return left_destination ? value.left_region : value.right_region;
+}
+
 namespace detail
 {
 // 矩形的透视中心是投影后对角线的交点，不是四个图像顶点的均值。
