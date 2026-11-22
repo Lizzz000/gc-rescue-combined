@@ -22,7 +22,7 @@ enum
     ODOMETRY_INPUT_POSITION_ESKF_TIMED
 };
 
-_Static_assert(CHASSIS_ODOMETRY_MAX_INTERVAL_US / 1000U < WHEEL_ALIGNMENT_HISTORY_MS,
+_Static_assert(CHASSIS_ODOMETRY_MAX_INTERVAL_MS < WHEEL_ALIGNMENT_HISTORY_MS,
                "alignment history must cover all valid wheel timestamps");
 
 #define ODOMETRY_TWO_PI 6.28318530717958647692f
@@ -143,7 +143,7 @@ static uint8_t Get_Wheel_Deltas(const Odometry_State_t *state, const float posit
         if (timing != NULL)
         {
             const uint32_t wheel_elapsed_ms = timing->wheel_time_ms[i] - state->previous_wheel_time_ms[i];
-            if (wheel_elapsed_ms > CHASSIS_ODOMETRY_MAX_INTERVAL_US / 1000U)
+            if (wheel_elapsed_ms > CHASSIS_ODOMETRY_MAX_INTERVAL_MS)
                 return 0U;
             /* 每轮使用自身的接收间隔，并为毫秒取整留一个 tick。 */
             interval_s = (wheel_elapsed_ms + 1U) * 0.001f;
@@ -167,7 +167,8 @@ static uint8_t Update_Position(Odometry_State_t *state, const float wheel_positi
         return 0U;
     }
     if (wheel_position_rad == NULL || wheel_rad_s == NULL || !isfinite(yaw_rad) ||
-        (use_eskf && (state->heading.yaw_fault || !isfinite(gyro_rad_s) || fabsf(gyro_rad_s) > 8.0f)))
+        (use_eskf && (state->heading.yaw_fault || !isfinite(gyro_rad_s) ||
+                      fabsf(gyro_rad_s) > HEADING_ESKF_MAX_GYRO_RAD_S)))
     {
         Odometry_Invalidate(state);
         return 0U;
@@ -185,7 +186,7 @@ static uint8_t Update_Position(Odometry_State_t *state, const float wheel_positi
         if (timing != NULL)
         {
             const uint32_t age_ms = timing->control_time_ms - timing->wheel_time_ms[i];
-            if (age_ms > CHASSIS_ODOMETRY_MAX_INTERVAL_US / 1000U)
+            if (age_ms > CHASSIS_ODOMETRY_MAX_INTERVAL_MS)
             {
                 Odometry_Invalidate(state);
                 return 0U;

@@ -7,34 +7,23 @@
  */
 #include "chassis.h"
 #include "chassis_odometry.h"
+#include "chassis_time.h"
+#include "chassis_feedback.h"
 #include "motor_chassis.h"
 #include "velocity_profile.h"
 #include "dm_motor.h"
 #include "bsp_can.h"
 #include "INS_task.h"
 #include "pid.h"
-#include "tim.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <math.h>
 
-#define CONTROL_PERIOD_MS 10U
-#define STOP_SPEED_RAD_S 0.20f
-#define STOP_GROUPS 3U
-#define TIMED_BRAKE_LIMIT_MS 500U
 #define DEG_TO_RAD 0.01745329251994329577f
 #define CHASSIS_TURN_DEG_TO_RAD 0.01745329251994329577
 
 typedef enum { IDLE, TRANSLATION, DISTANCE, VELOCITY, TURN, HOLDING } Chassis_Mode_t;
 
-/* ID1后轮、ID2右前轮、ID3左前轮；方向、齿比与MIT速度阻尼沿实测配置。 */
-static const uint16_t motor_id[3] = {1U, 2U, 3U};
-static const float motor_direction[3] = {-1.0f, -1.0f, -1.0f};
-static const float motor_gear_ratio[3] = {1.0f, 1.0f, 1.0f};
-static const float motor_kd_default[3] = {0.22f, 0.27f, 0.22f};
-/* 2026-11-16：1.8 kg、0.25 m/s 前后与双向旋转复测。摩擦项只用于平移。 */
-static const float motor_friction_default[3] = {0.0f, 0.015f, 0.015f};
-static const float motor_vmax[3] = {40.0f, 40.0f, 40.0f};
 float chassis_speed[3];
 float chassis_tuning_kd[3];
 float chassis_tuning_ff_gain;
@@ -56,8 +45,7 @@ static uint8_t awaiting_disable_feedback, disable_confirmed;
 static uint8_t monitoring_stop, stop_groups, disable_after_stop;
 static uint32_t stop_seq[3], last_stop_group_ms;
 static Chassis_Mode_t mode;
-static TickType_t last_control_tick;
-static uint32_t last_control_us, step_start_us;
+static Chassis_Control_Clock_t control_clock;
 static Chassis_Translation_Direction_t translation_direction;
 static float target_speed, ramp_speed, target_yaw_deg;
 static uint32_t run_duration_ms, run_started_ms;
@@ -94,15 +82,6 @@ static uint8_t Send_Chassis_Targets(float vx, float vy, float wz);
 static double Distance_Progress(void);
 static void Begin_Fault_Stop(uint32_t now_ms);
 
-/** @brief 初始化发帧与斜坡时基。RTOS tick 控制节拍，TIM2 微秒用于实际步长。
- * @return 无。
- */
-static void Reset_Control_Time(void)
-{
-    last_control_tick = xTaskGetTickCount();
-    last_control_us = step_start_us = __HAL_TIM_GET_COUNTER(&htim2);
-}
-
 /** @brief 返回本任务的软件使能状态，不代替实际电机反馈。 @return 使能为 1，否则 0。 */
 uint8_t Chassis_Is_Enabled(void)
 {
@@ -117,7 +96,7 @@ uint8_t Chassis_Is_Enabled(void)
 static uint8_t Read_IMU(INS_control_data_t *imu)
 {
     return INS_Get_Data(imu) && isfinite(imu->yaw_deg) && isfinite(imu->world_z_rad_s) &&
-           (uint32_t)((uint32_t)xTaskGetTickCount() - imu->sample_time_ms) <= CHASSIS_ODOMETRY_MAX_IMU_AGE_MS;
+           (uint32_t)(Chassis_Time_Now_Ms() - imu->sample_time_ms) <= CHASSIS_ODOMETRY_MAX_IMU_AGE_MS;
 }
 
 uint8_t Chassis_Attitude_Ready(void)
@@ -135,13 +114,13 @@ static void Update_Stop_Feedback(uint8_t baseline)
     uint32_t seq[3];
     uint8_t fresh_group = 1U, quiet = 1U;
     taskENTER_CRITICAL();
-    uint32_t now_ms = (uint32_t)xTaskGetTickCount();
+    uint32_t now_ms = Chassis_Time_Now_Ms();
     for (unsigned i = 0U; i < 3U; ++i)
     {
         seq[i] = dm_motor[i].feedback_seq;
         if (seq[i] == stop_seq[i])
             fresh_group = 0U;
-        if (dm_motor[i].state != 1U || !(fabsf(dm_motor[i].velocity) <= STOP_SPEED_RAD_S) ||
+        if (dm_motor[i].state != 1U || !(fabsf(dm_motor[i].velocity) <= CHASSIS_STOP_SPEED_RAD_S) ||
             (uint32_t)(now_ms - dm_motor[i].feedback_time_ms) > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS)
             quiet = 0U;
     }
@@ -155,7 +134,7 @@ static void Update_Stop_Feedback(uint8_t baseline)
     if (!baseline && quiet && fresh_group)
     {
         last_stop_group_ms = now_ms;
-        if (stop_groups < STOP_GROUPS)
+        if (stop_groups < CHASSIS_STOP_GROUPS)
             ++stop_groups;
     }
 }
@@ -168,7 +147,7 @@ static uint8_t Stopped_Feedback(void)
     if (!enabled || mode != IDLE || !monitoring_stop)
         return 0U;
     Update_Stop_Feedback(0U);
-    return stop_groups == STOP_GROUPS;
+    return stop_groups == CHASSIS_STOP_GROUPS;
 }
 
 static uint8_t Distance_Endpoint_Valid(void)
@@ -221,9 +200,9 @@ uint8_t Chassis_Motors_Ready(void)
 {
     uint8_t ready = 1U;
     taskENTER_CRITICAL();
-    uint32_t now_ms = (uint32_t)xTaskGetTickCount();
+    uint32_t now_ms = Chassis_Time_Now_Ms();
     for (unsigned i = 0U; i < 3U; ++i)
-        if (dm_motor[i].id != motor_id[i] || dm_motor[i].state != 1U ||
+        if (dm_motor[i].id != chassis_wheel_config[i].id || dm_motor[i].state != 1U ||
             (awaiting_enable_feedback && dm_motor[i].feedback_seq == enable_feedback_seq[i]) ||
             !isfinite(dm_motor[i].velocity) ||
             (uint32_t)(now_ms - dm_motor[i].feedback_time_ms) > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS)
@@ -240,8 +219,8 @@ uint8_t Chassis_Get_Odometry(Chassis_Odometry_t *data)
     INS_control_data_t imu;
     *data = odometry.data;
     data->valid = data->valid &&
-        (uint32_t)(__HAL_TIM_GET_COUNTER(&htim2) - data->sample_time_us) <=
-            CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS * 1000U &&
+        (uint32_t)(Chassis_Time_Now_Us() - data->sample_time_us) <=
+            CHASSIS_MOTOR_FEEDBACK_TIMEOUT_US &&
         Chassis_Motors_Ready() && Read_IMU(&imu);
     data->yaw_rate_rad_s = data->valid ? CHASSIS_STRAIGHT_YAW_SIGN * imu.world_z_rad_s : 0.0f;
     return data->valid;
@@ -251,9 +230,9 @@ uint8_t Chassis_Get_Odometry(Chassis_Odometry_t *data)
 static float Predict_Command_Yaw(const Chassis_Odometry_t *pose, uint32_t now_us, float yaw_rate)
 {
     const uint32_t age_us = now_us - pose->sample_time_us;
-    if (age_us > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS * 1000U)
+    if (age_us > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_US)
         return pose->yaw_rad;
-    return pose->yaw_rad + (yaw_rate - odometry.heading.bias_rad_s) * (age_us * 0.000001f);
+    return pose->yaw_rad + (yaw_rate - odometry.heading.bias_rad_s) * Chassis_Time_Us_To_S(age_us);
 }
 
 /** @brief 只在没有执行动作时重置平移原点，保持现有 INS 的航向参考。 */
@@ -275,26 +254,24 @@ uint8_t Chassis_Reset_Odometry(void)
 static void Update_Odometry(uint32_t now_us,
                             const INS_control_data_t *imu, uint8_t imu_valid)
 {
-    dm_motor_t feedback[3];
-    taskENTER_CRITICAL();
-    const uint32_t now_ms = (uint32_t)xTaskGetTickCount();
-    for (unsigned i = 0U; i < 3U; ++i)
-        feedback[i] = dm_motor[i];
-    taskEXIT_CRITICAL();
+    Chassis_Feedback_Snapshot_t snapshot;
+    Chassis_Feedback_Read(&snapshot);
+    const Chassis_Wheel_Feedback_t *feedback = snapshot.wheel;
+    const uint32_t now_ms = snapshot.now_ms;
     uint8_t ready = imu_valid, fresh_group = 1U;
     float wheel[3], position[3];
     Odometry_Feedback_Timing_t timing = {.control_time_ms = now_ms};
     for (unsigned i = 0U; i < 3U; ++i)
     {
-        if (feedback[i].id != motor_id[i] || feedback[i].state != 1U ||
+        if (feedback[i].id != chassis_wheel_config[i].id || feedback[i].state != 1U ||
             !isfinite(feedback[i].position) || !isfinite(feedback[i].velocity) ||
-            fabsf(feedback[i].velocity) > motor_vmax[i] ||
+            fabsf(feedback[i].velocity) > chassis_wheel_config[i].max_motor_rad_s ||
             (uint32_t)(now_ms - feedback[i].feedback_time_ms) > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS)
             ready = 0U;
         if (feedback[i].feedback_seq == odometry_seq[i])
             fresh_group = 0U;
-        wheel[i] = feedback[i].velocity * motor_direction[i] / motor_gear_ratio[i];
-        position[i] = feedback[i].position * motor_direction[i] / motor_gear_ratio[i];
+        wheel[i] = Chassis_Feedback_To_Wheel_Axis(feedback[i].velocity, &chassis_wheel_config[i]);
+        position[i] = Chassis_Feedback_To_Wheel_Axis(feedback[i].position, &chassis_wheel_config[i]);
         timing.wheel_time_ms[i] = feedback[i].feedback_time_ms;
     }
     if (!ready)
@@ -306,7 +283,7 @@ static void Update_Odometry(uint32_t now_us,
     else if (fresh_group)
     {
 #if CHASSIS_TUNING_ENABLED
-        const uint32_t algorithm_start_us = __HAL_TIM_GET_COUNTER(&htim2);
+        const uint32_t algorithm_start_us = Chassis_Time_Now_Us();
 #endif
         const uint8_t observe_yaw = !imu->yaw_predicted &&
             (!odometry.initialized || imu->sample_time_ms != odometry_imu_sample_ms);
@@ -316,7 +293,7 @@ static void Update_Odometry(uint32_t now_us,
                 CHASSIS_STRAIGHT_YAW_SIGN * imu->world_z_rad_s, now_us, observe_yaw) && observe_yaw)
             odometry_imu_sample_ms = imu->sample_time_ms;
 #if CHASSIS_TUNING_ENABLED
-        chassis_odometry_last_us = __HAL_TIM_GET_COUNTER(&htim2) - algorithm_start_us;
+        chassis_odometry_last_us = Chassis_Time_Now_Us() - algorithm_start_us;
         if (chassis_odometry_last_us > chassis_odometry_max_us)
             chassis_odometry_max_us = chassis_odometry_last_us;
         chassis_heading_debug[0] = odometry.heading.yaw_rad;
@@ -330,7 +307,7 @@ static void Update_Odometry(uint32_t now_us,
             odometry_seq[i] = feedback[i].feedback_seq;
     }
     else if ((uint32_t)(now_us - odometry.data.sample_time_us) >
-             CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS * 1000U)
+             CHASSIS_MOTOR_FEEDBACK_TIMEOUT_US)
         Odometry_Invalidate(&odometry);
     chassis_speed[0] = odometry.data.valid ? odometry.data.vx_mps : 0.0f;
     chassis_speed[1] = odometry.data.valid ? odometry.data.vy_mps : 0.0f;
@@ -410,12 +387,12 @@ void Chassis_Init(void)
         odometry_seq[i] = 0U;
         chassis_speed[i] = 0.0f;
         last_body_target[i] = 0.0f;
-        chassis_tuning_kd[i] = motor_kd_default[i];
-        chassis_tuning_friction[i] = motor_friction_default[i];
+        chassis_tuning_kd[i] = chassis_wheel_config[i].default_kd;
+        chassis_tuning_friction[i] = chassis_wheel_config[i].default_friction_nm;
         chassis_motor_target[i] = chassis_motor_ff[i] = 0.0f;
     }
     chassis_tuning_ff_gain = 1.0f;
-    Reset_Control_Time();
+    Chassis_Time_Reset(&control_clock);
 }
 
 /** @brief 故障先用现有零 MIT 制动；停稳或 500 ms 后失能，不报告正常完成。 */
@@ -469,14 +446,14 @@ uint8_t Chassis_Disable_Confirmed(void)
     if (enabled)
         return 0U;
 
-    const uint32_t now_ms = (uint32_t)xTaskGetTickCount();
+    const uint32_t now_ms = Chassis_Time_Now_Ms();
     taskENTER_CRITICAL();
     if (awaiting_disable_feedback)
     {
         uint8_t confirmed = 1U;
         for (unsigned i = 0U; i < 3U; ++i)
         {
-            if (dm_motor[i].id != motor_id[i] || dm_motor[i].state != 0U ||
+            if (dm_motor[i].id != chassis_wheel_config[i].id || dm_motor[i].state != 0U ||
                 dm_motor[i].feedback_seq == disable_feedback_seq[i] ||
                 (uint32_t)(now_ms - dm_motor[i].feedback_time_ms) > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS)
                 confirmed = 0U;
@@ -489,7 +466,7 @@ uint8_t Chassis_Disable_Confirmed(void)
     }
     for (unsigned i = 0U; i < 3U; ++i)
     {
-        if (dm_motor[i].id == motor_id[i] && dm_motor[i].state != 0U)
+        if (dm_motor[i].id == chassis_wheel_config[i].id && dm_motor[i].state != 0U)
             disable_confirmed = 0U;
     }
     const uint8_t confirmed = disable_confirmed;
@@ -517,7 +494,7 @@ uint8_t Chassis_Enable(void)
     enabled = 1U;
     awaiting_disable_feedback = disable_confirmed = 0U;
     pending_enable = 1U;
-    Reset_Control_Time();
+    Chassis_Time_Reset(&control_clock);
     return 1U;
 }
 
@@ -554,7 +531,7 @@ static uint8_t Prepare_Translation(Chassis_Translation_Direction_t direction)
     translation_direction = direction;
     target_yaw_deg = CHASSIS_STRAIGHT_YAW_SIGN * imu.yaw_deg;
     /* 保留原发帧节拍，只从接单时刻开始累计首拍斜坡。 */
-    step_start_us = __HAL_TIM_GET_COUNTER(&htim2);
+    control_clock.step_start_us = Chassis_Time_Now_Us();
     return 1U;
 }
 
@@ -591,7 +568,7 @@ uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction,
     Chassis_Odometry_t origin;
     if (timeout_ms > INT32_MAX || !Chassis_Get_Odometry(&origin))
         return 0U;
-    const uint32_t now_us = __HAL_TIM_GET_COUNTER(&htim2);
+    const uint32_t now_us = Chassis_Time_Now_Us();
     float heading = Predict_Command_Yaw(&origin, now_us, origin.yaw_rate_rad_s);
     if (mode == TURN)
     {
@@ -605,7 +582,7 @@ uint8_t Chassis_Distance_Start(Chassis_Translation_Direction_t direction,
             delta = copysignf(180.0f, imu.world_z_rad_s != 0.0f ?
                              CHASSIS_STRAIGHT_YAW_SIGN * imu.world_z_rad_s : (float)turn_direction);
         const float remaining = turn_requested_deg - turn_accumulated_deg - delta;
-        const uint32_t imu_age_ms = (uint32_t)xTaskGetTickCount() - imu.sample_time_ms;
+        const uint32_t imu_age_ms = Chassis_Time_Now_Ms() - imu.sample_time_ms;
         if (imu_age_ms > CHASSIS_ODOMETRY_MAX_IMU_AGE_MS)
             return 0U;
         const float remaining_rad = remaining * DEG_TO_RAD -
@@ -715,9 +692,9 @@ uint8_t Chassis_Turn_Start(int8_t direction, float angle_deg)
     turn_requested_deg = direction * angle_deg;
     turn_accumulated_deg = 0.0f;
     turn_last_yaw_deg = CHASSIS_STRAIGHT_YAW_SIGN * imu.yaw_deg;
-    turn_started_ms = (uint32_t)xTaskGetTickCount();
+    turn_started_ms = Chassis_Time_Now_Ms();
     mode = TURN;
-    step_start_us = __HAL_TIM_GET_COUNTER(&htim2);
+    control_clock.step_start_us = Chassis_Time_Now_Us();
     return 1U;
 }
 
@@ -762,7 +739,7 @@ static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw, uint
     else if (mode == HOLDING && !world_frame)
         Velocity_Profile_Seed(&velocity_profile, last_body_target[0], last_body_target[1], last_body_target[2]);
     if (mode == IDLE)
-        step_start_us = __HAL_TIM_GET_COUNTER(&htim2);
+        control_clock.step_start_us = Chassis_Time_Now_Us();
     if (hold_yaw && wz == 0.0f && (mode != VELOCITY || vector_target[2] != 0.0f || !vector_hold_yaw))
     {
         target_yaw_deg = CHASSIS_STRAIGHT_YAW_SIGN * imu.yaw_deg;
@@ -821,16 +798,18 @@ static uint8_t Send_Chassis_Targets(float vx, float vy, float wz)
     float scale = 1.0f;
     for (unsigned i = 0U; i < 3U; ++i)
     {
-        float speed = fabsf(wheel[i] * motor_gear_ratio[i]);
-        if (speed > motor_vmax[i])
-            scale = fminf(scale, motor_vmax[i] / speed);
+        const Chassis_Wheel_Config_t *config = &chassis_wheel_config[i];
+        const float speed = fabsf(wheel[i] * config->gear_ratio);
+        if (speed > config->max_motor_rad_s)
+            scale = fminf(scale, config->max_motor_rad_s / speed);
     }
     /* 只对已限幅、实际提交的车体平移目标求导。长间隔不补偿累计误差，
      * Stop/故障/使能包序始终零前馈；未标定的偏航惯性项保持零。 */
-    const uint32_t ff_now_us = __HAL_TIM_GET_COUNTER(&htim2);
-    const float ff_dt = ff_history_valid ? (ff_now_us - ff_previous_us) * 0.000001f : ff_control_interval_s;
+    const uint32_t ff_now_us = Chassis_Time_Now_Us();
+    const float ff_dt = ff_history_valid ?
+        Chassis_Time_Us_To_S(ff_now_us - ff_previous_us) : ff_control_interval_s;
     float fx = 0.0f, fy = 0.0f;
-    if (mode != IDLE && ff_dt > 0.0f && ff_dt <= 0.05f)
+    if (mode != IDLE && ff_dt > 0.0f && ff_dt <= CHASSIS_FEEDFORWARD_MAX_INTERVAL_S)
     {
         float previous_x = last_body_target[0], previous_y = last_body_target[1];
         if (vector_world_frame && ff_history_valid && ff_yaw_valid)
@@ -860,16 +839,17 @@ static uint8_t Send_Chassis_Targets(float vx, float vy, float wz)
     };
     for (unsigned i = 0U; i < 3U; ++i)
     {
-        float target = wheel[i] * scale * motor_gear_ratio[i] * motor_direction[i];
+        const Chassis_Wheel_Config_t *config = &chassis_wheel_config[i];
+        const float target = wheel[i] * scale * config->gear_ratio * config->direction;
         float ff = 0.0f;
         if (mode != IDLE)
         {
-            ff = wheel_torque[i] * motor_direction[i] / motor_gear_ratio[i] +
+            ff = wheel_torque[i] * config->direction / config->gear_ratio +
                  ((vx != 0.0f || vy != 0.0f) ?
                   chassis_tuning_friction[i] * target / (fabsf(target) + CHASSIS_FRICTION_SPEED_RAD_S) : 0.0f);
             ff = fmaxf(-CHASSIS_FEEDFORWARD_LIMIT_NM, fminf(CHASSIS_FEEDFORWARD_LIMIT_NM, ff));
         }
-        if (ctrl_motor(&MOTOR_CAN, motor_id[i], 0.0f, target, 0.0f, chassis_tuning_kd[i], ff) != HAL_OK)
+        if (ctrl_motor(&MOTOR_CAN, config->id, 0.0f, target, 0.0f, chassis_tuning_kd[i], ff) != HAL_OK)
         {
             Chassis_Disable();
             return 0U;
@@ -877,7 +857,7 @@ static uint8_t Send_Chassis_Targets(float vx, float vy, float wz)
         chassis_motor_target[i] = target;
         chassis_motor_ff[i] = ff;
         if (i < 2U)
-            vTaskDelay(pdMS_TO_TICKS(1U));
+            vTaskDelay(pdMS_TO_TICKS(CHASSIS_CAN_INTERFRAME_DELAY_MS));
     }
     last_body_target[0] = vx * scale;
     last_body_target[1] = vy * scale;
@@ -982,7 +962,7 @@ static void Confirm_Turn_Stop(const INS_control_data_t *imu)
         turn_imu_quiet = 1U;
         return;
     }
-    if (stop_groups == STOP_GROUPS && quiet_ms >= CHASSIS_TURN_STOP_CONFIRM_MS)
+    if (stop_groups == CHASSIS_STOP_GROUPS && quiet_ms >= CHASSIS_TURN_STOP_CONFIRM_MS)
     {
         Chassis_Stop();
         monitoring_stop = 1U;
@@ -997,7 +977,7 @@ void Chassis_Loop(void)
     const TickType_t now_tick = xTaskGetTickCount();
     const uint32_t now_ms = (uint32_t)now_tick;
     if (mode == IDLE && distance_completion_pending &&
-        (uint32_t)(now_ms - distance_stop_ms) >= TIMED_BRAKE_LIMIT_MS && !Chassis_Is_Stopped())
+        (uint32_t)(now_ms - distance_stop_ms) >= CHASSIS_TIMED_BRAKE_LIMIT_MS && !Chassis_Is_Stopped())
         Chassis_Disable();
     if ((mode == DISTANCE || (mode == HOLDING && distance_completion_pending)) && run_started &&
         (uint32_t)(now_ms - run_started_ms) >= distance_timeout_ms)
@@ -1006,19 +986,13 @@ void Chassis_Loop(void)
         (uint32_t)(now_ms - run_started_ms) >= run_duration_ms)
         Chassis_Hold();
     /* 故障制动须撤销使能；正常到时减速完成后持续发送零 MIT。 */
-    if ((disable_after_stop && ((uint32_t)(now_ms - run_started_ms) >= TIMED_BRAKE_LIMIT_MS ||
+    if ((disable_after_stop && ((uint32_t)(now_ms - run_started_ms) >= CHASSIS_TIMED_BRAKE_LIMIT_MS ||
                                 Stopped_Feedback())) ||
         (mode == TURN && (uint32_t)(now_ms - turn_started_ms) >= CHASSIS_TURN_TIMEOUT_MS))
         Chassis_Disable();
-    /* 任务按 5 ms 的 RTOS 节拍唤醒。微秒抖动不应把名义 10 ms 的控制拍推到 15 ms。 */
-    if ((TickType_t)(now_tick - last_control_tick) < pdMS_TO_TICKS(CONTROL_PERIOD_MS))
+    uint32_t now_us, elapsed_us;
+    if (!Chassis_Time_Take_Control_Step(&control_clock, now_tick, &now_us, &elapsed_us))
         return;
-    const uint32_t now_us = __HAL_TIM_GET_COUNTER(&htim2);
-    if (now_us == last_control_us)
-        return;
-    const uint32_t elapsed_us = now_us - step_start_us;
-    last_control_tick = now_tick;
-    last_control_us = step_start_us = now_us;
 
     INS_control_data_t imu;
     const uint8_t imu_valid = Read_IMU(&imu);
@@ -1059,12 +1033,12 @@ void Chassis_Loop(void)
             /* 记录发送前的序号，已缓存的失能状态不能当作本次确认。 */
             taskENTER_CRITICAL();
             disable_feedback_seq[i] = dm_motor[i].feedback_seq;
-            const HAL_StatusTypeDef result = disable_motor(&MOTOR_CAN, motor_id[i]);
+            const HAL_StatusTypeDef result = disable_motor(&MOTOR_CAN, chassis_wheel_config[i].id);
             taskEXIT_CRITICAL();
             if (result != HAL_OK)
                 sent = 0U;
             else if (i < 2U)
-                vTaskDelay(pdMS_TO_TICKS(1U));
+                vTaskDelay(pdMS_TO_TICKS(CHASSIS_CAN_INTERFRAME_DELAY_MS));
         }
         if (sent)
         {
@@ -1099,13 +1073,13 @@ void Chassis_Loop(void)
     {
         for (unsigned i = 0U; i < 3U; ++i)
         {
-            if (enable_motor(&MOTOR_CAN, motor_id[i]) != HAL_OK)
+            if (enable_motor(&MOTOR_CAN, chassis_wheel_config[i].id) != HAL_OK)
             {
                 Chassis_Disable();
                 return;
             }
             if (i < 2U)
-                vTaskDelay(pdMS_TO_TICKS(1U));
+                vTaskDelay(pdMS_TO_TICKS(CHASSIS_CAN_INTERFRAME_DELAY_MS));
         }
         /* 上一次使能留下的反馈可能仍在 30 ms 窗口内，须见到本轮 FC 后各轮的新帧。 */
         taskENTER_CRITICAL();
@@ -1122,11 +1096,11 @@ void Chassis_Loop(void)
         /* 姿态暂时不可用时先零速制动，停稳或制动期限到了再由循环开头失能。 */
         Begin_Fault_Stop(now_ms);
     }
-    float dt = elapsed_us * 0.000001f;
+    float dt = Chassis_Time_Us_To_S(elapsed_us);
     ff_control_interval_s = dt;
     /* 任务被堵住后再醒来时，不把整段空白算进一次加速。25 ms 的正常抖动仍按实测间隔。 */
-    if (dt > 0.05f)
-        dt = 0.05f;
+    if (dt > CHASSIS_CONTROL_MAX_STEP_S)
+        dt = CHASSIS_CONTROL_MAX_STEP_S;
     float vx = 0.0f, vy = 0.0f, wz = 0.0f;
     if (mode == TRANSLATION)
     {
@@ -1212,6 +1186,6 @@ void Chassis_Loop(void)
     else if (mode == TRANSLATION && !run_started && ramp_speed > 0.0f)
     {
         run_started = 1U;
-        run_started_ms = (uint32_t)xTaskGetTickCount();
+        run_started_ms = Chassis_Time_Now_Ms();
     }
 }

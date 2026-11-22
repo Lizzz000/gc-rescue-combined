@@ -17,7 +17,9 @@
 | [heading_eskf.c](../project/Core/Algorithm/Chassis/heading_eskf.c) | 陀螺预测、YAW 观测与轮角速度弱约束 |
 | [planar_odometry.c](../project/Core/Algorithm/Chassis/planar_odometry.c) | 根据起止航向将车体位移积分到世界坐标系 |
 | [motor_chassis.c](../project/Core/Algorithm/Chassis/motor_chassis.c) | 三轮正逆运动学，ID1 后轮、ID2 右前轮、ID3 左前轮 |
-| [chassis.c](../project/Core/Control/Chassis/chassis.c)、[chassis.h](../project/Core/Control/Chassis/chassis.h) | 一致反馈快照、里程计查询/重置、定距闭环和故障停车 |
+| [chassis_feedback.h](../project/Core/Control/Chassis/chassis_feedback.h) | 在同一临界区取反馈组时刻并复制三轮反馈，按轮向与齿比换算 |
+| [chassis_time.h](../project/Core/Control/Chassis/chassis_time.h) | 以 RTOS tick 判定控制拍，以 TIM2 微秒计数计算实际控制间隔 |
+| [chassis.c](../project/Core/Control/Chassis/chassis.c)、[chassis.h](../project/Core/Control/Chassis/chassis.h) | 里程计查询/重置、定距闭环和故障停车 |
 
 ## 坐标、采样与有效性
 
@@ -39,7 +41,7 @@
 
 三轮位置按各自的 CAN 接收时刻分段线性插值。首组以最晚轮反馈时刻建原点，后续每组积分到三轮均已覆盖的最新时刻。每轮保留 64 个毫秒槽，快轮在慢轮追上前发生换向时，过去各段仍按各自的角位移结算。静止编码器配非零速度反馈时，平移保持为零。
 
-发布的航向对应控制拍。新的可信 INS 航向按陀螺与帧龄推到控制拍，平移积分使用轮区间起止时刻的航向。`sample_time_us` 记录接受反馈组的控制拍，运动中的 x/y 会滞后相应的轮反馈年龄。CAN 和 INS 的年龄都在 RTOS 毫秒时钟内计算，控制拍间隔使用 TIM2 微秒时钟。
+发布的航向对应控制拍。新的可信 INS 航向按陀螺与帧龄推到控制拍，平移积分使用轮区间起止时刻的航向。`sample_time_us` 记录接受反馈组的控制拍，运动中的 x/y 会滞后相应的轮反馈年龄。CAN 和 INS 的年龄都在 RTOS 毫秒时钟内计算，控制拍间隔使用 TIM2 微秒时钟。底盘任务每 5 ms 唤醒，控制循环按 10 ms 门控。若到控制拍时 TIM2 未推进，本拍留到下一次唤醒重试。斜坡步长、前馈历史和里程计输入各有独立的上限，参数见 [chassis_config.h](../project/Core/Control/Chassis/chassis_config.h)。
 
 | 条件 | 处理 |
 | --- | --- |

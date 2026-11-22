@@ -501,6 +501,20 @@ static void test_timing_and_parameters(void)
     step(10000U, 1U); assert(disables == 0U && controls == 9U && aborts == 0U);
 }
 
+/* RTOS 已到控制拍但 TIM2 未推进时，下次任务唤醒仍可完成这一拍。 */
+static void test_control_step_waits_for_timer(void)
+{
+    reset_case(0U, 0U);
+    assert(enable_ready());
+
+    test_tick += CHASSIS_CONTROL_PERIOD_MS;
+    step(0U, 1U);
+    assert(controls == 0U);
+
+    step(CHASSIS_TASK_PERIOD_MS * 1000U, 1U);
+    assert(controls == 3U);
+}
+
 /** @brief 再次使能后重新确认三轮已停，前一次静止反馈不得放行起步。 */
 static void test_reenable_order(void)
 {
@@ -2252,6 +2266,7 @@ int main(void)
     test_timed_brake();
     test_kinematics();
     test_timing_and_parameters();
+    test_control_step_waits_for_timer();
     test_reenable_order();
     test_translation();
     test_distance_profiles();

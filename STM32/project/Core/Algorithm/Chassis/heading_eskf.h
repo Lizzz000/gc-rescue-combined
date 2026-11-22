@@ -3,6 +3,9 @@
 
 #include <stdint.h>
 
+/* 初始化、预测及上游反馈校验使用同一平面角速度输入上限。 */
+#define HEADING_ESKF_MAX_GYRO_RAD_S 8.0f
+
 /* 平面 SO(2) ESKF：名义状态 yaw/bias，误差状态 delta_yaw/delta_bias。
  * 陀螺预测；AHRS YAW 为主要观测；轮角增量仅弱约束零偏，不累计成绝对航向。
  * 单精度、2x2 对称协方差、无堆内存；噪声参数与相关性限制见 README。 */

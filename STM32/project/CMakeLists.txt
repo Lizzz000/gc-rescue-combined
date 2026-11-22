@@ -55,6 +55,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Communication/Common/link_frame.c
     Core/Communication/Common/usb_link.c
     Core/Control/Chassis/chassis.c
+    Core/Control/Chassis/chassis_config.c
     Core/Devices/BMI088/BMI088driver.c
     Core/Devices/BMI088/BMI088Middleware.c
     Core/Devices/IST8310/ist8310driver.c

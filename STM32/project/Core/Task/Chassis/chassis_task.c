@@ -22,6 +22,12 @@
 #include "task.h"
 #include <math.h>
 
+/* 指示灯翻转后重置同一个任务计数，电压采样周期须整除这一窗口。 */
+_Static_assert(CHASSIS_BATTERY_SAMPLE_PERIOD_MS % CHASSIS_TASK_PERIOD_MS == 0U,
+               "battery sampling must align to the chassis task period");
+_Static_assert(CHASSIS_LED_TOGGLE_PERIOD_MS % CHASSIS_BATTERY_SAMPLE_PERIOD_MS == 0U,
+               "LED toggle must align to the battery sampling period");
+
 volatile float battery_voltage = NAN;
 
 /**
@@ -57,10 +63,10 @@ void test_task(void const *argument)
     buzzer_off();
     TickType_t wake = xTaskGetTickCount();
     battery_voltage = get_battery_voltage();
-    uint8_t period_ticks = 0U;
+    uint32_t task_cycles = 0U;
     for (;;)
     {
-        vTaskDelayUntil(&wake, pdMS_TO_TICKS(5U));
+        vTaskDelayUntil(&wake, pdMS_TO_TICKS(CHASSIS_TASK_PERIOD_MS));
 #if CHASSIS_TUNING_ENABLED
         Live_Tuning_Loop();
 #elif UART6_MANUAL_ENABLED
@@ -75,12 +81,12 @@ void test_task(void const *argument)
 #if JETSON_AUTO_CAN_ENABLED
         Jetson_Auto_Loop();
 #endif
-        if (++period_ticks % 20U == 0U)
+        if (++task_cycles % (CHASSIS_BATTERY_SAMPLE_PERIOD_MS / CHASSIS_TASK_PERIOD_MS) == 0U)
             battery_voltage = get_battery_voltage();
-        if (period_ticks == 100U)
+        if (task_cycles == CHASSIS_LED_TOGGLE_PERIOD_MS / CHASSIS_TASK_PERIOD_MS)
         {
             bsp_led_toggle();
-            period_ticks = 0U;
+            task_cycles = 0U;
         }
     }
 }

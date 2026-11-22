@@ -171,6 +171,7 @@ def main():
             if "project/Core/Algorithm/Vision/visual_servo.c" not in sources:
                 sources.append("project/Core/Algorithm/Vision/visual_servo.c")
         if "project/Core/Control/Chassis/chassis.c" in sources:
+            sources.append("project/Core/Control/Chassis/chassis_config.c")
             sources.append("project/Core/Control/Chassis/chassis_odometry.c")
             sources.append("project/Core/Algorithm/Chassis/velocity_profile.c")
         if "project/Core/Control/Chassis/chassis_odometry.c" in sources:

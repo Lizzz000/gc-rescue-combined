@@ -49,7 +49,8 @@ def check_module_boundaries(cc, temp_dir=None):
 
         # 两侧各自使用真实控制器及源文件，只提供一组公共底盘/链路值接口与硬件替身。
         common_headers = [CORE / name for name in ("Control/Chassis/chassis.h",
-                          "Control/Chassis/chassis_pose.h", "Communication/Common/link_payload.h")]
+                          "Control/Chassis/chassis_config.h", "Control/Chassis/chassis_pose.h",
+                          "Communication/Common/link_payload.h")]
         platform = ["-I" + str(NATIVE / "stubs")]
         manual_firmware = ROOT / "manual_test/firmware"
         manual = [manual_firmware / name for name in ("uart6_manual", "manual_control", "manual_link")]

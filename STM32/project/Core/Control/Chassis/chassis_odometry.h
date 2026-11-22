@@ -2,16 +2,10 @@
 #define CHASSIS_ODOMETRY_H
 
 #include <stdint.h>
+#include "chassis_config.h"
 #include "heading_eskf.h"
 #include "chassis_pose.h"
 #include "wheel_alignment.h"
-
-/* 超过此间隔不外推缺失运动；控制层仍须先检查三轮与 IMU 的反馈时效。 */
-#define CHASSIS_ODOMETRY_MAX_INTERVAL_US 50000U
-#define CHASSIS_ODOMETRY_MAX_IMU_AGE_MS 20U
-/* 本车 MIT 反馈位置量程为 [-12.5,+12.5] rad，齿比均为1；回绕周期不是2*pi。 */
-#define CHASSIS_ODOMETRY_ENCODER_PERIOD_RAD 25.0f
-#define CHASSIS_ODOMETRY_MAX_WHEEL_RAD_S 40.0f
 
 /** @brief 一个底盘的积分历史；只由同一控制任务更新。 */
 typedef struct

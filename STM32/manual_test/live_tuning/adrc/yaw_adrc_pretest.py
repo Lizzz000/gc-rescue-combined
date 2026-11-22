@@ -164,7 +164,7 @@ def compare_run(case, cfg, tuning=None, proportional=None):
 
 
 def load_config(repo):
-    header = (repo / "STM32/project/Core/Control/Chassis/chassis.h").read_text(encoding="utf-8")
+    header = (repo / "STM32/project/Core/Control/Chassis/chassis_config.h").read_text(encoding="utf-8")
     cfg = {}
     for line in header.splitlines():
         words = line.split()

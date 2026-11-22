@@ -9,6 +9,7 @@
 #define TWO_PI 6.28318530717958647692f
 #define YAW_JUMP_LIMIT_RAD 0.0872664626f
 #define YAW_REJECT_LIMIT 3U
+#define OBSERVATION_REFERENCE_PERIOD_S 0.01f  /* 100 Hz 的观测噪声标定周期。 */
 #define YAW_VARIANCE 0.00030461742f   /* 100 Hz 下的航向观测方差：(1°)^2。 */
 #define GYRO_NOISE_DENSITY_SQ 0.0004f /* (0.02 rad/sqrt(s))^2 */
 #define BIAS_WALK_DENSITY_SQ 0.00000025f
@@ -29,7 +30,7 @@ uint8_t Heading_ESKF_Init(Heading_ESKF_t *state, float yaw_rad, float gyro_rad_s
         return 0U;
     }
     *state = (Heading_ESKF_t){0};
-    if (!isfinite(yaw_rad) || !isfinite(gyro_rad_s) || fabsf(gyro_rad_s) > 8.0f)
+    if (!isfinite(yaw_rad) || !isfinite(gyro_rad_s) || fabsf(gyro_rad_s) > HEADING_ESKF_MAX_GYRO_RAD_S)
     {
         return 0U;
     }
@@ -79,7 +80,7 @@ static uint8_t Update_Heading(Heading_ESKF_t *state, float yaw_rad, float gyro_r
         return 0U;
     }
     if (!state->initialized || !Valid_State(state) || !isfinite(yaw_rad) || !isfinite(gyro_rad_s) ||
-        fabsf(gyro_rad_s) > 8.0f || !isfinite(dt) || dt <= 0.0f || dt > 0.05f)
+        fabsf(gyro_rad_s) > HEADING_ESKF_MAX_GYRO_RAD_S || !isfinite(dt) || dt <= 0.0f || dt > 0.05f)
     {
         state->initialized = 0U;
         return 0U;
@@ -93,18 +94,20 @@ static uint8_t Update_Heading(Heading_ESKF_t *state, float yaw_rad, float gyro_r
                     BIAS_WALK_DENSITY_SQ * dt2 * dt / 3.0f;
     state->p_yaw_bias -= dt * state->p_bias + 0.5f * BIAS_WALK_DENSITY_SQ * dt2;
     state->p_bias += BIAS_WALK_DENSITY_SQ * dt;
+    const float observation_scale = OBSERVATION_REFERENCE_PERIOD_S / dt;
     state->wheel_bias_gain = 0.0f;
     if (isfinite(wheel_delta_rad))
     {
         const float residual = mean_gyro_rad_s - wheel_delta_rad / dt - state->bias_rad_s;
         /* 轮径/安装/轮滑误差保留较大 R；不把不一致强行吸收到 gyro bias。
          * 连续衰减权重，严重不一致仅丢弃轮观测，不影响有效 YAW。 */
-        const float tolerance = 0.15f + 0.10f * fabsf(mean_gyro_rad_s);
+        const float gyro_magnitude_rad_s = fabsf(mean_gyro_rad_s);
+        const float tolerance = 0.15f + 0.10f * gyro_magnitude_rad_s;
         if (isfinite(residual) && fabsf(residual) <= 1.5f)
         {
-            const float sigma = 0.5f + 0.15f * fabsf(mean_gyro_rad_s);
+            const float sigma = 0.5f + 0.15f * gyro_magnitude_rad_s;
             const float normalized = residual / tolerance;
-            const float measurement_variance = sigma * sigma * (1.0f + normalized * normalized) * (.01f / dt);
+            const float measurement_variance = sigma * sigma * (1.0f + normalized * normalized) * observation_scale;
             state->wheel_bias_gain = Correct(state, 0.0f, 1.0f, residual, measurement_variance);
         }
     }
@@ -117,7 +120,7 @@ static uint8_t Update_Heading(Heading_ESKF_t *state, float yaw_rad, float gyro_r
         if (!check_jump || fabsf(innovation) <= YAW_JUMP_LIMIT_RAD)
         {
             state->yaw_rejected_run = 0U;
-            state->yaw_gain = Correct(state, 1.0f, 0.0f, innovation, YAW_VARIANCE * (.01f / dt));
+            state->yaw_gain = Correct(state, 1.0f, 0.0f, innovation, YAW_VARIANCE * observation_scale);
         }
         else if (++state->yaw_rejected_run >= YAW_REJECT_LIMIT)
         {

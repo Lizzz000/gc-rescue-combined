@@ -24,7 +24,7 @@
 
 正式运行使用 `CHASSIS_RUN_SPEED_MPS`（0.40 m/s）与 `CHASSIS_RUN_YAW_RATE_RAD_S`（3.0 rad/s）。手动和自动固件各自管理上电零速使能、接管与故障。手动硬上限为 0.50 m/s 合速度和 4.0 rad/s。连续速度按实测周期限制加减速并经 40 ms 平滑，再换算为三轮 CAN1 目标。自动视觉靠近时随距离减速，安全区精调使用独立的低速参数。正式视觉搬运使用 `Debug-Auto` 预设；单次底盘联调用 `Debug-Auto-Chassis-Test`。
 
-速度配置保留在现有头文件中，修改后需要重新编译：
+底盘的周期、超时、限速和控制增益集中在 [chassis_config.h](project/Core/Control/Chassis/chassis_config.h)，各轮 ID、方向、齿比和默认电机参数集中在 [chassis_config.c](project/Core/Control/Chassis/chassis_config.c)。自动流程的场地和视觉参数由 [jetson_auto_config.h](project/Core/Control/Jetson/jetson_auto_config.h) 管理。修改固件参数后需重新编译。常用速度配置如下。
 
 - `CHASSIS_STRAIGHT_MAX_SPEED_MPS`、`CHASSIS_DISTANCE_MAX_SPEED_MPS`：平移与定距速度上限。
 - `CHASSIS_VECTOR_MAX_WZ_RAD_S`、`CHASSIS_TURN_OUTPUT_LIMIT`：连续转向硬上限和定角转向正常上限。
