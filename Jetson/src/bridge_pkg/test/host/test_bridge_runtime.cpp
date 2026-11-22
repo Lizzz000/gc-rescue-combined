@@ -18,6 +18,10 @@ struct BridgeRuntimeTestAccess
   static const can_frame & reply(const BridgeRuntime & runtime)
   {return runtime.transactions_.replyFrame(CanProtocol::COMMAND_RESULT_ID);}
   static void sendPeriodicFrame(BridgeRuntime & runtime) {runtime.sendPeriodicFrame();}
+  static void expireMissionStatus(BridgeRuntime & runtime, BridgeRuntime::Clock::duration timeout)
+  {
+    runtime.mission_watchdog_.received({BridgeRuntime::Clock::now() - timeout});
+  }
   static bool held(const BridgeRuntime & runtime) {return runtime.state_.locallyHeld();}
   static bool aborted(const BridgeRuntime & runtime) {return runtime.transactions_.route_aborted_;}
   static bool authorized(const BridgeRuntime & runtime) {return runtime.transactions_.turnAuthorized();}
@@ -58,6 +62,7 @@ public:
 
 struct Fixture
 {
+  static constexpr auto mission_watchdog_timeout = std::chrono::seconds(60);
   rclcpp::Node node;
   std::shared_ptr<rclcpp::Client<interface_pkg::srv::CheckRoi>> roi =
     std::make_shared<rclcpp::Client<interface_pkg::srv::CheckRoi>>();
@@ -71,7 +76,7 @@ struct Fixture
     BridgeRuntime::Config config;
     config.request_timeout = std::chrono::seconds(1);
     config.tx_queue_timeout = std::chrono::seconds(1);
-    config.mission_watchdog_timeout = std::chrono::seconds(60);
+    config.mission_watchdog_timeout = mission_watchdog_timeout;
     auto owned_transport = std::make_unique<HostTransport>();
     transport = owned_transport.get();
     runtime = std::make_unique<BridgeRuntime>(node, config, BridgeRuntime::Ports{
@@ -133,6 +138,28 @@ struct Fixture
     runtime->safetyCallback(message);
   }
 };
+
+void checkMissionStatusTimeout()
+{
+  Group group("BridgeRuntime MissionStatus watchdog");
+  Fixture fixture;
+  fixture.target();
+  fixture.runtime->io();
+  fixture.runtime->io();
+  CHECK(fixture.transport->periodic_writes == 2);
+
+  // Mission 状态失效后，新视觉目标也不能让周期帧继续给下位机续期。
+  BridgeRuntimeTestAccess::expireMissionStatus(*fixture.runtime, Fixture::mission_watchdog_timeout);
+  fixture.target();
+  fixture.runtime->io();
+  fixture.runtime->io();
+  CHECK(fixture.transport->periodic_writes == 2);
+  CHECK(fixture.transport->opened);
+
+  fixture.mission(10);
+  fixture.runtime->io();
+  CHECK(fixture.transport->periodic_writes == 3);
+}
 }
 
 void testDeliveryLocalization()
@@ -224,6 +251,7 @@ void testDeliveryLocalization()
 
 void testBridgeRuntimeSearch()
 {
+  checkMissionStatusTimeout();
   Group group("BridgeRuntime search transactions and restart");
   for (int order = 0; order < 3; ++order) {
     Fixture fixture;

@@ -50,7 +50,49 @@
 9. `src/interface_pkg/msg/` 与 `src/interface_pkg/srv/`。
 10. `src/record_pkg/` 与 `src/teleop_pkg/` 各自阅读。
 
-CPU 分割后处理在 `src/vision_pkg/yolo/postprocess.cpp`，GPU 提交在 `yolo.cpp`，ROS 消息转换在 `node/seg_ros.cpp`。纯后处理测试入口为 `src/vision_pkg/test/postprocess`，只需 OpenCV；跟踪及选择器测试入口为 `src/track_pkg/test/host`，只需 Eigen 和 GoogleTest。两者也接入各包的 `BUILD_TESTING`。跟踪 ID 全程使用整数，避免大编号经 float 矩阵传递时丢失精度；关联及运动模型保持。
+CPU 分割后处理在 `src/vision_pkg/yolo/postprocess.cpp`，GPU 提交在 `yolo.cpp`，ROS 消息转换在 `node/seg_ros.cpp`。跟踪 ID 全程使用整数，避免大编号经 float 矩阵传递时丢失精度；关联及运动模型保持。
+
+## 分层验收
+
+### 主机独立回归
+
+以下入口可在各包内独立运行，无需启动 ROS、使用 GPU 或连接实车设备。
+
+| 回归 | 入口与依赖 |
+| --- | --- |
+| 分割 CPU 后处理 | [postprocess](../src/vision_pkg/test/postprocess/README.md)，C++17、OpenCV |
+| NVMM 像素与映射顺序 | [nvmm](../src/vision_pkg/test/nvmm/README.md)，C++17、CMake，使用 SDK 桩 |
+| 安全区 | [test/field](../src/vision_pkg/test/field/README.md#运行)，C++17、OpenCV、Python/PyYAML |
+| 跟踪与选择 | [track host](../src/track_pkg/test/host/README.md)，Eigen、GoogleTest |
+| Bridge 协议与握手 | [Linux run.sh](../src/bridge_pkg/test/host/run.sh) 或 [Windows run.ps1](../src/bridge_pkg/test/host/run.ps1)，主机 G++ |
+| Mission 状态机与几何 | [Windows run.ps1](../src/mission_pkg/test/host/run.ps1)，主机 G++ |
+| 装配与验收工具 | 在 `Jetson/` 下运行 `python -m unittest discover -s tools/tests`，Python/PyYAML |
+
+安全区在 Windows、OpenCV 4.13.0 的主机基线有 7 条失败断言（压力矩阵 4 条、黑带专项 2 条、困难光照几何 1 条）。回归时用相同配置和环境对比具体断言。没有标注时，实拍回放按跳过记录。`validate.py field` 和 `field-compare` 的默认流程仍引用旧 `checks` 路径，安全区回归使用上表入口。 [已知基线](../src/vision_pkg/test/field/README.md#2026-11-17-验证结果)
+
+### Linux ROS 软件合同
+
+在仓库的 `Jetson/` 目录运行。先加载 ROS 2 Humble 和含 `teleop_pkg` 的下层工作区（Bridge 的 S288 测试依赖），安装 Jetson 生产构建所需的 OpenCV、GStreamer、CUDA、TensorRT 和多媒体 SDK。使用能通过 `run:=all` 校验的现场配置，包括已标定的夹爪参数。`contracts` 使用本轮 `validate.py build` 记录的构建和安装身份，运行前需加载同一份安装。
+
+```bash
+validation_dir="$(mktemp -d)"
+config=/path/to/rescue.yaml
+python3 tools/validate.py build --config "$config" --output "$validation_dir/build-report" \
+  --build "$validation_dir/build" --install "$validation_dir/install"
+source "$validation_dir/install/setup.bash"
+python3 tools/validate.py contracts --config "$config" --output "$validation_dir/contracts" \
+  --build "$validation_dir/build" --install "$validation_dir/install"
+```
+
+登记了 `vision_contract_yolo_transfer` 的构建还需要与配置一致的引擎、标签和 `--inputs` 指定的 3 张冻结图。合同阶段以软件配置覆盖实车 USB 路径，检查五个测试包的必需 CTest 登记和本轮产生的 XML。`interface_pkg` 参与构建和安装核验。用 `contract-status.json` 检查缺失、过期、跳过和失败项，各包的结果汇总在 `contract-results/`。安全区实拍回放可通过 `FIELD_REPLAY_DIR` 提供标注数据，跳过和失败都会使 ROS 合同验收无法通过。
+
+### Jetson 整链
+
+用正式 `rescue.launch.py` 和匹配的 Jetson 相机、自动 GStreamer/NVMM 管线及 TensorRT 引擎补验。当前 `validate.py capture` 的分割与整链场景会把图片设为 `file` 相机后端，生产分割要求自动 GStreamer/NVMM。该输入路径需更新并验证后，才能用 `capture` 记录当前整链证据。
+
+1. 核对 `all` 为 7 个进程、8 个节点，`vision` 在同一进程运行检测和图传。让 Bridge 退出后，核对正式 launch 关闭本次全栈进程。
+2. 让 `MissionStatus` 超过配置的有效期，确认 Bridge 停止发送类型 3/4 周期帧。
+3. 分别切换 `seg → field` 和 `field → seg`，确认阶段切换后旧帧不再发布，图传继续按同一时间戳和 `frame_id` 配对。
 
 ## 运行
 

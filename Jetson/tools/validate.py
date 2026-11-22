@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """板端综合验收入口；阶段调度和结果记录由 validation.workflow 负责。
 
-实际运行条件与用法见 docs/validation/unified-validation.md，PC 源码检查不代替板端验收。
+实际运行条件与用法见 docs/README.md 的分层验收说明。
 """
 import signal
 from validation.workflow import main

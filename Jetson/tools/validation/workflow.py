@@ -35,9 +35,21 @@ from .provenance import PACKAGES, begin_build, finish_build, verify_install
 
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE = 'c1f83e9ed987d6dd24bc59641e22f6b2a44f6717'
-FULL_ROLES = ('vision', 'track', 'select', 'mission', 'target', 'safety', 'bridge')
 MISSION_CONTRACT = 'stm32-handshake-v4'
 CAPTURE_SCENARIOS = (('detect', (0, 1, 2)), ('clock', (0,)), ('chain', (0, 1, 2)))
+
+# 验收要求独立于 CTest 实际登记，避免漏掉一个测试后仍给出通过结论。
+REQUIRED_CONTRACTS = {
+    'vision_pkg': ('test_field_matrix', 'test_field_sequence', 'test_field_replay',
+                   'test_field_colour', 'test_corner_order', 'test_field_centers',
+                   'test_field_truth', 'test_field_split', 'test_field_geometry',
+                   'test_nvmm_pixels', 'test_postprocess', 'test_image_view'),
+    'track_pkg': ('test_ocsort_core', 'test_tracking_core'),
+    'mission_pkg': ('test_mission_host',),
+    'bridge_pkg': ('test_bridge_core_host', 'test_bridge_runtime_host', 'test_cdc_write',
+                   'test_s288_timing', 'test_cdc_exclusive', 'test_s288_forward'),
+    'bringup_pkg': ('configuration',),
+}
 
 
 # ---- 准备与构建：统一配置、命令留证、资产快照和实际安装身份 ----
@@ -131,21 +143,58 @@ def build(args):
 
 # ---- 合同执行：核对安装、读取真实登记、运行并检查本轮结果 ----
 
+def contract_registrations(build, output, env):
+    from .provenance import beneath
+
+    registrations = []
+    expected = set()
+    directory = output / 'ctest-registration'
+    for package, required_tests in REQUIRED_CONTRACTS.items():
+        package_build = build.resolve() / package
+        require((package_build / 'CTestTestfile.cmake').is_file(),
+                'missing actual CTest registration: ' + package)
+        argv = ['ctest', '--show-only=json-v1', '--test-dir', str(package_build)]
+        observed = subprocess.run(argv, text=True, capture_output=True, env=env)
+        write_json(directory / (package + '.command.json'),
+                   {'argv': argv, 'exit_code': observed.returncode, 'stderr': observed.stderr})
+        (directory / (package + '.json')).write_text(observed.stdout, encoding='utf-8')
+        require(observed.returncode == 0, 'cannot list real CTest registrations: ' + package)
+        tests = json.loads(observed.stdout).get('tests', ())
+        missing = set(required_tests) - {test['name'] for test in tests}
+        require(not missing, f'missing required CTest registrations in {package}: {sorted(missing)}')
+        for test in tests:
+            name = test['name']
+            properties = {item['name']: item['value'] for item in test.get('properties', [])}
+            require(not properties.get('DISABLED'), 'registered contract is disabled: ' + name)
+            test_argv = test.get('command', ())
+            runners = [index for index, part in enumerate(test_argv) if Path(part).name == 'run_test.py']
+            require(len(runners) == 1 and runners[0] + 1 < len(test_argv),
+                    'unrecognized ament result registration: ' + name)
+            result = (package_build / test_argv[runners[0] + 1]).resolve()
+            require(beneath(result, package_build / 'test_results'),
+                    'CTest result outside this package: ' + name)
+            require(result not in expected, 'multiple CTest registrations reuse one result XML: ' + str(result))
+            expected.add(result)
+            registrations.append({'package': package, 'name': name, 'result_file': str(result)})
+    return registrations, expected
+
+
 def contracts(args):
-    from .provenance import IDENTITY, beneath
+    from .provenance import IDENTITY
     require(args.kind == 'candidate', 'the rebuilt contract suite only runs against a candidate build')
     snapshot = prepare(args)
     identity = json.loads((args.install.resolve() / IDENTITY).read_text(encoding='utf-8'))
     require(identity['build_root'] == str(args.build.resolve()),
             '--build does not match the verified installation')
     cfg = configuration()
-    selected = {role: executable(args.install, package, program)
-                for role, (package, program, _) in cfg.ROLES.items()}
+    selected = {}
     from ament_index_python.packages import get_package_prefix
-    for role, selected_path in selected.items():
+    for role in snapshot['roles']:
         package, program, _ = cfg.ROLES[role]
+        selected_path = executable(args.install, package, program)
         active = Path(get_package_prefix(package)) / 'lib' / package / program
         require(active.resolve() == selected_path, 'sourced ROS overlay differs from --install: ' + role)
+        selected[role] = selected_path
     verify_install(args, ROOT, BASELINE, selected, args.output)
     assets = asset_snapshot(snapshot)
     # 软件合同不打开实车 USB 设备。
@@ -163,33 +212,7 @@ def contracts(args):
     env = os.environ.copy()
     env['RESCUE_CONTRACT_PARAMETERS'] = str(software_parameters.resolve())
     env['RESCUE_TEST_ARTIFACTS'] = str((args.output / 'contract-artifacts').resolve())
-    # 从实际 CTest 登记确定应生成的结果，登记数量本身不表示执行通过。
-    registrations = []
-    expected = set()
-    for package in PACKAGES:
-        package_build = args.build.resolve() / package
-        require((package_build / 'CTestTestfile.cmake').is_file(), 'missing actual CTest registration: ' + package)
-        argv = ['ctest', '--show-only=json-v1', '--test-dir', str(package_build)]
-        observed = subprocess.run(argv, text=True, capture_output=True, env=env)
-        write_json(args.output / 'ctest-registration' / (package + '.command.json'),
-                   {'argv': argv, 'exit_code': observed.returncode, 'stderr': observed.stderr})
-        (args.output / 'ctest-registration' / (package + '.json')).write_text(observed.stdout, encoding='utf-8')
-        require(observed.returncode == 0, 'cannot list real CTest registrations: ' + package)
-        listing = json.loads(observed.stdout)
-        require(listing.get('tests'), 'package registered no rebuilt contracts: ' + package)
-        for test in listing['tests']:
-            properties = {item['name']: item['value'] for item in test.get('properties', [])}
-            require(not properties.get('DISABLED'), 'registered contract is disabled: ' + test['name'])
-            test_argv = test['command']
-            runners = [index for index, part in enumerate(test_argv) if Path(part).name == 'run_test.py']
-            require(len(runners) == 1 and runners[0] + 1 < len(test_argv),
-                    'unrecognized ament result registration: ' + test['name'])
-            result = Path(test_argv[runners[0] + 1])
-            result = (package_build / result).resolve() if not result.is_absolute() else result.resolve()
-            require(beneath(result, package_build / 'test_results'), 'CTest result outside this package: ' + test['name'])
-            require(result not in expected, 'multiple CTest registrations reuse one result XML: ' + str(result))
-            expected.add(result)
-            registrations.append({'package': package, 'name': test['name'], 'result_file': str(result)})
+    registrations, expected = contract_registrations(args.build, args.output, env)
     write_json(args.output / 'contract-registration.json', registrations)
     gpu_inputs = []
     gpu_input_identity = []
@@ -229,12 +252,15 @@ def contracts(args):
     # 保存运行前身份；旧 XML、跳过项、缺失项与命令失败都不能计为本轮通过。
     prior = {str(path): fingerprint(path) for path in expected if path.is_file()}
     commands_failed = []
-    for argv, log in (
-            # 限定本轮源码，避免从SSH默认home递归发现历史工作区或其他项目。
-            (['colcon', '--log-base', args.output / 'test-log', 'test', '--base-paths', args.source / 'src',
-              '--build-base', args.build, '--packages-select', *PACKAGES,
-              '--install-base', args.install, '--event-handlers', 'console_direct+'], 'contracts.log'),
-            (['colcon', 'test-result', '--test-result-base', args.build, '--verbose'], 'contract-results.log')):
+    # 限定本轮测试包，避免将仅构建包或其它工作区的 XML 纳入结论。
+    test_commands = [
+        (['colcon', '--log-base', args.output / 'test-log', 'test', '--base-paths', args.source / 'src',
+          '--build-base', args.build, '--packages-select', *REQUIRED_CONTRACTS,
+          '--install-base', args.install, '--event-handlers', 'console_direct+'], 'contracts.log'),
+        *((['colcon', 'test-result', '--test-result-base', args.build / package, '--verbose'],
+           f'contract-results/{package}.log') for package in REQUIRED_CONTRACTS),
+    ]
+    for argv, log in test_commands:
         try:
             command(argv, args.output / log, env)
         except ContractFailure as error:
@@ -264,7 +290,9 @@ def contracts(args):
             status = 'failed' if case.find('failure') is not None or case.find('error') is not None else (
                 'not_executed' if case.find('skipped') is not None or case.get('status') == 'notrun' else 'executed')
             cases.append({'source': str(path), 'name': case.get('name'), 'status': status})
-    unexpected = [str(path) for path in args.build.resolve().glob('*/test_results/**/*.xml') if path.resolve() not in expected]
+    unexpected = [str(path) for package in REQUIRED_CONTRACTS
+                  for path in (args.build.resolve() / package / 'test_results').rglob('*.xml')
+                  if path.resolve() not in expected]
     write_json(args.output / 'contract-status.json', {'cases': cases, 'stale_not_counted': stale,
                'missing_registered_results': missing, 'unexpected_not_counted': unexpected,
                'malformed': malformed, 'command_errors': commands_failed})
@@ -290,12 +318,12 @@ def executable(install, package, name):
     raise CapabilityMissing(f'missing executable {package}/{name} in {install}')
 
 
-def launch_case(args, snapshot, directory, run='all', clock=False):
+def launch_case(args, snapshot, directory, *, clock=False):
     """同一有效参数启动基线/候选。"""
     import yaml
     cfg = configuration()
     directory.mkdir(parents=True, exist_ok=True)
-    roles = FULL_ROLES if run == 'all' else (run,)
+    roles = snapshot['roles']
     role_executables = {}
     from ament_index_python.packages import get_package_prefix, get_package_share_directory
     for role in roles:
@@ -321,16 +349,15 @@ def launch_case(args, snapshot, directory, run='all', clock=False):
         env = os.environ.copy()
         env['RESCUE_RUN_DIR'] = str((directory / 'launch').resolve())
         return OwnedProcess(['ros2', 'launch', 'bringup_pkg', 'rescue.launch.py',
-                             'config:=' + snapshot['configuration'], 'run:=' + run],
+                              'config:=' + snapshot['configuration'], 'run:=' + snapshot['run']],
                             directory / 'launcher.log', env, role_executables)
     nodes = copy.deepcopy(snapshot['nodes'])
     param_file = directory / 'parameters.yaml'
     param_file.write_text(importlib.import_module('rescue_validation_runtime.ros.launch').dump_ros_parameters(nodes), encoding='utf-8')
     actions = []
-    for role in roles:
+    for role in role_executables:
         package, name, _ = cfg.ROLES[role]
         arguments = ['--role', role]
-        executable(args.install, package, name)
         actions.append(f'Node(package={package!r}, executable={name!r}, arguments={arguments!r}, '
                        f'parameters=[{str(param_file.resolve())!r}], output="screen")')
     launch = directory / 'observation.launch.py'
@@ -341,11 +368,11 @@ def launch_case(args, snapshot, directory, run='all', clock=False):
                         role_executables=role_executables)
 
 
-def case_snapshot(args, image=None, clock=False, directory=None, link_device=None):
+def case_snapshot(args, image=None, clock=False, directory=None, link_device=None, *, run='all'):
     """将场景覆盖值写入独立验收配置，再经生产装配器 load_configuration 读取；配置期能拦住哪些非法组合以 bringup 当前校验为准，其余在节点启动时暴露。"""
     import yaml
     cfg = configuration()
-    original = cfg.load_configuration(args.config, 'all')
+    original = cfg.load_configuration(args.config, run)
     values = dict(original['values'])
     # 场景只连接本次创建的伪终端，不打开实车设备。
     values.update({'link.device': link_device or '/dev/rescue-validation-unused',
@@ -365,15 +392,17 @@ def case_snapshot(args, image=None, clock=False, directory=None, link_device=Non
                                                   if args.stage == 'performance' else 10),
                        'shared.image.width': decoded.shape[1], 'shared.image.height': decoded.shape[0]})
     if clock:
+        # 模拟时钟不采图，但含分割的节点仍要求自动 GStreamer 管线。
         values.update({'vision.detect.camera_device': '/dev/rescue_validation_absent',
-                       'vision.detect.camera_backend': 'v4l2', 'vision.stream.stream_enabled': False})
+                       'vision.detect.camera_backend': 'gstreamer', 'vision.detect.camera_pipeline': '',
+                       'vision.stream.stream_enabled': False})
     path = (directory or args.output) / ('clock-config.yaml' if clock else 'case-config.yaml')
     path.write_text(yaml.safe_dump(flat_to_document(values), sort_keys=False), encoding='utf-8')
-    snapshot = cfg.load_configuration(path, 'all')
+    snapshot = cfg.load_configuration(path, run)
     if clock:
         # ROS通用use_sim_time不是生产配置键，仅时钟合同显式启用。
-        for node in ('detect_node', 'stream_node'):
-            snapshot['nodes'][node]['use_sim_time'] = True
+        for parameters in snapshot['nodes'].values():
+            parameters['use_sim_time'] = True
     return snapshot
 
 
@@ -449,12 +478,12 @@ def resource_sample(owner):
     return sample
 
 
-def cleanup_case(record, observer, owner, http, can, snapshot, before, expected, port):
+def cleanup_case(record, observer, owner, http, can, snapshot, before, port):
     """某一步清理失败也继续关闭其余自有资源，并在原始报告保留每个错误。"""
     errors = []
     for name, action in (
             ('http', lambda: http.stop() if http else None),
-            ('launcher', lambda: record.update(shutdown=owner.stop(expected, port)) if owner else None),
+            ('launcher', lambda: record.update(shutdown=owner.stop(snapshot['roles'], port)) if owner else None),
             ('can', lambda: can.close() if can else None),
             ('observer', lambda: observer.close() if observer else None),
             ('assets', lambda: record.update(assets_unchanged=asset_snapshot(snapshot) == before))):
@@ -811,9 +840,11 @@ def capture(args):
         for scenario, image in scenarios:
             directory = args.output / f'{scenario}-{image.stem}'
             directory.mkdir(parents=True, exist_ok=True)
+            clock = scenario == 'clock'
+            run = 'all' if scenario == 'chain' else 'detect' if clock else 'vision'
             can = UsbProbe(directory) if scenario == 'chain' else None
-            snapshot = case_snapshot(args, image if scenario != 'clock' else None,
-                                     scenario == 'clock', directory, can.device if can else None)
+            snapshot = case_snapshot(args, image if not clock else None, clock, directory,
+                                     can.device if can else None, run=run)
             before = asset_snapshot(snapshot)
             observer = Observer(snapshot, directory)
             owner = None
@@ -824,9 +855,7 @@ def capture(args):
             try:
                 if can:
                     observer.pollers.append(can.poll)
-                owner = launch_case(args, snapshot, directory, 'all' if scenario == 'chain' else
-                                    ('detect' if scenario == 'clock' else 'vision'),
-                                    args.kind == 'baseline', scenario == 'clock')
+                owner = launch_case(args, snapshot, directory, clock=clock)
                 if scenario == 'clock':
                     record['result'] = clock_contract(observer, owner)
                 else:
@@ -879,9 +908,8 @@ def capture(args):
                 record['error'] = str(error)
                 raise
             finally:
-                expected = FULL_ROLES if scenario == 'chain' else ('detect',) if scenario == 'clock' else ('vision',)
-                cleanup_case(record, observer, owner, http, can, snapshot, before, expected,
-                             None if scenario == 'clock' else snapshot['values']['vision.stream.stream_port'])
+                cleanup_case(record, observer, owner, http, can, snapshot, before,
+                             None if clock else snapshot['values']['vision.stream.stream_port'])
                 record['input_unchanged'] = fingerprint(image) == record['input']
                 if (record['status'] == 'observed_pending_shutdown' and not record['cleanup_errors'] and
                         record.get('shutdown', {}).get('clean') and record.get('assets_unchanged') and record['input_unchanged']):
@@ -1145,12 +1173,13 @@ def camera_or_performance(args):
             require(switches == 119 and len(report['phases']) == 120 and reconnects == 16,
                     'camera schedule incomplete (119/120/16 required)')
             require({item['task'] for item in report['snapshots']} == {'seg', 'field'}, 'two-stage snapshots missing')
-            require(http.frames > 0 and set(owner.roles) == set(FULL_ROLES), 'HTTP frames or seven role identities missing')
+            require(http.frames > 0 and set(owner.roles) == set(snapshot['roles']),
+                    'HTTP frames or configured role identities missing')
             require(report['resources'] and all(sample['temperatures_c'] for sample in report['resources']),
                     'temperature evidence missing')
         report['status'] = 'observed_pending_shutdown'
     finally:
-        cleanup_case(report, observer, owner, http, can, snapshot, before, FULL_ROLES, port)
+        cleanup_case(report, observer, owner, http, can, snapshot, before, port)
         try:
             rclpy.shutdown()
         except BaseException as error:
