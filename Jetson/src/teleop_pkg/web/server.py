@@ -31,12 +31,14 @@ _MAX_COMMAND_CLIENTS = 256
 class ManualServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port, command, status, servo):
+    def __init__(self, port, command, status, servo, *, servo_move_s=None):
         """command 为 ManualCommand；status() 返回链路诊断；servo 只处理手动转角。"""
         super().__init__((BIND_ADDRESS, port), _Handler)
         self.command = command
         self.status = status
         self.servo = servo
+        preset_seconds = 2.0 if servo_move_s is None else servo_move_s
+        self.page = _PAGE.replace(b'__SERVO_PRESET_SECONDS__', str(preset_seconds).encode('ascii'))
         self._motion_lock = threading.Lock()
         self._command_sequences = {}
 
@@ -92,7 +94,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == '/':
-            self._reply(HTTPStatus.OK, _PAGE, 'text/html; charset=utf-8')
+            self._reply(HTTPStatus.OK, self.server.page, 'text/html; charset=utf-8')
         elif self.path == '/api/state':
             self._json(HTTPStatus.OK, self._state())
         else:

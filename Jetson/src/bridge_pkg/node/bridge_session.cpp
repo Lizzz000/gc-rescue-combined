@@ -40,7 +40,9 @@ BridgeRuntime::BridgeRuntime(
   gripper_ = std::make_unique<s288::Session>(s288::SessionConfig{
     gripper_config_.device, static_cast<int>(gripper_config_.id),
     gripper_config_.kp, gripper_config_.kd,
-    gripper_config_.closed_deg, gripper_config_.open_deg});
+    gripper_config_.closed_deg, gripper_config_.open_deg, gripper_config_.ramp_fraction,
+    gripper_config_.open_hold_max_nm, gripper_config_.output_tolerance_deg,
+    gripper_config_.open_trim_deg, gripper_config_.closed_trim_deg});
   if (!gripper_->available() || !gripper_->start_open(gripper_config_.move_s)) {
     arrival_point_.complete(false);
   }
@@ -91,12 +93,16 @@ static_assert(static_cast<std::uint8_t>(BridgeCyclePhase::Fault) ==
   interface_pkg::msg::MissionStatus::CYCLE_FAULT);
 static_assert(static_cast<std::uint8_t>(BridgeCyclePhase::LocalizingStart) ==
   interface_pkg::msg::MissionStatus::CYCLE_LOCALIZING_START);
+static_assert(static_cast<std::uint8_t>(BridgeCyclePhase::InitialLocalizing) ==
+  interface_pkg::msg::MissionStatus::CYCLE_INITIAL_LOCALIZING);
 static_assert(CanProtocol::TURN_COMPLETED ==
   interface_pkg::srv::MissionCommand::Request::TURN_COMPLETED);
 static_assert(CanProtocol::SAFETY_ARRIVED ==
   interface_pkg::srv::MissionCommand::Request::SAFETY_ARRIVED);
 static_assert(CanProtocol::START_SEARCH ==
   interface_pkg::srv::MissionCommand::Request::START_SEARCH);
+static_assert(CanProtocol::START_ALIGN ==
+  interface_pkg::srv::MissionCommand::Request::START_ALIGN);
 static_assert(CanProtocol::DELIVERY_COMPLETED ==
   interface_pkg::srv::MissionCommand::Request::DELIVERY_COMPLETED);
 
@@ -111,6 +117,7 @@ void BridgeRuntime::taskCallback(interface_pkg::msg::TaskState::ConstSharedPtr m
   const auto update = state_.task({{stamp}, msg->task, msg->epoch}, current);
   if (!update.accepted) {return;}
   transactions_.onStateUpdate();
+  transactions_.resolvePendingModeReply(Clock::now());
 }
 
 // Mission 是任务准入状态，不能仅凭安全区消息推测成功目的侧。
@@ -328,11 +335,18 @@ void BridgeRuntime::handleArrivalPoint(std::uint8_t kind, std::uint32_t request_
 
 void BridgeRuntime::pollGripper()
 {
-  if (!arrival_point_.busy()) {return;}
   const auto status = gripper_->status();
   if (status != s288::MotionStatus::Succeeded && status != s288::MotionStatus::Failed) {return;}
-  // 成功仅表示动作周期结束并确认 Stop。先存终态，后清底层状态，丢包按编号重放。
-  const auto result = arrival_point_.complete(status == s288::MotionStatus::Succeeded);
-  gripper_->acknowledge();
-  if (result) {transactions_.armGripperResult(*result);}
+  if (status == s288::MotionStatus::Failed) {
+    last_error_ = gripper_->message();
+    RCLCPP_ERROR(get_logger(), "S288: %s", last_error_.c_str());
+    publishStatus();
+  }
+  if (arrival_point_.busy()) {
+    if (status == s288::MotionStatus::Succeeded) {RCLCPP_INFO(get_logger(), "S288: %s", gripper_->message().c_str());}
+    const auto result = arrival_point_.complete(status == s288::MotionStatus::Succeeded);
+    if (result) {transactions_.armGripperResult(*result);}
+  }
+  // 已回执的张开仍可出现保位故障，只消费本次实际读到的状态。
+  gripper_->acknowledge(status);
 }

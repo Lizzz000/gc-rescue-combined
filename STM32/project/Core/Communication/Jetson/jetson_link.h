@@ -18,6 +18,8 @@
 #define JETSON_CAN_ACTION_RESULT_ID       9U
 #define JETSON_CAN_VELOCITY_DLC           LINK_VELOCITY_DLC
 #define JETSON_CAN_ARRIVAL_ID             16U
+/* 原到达载荷 1 为独立诊断；载荷 2 请求按已夹取类别登记投送区。 */
+#define JETSON_CAN_SELECTED_ROUTE         2U
 #define JETSON_CAN_TURN_COMPLETED_ID      17U
 #define JETSON_CAN_SAFETY_ARRIVED_ID      18U
 #define JETSON_CAN_START_SEARCH_ID        19U
@@ -29,6 +31,9 @@
 #define JETSON_CAN_POINT_RELEASE          2U
 #define JETSON_CAN_POINT_REJECT_OPEN      3U
 #define JETSON_CAN_POINT_REPLY_COMMAND    5U
+/* 类型 22 请求初次整区模式，命令 6 回显非零请求号。 */
+#define JETSON_CAN_START_ALIGN_ID        22U
+#define JETSON_CAN_START_ALIGN_COMMAND    6U
 
 /* 手动类型 2 的速度载荷：valid:uint8 + vx/vy/wz:int16 小端，共 7 字节。 */
 typedef Link_Velocity_Frame_t Jetson_CAN_Velocity_Frame_t;
@@ -134,8 +139,8 @@ void Jetson_CAN_Receive_At(uint16_t type, const uint8_t *data, uint8_t len, uint
 
 /**
  * @brief 首次提交命令后设置类型 7 匹配，丢弃前一请求的回执快照。
- * @param[in] request_type 上行类型 17 至 20 或 21，传 0 结束等待并恢复最新帧快照。
- * @param[in] token 本趟 ROI 请求号或类型 19/21 非零请求编号。
+ * @param[in] request_type 上行类型 17 至 22，传 0 结束等待并恢复最新帧快照。
+ * @param[in] token 本趟 ROI 请求号或类型 19/21/22 非零请求编号。
  * @return 无；活动期只更新合法匹配帧，首个受理帧保留到本次等待结束。
  * @note 由自动任务在首次成功提交的同一临界区内设置，重试时不重新设置。
  */

@@ -9,7 +9,7 @@
 | interface_pkg | 共用消息和服务：检测、场地、任务、ROI、安全区、桥状态 |
 | vision_pkg | USB 相机、按阶段切换的分割和场地推理、MJPEG 图传 |
 | track_pkg | OC-SORT 跟踪，以及避开蓝色的目标选择 |
-| mission_pkg | 运输阶段、ROI 检查、安全区中心 |
+| mission_pkg | 运输阶段、投送区登记、整区中心、独立 ROI 诊断 |
 | bridge_pkg | 中心数据的 USB 桥，以及和 STM32 的运输握手、夹爪动作结果 |
 | bringup_pkg | 唯一启动入口，用同一份配置拉起各角色 |
 | record_pkg | 独立工具：相机流和 PC 预览 / MP4 录制 |
@@ -35,7 +35,7 @@
 
 ## 一次运输
 
-相机帧进入 `detect_node`。seg 阶段发布检测，`track_node` 维持轨迹，`select_node` 选择目标。`mission_node` 调用 `target_node` 做 ROI 检查，首趟只接受一个绿色目标，通过后确定左或右目的区。STM32 返航停稳后发送类型 17，命令 1 切到 field，服务成功且任务状态确认后进入投送阶段。STM32 按目的区定时横移，再盲推、松爪并退出。送达后，命令 4 将 `transport_phase` 记为 Later，任务进入 `LocalizingStart`。`safety_node` 取整块安全区内框的对角线交点并归一化，`bridge_node` 通过 USB 发送新中心，保留本趟目的区和 token。STM32 复核并记录新起点后通过命令 3 切回 seg，后续也可选择黑色和橙色目标。
+相机帧进入 `detect_node`。seg 阶段发布检测，`track_node` 维持轨迹，`select_node` 选择目标。首次运动先经类型 22 切到整区识别，STM32 自动对准停稳后记录起点，转 180° 并经类型 19 切回 seg。Bridge 在受理夹取时锁存真实选中类别，成功后由 `mission_node` 登记目的区。首趟接受绿色，后续绿色和黑色送左区，橙色送右区。正式流程无需 ROI 检查。STM32 返航停稳后发送类型 17，命令 1 切到 field，服务成功且任务状态确认后进入投送阶段。STM32 按目的区定时横移，再盲推、松爪并退出。送达后，命令 4 将 `transport_phase` 记为 Later，任务进入 `LocalizingStart`。`safety_node` 取整块安全区内框的对角线交点并归一化，`bridge_node` 通过 USB 发送新中心，保留本趟目的区和 token。STM32 复核并记录新起点后通过命令 3 切回 seg，后续也可选择黑色和橙色目标。
 
 ## 阅读顺序
 
@@ -46,7 +46,7 @@
 5. `src/vision_pkg/app/vision_runtime.cpp`，然后 `runtime/detect_runtime.cpp`（采集、推理、帧发布和停机）和 `runtime/stream_runtime.cpp`（同帧配对、编码与图传）。ROS 接口在 `node/detect_node.cpp` 和 `node/stream_node.cpp`。
 6. `src/track_pkg/node/track_node.cpp` 与 `select_node.cpp`。
 7. `src/mission_pkg/control/controller.hpp`，然后 `node/mission_node.cpp`、`target_node.cpp`、`safety_node.cpp`。
-8. `src/bridge_pkg/protocol/usb_protocol.hpp`，然后 `state/bridge_transactions.cpp`（到达、ROI 与命令回执）和 `node/bridge_io.cpp`（USB 轮询与 ROS 服务）。
+8. `src/bridge_pkg/protocol/usb_protocol.hpp`，然后 `state/bridge_transactions.cpp`（投送区登记、独立到达诊断与命令回执）和 `node/bridge_io.cpp`（USB 轮询与 ROS 服务）。
 9. `src/interface_pkg/msg/` 与 `src/interface_pkg/srv/`。
 10. `src/record_pkg/` 与 `src/teleop_pkg/` 各自阅读。
 
@@ -68,7 +68,7 @@ CPU 分割后处理在 `src/vision_pkg/yolo/postprocess.cpp`，GPU 提交在 `yo
 | Mission 状态机与几何 | [Windows run.ps1](../src/mission_pkg/test/host/run.ps1)，主机 G++ |
 | 装配与验收工具 | 在 `Jetson/` 下运行 `python -m unittest discover -s tools/tests`，Python/PyYAML |
 
-安全区在 Windows、OpenCV 4.13.0 的主机基线有 7 条失败断言（压力矩阵 4 条、黑带专项 2 条、困难光照几何 1 条）。回归时用相同配置和环境对比具体断言。没有标注时，实拍回放按跳过记录。`validate.py field` 和 `field-compare` 的默认流程仍引用旧 `checks` 路径，安全区回归使用上表入口。 [已知基线](../src/vision_pkg/test/field/README.md#2026-11-17-验证结果)
+安全区在 Windows、OpenCV 4.13.0 的主机基线有 7 条失败断言（压力矩阵 4 条、黑带专项 2 条、困难光照几何 1 条）。回归时用相同配置和环境对比具体断言。没有标注时，实拍回放按跳过记录。按上表入口运行安全区回归。 [已知基线](../src/vision_pkg/test/field/README.md#2026-11-17-验证结果)
 
 ### Linux ROS 软件合同
 
@@ -88,7 +88,7 @@ python3 tools/validate.py contracts --config "$config" --output "$validation_dir
 
 ### Jetson 冻结图整链
 
-在 Jetson 上加载 ROS 2 Humble 和上一步的验收安装。输入目录放 3 张不同的 JPG/PNG，配置须有本机能够加载的 TensorRT 引擎和类别表，并通过 `run:=all` 的配置校验。要覆盖成功运输，至少一张图须同时满足货物 ROI 规则和目的区识别条件。
+在 Jetson 上加载 ROS 2 Humble 和上一步的验收安装。输入目录放 3 张不同的 JPG/PNG，配置须有本机能够加载的 TensorRT 引擎和类别表，并通过 `run:=all` 的配置校验。现有冻结图 `capture` 使用独立诊断的 `16/01` 报文核对 ROI 兼容路径。要覆盖该诊断的成功结果，至少一张图须同时满足诊断 ROI 规则和目的区识别条件。正式无 ROI 目的区登记有独立的 Mission 和 Bridge 回归。
 
 ```bash
 python3 tools/validate.py capture --config "$config" --inputs /path/to/frozen-images \
@@ -123,6 +123,14 @@ ros2 launch bringup_pkg rescue.launch.py run:=all
 
 自动控制的通信保护复用类型 3/4，不增加心跳或改变载荷。正常丢目标时继续发送 `valid=0`，STM32 继续搜索；夹爪、转向和等待阶段也持续发送。MissionStatus 超过既有 500 ms 有效期时 bridge 停发周期流。STM32 在 USB 离线、会话改变或周期流断开达到 250 ms 后触发制动，确认停稳或制动达到 500 ms 后请求失能；这些是检测和制动期限，不保证 250 ms 内物理停稳。故障锁存至显式重新初始化，恢复连接不会自动续跑。启动前必须收到当前 USB 会话中的周期帧，详细时序见 [板间帧说明](usb-protocol.md)。
 
+11 月 22 日的实车场地配置采用 15 mm 单边内缩。STM32 正式搬运的整区复定位参考为 `(0.5430, 0.3298)`，单绿物块夹取到达点为 `(0.5721, 0.8681)`。相机、夹爪、板间 USB 设备和图传设置集中在[现场配置](../src/bringup_pkg/config/field_20261122.yaml)。在已加载安装环境的 Jetson 上使用下列命令启动视觉。
+
+```bash
+ros2 launch bringup_pkg rescue.launch.py run:=vision config:="$(ros2 pkg prefix --share bringup_pkg)/config/field_20261122.yaml"
+```
+
+单独运行视觉时，可在另一终端执行 `ros2 service call /detect_node/set_field std_srvs/srv/SetBool "{data: true}"` 切换到安全区识别。正式图纸配置 `rescue.yaml` 的单边内缩为 30 mm。改用图纸值前，应在同一停位重新核对归一化中心。现场配置和图纸配置都默认关闭 HTTP 图传。
+
 相机的现场标定保存在 `rescue_advanced.yaml` 的 `vision.detect.camera_brightness` 和 `vision.detect.camera_controls`。当前标定为亮度 175、对比度 68、饱和度 90、色调 200、伽马 138、增益 48、手动曝光 150，并开启自动白平衡和连续自动对焦。这些数值是当前相机的 V4L2 控件值。使用完整配置快照启动时，快照中的参数优先，现场改动应同步到实际启动配置。
 
 在 Jetson 上用正式入口启动 `vision`、`detect` 或 `all` 时，自动 GStreamer 管线会在创建节点前通过 `v4l2-ctl`（来自 `v4l-utils`）先设置曝光等自动模式，再写手动参数，并回读全部目标值。缺少工具、设备写入失败或回读不符都会中止本次启动。文件回放、自定义管线和单独的 `stream` 角色跳过这一步。检查正在出图的相机时可直接读取驱动值：
@@ -131,11 +139,23 @@ ros2 launch bringup_pkg rescue.launch.py run:=all
 v4l2-ctl -d /dev/video0 --get-ctrl=brightness,contrast,saturation,hue,gamma,gain,auto_exposure,exposure_time_absolute,white_balance_automatic,focus_automatic_continuous
 ```
 
-此前搬运实测中，车辆横向对准安全区后连续 796 帧未得到有效场地观测。当前 STM32 正式流程的横移、盲推和直线退出使用锁航向的定时动作，各段停稳后才交接。退出并确认送达后，用整区中心重新定位。返航采用 20 s 总时限，停稳后复核位姿。正式搬运须标定 `JETSON_AUTO_ALIGN_MAX_M`、`JETSON_AUTO_ROI_BACK_M`、`JETSON_AUTO_RECOVERY_BACK_M`。`JETSON_AUTO_SAFETY_STRAIGHT_M` 只在单次底盘联调中标定。位姿留在 STM32 本地，USB 类型和载荷沿用原协议，通信与底盘故障制动继续生效。轮滑和实际行程须在现场复核。详见 [里程计与定距控制](../../STM32/docs/ODOMETRY.md)。
+下一次带货联调使用 [STM32 实车启动顺序](../../STM32/docs/JETSON_USB_TEST.md#下一次现场单绿验收)。此前搬运实测中，车辆横向对准安全区后连续 796 帧未得到有效场地观测。当前 STM32 正式流程的横移、盲推和直线退出使用锁航向的定时动作，各段停稳后才交接。退出并确认送达后，STM32 按本趟实测横移量反向粗复位并恢复安全区航向，再用整区中心精调。粗复位和视觉共用 10 s，停稳后两张新帧入窗才记起点。返航采用 20 s 总时限，停稳后复核位姿。正式搬运本场的 `JETSON_AUTO_ALIGN_MAX_M` 为 0.25 m。`JETSON_AUTO_SAFETY_STRAIGHT_M` 只在单次底盘联调中标定。位姿留在 STM32 本地，正式路由用 `16/02`，独立诊断用 `16/01`。通信与底盘故障制动继续生效。轮滑和实际行程须在现场复核。详见 [里程计与定距控制](../../STM32/docs/ODOMETRY.md)。
 
-手动网页通过 `--config` 读取顶层 `link.device` 与 `gripper.*`。`link.device` 是 STM32 的 USB OTG FS 设备，`gripper.device` 是 S288 串口。启动自动桥前将夹爪摆到张开位置，桥接会话会将连接时的角度记为零点。自动闭合目标为 −50°，张开目标为 0°，开合各驱动 1.0 s，随后等待 Stop 回执。Stop 后舵机停止主动施力。实际夹持和松爪位置须上车确认。
+手动网页通过 `--config` 读取顶层 `link.device` 与 `gripper.*`。`link.device` 是 STM32 的 USB OTG FS 设备，`gripper.device` 是 S288 串口。启动自动桥或手动网页前将夹爪摆到机械张开位置，会话用当时的输出轴编码器读数作零点。此夹爪本次机械张开位的读数为 6873 格，编码器每圈 8192 格。卸力后的回弹位置会偏离机械张开位，重连前应复核零点。
 
-`run:=vision` 只启动检测和图传。`run:=all` 启动上一节的 7 个进程。图传地址和端口来自 `rescue.yaml` 的 `stream_address`、`stream_port`，当前是 `0.0.0.0:8080`。
+- S288 闭合目标 −50°，张开目标 0°。配置为 `Kp=2.0`、`Kd=0.10`、基本动作时间 1.0 s，前 0.8 s 对目标角平滑插值。闭合与张开的电机指令补偿分别为 +0.35°、+5.0°。
+- 闭合后发送 Stop，记录输出轴角差，夹住物块而提前受阻时仍按原动作协议交接。张开时用独立输出轴编码器确认连续三次低速反馈均在 ±2°，随后持续轻力保位。空载闭合也按 ±2° 验收。保位的位置比例项力矩上限为 0.14 N·m。手动 Stop、接续下一个动作、退出或故障会结束保位。
+- 2026-11-22 空载标定中，闭合 Stop 后为 −50.19° 至 −50.01°。张开保位读数为 +0.48° 至 +0.70°，最长一轮测到动作开始后第 20 秒。最终自动代码以 6868 格建立会话，两轮闭合实际均为 −49.26°，张开保位读数在 ±1° 内。手动端用卸力后 6843 格的读数另建会话时，闭合为 −47.90° 和 −47.86°。带货夹持和释放仍需实测。
+
+默认配置下，`run:=vision` 和 `run:=all` 均关闭 HTTP 图传，8080 端口不监听。相机采集、物块分割和安全区识别按当前任务运行。
+
+调试时在启动命令末尾加 `stream:=true`，例如：
+
+```bash
+ros2 launch bringup_pkg rescue.launch.py run:=vision stream:=true
+```
+
+省略 `stream` 时沿用 `rescue_advanced.yaml` 的 `vision.stream.stream_enabled`；`stream:=false` 可显式关闭。开关在启动时生效。启用后，地址和端口由 `rescue.yaml` 的 `stream_address`、`stream_port` 决定，默认监听 `0.0.0.0:8080`。
 
 - `http://<板端>:8080/healthz`
 - `http://<板端>:8080/view`
@@ -156,11 +176,11 @@ python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/manual_control.py
 
 手动页面的空格停车在输入框聚焦时仍有效；停车后仍按着方向键的自动重复不会重新起步，须松键后重新按下。页面为底盘请求附带 `client_id` 和递增 `sequence`，后端在同一锁内按序执行，迟到及重复请求不覆盖新动作、不延长租约。直接调用 HTTP API 时也可提供这两个字段；省略时保持旧调用方式，但没有跨连接的乱序保护。序号按页面独立记录，不能将其当作多个操作者之间的全局急停锁。
 
-任务侧保留本进程已见 ROI 编号高水位；Target 单独重启造成重复或倒退编号时，新检查会返回无效、编号 0，并清除本次路线。旧送达记录仍只读确认，不会因此建立新路线。出现该诊断时应在停车后协调重启任务链，并核对运输阶段。Mission 纯核心回归已纳入 `colcon test --packages-select mission_pkg`。串口打开失败的实例只释放自己成功获取的独占标记，避免争抢设备时误清除已有进程的锁。
+独立 ROI 诊断保留任务进程已见的路由编号高水位；Target 单独重启造成重复或倒退编号时，新检查会返回无效、编号 0，并清除本次路线。旧送达记录仍只读确认，不会因此建立新路线。出现该诊断时应在停车后协调重启任务链，并核对运输阶段。Mission 纯核心回归已纳入 `colcon test --packages-select mission_pkg`。串口打开失败的实例只释放自己成功获取的独占标记，避免争抢设备时误清除已有进程的锁。
 
 常用话题：`/detect_node/status`、`/detect_node/seg/detections`、`/detect_node/field/results`、`/detect_node/active_task`、`/track_node/seg/tracks`、`/select_node/target`、`/mission_node/status`、`/safety_node/target`、`/bridge_node/status`。`/detect_node/active_task` 和 `/mission_node/status` 是 `transient_local`。
 
-服务：`/detect_node/set_field`、`/target_node/check_roi`、`/mission_node/arrived`、`/mission_node/command`。
+正式服务包括 `/detect_node/set_field`、`/mission_node/register_pickup`、`/mission_node/command`。独立诊断使用 `/target_node/check_roi` 和 `/mission_node/arrived`。
 
 ### 安全区识别验证状态
 
@@ -186,8 +206,8 @@ python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/manual_control.py
 
 ## 术语
 
-- ROI：归一化矩形。到达后统计与它相交的检测。当前左上角 `(0.25, 0.5)`，宽和高都是 `0.5`。
-- CyclePhase：运输握手阶段 0–8，定义在 `controller.hpp`。它和识别模式 `seg` / `field` 是两套状态。
+- 独立诊断 ROI：归一化矩形，统计与它相交的检测。当前左上角 `(0.25, 0.5)`，宽和高都是 `0.5`。
+- CyclePhase：运输握手阶段 0–10，定义在 `controller.hpp`。它和识别模式 `seg` / `field` 是两套状态。
 - transport_phase：`0` 是首趟，选择器只要一个绿色；`1` 是 Later，本趟送达确认之后，黑色和橙色也可以入选。
 - epoch：`TaskState` 里的代次。同一次 `detect_node` 进程每次切换 seg/field 都会加一。
 - cycle_generation：`mission_node` 每次受理模式切换时加一，下游用它丢掉旧的坐标授权。
@@ -198,15 +218,12 @@ python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/manual_control.py
 - FrameGate：按源时间丢掉过期、回退或不属于当前阶段的帧。无新帧时的撤销期限是 `reset_timeout_s`，当前为 1 秒；100 毫秒只是轮询周期。
 - OC-SORT：按类别关联检测框。切阶段会清空轨迹输出；进程内的 ID 计数不回到 0。
 - letterbox：把原图等比缩进模型输入，空边填固定值，再除以 255 写成 NCHW。
-- 命令 1–4：转向完成、安全区到达、重新寻找、送达确认。1、2、4 携带本趟 `roi_request_id` 的低 32 位。
+- 命令 1、2、3、4、5、6 分别为返航后阶段确认、安全区到达、重新寻找、送达确认、夹爪受理和首次整区定位。1、2、4 携带本趟路由编号，正式流程中等于成功的夹取请求号。
 - 伪终端：软件验收使用临时创建的 USB 字节流替身，不访问实车设备。
 
 ## 流程图
 
-`flowcharts/system.svg` 画出 7 个进程、8 个节点，以及一次运输用到的话题和服务。实线是话题，虚线是服务。节点划分见 `runtime/core.py` 第 19–31 行；话题名见各节点的 `createRosInterfaces` 和 `rescue_advanced.yaml`。
-
-`flowcharts/vision.svg` 是一帧的两条出路：NVMM 上做分割或场地，同时把处理帧送给图传。采集管线在 `camera/camera.cpp` 第 101–129 行，GPU 前处理在 `yolo/cuda/nvmm_preprocess.hpp` 第 13–36 行，发布在 `detect_node.cpp` 第 298–362 行，HTTP 在 `stream/mjpeg/mjpeg.cpp`。
-
-`flowcharts/mission.svg` 是 CyclePhase 0–8，以及命令 1–4 怎样换阶段。枚举在 `controller.hpp` 第 34–45 行，服务在 `mission_node.cpp` 第 99–120 行。
-
-`flowcharts/usb.svg` 是 USB 握手顺序和两条中心周期帧。类型、载荷与失联制动规则见 [usb-protocol.md](usb-protocol.md)。到达分支在 `state/bridge_transactions.cpp` 的 `handleArrival`。
+- [进程与设备](flowcharts/system.svg)展示 7 个进程、8 个节点和两条独立 USB 设备链路。
+- [视觉与图传](flowcharts/vision.svg)展示 TensorRT 分割、OpenCV 安全区识别及按需开启的 MJPEG 图传。
+- [任务阶段](flowcharts/mission.svg)展示 CyclePhase 0–10、首次整区对准、正式投送与独立诊断。
+- [USB 握手](flowcharts/usb.svg)展示动作与回复编号、正式 `16/02` 路由以及两次整区建点。载荷与失联制动规则见 [USB 协议](usb-protocol.md)。

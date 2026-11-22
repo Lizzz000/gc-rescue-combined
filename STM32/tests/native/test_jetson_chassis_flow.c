@@ -267,12 +267,11 @@ static void Flow_No_Actuator(void)
     assert(distance_count == 0U);
 }
 
-/** @brief 显式启动联调，保持真实配置的未标定机构参数为零。 */
+/** @brief 显式启动底盘联调，确认此模式无需执行夹爪和 ROI 流程。 */
 static void Flow_Start(void)
 {
     Reset();
     assert(JETSON_AUTO_ENABLED == 0 && JETSON_AUTO_CHASSIS_TEST == 1);
-    assert(JETSON_AUTO_ROI_BACK_M == 0.0f);
     Steps(5U);
     assert(!enabled && !enables && jetson_test_start == 0U);
     jetson_test_start = 1U;

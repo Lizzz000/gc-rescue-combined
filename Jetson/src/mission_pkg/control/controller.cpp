@@ -1,6 +1,6 @@
 #include "control/controller.hpp"
 
-// 阶段迁移。ROI 应答与诊断成功才建路由；206 才记录送达；205 双确认才恢复寻找。
+// 阶段迁移。正式流程登记夹取类别，独立诊断按 ROI 建路由。收到送达确认后才记录投送。
 // Copyright 2026 li
 // SPDX-License-Identifier: Apache-2.0
 #include <cmath>
@@ -106,7 +106,7 @@ MissionCommandResult MissionController::requestCommand(
     roi_request_id == delivered_roi_request_id_)
   {
     result.accepted = true;
-    result.message = "delivery already recorded for this ROI";
+    result.message = "delivery already recorded for this route";
     return result;
   }
   const bool matches_route = roi_request_id != 0 && roi_request_id == state_.roi_request_id;
@@ -121,7 +121,7 @@ MissionCommandResult MissionController::requestCommand(
     (recorded_turn || recorded_arrival))
   {
     result.accepted = true;
-    result.message = "command already accepted for current ROI and phase";
+    result.message = "command already accepted for current route and phase";
     return result;
   }
   // 活动等待、待发布切换、待提交 ROI 均占用流程；拒绝新命令不刷新原截止。
@@ -133,6 +133,18 @@ MissionCommandResult MissionController::requestCommand(
   // 三种物理完成事件均核对完整业务编号，不能让上一趟迟到的 ROS 请求推进同阶段的新趟。
   // StartSearch 独立于路由身份，仍可从无有效路由的 Fault 恢复。
   switch (command) {
+    case MissionCommand::StartAlign:
+      // 场地准备可先人工切过 field；只允许第一次业务请求显式授权整区。
+      if (roi_request_id != 0 || state_.cycle_generation != 0 || roi_check_.generation != 0 ||
+        state_.transport_phase != MissionState::Transport::First || state_.roi_request_id != 0 ||
+        state_.destination != MissionState::Destination::None || state_.operation != MissionState::Operation::Idle ||
+        (state_.cycle_phase != CyclePhase::SearchingTarget && state_.cycle_phase != CyclePhase::Fault) ||
+        !task_ || (task_->task != "seg" && task_->task != "field")) break;
+      result.acted = true;
+      startAutomatic(true);
+      result.accepted = state_.cycle_phase != CyclePhase::Fault;
+      result.message = state_.reason;
+      return result;
     case MissionCommand::TurnCompleted:
       if (!matches_route || state_.cycle_phase != CyclePhase::WaitingTurn) break;
       result.acted = true;
@@ -160,12 +172,12 @@ MissionCommandResult MissionController::requestCommand(
     case MissionCommand::DeliveryCompleted:
       if (!matches_route || state_.cycle_phase != CyclePhase::WaitingTransfer ||
         state_.destination == MissionState::Destination::None) break;
-      // 唯一首趟放行点：货物确认留在正确分区之后。ROI 和到达都不替代这一步。
+      // 首趟阶段只在确认送达后切换。
       // 先记账再发布；发布失败不回滚已记下的送达。
       delivered_roi_request_id_ = roi_request_id;
       state_.transport_phase = MissionState::Transport::Later;
       state_.cycle_phase = CyclePhase::LocalizingStart;
-      state_.reason = "delivery confirmed for current ROI; localizing the next starting pose";
+      state_.reason = "delivery confirmed for current route; localizing the next starting pose";
       result.acted = true;
       out_.publishStatus(state_);
       result.accepted = true;
@@ -173,9 +185,10 @@ MissionCommandResult MissionController::requestCommand(
       return result;
     case MissionCommand::StartSearch:
       // 调用端须已完成起点定位与再次转向，或停车并安全释放；Mission 不核实机械动作。
-      // 205 无趟次身份。只弃路由，不确认或回滚送达。
+      // 开始搜索命令只撤销当前路由，已确认的送达仍有效。
       if (state_.cycle_phase != CyclePhase::WaitingTransfer &&
         state_.cycle_phase != CyclePhase::NavigatingSafety &&
+        state_.cycle_phase != CyclePhase::InitialLocalizing &&
         state_.cycle_phase != CyclePhase::LocalizingStart &&
         state_.cycle_phase != CyclePhase::WaitingTurn &&
         state_.cycle_phase != CyclePhase::CheckingRoi &&
@@ -193,8 +206,45 @@ MissionCommandResult MissionController::requestCommand(
       result.message = "start-search accepted; requesting seg recognition";
       return result;
   }
-  result.message = "command is not allowed for the current transport phase or ROI identity";
+  result.message = "command is not allowed for the current transport phase or route identity";
   return result;
+}
+
+PickupRouteResult MissionController::registerPickupRoute(
+  const std::string & class_id, std::uint32_t grasp_token, const RoiClassIds & ids)
+{
+  using Destination = MissionState::Destination;
+  if (grasp_token != 0 && grasp_token == last_grasp_token_ && class_id == last_grasp_class_ &&
+    state_.cycle_phase == CyclePhase::WaitingTurn && state_.roi_request_id == grasp_token)
+  {
+    return {true, state_.destination, grasp_token, state_.reason};
+  }
+  // 正式握手和旧诊断共享下游路由身份；同一任务进程不能将历史编号重新交给另一件货物。
+  if (grasp_token == 0 || grasp_token <= roi_response_id_high_water_ ||
+    state_.cycle_phase != CyclePhase::SearchingTarget || !task_ || task_->task != "seg" ||
+    busy() || roi_.pending_commit)
+  {
+    return {false, Destination::None, 0, "pickup transaction is stale or out of sequence"};
+  }
+  const bool later = state_.transport_phase == MissionState::Transport::Later;
+  Destination side = Destination::None;
+  if (class_id == std::to_string(ids.green) || (later && class_id == std::to_string(ids.black))) {
+    side = Destination::Left;
+  } else if (later && class_id == std::to_string(ids.orange)) {
+    side = Destination::Right;
+  } else {
+    return {false, Destination::None, 0, "selected class is not allowed for this delivery"};
+  }
+  last_grasp_class_ = class_id;
+  last_grasp_token_ = grasp_token;
+  roi_response_id_high_water_ = grasp_token;
+  state_.roi_request_id = grasp_token;
+  state_.destination = side;
+  state_.cycle_phase = CyclePhase::WaitingTurn;
+  state_.outcome = MissionState::Outcome::Success;
+  state_.reason = "selected pickup registered; waiting for STM32 turn completion";
+  out_.publishStatus(state_);
+  return {true, side, grasp_token, state_.reason};
 }
 
 void MissionController::requestRoi()
@@ -343,7 +393,7 @@ void MissionController::startAutomatic(bool field)
   state_.cycle_phase = field ? CyclePhase::SwitchingField : CyclePhase::SwitchingSeg;
   state_.operation = MissionState::Operation::Switching;
   state_.outcome = MissionState::Outcome::Pending;
-  state_.reason = field ? "turn completed; switching to field recognition" :
+  state_.reason = field ? "switching to field recognition" :
     "explicit start-search; switching to seg recognition";
   // 发布失败时这个标志还在，commandFailed 会清掉，不会留下已经发出的切换请求。
   automatic_.status_publication_pending = true;
@@ -379,7 +429,8 @@ void MissionController::finishAutomatic(
     state_.destination = MissionState::Destination::None;
     state_.cycle_phase = CyclePhase::Fault;
   } else if (automatic_.expected_field) {
-    state_.cycle_phase = CyclePhase::NavigatingSafety;
+    state_.cycle_phase = state_.destination == MissionState::Destination::None ?
+      CyclePhase::InitialLocalizing : CyclePhase::NavigatingSafety;
   } else {
     state_.cycle_phase = CyclePhase::SearchingTarget;
     state_.destination = MissionState::Destination::None;
@@ -527,7 +578,7 @@ void MissionController::observeExpectedTask(TimePoint now)
   } else if (automatic_.service_accepted) {
     finishAutomatic(
       MissionState::Outcome::Success,
-      automatic_.expected_field ? "field recognition confirmed after turn" :
+      automatic_.expected_field ? "field recognition confirmed" :
       "seg recognition confirmed; searching for target");
   } else {
     automatic_.task_observed = true;
@@ -567,7 +618,7 @@ void MissionController::switchReply(
   if (automatic_.task_observed) {
     finishAutomatic(
       MissionState::Outcome::Success,
-      automatic_.expected_field ? "field recognition confirmed after turn" :
+      automatic_.expected_field ? "field recognition confirmed" :
       "seg recognition confirmed; searching for target");
   }
 }

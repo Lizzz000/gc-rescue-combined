@@ -219,21 +219,21 @@ static void Check_Centers_And_ROI(void)
     }
 }
 
-/** @brief 核对 token 全范围、搜索与动作编号非零，以及目的区/命令/布尔的边界。 */
+/** @brief 核对 token 全范围、启动对准/搜索/动作编号非零，以及目的区/命令/布尔的边界。 */
 static void Check_Handshake(void)
 {
     const uint32_t tokens[] = {0U, 0x89ABCDEFU, UINT32_MAX};
     for (unsigned t = 0U; t < sizeof(tokens) / sizeof(tokens[0]); ++t)
     {
-        for (uint8_t command = 0U; command <= 6U; ++command)
+        for (uint8_t command = 0U; command <= 7U; ++command)
         {
             for (uint8_t accepted = 0U; accepted <= 2U; ++accepted)
             {
                 uint32_t token = tokens[t];
                 uint8_t reply[6] = {accepted, command, (uint8_t)token, (uint8_t)(token >> 8U),
                                     (uint8_t)(token >> 16U), (uint8_t)(token >> 24U)};
-                uint8_t valid = accepted <= 1U && command >= 1U && command <= 5U &&
-                                ((command != 3U && command != 5U) || token != 0U);
+                uint8_t valid = accepted <= 1U && command >= 1U && command <= 6U &&
+                                ((command != 3U && command != 5U && command != 6U) || token != 0U);
                 Jetson_CAN_Receive(JETSON_CAN_COMMAND_REPLY_ID, reply, sizeof(reply));
                 Jetson_CAN_Data_t data = Snapshot();
                 assert(data.command_reply.valid == valid);
@@ -282,21 +282,23 @@ static void Check_Snapshot(void)
     assert(!after.roi_reply.valid && !after.command_reply.valid && !after.turn_to_safety.valid);
 }
 
-/** @brief 核对六种上行帧的 DLC、小端 token、类型 21 到点类型和 HAL 所需的尾部缓冲。 */
+/** @brief 核对上行帧的 DLC、小端 token、类型 21 到点类型和 HAL 所需的尾部缓冲。 */
 static void Check_Uplink(void)
 {
-    const uint16_t tokenless_ids[] = {JETSON_CAN_ARRIVAL_ID};
-    const uint16_t token_ids[] = {JETSON_CAN_TURN_COMPLETED_ID, JETSON_CAN_SAFETY_ARRIVED_ID, JETSON_CAN_START_SEARCH_ID, JETSON_CAN_DELIVERY_COMPLETED_ID};
+    const uint16_t token_ids[] = {JETSON_CAN_TURN_COMPLETED_ID, JETSON_CAN_SAFETY_ARRIVED_ID,
+                                  JETSON_CAN_START_SEARCH_ID, JETSON_CAN_DELIVERY_COMPLETED_ID,
+                                  JETSON_CAN_START_ALIGN_ID};
     const uint8_t tokenless[8] = {0x01U};
     const uint8_t token_frame[8] = {0x01U, 0xEFU, 0xCDU, 0xABU, 0x89U};
     const uint8_t max_token_frame[8] = {0x01U, 0xFFU, 0xFFU, 0xFFU, 0xFFU};
     uint8_t data[8];
-    for (unsigned i = 0U; i < sizeof(tokenless_ids) / sizeof(tokenless_ids[0]); ++i)
-    {
-        memset(data, 0xAA, sizeof(data));
-        assert(Jetson_CAN_Encode_Uplink(tokenless_ids[i], UINT32_MAX, data) == 1U);
-        assert(memcmp(data, tokenless, sizeof(data)) == 0);
-    }
+    /* 同一类型 16 区分显式诊断与正式选中目标，均为单字节。 */
+    memset(data, 0xAA, sizeof(data));
+    assert(Jetson_CAN_Encode_Uplink(JETSON_CAN_ARRIVAL_ID, 0U, data) == 1U);
+    assert(memcmp(data, tokenless, sizeof(data)) == 0);
+    const uint8_t selected_route[8] = {2U};
+    assert(Jetson_CAN_Encode_Uplink(JETSON_CAN_ARRIVAL_ID, JETSON_CAN_SELECTED_ROUTE, data) == 1U);
+    assert(memcmp(data, selected_route, sizeof(data)) == 0);
     for (unsigned i = 0U; i < sizeof(token_ids) / sizeof(token_ids[0]); ++i)
     {
         memset(data, 0xAA, sizeof(data));
@@ -305,7 +307,7 @@ static void Check_Uplink(void)
         assert(Jetson_CAN_Encode_Uplink(token_ids[i], UINT32_MAX, data) == 5U);
         assert(memcmp(data, max_token_frame, sizeof(data)) == 0);
         const uint8_t length = Jetson_CAN_Encode_Uplink(token_ids[i], 0U, data);
-        if (token_ids[i] == JETSON_CAN_START_SEARCH_ID)
+        if (token_ids[i] == JETSON_CAN_START_SEARCH_ID || token_ids[i] == JETSON_CAN_START_ALIGN_ID)
         {
             assert(length == 0U);
             assert(memcmp(data, max_token_frame, sizeof(data)) == 0);
@@ -316,6 +318,7 @@ static void Check_Uplink(void)
             assert(memcmp(data, tokenless, sizeof(data)) == 0);
         }
     }
+    memcpy(data, tokenless, sizeof(data));
     const uint16_t rejected_ids[] = {0U, 1U, JETSON_CAN_TURN_REQUEST_ID, 0x201U, 0x202U, 0x207U, 0xFFFFU};
     for (unsigned i = 0U; i < sizeof(rejected_ids) / sizeof(rejected_ids[0]); ++i)
     {
@@ -403,6 +406,16 @@ static void Check_Command_Expectation(void)
     Jetson_CAN_Receive(JETSON_CAN_COMMAND_REPLY_ID, zero_search, sizeof(zero_search));
     assert(Snapshot().command_reply.command == 3U && Snapshot().command_reply.token == UINT32_MAX &&
            Snapshot().command_reply.sequence == search_sequence);
+
+    const uint8_t align_ok[6] = {1U, 6U, 8U};
+    const uint8_t align_old[6] = {1U, 6U, 1U};
+    Jetson_CAN_Expect_Command_Reply(JETSON_CAN_START_ALIGN_ID, 8U);
+    Jetson_CAN_Receive(JETSON_CAN_COMMAND_REPLY_ID, search_ok, sizeof(search_ok));
+    Jetson_CAN_Receive(JETSON_CAN_COMMAND_REPLY_ID, align_old, sizeof(align_old));
+    assert(!Snapshot().command_reply.valid);
+    Jetson_CAN_Receive(JETSON_CAN_COMMAND_REPLY_ID, align_ok, sizeof(align_ok));
+    assert(Snapshot().command_reply.valid && Snapshot().command_reply.command == 6U &&
+           Snapshot().command_reply.token == 8U);
 
     /* 类型 21 必须回显当前非零动作编号。 */
     const uint8_t point_ok[6] = {1U, 5U, 7U};

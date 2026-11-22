@@ -1,0 +1,254 @@
+# 2026-11-22 实车统一配置，传给 rescue.launch.py 的 config 参数。
+# 相机、识别、板间串口和夹爪在本文件配置，STM32 固件保存取货与整区停位中心及运动参数。
+# 启动阶段为 seg，采样安全区时切换至 field。HTTP 图传默认关闭，按需使用 stream:=true。
+version: 1
+shared:
+  image:
+    width: 1920
+    height: 1080
+  classes:
+    green: 0
+    blue: 1
+    black: 2
+    orange: 3
+  candidate_ids:
+  - 0
+  - 2
+  - 3
+vision:
+  detect:
+    seg_model_path: package://vision_pkg/models/seg.ad2322286d06b71.trt
+    seg_labels_path: package://vision_pkg/models/classes.txt
+    conf_threshold_seg: 0.5
+    camera_device: /dev/video0
+    camera_fps: 120
+    camera_fourcc: MJPG
+    camera_backend: gstreamer
+    task: both
+    dla_core: -1
+    nms_threshold: 0.7
+    max_detections: 300
+    publish_masks: false
+    mask_scale: 2
+    mask_label_offset: 1
+    max_masks: 32
+    publish_field_results: true
+    publish_raw: true
+    publish_processed: true
+    raw_max_fps: 100.0
+    camera_brightness: 175
+    camera_controls:
+      auto_exposure: 1
+      exposure_time_absolute: 150
+      exposure_dynamic_framerate: 0
+      white_balance_automatic: 1
+      focus_automatic_continuous: 1
+      contrast: 68
+      saturation: 90
+      hue: 200
+      gamma: 138
+      gain: 48
+      sharpness: 2000
+      power_line_frequency: 1
+      backlight_compensation: 0
+      zoom_absolute: 100
+    camera_buffer_size: 2
+    camera_pipeline: ''
+    publish_timing: true
+    seg_max_fps: 100.0
+    field_max_fps: 100.0
+    active_task: seg
+    publish_status: true
+    frame_id: camera
+  stream:
+    stream_address: 0.0.0.0
+    stream_port: 8080
+    stream_quality: 80
+    image_topic: /detect_node/image_processed
+    seg_detections_topic: /detect_node/seg/detections
+    seg_masks_topic: /detect_node/seg/masks
+    field_results_topic: /detect_node/field/results
+    draw_boxes: true
+    draw_labels: true
+    draw_masks: false
+    draw_field: true
+    overlay_wait_ms: 150.0
+    input_timeout_s: 1.0
+    active_task_topic: /detect_node/active_task
+    stream_enabled: false
+    stream_max_fps: 100.0
+    stream_scale: 1.0
+    jpeg_backend: nvjpeg
+    publish_annotated: false
+    publish_compressed: false
+    compressed_quality: 80
+    overlay_stats: false
+    publish_status: true
+    frame_id: ''
+  field:
+    field_w_m: 0.66
+    field_h_m: 0.36
+    black_width_m: 0.02
+    proc_width: 1280
+    proc_height: 720
+    bev_px_per_m: 400.0
+    bev_width: 0
+    bev_height: 0
+    # 场地图像单边内缩使用 15 mm。
+    wall_thickness_m: 0.015
+    purple_hue_range_deg:
+    - -80.0
+    - -15.0
+    purple_chroma_ratio_min: 0.5
+    purple_L_range:
+    - 8.0
+    - 96.0
+    morph_close_ksize: 5
+    morph_close_iter: 2
+    morph_dilate_ksize: 3
+    morph_dilate_iter: 2
+    min_area_frac: 0.004
+    min_rect_ratio_range:
+    - 1.2
+    - 12.0
+    max_border_touch: 2
+    min_fill_ratio: 0.45
+    max_candidates_try: 4
+    corner_exclude_frac: 0.06
+    edge_bins: 32
+    edge_band_frac: 0.18
+    fit_outlier_px: 2.0
+    fit_iterations: 4
+    min_side_points: 8
+    min_side_inliers: 6
+    prior_corner_tol_frac: 0.12
+    quad_min_area_frac: 0.004
+    quad_side_ratio_range:
+    - 0.2
+    - 6.0
+    use_aspect_check: false
+    quad_max_aspect_err: 2.0
+    black_search_range:
+    - 0.14
+    - 0.86
+    black_row_range:
+    - 0.12
+    - 0.88
+    black_min_depth: 0.35
+    black_conf_depth: 0.7
+    black_score_frac: 0.6
+    black_max_width_frac: 0.06
+    black_max_lift: 0.25
+    black_max_offset_frac: 0.04
+    bev_border_margin_frac: 0.04
+    red_hue_range_deg:
+    - -12.0
+    - 46.0
+    red_chroma_ratio_min: 0.6
+    red_L_min: 15.0
+    use_blue_interior: false
+    blue_hue_range_deg:
+    - -140.0
+    - -80.0
+    blue_chroma_ratio_min: 0.6
+    blue_L_min: 12.0
+    interior_open_ksize: 3
+    locate_hits_needed: 2
+    lost_frames_to_search: 6
+    refit_every: 10
+    track_window_scale: 1.35
+    edge_samples: 40
+    edge_probe_radius: 3
+    edge_support_min: 0.25
+    edge_support_strong: 0.35
+    w_purple: 0.3
+    w_temporal: 0.3
+    w_red_inside: 0.2
+    w_red_outside: 0.15
+    w_geometry: 0.05
+    min_total_score: 0.45
+    min_purple_score: 0.28
+    red_inside_min: 0.15
+    red_outside_max: 0.25
+    purple_lost_threshold: 0.15
+    red_cells_min: 4
+    expand_frac: 0.08
+    red_grid_cols: 4
+    red_grid_rows: 2
+    red_cell_min: 0.1
+    pred_velocity_gain: 0.7
+    max_jump_frac: 0.35
+    jump_accept_frac: 0.35
+    switch_confirm_frames: 2
+    fast_switch_purple: 0.45
+    fast_switch_red_inside: 0.45
+    fast_switch_red_outside: 0.12
+    max_hold_frames: 5
+tracking:
+  select:
+    blue_min_distance_ratio: 0.1
+    tracks_topic: /track_node/seg/tracks
+    active_task_topic: /detect_node/active_task
+    reset_timeout_s: 1.0
+    mission_status_topic: /mission_node/status
+  track:
+    det_threshold: 0.25
+    detections_topic: /detect_node/seg/detections
+    active_task_topic: /detect_node/active_task
+    iou_threshold: 0.3
+    inertia: 0.2
+    max_age: 10
+    min_hits: 3
+    delta_t: 3
+    use_byte: false
+    reset_timeout_s: 1.0
+mission:
+  target:
+    # 独立底盘诊断的原图计数窗口，四个值按图像宽高归一化。
+    roi_x: 0.25
+    roi_y: 0.5
+    roi_width: 0.5
+    roi_height: 0.5
+    roi_check_timeout_s: 1.0
+    input_topic: /select_node/target
+    control_topic: /mission_node/active_task
+    reset_timeout_s: 1.0
+    detections_topic: /detect_node/seg/detections
+  controller:
+    request_timeout_s: 2.0
+    detector_service: /detect_node/set_field
+    detector_task_topic: /detect_node/active_task
+    target_roi_service: /target_node/check_roi
+  safety:
+    input_topic: /detect_node/field/results
+    control_topic: /mission_node/active_task
+    reset_timeout_s: 1.0
+    mission_status_topic: /mission_node/status
+link:
+  device: /dev/serial/by-id/usb-GC_Rescue_STM32_Link_004300353034510530343537-if00
+gripper:
+  device: /dev/serial/by-id/usb-Artery_AT32_Virtual_Com_Port_26BDB9203057-if00
+  id: 0
+  kp: 2.0
+  kd: 0.10
+  closed_deg: -50
+  open_deg: 0
+  move_s: 1.0
+  # 从实测位置平滑给角，张开末段切换为独立输出轴反馈保位。
+  ramp_fraction: 0.80
+  closed_trim_deg: 0.35
+  open_trim_deg: 5.0
+  open_hold_max_nm: 0.14
+  output_tolerance_deg: 2.0
+bridge:
+  input_timeout_s: 0.25
+  safety_hold_s: 0.2
+  tx_queue_timeout_s: 0.1
+  request_timeout_s: 3.0
+  mission_watchdog_timeout_s: 0.5
+  target_topic: /target_node/target
+  safety_topic: /safety_node/target
+  task_topic: /mission_node/active_task
+  mission_status_topic: /mission_node/status
+  roi_service: /mission_node/arrived
+  command_service: /mission_node/command

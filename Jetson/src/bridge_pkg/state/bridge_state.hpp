@@ -68,7 +68,7 @@ enum class BridgeCyclePhase : std::uint8_t
 {
   SearchingTarget = 0, CheckingRoi = 1, WaitingTurn = 2, SwitchingField = 3,
   NavigatingSafety = 4, WaitingTransfer = 5, SwitchingSeg = 6, RoiFailed = 7, Fault = 8,
-  LocalizingStart = 9
+  LocalizingStart = 9, InitialLocalizing = 10
 };
 
 struct BridgeTaskState
@@ -167,6 +167,7 @@ public:
     BridgeMonotonicTime arrival, bool socket_open);
   // 读取时再次检查任务、任务忙碌状态及两种帧龄，防止排队后才过期的输入被发送。
   BridgeCenterOutput targetOutput(BridgeSourceTime current, BridgeMonotonicTime now) const;
+  std::string selectedClass(BridgeSourceTime current, BridgeMonotonicTime now) const;
   BridgeCenterOutput safetyOutput(BridgeSourceTime current, BridgeMonotonicTime now) const;
   // 本地到达立即闭锁；同代次心跳不能解锁。恢复需新授权代次、可移动终态、匹配模式及后续新帧。
   void holdCoordinates(BridgeSourceTime current);
@@ -178,6 +179,8 @@ public:
   std::optional<BridgeCyclePhase> cyclePhase() const;
   const std::optional<BridgeMissionState> & missionState() const {return mission_;}
   bool waitingTurn() const;
+  // 首次定位只使用无路由的完整内框，等待 Mission 与实际 field 双确认。
+  bool initialLocalizationConfirmed() const;
   BridgeSourceTime cutoff() const {return cutoff_;}
 
 private:
@@ -200,6 +203,7 @@ private:
   BridgeSourceTime cutoff_;
   // safety_ 是最近接收的 field 帧（源时间水位与 frame_id），safety_hold_ 是最近一次有效中心。
   Center target_, safety_, safety_hold_;
+  std::string target_class_;
   std::optional<BridgeTaskState> task_;
   std::optional<BridgeMissionState> mission_;
   bool coordinates_held_{false};

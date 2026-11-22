@@ -46,7 +46,7 @@ def materialize(snapshot, directory):
 def _start(context):
     """经 load_configuration 验证配置一次，再生成快照并装配角色；失败时不创建业务资源。
 
-    context 为 ROS LaunchContext，读取 config/run。返回 launch action 列表；
+    context 为 ROS LaunchContext，读取配置、角色和图传开关。返回 launch action 列表；
     配置错误直接抛出，参数文件和节点均在完整校验成功后创建。
     """
     from launch.actions import EmitEvent, LogInfo, RegisterEventHandler
@@ -55,8 +55,10 @@ def _start(context):
     from launch.substitutions import LaunchConfiguration
     from launch_ros.actions import Node
 
+    stream = LaunchConfiguration('stream').perform(context)
     snapshot = load_configuration(LaunchConfiguration('config').perform(context),
-                                  LaunchConfiguration('run').perform(context))
+                                  LaunchConfiguration('run').perform(context),
+                                  stream_enabled=None if stream == 'config' else stream == 'true')
     directory = os.environ.get('RESCUE_RUN_DIR') or tempfile.mkdtemp(prefix='rescue-run-')
     parameter_file = materialize(snapshot, directory)
     actions = [LogInfo(msg='Effective configuration: ' + str(Path(directory) / 'effective-configuration.json'))]
@@ -81,7 +83,7 @@ def _start(context):
 
 
 def generate_launch_description():
-    """声明唯一的 config/run 启动入口；实际校验由 _start 在资源创建前完成。"""
+    """声明正式启动参数；实际校验由 _start 在资源创建前完成。"""
     from launch import LaunchDescription
     from launch.actions import DeclareLaunchArgument, OpaqueFunction
 
@@ -91,5 +93,7 @@ def generate_launch_description():
                               description='基础配置路径（通过advanced_config引用高级文件）或完整生效快照'),
         DeclareLaunchArgument('run', default_value='all',
                               description='all、vision，或detect/stream/track/select/mission/target/safety/bridge'),
+        DeclareLaunchArgument('stream', default_value='config', choices=['config', 'true', 'false'],
+                              description='HTTP 图传开关，默认沿用配置文件'),
         OpaqueFunction(function=_start),
     ])

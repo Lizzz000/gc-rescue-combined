@@ -203,8 +203,9 @@ class LaunchTopologyTests(unittest.TestCase):
         for run, processes, nodes in (('all', 7, 8), ('vision', 1, 2)):
             with self.subTest(run=run):
                 output = self.root / run
-                with patch.dict(os.environ, {'RESCUE_RUN_DIR': str(output)}):
-                    actions = launch._start({'config': str(self.config), 'run': run})
+                with (patch.dict(os.environ, {'RESCUE_RUN_DIR': str(output)}),
+                      patch.object(launch, 'apply_camera_controls', return_value={})):
+                    actions = launch._start({'config': str(self.config), 'run': run, 'stream': 'config'})
                 snapshot = json.loads((output / 'effective-configuration.json').read_text(encoding='utf-8'))
                 launched = [action for action in actions if isinstance(action, Node)]
                 self.assertEqual([action.arguments[1] for action in launched], snapshot['roles'])
@@ -220,6 +221,18 @@ class LaunchTopologyTests(unittest.TestCase):
                 else:
                     self.assertEqual(set(snapshot['nodes']), {'detect_node', 'stream_node'})
                     self.assertFalse(handlers)
+
+    def test_launch_stream_setting_reaches_effective_parameters(self):
+        launch = importlib.import_module('rescue_validation_runtime.ros.launch')
+        for stream, enabled in (('config', False), ('true', True), ('false', False)):
+            with self.subTest(stream=stream):
+                output = self.root / stream
+                with (patch.dict(os.environ, {'RESCUE_RUN_DIR': str(output)}),
+                      patch.object(launch, 'apply_camera_controls', return_value={})):
+                    launch._start({'config': str(self.config), 'run': 'vision', 'stream': stream})
+                snapshot = json.loads((output / 'effective-configuration.json').read_text(encoding='utf-8'))
+                self.assertIs(snapshot['values']['vision.stream.stream_enabled'], enabled)
+                self.assertIs(snapshot['nodes']['stream_node']['stream_enabled'], enabled)
 
     def test_validation_uses_selected_snapshot_for_launch(self):
         args = SimpleNamespace(

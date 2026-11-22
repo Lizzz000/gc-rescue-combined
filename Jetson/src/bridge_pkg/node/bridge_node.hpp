@@ -20,6 +20,7 @@
 #include <interface_pkg/msg/bridge_status.hpp>
 #include <interface_pkg/msg/roi_check.hpp>
 #include <interface_pkg/srv/check_roi.hpp>
+#include <interface_pkg/srv/register_pickup_route.hpp>
 #include <interface_pkg/srv/mission_command.hpp>
 
 
@@ -83,6 +84,9 @@ public:
       std::string device;
       std::int64_t id{0};
       double kp{0}, kd{0}, closed_deg{0}, open_deg{0}, move_s{0};
+        double ramp_fraction{0};
+        double open_hold_max_nm{0}, output_tolerance_deg{1.0};
+        double open_trim_deg{0}, closed_trim_deg{0};
     } gripper;
     BridgeStateConfig state;
   };
@@ -91,6 +95,7 @@ public:
     rclcpp::Publisher<interface_pkg::msg::BridgeStatus>::SharedPtr status_pub;
     rclcpp::Client<interface_pkg::srv::CheckRoi>::SharedPtr roi_client;
     rclcpp::Client<interface_pkg::srv::MissionCommand>::SharedPtr command_client;
+    rclcpp::Client<interface_pkg::srv::RegisterPickupRoute>::SharedPtr pickup_client;
   };
   BridgeRuntime(
     rclcpp::Node & node, Config config, Ports ports, std::unique_ptr<CanTransport> transport);
@@ -130,6 +135,8 @@ private:
   bool socketOpen() const override {return can_->socketOpen();}
   bool serviceReady(BridgeTransactions::Service service) override;
   std::int64_t sendRoi(std::uint64_t generation) override;
+  std::int64_t sendPickupRoute(std::uint64_t generation, const std::string & class_id,
+    std::uint32_t grasp_token) override;
   std::int64_t sendCommand(const BridgeTransactions::CommandRequest & command) override;
   void cancelService(BridgeTransactions::Service service, std::int64_t request_id) override;
   void queueReply(canid_t id) override

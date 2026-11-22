@@ -76,7 +76,8 @@ vision:
     overlay_wait_ms: 150.0
     input_timeout_s: 1.0
     active_task_topic: /detect_node/active_task
-    stream_enabled: true
+    # 默认关闭 HTTP 图传；现场调试时可在启动命令追加 stream:=true。
+    stream_enabled: false
     stream_max_fps: 100.0
     # 仅缩放 HTTP 图传；ROS 压缩图保留原画布，比例恰为 1 且质量相同才共享 JPEG。
     stream_scale: 1.0
@@ -254,12 +255,21 @@ bridge:
   command_service: /mission_node/command
 # 夹爪控制参数。开合角相对桥接会话连接时记录的位置。
 gripper:
-  # 输出位置刚度 / 速度刚度，待实车标定。
-  kp: 1.0
-  kd: 0.05
+  # S288 输出轴位置刚度和速度阻尼；与下方角度补偿一同空载标定。
+  kp: 2.0
+  kd: 0.10
   # 连接时将夹爪置于张开位。以此为零点，闭合转 -50°，张开返回零点。
   closed_deg: -50
   open_deg: 0
   # 自动开或合一次的驱动时长（秒）。
   move_s: 1.0
+  # 开合时间的前 80% 平滑移动目标角，余下 20% 保持终点，随后停机。0 为直接给终点。
+  ramp_fraction: 0.80
+  # 补偿加在电机位置指令上，输出轴的名义目标仍是闭合 -50°、张开 0°。
+  closed_trim_deg: 0.35
+  open_trim_deg: 5.0
+  # 张开时限制位置环的静态力矩需求（N·m）；设为 0 恢复动作后 Stop。
+  open_hold_max_nm: 0.14
+  # 用独立输出轴编码器判断张开到位。闭合后 Stop，允许爪中物块阻挡行程。
+  output_tolerance_deg: 2.0
 

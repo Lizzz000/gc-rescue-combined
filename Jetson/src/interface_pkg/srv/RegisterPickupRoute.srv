@@ -1,0 +1,11 @@
+# Copyright 2026 li
+# SPDX-License-Identifier: Apache-2.0
+# 桥在抓取动作受理时锁存正式目标类别，闭合回执成功后登记该物资的目的地。
+string class_id
+uint32 grasp_token
+---
+bool accepted
+# 0 无目的地，1 左侧，2 右侧。route_id 是后续转向和投送握手的身份。
+uint8 destination
+uint64 route_id
+string message

@@ -13,7 +13,7 @@ FIELDS = _SCHEMA['schema']
 ARRAY_EXPANSION = _SCHEMA['array_expansion']
 # 阅读：ROLES 是唯一角色表。完整部署按 FULL_ROLES 拉起七个进程。
 # vision 出检测和场地，track 出轨迹，select 选一个目标，
-# mission 编排阶段，target 检查 ROI，safety 给出目的区，bridge 发给 STM32。
+# mission 编排阶段和登记目的区，target 转发选中目标，safety 发布安全区中心。
 # 下一份：ros/launch.py。各进程再打开对应包的 app 入口。
 # 角色映射到包、业务程序和节点；vision 在同一进程装配 Detect/Stream。
 ROLES = {

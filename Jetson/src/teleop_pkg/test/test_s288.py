@@ -7,8 +7,9 @@ import unittest
 from unittest.mock import patch
 
 from servo.s288 import (
-    FEEDBACK_BYTES, FEEDBACK_MARK, ServoBusy, ServoSession, _take_feedback,
-    check_goto, check_move, control_packet, crc32)
+    FEEDBACK_BYTES, FEEDBACK_MARK, MODE_RUN, MODE_STOP, OpenHold, RATIO,
+    ServoBusy, ServoLink, ServoSession, _take_feedback,
+    check_goto, check_move, control_packet, crc32, output_degrees)
 
 
 class ProtocolTest(unittest.TestCase):
@@ -52,8 +53,8 @@ class FakeLink:
         self.calls.append(('move', degrees, seconds, kp, kd, cancel.is_set()))
         return {'position': 0.5, 'turned_deg': degrees}
 
-    def goto_degrees(self, target_deg, seconds, kp, kd, cancel, zero_rad):
-        self.calls.append(('goto', target_deg, seconds, kp, kd, cancel.is_set(), zero_rad))
+    def goto_degrees(self, target_deg, seconds, kp, kd, cancel, zero_rad, *, ramp_fraction=0.0):
+        self.calls.append(('goto', target_deg, seconds, kp, kd, cancel.is_set(), zero_rad, ramp_fraction))
         return {'position': zero_rad + math.radians(target_deg), 'turned_deg': target_deg,
                 'target_deg': target_deg}
 
@@ -149,7 +150,7 @@ class SessionTest(unittest.TestCase):
         self.assertFalse(session.busy)
 
     def test_open_close_use_required_seconds(self):
-        session = ServoSession('', 0, 1.0, 0.05, closed_deg=-40, open_deg=40)
+        session = ServoSession('', 0, 1.0, 0.05, closed_deg=-40, open_deg=40, ramp_fraction=0.8)
         session._link = FakeLink()
         session._zero_rad = 0.0
         session.start_open(0.2)
@@ -158,6 +159,245 @@ class SessionTest(unittest.TestCase):
         session.start_close(0.2)
         feedback = session.wait(timeout=2)
         self.assertEqual(feedback['target_deg'], -40)
+        self.assertEqual([call[-1] for call in session._link.calls], [0.8, 0.8])
+        session.start_goto(10, 0.2)
+        session.wait(timeout=2)
+        self.assertEqual(session._link.calls[-1][-1], 0.0)
+
+    def test_holding_releases_the_serial_worker_before_new_motion(self):
+        class HoldLink(FakeLink):
+            def goto_degrees(self, target_deg, seconds, kp, kd, cancel, zero_rad, *, open_hold, **options):
+                self.calls.append(('hold',))
+                feedback = {'position': 0.1, 'output_encoder': 4, 'target_deg': 0.0,
+                            'output_error_deg': -0.4}
+                open_hold.report(feedback)
+                if not cancel.wait(2):
+                    raise RuntimeError('保位未取消')
+                self.calls.append(('hold_stop',))
+                return feedback
+
+            def move_degrees(self, degrees, seconds, kp, kd, cancel):
+                result = super().move_degrees(degrees, seconds, kp, kd, cancel)
+                return {**result, 'output_encoder': 5}
+
+            def stop(self):
+                return {**super().stop(), 'output_encoder': 4}
+
+        session = ServoSession('', 0, 1.0, 0.05, closed_deg=-50, open_deg=0,
+                               open_hold_max_nm=0.25)
+        self.addCleanup(session.close)
+        session._link = HoldLink()
+        session._zero_rad = 0.1
+        session._output_zero = 8188
+        session.start_open(0.2)
+        session.wait(timeout=1)
+        self.assertFalse(session.busy)
+        self.assertTrue(session.snapshot()['holding'])
+        self.assertAlmostEqual(session.snapshot()['output_position_deg'], 8 * 360 / 8192)
+        session.start_move(2, 0.2)
+        session.wait(timeout=1)
+        self.assertEqual([call[0] for call in session._link.calls], ['hold', 'hold_stop', 'move'])
+        session.start_open(0.2)
+        session.wait(timeout=1)
+        session.stop()
+        session._worker.join(timeout=1)
+        self.assertFalse(session._worker.is_alive())
+        self.assertFalse(session.snapshot()['holding'])
+        session.start_open(0.2)
+        session.wait(timeout=1)
+        link = session._link
+        session.close()
+        self.assertTrue(link.closed)
+        self.assertEqual([call[0] for call in link.calls[-3:]], ['hold', 'hold_stop', 'stop'])
+
+
+class LinkTrajectoryTest(unittest.TestCase):
+    def setUp(self):
+        self.now = 0.0
+        self.cancel_at = math.inf
+        self.exchange_delay = 0.0
+        self.follow_motor = True
+        self.encoder = lambda at: 8190
+        self.speed = lambda at: 0.0
+        self.warning_at = math.inf
+        self.timeout_at = math.inf
+        self.previous_stop_frames = 0
+        self.position = 0.4
+        self.commands = []
+        self.link = ServoLink.__new__(ServoLink)
+        self.link.motor_id = 0
+        self.link.exchange = self.exchange
+        clock = patch('servo.s288.time.monotonic', lambda: self.now)
+        legacy_sleep = patch('servo.s288.time.sleep', self.wait)
+        clock.start()
+        legacy_sleep.start()
+        self.addCleanup(clock.stop)
+        self.addCleanup(legacy_sleep.stop)
+
+    def is_set(self):
+        return self.now >= self.cancel_at
+
+    def wait(self, seconds):
+        self.now = min(self.now + seconds, self.cancel_at)
+
+    def exchange(self, packet):
+        mode = (packet[2] >> 4) & 7
+        position = self.position
+        if mode == MODE_RUN:
+            self.assertEqual(struct.unpack_from('<hh', packet, 4), (0, 0))
+            raw_position, = struct.unpack_from('<i', packet, 8)
+            position = raw_position * (2 * math.pi) / (RATIO * 32768)
+            if self.follow_motor:
+                self.position = position
+        self.commands.append((self.now, mode, position))
+        if mode == MODE_RUN:
+            self.now += self.exchange_delay
+            if self.now >= self.timeout_at:
+                raise TimeoutError('未收到有效的舵机反馈')
+        feedback_mode = mode
+        if mode == MODE_RUN and self.previous_stop_frames > 0:
+            feedback_mode = MODE_STOP
+            self.previous_stop_frames -= 1
+        return {'mode': feedback_mode, 'position': self.position, 'error': 0, 'timeout': False,
+                'output_encoder': self.encoder(self.now), 'speed': self.speed(self.now),
+                'warning': int(mode == MODE_RUN and self.now >= self.warning_at)}
+
+    def test_ramp_uses_current_position_and_holds_exact_target(self):
+        self.exchange_delay = 0.003
+        target = 0.1 - math.radians(50)
+        self.link.goto_degrees(-50, 0.2, 1.0, 0.05, self, 0.1, ramp_fraction=0.8)
+        runs = [(at, position) for at, mode, position in self.commands if mode == MODE_RUN]
+        self.assertEqual(self.commands[0], (0.0, MODE_STOP, 0.4))
+        self.assertAlmostEqual(runs[0][1], 0.4, delta=4e-7)
+        self.assertAlmostEqual(runs[4][1], (0.4 + target) / 2.0, delta=4e-7)
+        self.assertTrue(all(left[1] >= right[1] for left, right in zip(runs, runs[1:])))
+        for at, position in runs:
+            if at >= 0.16:
+                self.assertAlmostEqual(position, target, delta=4e-7)
+        self.assertEqual(self.commands[-1][:2], (0.2, MODE_STOP))
+
+    def test_shortest_full_ramp_sends_final_target_before_stop(self):
+        feedback = self.link.goto_degrees(0, 0.2, 1.0, 0.05, self, 0.1, ramp_fraction=1.0)
+        at, mode, position = self.commands[-2]
+        self.assertLess(at, 0.2)
+        self.assertEqual(mode, MODE_RUN)
+        self.assertAlmostEqual(position, 0.1, delta=4e-7)
+        self.assertEqual(self.commands[-1][:2], (0.2, MODE_STOP))
+        self.assertAlmostEqual(feedback['position'], 0.1, delta=4e-7)
+
+    def test_cancel_stops_without_sending_target(self):
+        self.cancel_at = 0.175
+        self.link.goto_degrees(0, 0.2, 1.0, 0.05, self, 0.1, ramp_fraction=1.0)
+        self.assertEqual(self.commands[-1][:2], (self.cancel_at, MODE_STOP))
+        self.assertTrue(all(position > 0.1 for _, _, position in self.commands))
+
+    def test_slow_exchange_missing_final_frame_stops_and_fails(self):
+        self.exchange_delay = 0.21
+        with self.assertRaisesRegex(RuntimeError, '未发送最终目标角'):
+            self.link.goto_degrees(0, 0.2, 1.0, 0.05, self, 0.1, ramp_fraction=1.0)
+        self.assertEqual([mode for _, mode, _ in self.commands], [MODE_STOP, MODE_RUN, MODE_STOP])
+        self.assertAlmostEqual(self.commands[-1][2], 0.4, delta=4e-7)
+
+    def test_jog_and_old_goto_send_target_in_first_run_packet(self):
+        self.link.move_degrees(20, 0.2, 1.0, 0.05, self)
+        self.assertEqual(self.commands[1][1], MODE_RUN)
+        self.assertAlmostEqual(self.commands[1][2], 0.4 + math.radians(20), delta=4e-7)
+        self.commands.clear()
+        self.link.goto_degrees(0, 0.2, 1.0, 0.05, self, 0.1)
+        self.assertEqual(self.commands[1][1], MODE_RUN)
+        self.assertAlmostEqual(self.commands[1][2], 0.1, delta=4e-7)
+
+    def test_open_holds_after_three_fresh_stable_samples_and_wraps_encoder(self):
+        self.encoder = lambda at: 2
+        self.speed = lambda at: 0.13 if at < 1.0 else 0.0
+        self.cancel_at = 1.13
+        accepted = []
+        hold = OpenHold(8190, 0.0, 0.25, 1.0, lambda feedback: accepted.append((self.now, feedback)))
+        self.link.goto_degrees(0, 1, 1.0, 0.05, self, 0.1, ramp_fraction=0.8,
+                               trim_deg=5.0, open_hold=hold)
+        self.assertTrue(accepted)
+        self.assertGreaterEqual(accepted[0][0], 1.02)
+        self.assertAlmostEqual(accepted[0][1]['output_error_deg'], -4 * 360 / 8192)
+        self.assertAlmostEqual(output_degrees(8190, 2), -4 * 360 / 8192)
+        self.assertEqual([mode for _, mode, _ in self.commands].count(MODE_STOP), 2)
+        self.assertEqual(self.commands[-1][:2], (self.cancel_at, MODE_STOP))
+
+    def test_capture_timeout_stops_and_respects_position_torque_limit(self):
+        self.follow_motor = False
+        self.encoder = lambda at: 8000
+        hold = OpenHold(8190, 0.0, 0.02, 1.0, lambda _: self.fail('未到位即报告保位'))
+        with self.assertRaisesRegex(RuntimeError, '捕获超时'):
+            self.link.goto_degrees(0, 1, 1.0, 0.05, self, 0.1, ramp_fraction=0.8,
+                                   trim_deg=5.0, open_hold=hold)
+        held_positions = [position for at, mode, position in self.commands if at >= 0.8 and mode == MODE_RUN]
+        self.assertTrue(held_positions)
+        self.assertTrue(all(abs(position - 0.4) <= 0.0200004 for position in held_positions))
+        self.assertEqual(self.commands[-1][:2], (1.5, MODE_STOP))
+
+    def test_maximum_duration_has_no_extra_capture_time(self):
+        self.cancel_at = 10.10
+        accepted = []
+        hold = OpenHold(8190, 0.0, 0.25, 1.0, lambda _: accepted.append(self.now))
+        self.link.goto_degrees(0, 10, 1.0, 0.05, self, 0.1, ramp_fraction=0.8, open_hold=hold)
+        self.assertEqual(accepted[0], 10.0)
+        self.assertEqual(self.commands[-1][:2], (10.10, MODE_STOP))
+
+        self.now = 0.0
+        self.commands.clear()
+        self.encoder = lambda at: 8100
+        with self.assertRaisesRegex(RuntimeError, '捕获超时'):
+            self.link.goto_degrees(0, 10, 1.0, 0.05, self, 0.1, ramp_fraction=0.8, open_hold=hold)
+        self.assertEqual(self.commands[-1][:2], (10.0, MODE_STOP))
+
+    def test_warning_stops_active_hold(self):
+        self.warning_at = 1.1
+        accepted = []
+        hold = OpenHold(8190, 0.0, 0.25, 1.0, accepted.append)
+        with self.assertRaisesRegex(RuntimeError, '告警 1'):
+            self.link.goto_degrees(0, 1, 1.0, 0.05, self, 0.1, ramp_fraction=0.8, open_hold=hold)
+        self.assertTrue(accepted)
+        self.assertEqual(self.commands[-1][1], MODE_STOP)
+
+    def test_only_the_first_run_can_return_previous_stop(self):
+        self.previous_stop_frames = 1
+        self.link.goto_degrees(-50, 0.2, 1.0, 0.05, self, 0.1, check_warning=True)
+        self.previous_stop_frames = 2
+        self.commands.clear()
+        with self.assertRaisesRegex(RuntimeError, '未收到舵机运行模式反馈'):
+            self.link.goto_degrees(-50, 0.2, 1.0, 0.05, self, 0.1, check_warning=True)
+        self.assertEqual([mode for _, mode, _ in self.commands],
+                         [MODE_STOP, MODE_RUN, MODE_RUN, MODE_STOP])
+        self.previous_stop_frames = 1
+        self.exchange_delay = 0.21
+        with self.assertRaisesRegex(RuntimeError, '未收到舵机运行模式反馈'):
+            self.link.goto_degrees(-50, 0.2, 1.0, 0.05, self, 0.1, check_warning=True)
+
+    def test_missing_serial_feedback_stops_active_hold(self):
+        self.timeout_at = 1.10
+        hold = OpenHold(8190, 0.0, 0.25, 1.0, lambda _: None)
+        with self.assertRaisesRegex(TimeoutError, '未收到有效的舵机反馈'):
+            self.link.goto_degrees(0, 1, 1.0, 0.05, self, 0.1, ramp_fraction=0.8, open_hold=hold)
+        self.assertEqual(self.commands[-1][1], MODE_STOP)
+
+    def test_persistent_output_drift_stops_active_hold(self):
+        self.encoder = lambda at: 8190 if at < 1.10 else 8100
+        accepted = []
+        hold = OpenHold(8190, 0.0, 0.25, 1.0, accepted.append)
+        with self.assertRaisesRegex(RuntimeError, '持续超差'):
+            self.link.goto_degrees(0, 1, 1.0, 0.05, self, 0.1, ramp_fraction=0.8, open_hold=hold)
+        self.assertTrue(accepted)
+        self.assertEqual(self.commands[-1][1], MODE_STOP)
+        self.assertGreaterEqual(self.commands[-1][0], 1.60)
+        self.assertLess(self.commands[-1][0], 1.63)
+
+    def test_close_trim_stops_on_time_without_requiring_empty_grip_angle(self):
+        self.encoder = lambda at: 8170
+        final = self.link.goto_degrees(-50, 1, 1.0, 0.05, self, 0.1, ramp_fraction=0.8,
+                                       trim_deg=0.35, check_warning=True)
+        self.assertEqual(final['target_deg'], -50)
+        self.assertEqual(self.commands[-1][:2], (1.0, MODE_STOP))
+        self.assertAlmostEqual(self.commands[-2][2], 0.1 + math.radians(-49.65), delta=4e-7)
+        self.assertEqual(final['output_encoder'], 8170)
 
 
 class GotoCheckTest(unittest.TestCase):

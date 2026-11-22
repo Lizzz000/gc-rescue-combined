@@ -39,6 +39,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/BridgeStatus.msg"
   "srv/CheckRoi.srv"
   "srv/MissionCommand.srv"
+  "srv/RegisterPickupRoute.srv"
   # 新增外部消息依赖：在 find_package 与 DEPENDENCIES 两处同时登记
   DEPENDENCIES std_msgs geometry_msgs vision_msgs
 )

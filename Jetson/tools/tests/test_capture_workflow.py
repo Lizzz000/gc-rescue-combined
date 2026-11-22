@@ -86,6 +86,15 @@ class CaptureReplayTests(unittest.TestCase):
         self.assertEqual(len(snapshot['roles']), 7)
         self.assertIn('tensorrt_gpu', snapshot['required_backends'])
 
+    def test_http_stream_is_opt_in_and_disabled_for_clock(self):
+        disabled = workflow.case_snapshot(self.args, directory=self.directory, run='vision')
+        enabled = workflow.case_snapshot(self.args, directory=self.directory, run='vision', http_stream=True)
+        clock = workflow.case_snapshot(self.args, directory=self.directory, run='detect', clock=True)
+
+        self.assertFalse(disabled['nodes']['stream_node']['stream_enabled'])
+        self.assertTrue(enabled['nodes']['stream_node']['stream_enabled'])
+        self.assertFalse(clock['values']['vision.stream.stream_enabled'])
+
     def test_file_case_rejects_either_dimension_smaller_than_nvmm_letterbox_input(self):
         for shape in ((7, 1, 3), (1, 9, 3)):
             self.imread.return_value = SimpleNamespace(shape=shape)

@@ -2,32 +2,39 @@ digraph mission {
   graph [
     fontname="Microsoft YaHei",
     rankdir=TB,
-    label="CyclePhase 0–8 与命令 1–4",
+    label="自动搬运任务阶段",
     labelloc=t,
     fontsize=16
   ];
   node [fontname="Microsoft YaHei", shape=box, style="rounded,filled", fillcolor="#f7f7f7"];
-  edge [fontname="Microsoft YaHei"];
+  edge [fontname="Microsoft YaHei", fontsize=11];
 
-  fault [label="8 Fault\n启动初态"];
-  search [label="0 SearchingTarget\n寻找目标"];
-  roi [label="1 CheckingRoi\n检查 ROI"];
-  turn [label="2 WaitingTurn\n等待转向"];
-  field [label="3 SwitchingField\n切到 field"];
-  nav [label="4 NavigatingSafety\n驶向安全区"];
-  wait [label="5 WaitingTransfer\n等待送达或重找"];
-  seg [label="6 SwitchingSeg\n切回 seg"];
-  failed [label="7 RoiFailed\nROI 失败"];
+  ready [label="8 Fault → 0 SearchingTarget\n首个合法 seg 会话解除启动门控"];
+  first_field [label="3 SwitchingField\n确认首次 field 服务和识别会话"];
+  initial [label="10 InitialLocalizing\n识别整区中心，停稳后复核两个新源帧"];
+  seg [label="6 SwitchingSeg\n确认 seg 服务和识别会话"];
+  search [label="0 SearchingTarget\n追踪目标，到达标定夹取点"];
+  returned [label="2 WaitingTurn\n锁定目的区与本趟路由标识"];
+  return_field [label="3 SwitchingField\n确认返航后的 field 服务和识别会话"];
+  deliver [label="4 NavigatingSafety\n确认 field 后锁航向横移至目的侧"];
+  transfer [label="5 WaitingTransfer\n停稳后坡前盲推、松爪、直线退出"];
+  localize [label="9 LocalizingStart\n反向补偿横移，再对准整区中心"];
+  roi [label="1 CheckingRoi\n独立诊断"];
+  failed [label="7 RoiFailed\n等待显式重找"];
 
-  fault -> search [label="首个合法 seg"];
-  search -> roi [label="arrived"];
-  roi -> turn [label="通过\ndestination=左或右"];
-  roi -> failed [label="超时或拒绝"];
-  failed -> seg [label="命令 3 重新寻找"];
-  turn -> field [label="命令 1 转向完成"];
-  field -> nav [label="set_field 成功\n且 TaskState 为 field"];
-  nav -> wait [label="命令 2 安全区到达"];
-  wait -> wait [label="命令 4 送达确认\ntransport_phase=Later"];
-  wait -> seg [label="命令 3 重新寻找"];
-  seg -> search [label="seg 双确认\n清空目的地和 ROI 号"];
+  ready -> first_field [label="启动开爪成功，发起类型 22"];
+  first_field -> initial [label="首次整区会话确认，回命令 6"];
+  initial -> seg [label="记录起点，旋转 180° 并停稳\n发起命令 3"];
+  seg -> search [label="恢复目标中心"];
+  search -> returned [label="夹取成功，登记目的区\n首趟仅绿色，之后绿黑左、橙色右"];
+  returned -> return_field [label="里程计返航停稳并复核位姿\n发起命令 1"];
+  return_field -> deliver [label="返航会话确认"];
+  deliver -> transfer [label="定时横移停稳，命令 2"];
+  transfer -> localize [label="回退停稳，命令 4\n运输阶段切至 Later"];
+  localize -> seg [label="停稳复核两个新源帧并记录新起点\n旋转 180° 后发起命令 3", constraint=false];
+
+  search -> roi [label="独立诊断 arrived", style=dashed];
+  roi -> returned [label="ROI 通过", style=dashed];
+  roi -> failed [label="超时或拒绝", style=dashed];
+  failed -> seg [label="命令 3", style=dashed, constraint=false];
 }

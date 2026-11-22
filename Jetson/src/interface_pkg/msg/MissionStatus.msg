@@ -43,6 +43,8 @@ uint8 CYCLE_ROI_FAILED=7
 uint8 CYCLE_FAULT=8
 # 送达确认后，维持本趟 field 路由，等待 STM32 用新场地图像更新起点。
 uint8 CYCLE_LOCALIZING_START=9
+# 首次出发前用完整内框对齐起点；没有已提交的目的侧和 ROI。
+uint8 CYCLE_INITIAL_LOCALIZING=10
 uint8 cycle_phase
 # 每次受理模式切换命令递增；即使瞬时中间状态被 QoS 合并，消费者仍识别新的坐标授权。
 # 这是进程内代次，不是 CAN 事务号；不能防止跨进程重启或跨轮总线重放。

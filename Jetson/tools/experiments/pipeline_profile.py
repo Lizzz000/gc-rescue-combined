@@ -300,7 +300,8 @@ def main():
     from validation.observations import UsbProbe
     usb_probe = UsbProbe(args.output)
     overrides = {'link.device': usb_probe.device, 'vision.detect.active_task': 'seg',
-                 'vision.stream.stream_address': '127.0.0.1'}
+                 'vision.stream.stream_address': '127.0.0.1',
+                 'vision.stream.stream_enabled': True}
     with socket.socket() as channel:
         channel.bind(('127.0.0.1', 0))
         overrides['vision.stream.stream_port'] = channel.getsockname()[1]
@@ -315,7 +316,6 @@ def main():
     snapshot = cfg.load_configuration(case_config, 'all')
     port = values['vision.stream.stream_port']
     require(not port_open(port), '本轮 HTTP 端口已被占用')
-    require(values['vision.stream.stream_enabled'], '此对照要求保留生产图传服务与单个调试客户端')
     before = asset_snapshot(snapshot)
     report = {'schema': 'pipeline-profile-v3', 'status': 'failed', 'configuration': snapshot,
               'production_configuration': original, 'explicit_execution_overrides': overrides,

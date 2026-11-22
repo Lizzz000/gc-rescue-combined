@@ -2,27 +2,46 @@ digraph usb {
   graph [
     fontname="Microsoft YaHei",
     rankdir=TB,
-    label="USB 握手与周期帧",
+    newrank=true,
+    label="USB CDC 自动搬运握手",
     labelloc=t,
     fontsize=16
   ];
   node [fontname="Microsoft YaHei", shape=box, style="rounded,filled", fillcolor="#f7f7f7"];
-  edge [fontname="Microsoft YaHei"];
+  edge [fontname="Microsoft YaHei", fontsize=11];
 
-  f200 [label="STM32 → Jetson\n类型 16  载荷 01\n到达"];
-  f190 [label="Jetson → STM32\n类型 5\n01 受理 / 00 当前阶段拒绝"];
-  f191 [label="Jetson → STM32\n类型 6\nvalid、passed、destination"];
-  f193 [label="Jetson → STM32\n类型 8\n01、destination、token 小端"];
-  f203 [label="STM32 → Jetson\n类型 17\n01 + token"];
-  f192a [label="Jetson → STM32\n类型 7\naccepted、command=1、token"];
-  f204 [label="STM32 → Jetson\n类型 18\n01 + token\n安全区到达"];
-  f192b [label="类型 7\ncommand=2"];
-  f206 [label="STM32 → Jetson\n类型 20\n01 + token\n投送"];
-  f192c [label="类型 7\ncommand=4"];
-  f205 [label="STM32 → Jetson\n类型 19  01+id32\n重找"];
-  f192d [label="类型 7\ncommand=3，token 填 0"];
-  periodic [label="周期帧（寻找或导航时）\n仅类型 3/4，各 100 Hz\n类型 3 目标中心\n类型 4 安全区中心", shape=note, fillcolor="#fff8e8"];
+  subgraph cluster_start {
+    label="上电启动";
+    fontname="Microsoft YaHei";
+    color="#4c78a8";
+    open [label="21 kind=0 查询启动开爪\n7 命令 5 确认受理，9 报动作终态"];
+    first [label="22 请求首次整区识别\nfield 会话确认后，7 命令 6 回显请求号"];
+    origin [label="类型 4 发送整区中心\n对准、停稳、复核两张新源帧并记起点"];
+    open -> first -> origin;
+  }
 
-  f200 -> f190 -> f191 -> f193 -> f203 -> f192a -> f204 -> f192b -> f206 -> f192c -> f205 -> f192d;
-  note [label="夹爪：类型 21(kind,id) 请求/查询\n类型 7 命令 5 受理，类型 9 报终态", shape=note, fillcolor="#fff8e8"];
+  subgraph cluster_cycle {
+    label="每趟搬运";
+    fontname="Microsoft YaHei";
+    color="#54a24b";
+    search [label="旋转 180° 并停稳，19 请求搜索\nseg 会话确认后，7 命令 3 回显请求号"];
+    grasp [label="类型 3 引导至夹取点，21 kind=1 夹取\n7 命令 5 确认受理，9 报动作终态"];
+    route [label="16/02 登记已夹取货物的目的区\n5 受理，6 路由结果，8 目的区授权\n8 的 token 等于本次夹取请求号"];
+    returned [label="里程计返航停稳，17 携本趟 token\nfield 会话确认后，7 命令 1 回显 token"];
+    lateral [label="锁航向横移停稳，18 携本趟 token\n7 命令 2 回显 token"];
+    release [label="坡前盲推停稳，21 kind=2 释放\n7 命令 5 确认受理，9 报动作终态"];
+    delivery [label="回退停稳，20 携本趟 token\n7 命令 4 回显 token"];
+    recenter [label="反向补偿横移，类型 4 发送整区中心\n停稳复核两张新源帧后记新起点"];
+    search -> grasp -> route -> returned -> lateral -> release -> delivery -> recenter;
+    recenter -> search [label="下一趟", constraint=false];
+  }
+
+  origin -> search;
+  periodic [label="Jetson 周期发送 3 目标中心与 4 安全区中心\n每种目标周期 10 ms；无可用坐标时发合法无效帧",
+            shape=note, fillcolor="#fff8e8"];
+  diagnostic [label="独立诊断入口为 16/01\n6 保留 ROI 结果语义", shape=note, fillcolor="#fff8e8"];
+  point [label="夹爪受理回执和成功终态\n均须匹配当前请求号", shape=note, fillcolor="#fff8e8"];
+  { rank=same; first; periodic; }
+  { rank=same; route; diagnostic; }
+  { rank=same; release; point; }
 }

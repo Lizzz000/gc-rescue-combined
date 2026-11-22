@@ -231,6 +231,53 @@ void testBridgeState()
   const auto safety_output = safety.safetyOutput(now, arrival);
   CHECK(safety_output.valid && safety_output.x == 2500 && safety_output.y == 5000);
 
+  // 首次对准没有左右路由。无论模式与 Mission 谁先到，都要用双确认之后的整区帧。
+  for (const bool task_first : {false, true}) {
+    auto initial = makeState();
+    auto phase = missionAt(now_ns - 20, BridgeCyclePhase::InitialLocalizing,
+        BridgeTransportPhase::First, 1, BridgeDestination::None, BridgeOutcome::Success);
+    if (task_first) {initial.task(field_only, now);} else {initial.mission(phase, now);}
+    CHECK(!initial.initialLocalizationConfirmed());
+    if (task_first) {initial.mission(phase, now);} else {initial.task(field_only, now);}
+    CHECK(initial.initialLocalizationConfirmed());
+    auto center = left_side;
+    center.side = 0;
+    center.stamp = now;
+    CHECK(!initial.safety(center, now, arrival, true));
+    center.stamp = {now_ns + 1};
+    CHECK(initial.safety(center, center.stamp, arrival, true));
+    CHECK(initial.safetyOutput(center.stamp, arrival).valid);
+    CHECK(!initial.targetOutput(center.stamp, arrival).valid);
+    center.stamp.ns++;
+    center.side = 2;
+    CHECK(initial.safety(center, center.stamp, arrival, true));
+    CHECK(!initial.safetyOutput(center.stamp, arrival).valid);
+    initial.holdCoordinates(center.stamp);
+    CHECK(!initial.initialLocalizationConfirmed());
+  }
+  for (int mismatch = 0; mismatch < 6; ++mismatch) {
+    auto initial = makeState();
+    initial.task(field_only, now);
+    auto phase = missionAt(now_ns, BridgeCyclePhase::InitialLocalizing, BridgeTransportPhase::First,
+        1, BridgeDestination::None, BridgeOutcome::Success);
+    switch (mismatch) {
+      case 0: phase.destination = BridgeDestination::Left; break;
+      case 1: phase.roi_request_id = 1; break;
+      case 2: phase.transport_phase = BridgeTransportPhase::Later; break;
+      case 3: phase.operation = BridgeOperation::Switching; break;
+      case 4: phase.outcome = BridgeOutcome::Pending; break;
+      case 5: phase.cycle_phase = BridgeCyclePhase::SwitchingField; break;
+    }
+    CHECK(initial.mission(phase, now).accepted);
+    CHECK(!initial.initialLocalizationConfirmed());
+    auto center = left_side;
+    center.side = 0;
+    center.stamp = {now_ns + 1};
+    CHECK(initial.safety(center, center.stamp, arrival, true));
+    CHECK(!initial.safetyOutput(center.stamp, arrival).valid);
+    CHECK(!initial.targetOutput(center.stamp, arrival).valid);
+  }
+
   // 送达后同趟的新帧才可用于起点定位，错侧、旧帧及盲推期间的中心仍无效。
   for (int mismatch = 0; mismatch < 7; ++mismatch) {
     auto localization = makeState();

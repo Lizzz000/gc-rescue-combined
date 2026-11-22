@@ -11,6 +11,7 @@
 """
 
 import argparse
+import math
 from pathlib import Path
 import signal
 import sys
@@ -23,14 +24,16 @@ from manual.command import (
     DEFAULT_ARM_ZERO_S, MAX_ARM_ZERO_S, MAX_LEASE_S, MAX_LINEAR_MPS,
     MAX_ANGULAR_RADPS, MAX_TIMED_S, STOP_ZERO_S, ManualCommand)
 from manual.link import CdcLink, LinkError, manual_packet
-from servo.s288 import ServoSession
+from servo.s288 import (MAX_MOVE_DEGREES, MAX_MOVE_SECONDS, MAX_OPEN_HOLD_NM, MIN_MOVE_DEGREES,
+                        MIN_MOVE_SECONDS, ServoSession, check_ramp_fraction)
 from web.server import BIND_ADDRESS, ManualServer
 
 DEFAULT_PORT = 8090
 DEFAULT_RATE_HZ = 100.0
 # 退出前 valid=0 的发送时长，让 STM32 先看到明确撤销再进入超时。
 EXIT_INVALID_S = 0.1
-_GRIPPER_KEYS = ('device', 'id', 'kp', 'kd', 'closed_deg', 'open_deg', 'move_s')
+_GRIPPER_KEYS = ('device', 'id', 'kp', 'kd', 'closed_deg', 'open_deg', 'move_s', 'ramp_fraction',
+                 'open_hold_max_nm', 'output_tolerance_deg', 'open_trim_deg', 'closed_trim_deg')
 
 
 def _mapping(path, document, label):
@@ -88,6 +91,12 @@ def load_manual_config(path):
         'kd': values.get('gripper.kd'),
         'closed_deg': values.get('gripper.closed_deg'),
         'open_deg': values.get('gripper.open_deg'),
+        'move_s': values.get('gripper.move_s'),
+        'ramp_fraction': values.get('gripper.ramp_fraction', 0.0),
+        'open_hold_max_nm': values.get('gripper.open_hold_max_nm', 0.0),
+        'output_tolerance_deg': values.get('gripper.output_tolerance_deg', 1.0),
+        'open_trim_deg': values.get('gripper.open_trim_deg', 0.0),
+        'closed_trim_deg': values.get('gripper.closed_trim_deg', 0.0),
     }
     if config['link_device'] is not None and not isinstance(config['link_device'], str):
         raise ValueError('link.device 须为字符串')
@@ -104,6 +113,29 @@ def load_manual_config(path):
         if type(value) is bool or not isinstance(value, (int, float)):
             raise ValueError(f'gripper.{name} 须为数值或留空')
         config[name] = float(value)
+    move_s = config['move_s']
+    if move_s is not None:
+        if (type(move_s) is bool or not isinstance(move_s, (int, float)) or
+                not MIN_MOVE_SECONDS <= move_s <= MAX_MOVE_SECONDS):
+            raise ValueError(f'gripper.move_s 须在 {MIN_MOVE_SECONDS:g} 到 {MAX_MOVE_SECONDS:g} 秒之间')
+        config['move_s'] = float(move_s)
+    check_ramp_fraction(config['ramp_fraction'])
+    config['ramp_fraction'] = float(config['ramp_fraction'])
+    for name in ('open_hold_max_nm', 'output_tolerance_deg', 'open_trim_deg', 'closed_trim_deg'):
+        value = config[name]
+        if type(value) is bool or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f'gripper.{name} 须为有限数值')
+        config[name] = float(value)
+    if not 0.0 <= config['open_hold_max_nm'] <= MAX_OPEN_HOLD_NM:
+        raise ValueError(f'gripper.open_hold_max_nm 须为 0 到 {MAX_OPEN_HOLD_NM:g} 之间的数值')
+    if not 0.0 < config['output_tolerance_deg'] < 180.0:
+        raise ValueError('gripper.output_tolerance_deg 须大于 0 且小于 180')
+    for end in ('open', 'closed'):
+        target = config[f'{end}_deg']
+        if target is not None and not MIN_MOVE_DEGREES <= target + config[f'{end}_trim_deg'] <= MAX_MOVE_DEGREES:
+            raise ValueError(f'gripper.{end}_trim_deg 补偿后的角度超出范围')
+    if config['open_hold_max_nm'] > 0.0 and config['kp'] is not None and config['kp'] <= 0.0:
+        raise ValueError('张开保位需要正的 gripper.kp')
     if config['gripper_device']:
         missing = [name for name, value in (
             ('kp', config['kp']), ('kd', config['kd']),
@@ -211,12 +243,15 @@ def main(argv=None):
     kd = 0.0 if config['kd'] is None else config['kd']
     servo = ServoSession(
         config['gripper_device'], config['gripper_id'], kp, kd,
-        config['closed_deg'], config['open_deg'])
+        config['closed_deg'], config['open_deg'], ramp_fraction=config['ramp_fraction'],
+        open_hold_max_nm=config['open_hold_max_nm'], output_tolerance_deg=config['output_tolerance_deg'],
+        open_trim_deg=config['open_trim_deg'], closed_trim_deg=config['closed_trim_deg'])
     if config['gripper_device'] and not servo.available:
         print(f'舵机未打开：{servo.message}。底盘控制仍可使用。', file=sys.stderr)
     sender = Sender(link, command, args.rate_hz)
     server = ManualServer(args.port, command, lambda: {
-        'device': config['link_device'], 'frames': sender.frames, 'last_frame': list(sender.last)}, servo)
+        'device': config['link_device'], 'frames': sender.frames, 'last_frame': list(sender.last)},
+        servo, servo_move_s=config['move_s'])
     stop_event = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_: stop_event.set())

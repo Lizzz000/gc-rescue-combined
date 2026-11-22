@@ -146,6 +146,21 @@ BridgeNode::StartupSettings BridgeNode::declareAndValidateParameters()
     throw rescue::ConfigurationError("invalid gripper_move_s");
   }
   settings.runtime.gripper.move_s = move_s;
+  // 旧 ROS 参数文件没有该键，沿用直接给目标角的动作。
+  const auto ramp_fraction = declare_parameter<double>("gripper_ramp_fraction", 0.0, descriptor);
+  if (!s288::validRampFraction(ramp_fraction)) {
+    throw rescue::ConfigurationError("invalid gripper_ramp_fraction");
+  }
+  settings.runtime.gripper.ramp_fraction = ramp_fraction;
+  auto & gripper = settings.runtime.gripper;
+  gripper.open_hold_max_nm = declare_parameter<double>("gripper_open_hold_max_nm", 0.0, descriptor);
+  gripper.output_tolerance_deg = declare_parameter<double>("gripper_output_tolerance_deg", 1.0, descriptor);
+  gripper.open_trim_deg = declare_parameter<double>("gripper_open_trim_deg", 0.0, descriptor);
+  gripper.closed_trim_deg = declare_parameter<double>("gripper_closed_trim_deg", 0.0, descriptor);
+  if (!s288::validHoldConfig(gripper.open_hold_max_nm, gripper.output_tolerance_deg, gripper.kp,
+      gripper.open_deg, gripper.open_trim_deg, gripper.closed_deg, gripper.closed_trim_deg)) {
+    throw rescue::ConfigurationError("invalid gripper hold or trim parameters");
+  }
   settings.target_topic = rescue::declareRequired<std::string>(
     *this, "target_topic", descriptor);
   settings.safety_topic = rescue::declareRequired<std::string>(
@@ -210,6 +225,10 @@ void BridgeNode::createRosInterfaces(StartupSettings & settings)
       runtime_->missionCallback(msg);
     });
   ports.roi_client = create_client<interface_pkg::srv::CheckRoi>(settings.roi_service);
+  // 使用配置的 Mission 服务命名空间，ROS 的单服务 remap 仍然生效。
+  const auto mission_namespace = settings.command_service.substr(0, settings.command_service.rfind('/') + 1);
+  const auto pickup_service = mission_namespace + "register_pickup";
+  ports.pickup_client = create_client<interface_pkg::srv::RegisterPickupRoute>(pickup_service);
   ports.command_client = create_client<interface_pkg::srv::MissionCommand>(settings.command_service);
 }
 

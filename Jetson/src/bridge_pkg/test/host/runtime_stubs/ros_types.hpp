@@ -69,7 +69,7 @@ struct MissionStatus {
   static constexpr std::uint8_t DEST_NONE=0, DEST_LEFT=1, DEST_RIGHT=2;
   static constexpr std::uint8_t OP_IDLE=0, OP_SWITCHING=2, RESULT_SUCCESS=2, RESULT_ROI_INVALID=6;
   static constexpr std::uint8_t TRANSPORT_FIRST=0, TRANSPORT_LATER=1, CYCLE_WAITING_TURN=2, CYCLE_FAULT=8,
-    CYCLE_LOCALIZING_START=9;
+    CYCLE_LOCALIZING_START=9, CYCLE_INITIAL_LOCALIZING=10;
   HostHeader header;
   std::uint8_t destination{0}, operation{0}, outcome{0}, transport_phase{0}, cycle_phase{0};
   std::uint64_t roi_request_id{0}, cycle_generation{0};
@@ -100,13 +100,18 @@ struct BridgeStatus {
 };
 }
 namespace interface_pkg::srv {
+struct RegisterPickupRoute {
+  struct Request {std::string class_id; std::uint32_t grasp_token{0};};
+  struct Response {bool accepted{false}; std::uint8_t destination{0}; std::uint64_t route_id{0}; std::string message;};
+};
 struct CheckRoi {
   struct Request {};
   struct Response {msg::RoiCheck result;};
 };
 struct MissionCommand {
   struct Request {
-    static constexpr std::uint8_t TURN_COMPLETED=1, SAFETY_ARRIVED=2, START_SEARCH=3, DELIVERY_COMPLETED=4;
+    static constexpr std::uint8_t TURN_COMPLETED=1, SAFETY_ARRIVED=2, START_SEARCH=3, DELIVERY_COMPLETED=4,
+      START_ALIGN=6;
     std::uint8_t command{0};
     std::uint64_t roi_request_id{0};
   };

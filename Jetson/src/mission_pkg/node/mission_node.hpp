@@ -13,6 +13,7 @@
 #include <interface_pkg/msg/task_state.hpp>
 #include <interface_pkg/srv/check_roi.hpp>
 #include <interface_pkg/srv/mission_command.hpp>
+#include <interface_pkg/srv/register_pickup_route.hpp>
 #include <chrono>
 #include <cstdint>
 #include "control/controller.hpp"
@@ -29,6 +30,7 @@ protected:
   using Switch = std_srvs::srv::SetBool;
   using CheckRoi = interface_pkg::srv::CheckRoi;
   using Command = interface_pkg::srv::MissionCommand;
+  using RegisterPickupRoute = interface_pkg::srv::RegisterPickupRoute;
   using RequestHeader = std::shared_ptr<rmw_request_id_t>;
   // ROS 调用边界；合同测试可单独注入应答或发布异常，业务顺序仍由节点实现负责。
   virtual void sendRoiResponse(const RequestHeader & header, CheckRoi::Response & response);
@@ -40,6 +42,7 @@ private:
   struct Settings
   {
     std::string detector_service, detector_task_topic, target_roi_service;
+    RoiClassIds class_ids{};
     // 单位秒：下游服务等待上限，使用 steady_clock；不表示图像新鲜度。
     double request_timeout_s{0};
   };
@@ -47,6 +50,7 @@ private:
   void createRosInterfaces(const Settings & settings);
   static TransportPolicy transportPolicy();
   void onArrived(const RequestHeader & header);
+  void onPickupRoute(const RegisterPickupRoute::Request & request, RegisterPickupRoute::Response & response);
   // 发布或应答抛出后：还没发出去的到达先补一次失败结果，再按控制器规则退回或补发状态。
   void settleArrivalFailure(const RequestHeader & header, const std::string & message);
   void onCommand(const Command::Request & request, Command::Response & response);
@@ -71,6 +75,7 @@ private:
   rclcpp::Client<Switch>::SharedPtr detector_client_;
   rclcpp::Client<CheckRoi>::SharedPtr roi_client_;
   rclcpp::Service<CheckRoi>::SharedPtr arrived_service_;
+  rclcpp::Service<RegisterPickupRoute>::SharedPtr pickup_route_service_;
   rclcpp::Service<Command>::SharedPtr command_service_;
   rclcpp::Publisher<interface_pkg::msg::TaskState>::SharedPtr control_pub_;
   rclcpp::Publisher<interface_pkg::msg::RoiCheck>::SharedPtr roi_pub_;

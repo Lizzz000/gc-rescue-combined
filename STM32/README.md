@@ -37,7 +37,7 @@
 
 自动靠近使用 [Algorithm/Vision](project/Core/Algorithm/Vision/README.md) 的自适应图像坐标滤波；参数和实际跟踪效果仍需实车验证与标定。
 
-正式搬运首次从整块安全区中心对应的起点出发，先原地转 180°。夹取和 ROI 通过后按里程计返回起点，按目的区定时向左或右横移，再盲推、松爪、直线退出。确认送达后用类型 4 的整区中心视觉复核并保存下一趟起点。单次底盘联调仍使用 `JETSON_AUTO_SAFETY_STRAIGHT_M`。详见 [动作与握手](docs/JETSON_USB_TEST.md#机械动作与握手) 和 [里程计与定距控制](docs/ODOMETRY.md)。
+正式搬运先自动对准整块安全区，停稳并记录起点后转 180°。夹取成功后按本次真实目标类别登记目的区，授权编号等于夹取编号才按里程计返航。随后向目的侧定时横移、盲推、松爪、退出；按实测横移量反平移，再用整区新帧复核并保存下一趟起点。单次底盘联调使用 `JETSON_AUTO_SAFETY_STRAIGHT_M`。详见 [下一次现场单绿验收](docs/JETSON_USB_TEST.md#下一次现场单绿验收) 和 [里程计与定距控制](docs/ODOMETRY.md)。
 
 2026-11-17 里程计采用纯 C 模块 `chassis_odometry`，沿用现有三轮几何、轮序、方向、齿比和航向 PID。参考 ros2_controllers 的平面圆弧积分思路，正式入口使用三轮位置增量、平面 ESKF 航向和 SE(2) 积分，不依赖 ROS/Eigen。`Chassis_Get_Odometry` 用于读取估计状态，`Chassis_Reset_Odometry` 仅允许失能或已确认停车时调用。反馈丢失期间不补积分，恢复首组仅重建基线；10 mm 定距交接容差是软件判据，轮滑和航向漂移仍需实车测量。
 

@@ -4,8 +4,11 @@
 // 供 bridge 自动开合在进程内调用；不创建新进程，工作线程不得阻塞 io()。
 
 #include <atomic>
+#include <cmath>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -18,6 +21,15 @@ constexpr double kMinMoveS = 0.2, kMaxMoveS = 10.0;
 constexpr double kFeedbackWaitS = 0.2;
 constexpr int kStopAttempts = 3;
 constexpr double kCommandPeriodS = 0.02;
+constexpr bool validRampFraction(double fraction) {return fraction >= 0.0 && fraction <= 1.0;}
+
+inline bool validHoldConfig(double max_nm, double tolerance_deg, double kp,
+                            double open_deg, double open_trim_deg, double closed_deg, double closed_trim_deg)
+{
+  return max_nm >= 0 && max_nm <= 0.6 && tolerance_deg > 0 && tolerance_deg < 180 &&
+    (max_nm == 0 || kp > 0) && std::abs(open_deg + open_trim_deg) <= 360 &&
+    std::abs(closed_deg + closed_trim_deg) <= 360;
+}
 
 enum class MotionStatus { Idle, Busy, Succeeded, Failed };
 
@@ -27,6 +39,9 @@ struct SessionConfig
   int motor_id{0};
   double kp{0}, kd{0};
   double closed_deg{0}, open_deg{0};
+  double ramp_fraction{0};
+  double open_hold_max_nm{0}, output_tolerance_deg{1.0};
+  double open_trim_deg{0}, closed_trim_deg{0};
 };
 
 class Session
@@ -43,23 +58,30 @@ public:
   bool start_open(double seconds);
   bool start_close(double seconds);
   MotionStatus status() const {return status_.load();}
-  // 运行层消费完成功/失败后清回空闲，才能接受下一次提交。
-  void acknowledge();
+  void acknowledge(MotionStatus observed);
+  void acknowledge() {acknowledge(status());}
   void close();
 
 private:
   class Link;
-  bool start_goto(double target_deg, double seconds);
-  void run(double target_deg, double seconds);
+  struct Motion {double target_deg, seconds; bool open;};
+  bool start_goto(Motion motion);
+  void run();
+  void execute(const Motion & motion);
 
   SessionConfig config_;
   std::unique_ptr<Link> link_;
   mutable std::mutex lock_;
+  std::condition_variable wake_;
+  std::optional<Motion> pending_;
   std::thread worker_;
+  std::once_flag close_once_;
   std::atomic<MotionStatus> status_{MotionStatus::Idle};
   std::atomic<bool> cancel_{false};
+  std::atomic<bool> leave_hold_{false};
   std::string message_{"未配置舵机串口"};
   double zero_rad_{0};
+  int zero_encoder_{0};
   bool have_zero_{false};
 };
 

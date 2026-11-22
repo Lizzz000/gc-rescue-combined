@@ -40,6 +40,13 @@ def _read_configuration(config_file, package_resolver):
     if repeated:
         raise ConfigurationError(f'configuration fields defined in both files: {sorted(repeated)}')
     values = {**basic_values, **advanced_values}
+    # 旧快照直接发送终点，未声明平滑行程时沿用原指令。
+    values.setdefault('gripper.ramp_fraction', 0.0)
+    # 未记录输出轴标定的旧快照继续用原端点，到时停机。
+    values.setdefault('gripper.closed_trim_deg', 0.0)
+    values.setdefault('gripper.open_trim_deg', 0.0)
+    values.setdefault('gripper.open_hold_max_nm', 0.0)
+    values.setdefault('gripper.output_tolerance_deg', 1.0)
     unknown = set(values) - set(FIELDS)
     # 早期整份配置只登记亮度。未提供的扩展控件保留设备当前值。
     missing = {name for name in FIELDS if name not in values and not name.startswith(CONTROLS_PREFIX)}
@@ -76,13 +83,15 @@ def _parameter_value(values, mapping):
 
 
 def load_configuration(config_file, run='all', package_resolver: Callable | None = None,
-                       require_assets=True):
+                       require_assets=True, *, stream_enabled: bool | None = None):
     # 读取：先限定角色，再合并完整字段并保留每个字段的来源文件。
     if run != 'all' and run not in ROLES:
         raise ConfigurationError(f'run: expected all or one of {tuple(ROLES)}, got {run!r}')
     path = Path(config_file).resolve()
     package_resolver = package_resolver or _package_directory
     values, origins, sources = _read_configuration(path, package_resolver)
+    if stream_enabled is not None:
+        values['vision.stream.stream_enabled'] = stream_enabled
     # 验证：唯一校验入口；单角色同样执行全部业务校验，不从节点默认值补缺项。
     values = {name: _typed(name, value, FIELDS[name]) for name, value in values.items()}
     _validate(values, run)

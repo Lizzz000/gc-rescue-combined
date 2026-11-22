@@ -92,7 +92,7 @@ BridgeStateUpdate BridgeState::task(const BridgeTaskState & input, BridgeSourceT
   if (task_ && task_->task == input.task && task_->epoch == input.epoch &&
     task_->stamp.ns == input.stamp.ns) {return {};}
   task_ = input;
-  resetInputs(input.stamp);
+  resetInputs(initialLocalizationConfirmed() ? current : input.stamp);
   releaseCoordinates(current);
   return {true, true};
 }
@@ -107,7 +107,7 @@ BridgeStateUpdate BridgeState::mission(
     input.destination > BridgeDestination::Right || input.operation > BridgeOperation::Switching ||
     input.outcome > BridgeOutcome::RoiInvalid ||
     input.transport_phase > BridgeTransportPhase::Later ||
-    input.cycle_phase > BridgeCyclePhase::LocalizingStart ||
+    input.cycle_phase > BridgeCyclePhase::InitialLocalizing ||
     (mission_ && input.stamp.ns < mission_->stamp.ns)) {return {};}
   const bool restarted = mission_ && input.cycle_generation < mission_->cycle_generation;
   // 源时刻相等仍比较业务字段，因此 PENDING 与 SUCCESS 可以在同刻按接收顺序生效。
@@ -142,7 +142,7 @@ BridgeStateUpdate BridgeState::mission(
     resetInputs(current);
   } else if (changed) {
     // 普通阶段变化按消息源时间撤旧，原阶段心跳只更新 mission 快照。
-    resetInputs(input.stamp);
+    resetInputs(initialLocalizationConfirmed() ? current : input.stamp);
   }
   releaseCoordinates(current);
   return {true, changed, restarted};
@@ -188,6 +188,7 @@ bool BridgeState::target(
       center.valid = RecognitionValueValidation::hypothesis(result) && class_allowed &&
         bridge_scale::fixedPoint(box.center_x / config_.image_width, 10000.0, center.x) &&
         bridge_scale::fixedPoint(box.center_y / config_.image_height, 10000.0, center.y);
+      if (center.valid) {target_class_ = class_id;}
     }
   }
   target_ = std::move(center);
@@ -198,8 +199,9 @@ bool BridgeState::safety(
   const BridgeSafetyInput & input, BridgeSourceTime current,
   BridgeMonotonicTime arrival, bool socket_open)
 {
+  const bool initial = initialLocalizationConfirmed();
   if (!socket_open || !task_ || task_->task != "field" ||
-    (localization_authorized_ && input.stamp.ns <= cutoff_.ns) ||
+    ((initial || localization_authorized_) && input.stamp.ns <= cutoff_.ns) ||
     !sourceStamp(input.stamp, current, safety_)) {return false;}
   Center center;
   center.have_frame = true;
@@ -209,12 +211,14 @@ bool BridgeState::safety(
   center.side = input.side;
   // SafetyTarget 已提供归一化中心，直接乘 10000；这里不再除图像宽高。
   const bool changed_frame = safety_.have_frame && safety_.frame != center.frame;
-  center.valid = !changed_frame && input.valid &&
-    (input.side == static_cast<std::uint8_t>(BridgeDestination::Left) ||
-    input.side == static_cast<std::uint8_t>(BridgeDestination::Right)) &&
+  const bool whole_zone = input.side == static_cast<std::uint8_t>(BridgeDestination::None);
+  const bool routed = input.side == static_cast<std::uint8_t>(BridgeDestination::Left) ||
+    input.side == static_cast<std::uint8_t>(BridgeDestination::Right);
+  center.valid = !changed_frame && input.valid && (initial ? whole_zone : routed) &&
     bridge_scale::fixedPoint(input.x, 10000.0, center.x) &&
     bridge_scale::fixedPoint(input.y, 10000.0, center.y);
-  if (center.valid) {safety_hold_ = center;} else if (changed_frame) {safety_hold_ = Center{};}
+  if (center.valid) {safety_hold_ = center;}
+  else if (changed_frame || (initial && input.valid && !whole_zone)) {safety_hold_ = Center{};}
   safety_ = std::move(center);
   return true;
 }
@@ -255,14 +259,20 @@ BridgeCenterOutput BridgeState::targetOutput(
     static_cast<std::uint32_t>((target_.stamp.ns / 1000000) & 0xffffff)};
 }
 
+std::string BridgeState::selectedClass(BridgeSourceTime current, BridgeMonotonicTime now) const
+{
+  // 取与类型 3 同一个合法、新鲜、且当前允许移动的选中目标。
+  return targetOutput(current, now).valid ? target_class_ : "";
+}
+
 BridgeCenterOutput BridgeState::safetyOutput(
   BridgeSourceTime current, BridgeMonotonicTime now) const
 {
-  // 场地区域必须与 Mission 已成功提交的目的区同侧；仅有一个有效 SafetyTarget 还不够。
-  const bool allowed = !coordinatesHeld() &&
+  // 初始整区使用 side=0；交付及后续定位仍匹配同趟已提交的目的侧。
+  const bool routed = mission_ &&
     (mission_->cycle_phase == BridgeCyclePhase::NavigatingSafety || localization_authorized_) &&
-    mission_->outcome == BridgeOutcome::Success &&
-    mission_->destination != BridgeDestination::None &&
+    mission_->outcome == BridgeOutcome::Success && mission_->destination != BridgeDestination::None;
+  const bool allowed = !coordinatesHeld() && (routed || initialLocalizationConfirmed()) &&
     static_cast<std::uint8_t>(mission_->destination) == safety_hold_.side &&
     held(current, now);
   return {allowed, safety_hold_.x, safety_hold_.y,
@@ -302,10 +312,10 @@ std::optional<BridgeCyclePhase> BridgeState::cyclePhase() const
 
 bool BridgeState::movingPhase() const
 {
-  return idle() && task_ &&
+  return initialLocalizationConfirmed() || (idle() && task_ &&
          ((mission_->cycle_phase == BridgeCyclePhase::SearchingTarget && task_->task == "seg") ||
           ((mission_->cycle_phase == BridgeCyclePhase::NavigatingSafety || localization_authorized_) &&
-          task_->task == "field"));
+          task_->task == "field")));
 }
 
 bool BridgeState::coordinatesHeld() const
@@ -329,6 +339,15 @@ bool BridgeState::waitingTurn() const
   return idle() && mission_->cycle_phase == BridgeCyclePhase::WaitingTurn &&
          mission_->outcome == BridgeOutcome::Success && mission_->roi_request_id != 0 &&
          mission_->destination != BridgeDestination::None;
+}
+
+bool BridgeState::initialLocalizationConfirmed() const
+{
+  return !coordinates_held_ && idle() && task_ && task_->task == "field" &&
+         mission_->cycle_phase == BridgeCyclePhase::InitialLocalizing &&
+         mission_->transport_phase == BridgeTransportPhase::First &&
+         mission_->destination == BridgeDestination::None && mission_->roi_request_id == 0 &&
+         mission_->outcome == BridgeOutcome::Success;
 }
 
 // 实现 Bridge 包内服务等待生命周期，不持有 ROS 客户端或读取时钟。

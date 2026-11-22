@@ -7,21 +7,19 @@
 
 /* 场地距离与路线标定 */
 /* 正式搬运的场地距离使用 m，保留 0 时流程等待现场标定。 */
-/* 定时横移和整区复定位的允许距离上限。 */
-#define JETSON_AUTO_ALIGN_MAX_M 0.0f
-
-/* 夹取后的 ROI 检查退距和投送拒绝时的恢复退距。 */
-#define JETSON_AUTO_ROI_BACK_M 0.0f
-#define JETSON_AUTO_RECOVERY_BACK_M 0.0f
+/* 定时横移和反平移复定位分别从各段起点限距。
+ * 现场确认左右净空各至少 0.30 m，横移和复位的净位移上限取 0.25 m。 */
+#define JETSON_AUTO_ALIGN_MAX_M 0.25f
 
 /* 单次联调按目的区选择转向；正式搬运从出发点原地转 180° 后找目标。 */
 #define JETSON_AUTO_OUT_TURN_DEG 180.0f
 #define JETSON_AUTO_RETURN_TURN_DEG 180.0f
 
 /* 物资与左右安全区视觉窗口 */
-/* 中心坐标和各轴容差按原图宽高归一化，现场按相机与目标位置标定。 */
-#define JETSON_AUTO_TARGET_X 0.1000f
-#define JETSON_AUTO_TARGET_Y 0.900f
+/* 单绿物块可直接夹取时，正式 target 节点中心的 479 帧中位值。
+ * 中心与各轴容差按 1920×1080 原图归一化。 */
+#define JETSON_AUTO_TARGET_X 0.5721f
+#define JETSON_AUTO_TARGET_Y 0.8681f
 #define JETSON_AUTO_TARGET_TOL_X 0.0100f
 #define JETSON_AUTO_TARGET_TOL_Y 0.0100f
 /* 单次底盘联调使用的类型 4 对准窗口。 */
@@ -32,10 +30,10 @@
 
 /* 正式搬运用整块安全区透视中心复定位，按实车停位标定。 */
 #ifndef JETSON_AUTO_LOCALIZE_X
-#define JETSON_AUTO_LOCALIZE_X 0.5077f
+#define JETSON_AUTO_LOCALIZE_X 0.5430f
 #endif
 #ifndef JETSON_AUTO_LOCALIZE_Y
-#define JETSON_AUTO_LOCALIZE_Y 0.3250f
+#define JETSON_AUTO_LOCALIZE_Y 0.3298f
 #endif
 #ifndef JETSON_AUTO_LOCALIZE_TOL_X
 #define JETSON_AUTO_LOCALIZE_TOL_X JETSON_AUTO_SAFETY_TOL_X
@@ -49,6 +47,12 @@
 #ifndef JETSON_AUTO_RELOCALIZE_SPEED_MPS
 #define JETSON_AUTO_RELOCALIZE_SPEED_MPS CHASSIS_NAV_ALIGN_SPEED_MPS
 #endif
+/* 整区中心容易受车身摆动影响。精调用较慢的起步和更保守的制动距离。
+ * 图像响应以 q/m 估计，取值用于提前减速。搬运接近沿用独立参数。 */
+#define JETSON_AUTO_LOCALIZE_ACCEL_MPS2 0.60f
+#define JETSON_AUTO_LOCALIZE_LATENCY_S 0.22f
+#define JETSON_AUTO_LOCALIZE_RESPONSE_X_Q_PER_M 20000.0f
+#define JETSON_AUTO_LOCALIZE_RESPONSE_Y_Q_PER_M 14000.0f
 
 #if JETSON_AUTO_ENABLED
 #define JETSON_AUTO_APPROACH_SPEED_MPS CHASSIS_NAV_TRAVEL_SPEED_MPS
@@ -70,23 +74,48 @@
 #define JETSON_AUTO_APPROACH_LATENCY_S VISUAL_TRACKING_LATENCY_S
 #endif
 
-/* 安全区直行、检查后退与拒绝恢复共用定距速度。 */
+/* 真实物块在近处的像素变化更快，按较高图像响应提前制动。
+ * 横向未收敛时，进入最后 0.24 个画面高度后渐减前进速度。 */
+#ifndef JETSON_AUTO_PICKUP_ACCEL_MPS2
+#define JETSON_AUTO_PICKUP_ACCEL_MPS2 0.80f
+#endif
+#ifndef JETSON_AUTO_PICKUP_LATENCY_S
+#define JETSON_AUTO_PICKUP_LATENCY_S 0.20f
+#endif
+#ifndef JETSON_AUTO_PICKUP_RESPONSE_X_Q_PER_M
+#define JETSON_AUTO_PICKUP_RESPONSE_X_Q_PER_M 25000.0f
+#endif
+#ifndef JETSON_AUTO_PICKUP_RESPONSE_Y_Q_PER_M
+#define JETSON_AUTO_PICKUP_RESPONSE_Y_Q_PER_M 40000.0f
+#endif
+#define JETSON_AUTO_PICKUP_LATERAL_FIRST_Q 2400.0f
+
+/* 独立底盘联调的安全区定距速度。 */
 #define JETSON_AUTO_DISTANCE_SPEED_MPS CHASSIS_RUN_SPEED_MPS
 
 /* 左右横移共用速度和时长。盲推和直线回退分别计时。
  * 速度为目标值，计时包含加速。到期发零速，随后等待停稳。 */
-#define JETSON_AUTO_LATERAL_SPEED_MPS 0.40f
+#define JETSON_AUTO_LATERAL_SPEED_MPS 0.30f
 #define JETSON_AUTO_LATERAL_DURATION_MS 700U
 #define JETSON_AUTO_PUSH_SPEED_MPS 0.40f
 #define JETSON_AUTO_PUSH_DURATION_MS 1200U
 #define JETSON_AUTO_RETRACT_SPEED_MPS 0.40f
 #define JETSON_AUTO_RETRACT_DURATION_MS 1000U
+/* 直退停稳后按本趟实测横移量反平移，单位 m/s，只沿首次安全区朝向的横轴运动。 */
+#define JETSON_AUTO_RECENTER_SPEED_MPS 0.225f
 
 /* 视觉轴向、图像响应与滤波 */
 /* 符号乘 (设定点 - 实测点)，横向取本次相机安装的实测方向。 */
 #ifndef JETSON_AUTO_X_TO_LEFT
+#if JETSON_AUTO_ENABLED
+/* 正式相机实测右移会把物块推向画面左边，目标 x 偏小时应向左修正。 */
+#define JETSON_AUTO_X_TO_LEFT 1
+#else
 #define JETSON_AUTO_X_TO_LEFT VISUAL_TRACKING_X_TO_LEFT
 #endif
+#endif
+/* 整块安全区中心单独标定。现场左移时中心 x 增大，误差为正时向左修正。 */
+#define JETSON_AUTO_LOCALIZE_X_TO_LEFT 1
 #ifndef JETSON_AUTO_Y_TO_FORWARD
 #define JETSON_AUTO_Y_TO_FORWARD VISUAL_TRACKING_Y_TO_FORWARD
 #endif
@@ -111,7 +140,7 @@
 #endif
 
 /* 动作时限、视觉时效与停稳保护 */
-/* 返航限时涵盖停车后的位姿复核，对准限时也用于反平移和重新定位。 */
+/* 返航限时包含停稳复核。定时横移单独计时；直退后的反平移、停稳和整区视觉精调共用对准限时。 */
 #define JETSON_AUTO_RETURN_TIMEOUT_MS 20000U
 #define JETSON_AUTO_ALIGN_TIMEOUT_MS 10000U
 

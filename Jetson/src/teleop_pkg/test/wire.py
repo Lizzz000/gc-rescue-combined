@@ -125,15 +125,23 @@ def stm32_available():
 
 
 def stm32_constants():
-    """手动固件的超时、限速与任务周期；任务周期取 chassis_task.c 的 vTaskDelayUntil 参数。"""
-    task = (STM32_CORE / 'Task/Chassis/chassis_task.c').read_text(encoding='utf-8')
-    period = re.search(r'vTaskDelayUntil\([^,]+,\s*pdMS_TO_TICKS\((\d+)U?\)\)', task)
+    """读取手动固件的超时、限速和底盘调度周期。"""
+    chassis = STM32_CORE / 'Control/Chassis'
+    config = chassis / 'chassis_config.h'
+    if config.is_file():
+        period_ms = _define(config, 'CHASSIS_TASK_PERIOD_MS')
+    else:
+        # 旧版冻结夹具仍在 chassis.h 声明限速，任务直接传毫秒值。
+        config = chassis / 'chassis.h'
+        task = (STM32_CORE / 'Task/Chassis/chassis_task.c').read_text(encoding='utf-8')
+        period = re.search(r'vTaskDelayUntil\([^,]+,\s*pdMS_TO_TICKS\((\d+)U?\)\)', task)
+        period_ms = float(period.group(1)) if period else None
     control, _ = stm32_manual_sources()
     return {
         'timeout_ms': _define(control / 'manual_control.h', 'MANUAL_VELOCITY_TIMEOUT_MS'),
-        'max_linear_mps': _define(STM32_CORE / 'Control/Chassis/chassis.h', 'CHASSIS_STRAIGHT_MAX_SPEED_MPS'),
-        'max_angular_radps': _define(STM32_CORE / 'Control/Chassis/chassis.h', 'CHASSIS_VECTOR_MAX_WZ_RAD_S'),
-        'task_period_ms': float(period.group(1)) if period else None,
+        'max_linear_mps': _define(config, 'CHASSIS_STRAIGHT_MAX_SPEED_MPS'),
+        'max_angular_radps': _define(config, 'CHASSIS_VECTOR_MAX_WZ_RAD_S'),
+        'task_period_ms': period_ms,
     }
 
 

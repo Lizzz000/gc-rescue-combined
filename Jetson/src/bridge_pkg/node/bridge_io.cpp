@@ -112,6 +112,10 @@ bool BridgeRuntime::handleCommand(const can_frame & frame)
     transactions_.handleArrival();
     return true;
   }
+  if (command.kind == CanProtocol::CommandKind::PICKUP_ROUTE) {
+    transactions_.handleArrival(BridgeTransactions::Service::PickupRoute);
+    return true;
+  }
   if (command.kind == CanProtocol::CommandKind::ARRIVAL_POINT) {
     handleArrivalPoint(command.command, command.token);
     return true;
@@ -122,6 +126,7 @@ bool BridgeRuntime::handleCommand(const can_frame & frame)
 
 bool BridgeRuntime::serviceReady(BridgeTransactions::Service service)
 {
+  if (service == BridgeTransactions::Service::PickupRoute) {return ports_.pickup_client->service_is_ready();}
   return service == BridgeTransactions::Service::Roi ?
     ports_.roi_client->service_is_ready() : ports_.command_client->service_is_ready();
 }
@@ -148,10 +153,35 @@ std::int64_t BridgeRuntime::sendCommand(const BridgeTransactions::CommandRequest
     }).request_id;
 }
 
+std::int64_t BridgeRuntime::sendPickupRoute(std::uint64_t generation, const std::string & class_id,
+  std::uint32_t grasp_token)
+{
+  using Register = interface_pkg::srv::RegisterPickupRoute;
+  auto request = std::make_shared<Register::Request>();
+  request->class_id = class_id;
+  request->grasp_token = grasp_token;
+  return ports_.pickup_client->async_send_request(request,
+    [this, generation](rclcpp::Client<Register>::SharedFuture future) {
+      const auto current = Clock::now();
+      if (!transactions_.acceptRoiReply(generation, current)) {return;}
+      try {
+        const auto response = future.get();
+        transactions_.finishPickupRoute(response->accepted,
+          static_cast<BridgeDestination>(response->destination), response->route_id);
+        transactions_.refreshTurnRequest(current);
+      } catch (const std::exception & error) {
+        last_error_ = error.what();
+        transactions_.failRoute();
+      }
+    }).request_id;
+}
+
 void BridgeRuntime::cancelService(BridgeTransactions::Service service, std::int64_t request_id)
 {
   if (service == BridgeTransactions::Service::Roi) {
     ports_.roi_client->remove_pending_request(request_id);
+  } else if (service == BridgeTransactions::Service::PickupRoute) {
+    ports_.pickup_client->remove_pending_request(request_id);
   } else {
     ports_.command_client->remove_pending_request(request_id);
   }

@@ -34,7 +34,7 @@ class FakeLink:
             self.release.wait(timeout=2)
         return {'position': math.radians(degrees), 'turned_deg': degrees}
 
-    def goto_degrees(self, target_deg, seconds, kp, kd, cancel, zero_rad):
+    def goto_degrees(self, target_deg, seconds, kp, kd, cancel, zero_rad, *, ramp_fraction=0.0):
         self.calls.append(('goto', target_deg, seconds, cancel.is_set(), zero_rad))
         if self.block:
             self.started.set()
@@ -89,6 +89,12 @@ class ManualConfigTest(unittest.TestCase):
         self.assertEqual(config['kd'], 0.05)
         self.assertEqual(config['closed_deg'], -40)
         self.assertEqual(config['open_deg'], 40)
+        self.assertIsNone(config['move_s'])
+        self.assertEqual(config['ramp_fraction'], 0.0)
+        self.assertEqual(config['open_hold_max_nm'], 0.0)
+        self.assertEqual(config['output_tolerance_deg'], 1.0)
+        self.assertEqual(config['open_trim_deg'], 0.0)
+        self.assertEqual(config['closed_trim_deg'], 0.0)
 
     def test_official_yaml_loads_gripper_positions(self):
         path = Path(__file__).resolve().parents[2] / 'bringup_pkg/config/rescue.yaml'
@@ -96,6 +102,36 @@ class ManualConfigTest(unittest.TestCase):
         self.assertTrue(config['gripper_device'].startswith('/dev/'))
         self.assertEqual(config['closed_deg'], -50.0)
         self.assertEqual(config['open_deg'], 0.0)
+        self.assertEqual(config['move_s'], 1.0)
+        self.assertEqual(config['ramp_fraction'], 0.8)
+
+    def test_rejects_invalid_move_time_and_ramp(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'bad.yaml'
+            for key, value in (('move_s', 'true'), ('move_s', '0.1'), ('move_s', '.inf'),
+                               ('ramp_fraction', 'true'), ('ramp_fraction', '1.1'),
+                               ('ramp_fraction', '-0.1'), ('ramp_fraction', '.nan'),
+                               ('open_hold_max_nm', '-0.1'), ('open_hold_max_nm', '0.61'),
+                               ('output_tolerance_deg', '0'), ('output_tolerance_deg', '180'),
+                               ('open_trim_deg', '.nan'), ('closed_trim_deg', 'true')):
+                with self.subTest(key=key, value=value):
+                    path.write_text(f'gripper.{key}: {value}\n', encoding='utf-8')
+                    with self.assertRaisesRegex(ValueError, f'gripper\\.{key}'):
+                        manual_control.load_manual_config(path)
+            path.write_text('gripper.open_deg: 359\ngripper.open_trim_deg: 2\n', encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, r'gripper\.open_trim_deg'):
+                manual_control.load_manual_config(path)
+
+    def test_load_output_control_parameters(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'hold.yaml'
+            path.write_text('gripper:\n  open_hold_max_nm: 0.25\n  output_tolerance_deg: 1.0\n'
+                            '  open_trim_deg: 5.0\n  closed_trim_deg: 0.35\n', encoding='utf-8')
+            config = manual_control.load_manual_config(path)
+        self.assertEqual(config['open_hold_max_nm'], 0.25)
+        self.assertEqual(config['output_tolerance_deg'], 1.0)
+        self.assertEqual(config['open_trim_deg'], 5.0)
+        self.assertEqual(config['closed_trim_deg'], 0.35)
 
     def test_config_required_and_old_flags_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -123,11 +159,14 @@ class ManualConfigTest(unittest.TestCase):
 
 
 class ManualServoApiTest(unittest.TestCase):
+    preset_seconds = 1.0
+
     def setUp(self):
         self.command = ManualCommand(0.2, 0.1)
         self.session = session_with_link(open_deg=40, closed_deg=-40)
         self.server = ManualServer(0, self.command, lambda: {'device': 'test', 'frames': 0,
-                                                            'last_frame': [0, 0, 0, 0]}, self.session)
+                                                            'last_frame': [0, 0, 0, 0]}, self.session,
+                                   servo_move_s=self.preset_seconds)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.url = f'http://{BIND_ADDRESS}:{self.server.server_address[1]}'
@@ -147,6 +186,12 @@ class ManualServoApiTest(unittest.TestCase):
                 return response.status, json.loads(response.read())
         except urllib.error.HTTPError as error:
             return error.code, json.loads(error.read())
+
+    def test_page_uses_configured_open_close_time(self):
+        with urllib.request.urlopen(self.url, timeout=2) as response:
+            page = response.read()
+        self.assertIn(b'id="servo_s" type="number" step="0.1" value="2"', page)
+        self.assertIn(b'id="servo_preset_s" type="number" step="0.1" value="1.0"', page)
 
     def test_move_returns_202_and_busy_is_409(self):
         self.session._link.block = True
@@ -182,6 +227,8 @@ class ManualServoApiTest(unittest.TestCase):
         self.assertEqual(status, 202)
         self.session.wait(timeout=2)
         self.assertEqual(self.session._result['target_deg'], -40)
+        self.assertEqual(self.session._link.calls[-1][2], 0.2)
+
     def test_open_close_empty_body_is_400(self):
         # 空请求体 {} 须返回 400，不能断连接。
         status, payload = self.request('/api/servo/open', {})
@@ -190,6 +237,14 @@ class ManualServoApiTest(unittest.TestCase):
         status, payload = self.request('/api/servo/close', {})
         self.assertEqual(status, 400)
         self.assertIn('seconds', payload['error'])
+
+
+class ManualServoLegacyPageTest(unittest.TestCase):
+    def test_null_config_preserves_old_open_close_default(self):
+        command = ManualCommand(0.2, 0.1)
+        session = session_with_link()
+        with ManualServer(0, command, lambda: {}, session) as server:
+            self.assertIn(b'id="servo_preset_s" type="number" step="0.1" value="2.0"', server.page)
 
 
 if __name__ == '__main__':

@@ -22,6 +22,30 @@ def _resolver(package):
     return str(Path(__file__).resolve().parents[2] / package)
 
 
+class StreamConfigTest(unittest.TestCase):
+    def test_stream_is_opt_in_without_changing_detection(self):
+        for role in ('vision', 'all'):
+            with self.subTest(role=role):
+                default = load_configuration(OFFICIAL, role, _resolver)
+                enabled = load_configuration(OFFICIAL, role, _resolver, stream_enabled=True)
+                self.assertFalse(default['nodes']['stream_node']['stream_enabled'])
+                self.assertTrue(enabled['nodes']['stream_node']['stream_enabled'])
+                self.assertNotIn('jetson_jpeg', default['required_backends'])
+                self.assertIn('jetson_jpeg', enabled['required_backends'])
+                self.assertEqual(default['nodes']['detect_node'], enabled['nodes']['detect_node'])
+                self.assertNotEqual(default['effective_sha256'], enabled['effective_sha256'])
+
+    def test_explicit_off_overrides_a_config_that_enables_streaming(self):
+        config = read_configuration(OFFICIAL, package_resolver=_resolver)
+        config['vision']['stream']['stream_enabled'] = True
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'config.yaml'
+            path.write_text(yaml.safe_dump(config), encoding='utf-8')
+            self.assertTrue(load_configuration(path, 'vision', _resolver)['nodes']['stream_node']['stream_enabled'])
+            off = load_configuration(path, 'vision', _resolver, stream_enabled=False)
+            self.assertFalse(off['nodes']['stream_node']['stream_enabled'])
+
+
 class CameraControlsTest(unittest.TestCase):
     def test_field_preset_sets_modes_then_manual_values_and_reads_device(self):
         snapshot = load_configuration(OFFICIAL, run='vision', package_resolver=_resolver)
@@ -144,6 +168,28 @@ class AutoGripperConfigTest(unittest.TestCase):
                 self.assertEqual(bridge['gripper_closed_deg'], -50.0)
                 self.assertEqual(bridge['gripper_open_deg'], 0.0)
                 self.assertEqual(bridge['gripper_move_s'], 1.0)
+                self.assertEqual(bridge['gripper_ramp_fraction'], 0.8)
+                self.assertEqual(bridge['gripper_open_hold_max_nm'], 0.14)
+                self.assertEqual(bridge['gripper_output_tolerance_deg'], 2.0)
+                self.assertEqual(bridge['gripper_closed_trim_deg'], 0.35)
+                self.assertEqual(bridge['gripper_open_trim_deg'], 5.0)
+
+    def test_legacy_gripper_step_and_invalid_ramp(self):
+        config = read_configuration(OFFICIAL, package_resolver=_resolver)
+        for key in ('ramp_fraction', 'closed_trim_deg', 'open_trim_deg', 'open_hold_max_nm', 'output_tolerance_deg'):
+            del config['gripper'][key]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'config.yaml'
+            path.write_text(yaml.safe_dump(config), encoding='utf-8')
+            snap = load_configuration(path, 'bridge', _resolver)
+            self.assertEqual(snap['nodes']['bridge_node']['gripper_ramp_fraction'], 0.0)
+            self.assertEqual(snap['nodes']['bridge_node']['gripper_open_hold_max_nm'], 0.0)
+            for bad in (-0.1, 1.01, float('nan'), True):
+                with self.subTest(bad=bad):
+                    config['gripper']['ramp_fraction'] = bad
+                    path.write_text(yaml.safe_dump(config), encoding='utf-8')
+                    with self.assertRaisesRegex(ConfigurationError, r'gripper\.ramp_fraction'):
+                        load_configuration(path, 'bridge', _resolver)
 
     def test_empty_move_s_rejected_when_bridge_enabled(self):
         config = read_configuration(OFFICIAL, package_resolver=_resolver)

@@ -39,6 +39,11 @@ MissionNode::Settings MissionNode::loadParameters()
     *this, "detector_task_topic", descriptor);
   settings.target_roi_service = rescue::declareRequired<std::string>(
     *this, "target_roi_service", descriptor);
+  settings.class_ids = {
+    rescue::declareRequired<std::int64_t>(*this, "green_class_id", descriptor),
+    rescue::declareRequired<std::int64_t>(*this, "blue_class_id", descriptor),
+    rescue::declareRequired<std::int64_t>(*this, "black_class_id", descriptor),
+    rescue::declareRequired<std::int64_t>(*this, "orange_class_id", descriptor)};
   settings.request_timeout_s = rescue::declareRequired<double>(
     *this, "request_timeout_s", descriptor);
   return settings;
@@ -65,6 +70,10 @@ void MissionNode::createRosInterfaces(const Settings & settings)
   arrived_service_ = create_service<CheckRoi>(
     "~/arrived",
     [this](RequestHeader header, std::shared_ptr<CheckRoi::Request>) {onArrived(header);});
+  pickup_route_service_ = create_service<RegisterPickupRoute>(
+    "~/register_pickup",
+    [this](std::shared_ptr<RegisterPickupRoute::Request> request,
+      std::shared_ptr<RegisterPickupRoute::Response> response) {onPickupRoute(*request, *response);});
   command_service_ = create_service<Command>(
     "~/command",
     [this](std::shared_ptr<Command::Request> request,
@@ -83,6 +92,26 @@ void MissionNode::onArrived(const RequestHeader & header)
     return;
   }
   roi_call_header_.reset();
+}
+
+// 正式搬运只登记同一抓取事务已锁存的真实目标。旧 arrived 服务供显式 ROI 诊断使用。
+void MissionNode::onPickupRoute(
+  const RegisterPickupRoute::Request & request, RegisterPickupRoute::Response & response)
+{
+  try {
+    const auto route = controller_.registerPickupRoute(
+      request.class_id, request.grasp_token, settings_.class_ids);
+    response.accepted = route.accepted;
+    response.destination = static_cast<std::uint8_t>(route.destination);
+    response.route_id = route.route_id;
+    response.message = route.message;
+  } catch (const std::exception & error) {
+    response.accepted = false;
+    response.destination = 0;
+    response.route_id = 0;
+    response.message = error.what();
+    controller_.commandFailed(error.what());
+  }
 }
 
 void MissionNode::onCommand(const Command::Request & request, Command::Response & response)

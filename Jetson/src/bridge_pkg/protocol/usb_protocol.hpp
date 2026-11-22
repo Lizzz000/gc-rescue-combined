@@ -67,6 +67,7 @@ public:
   static constexpr canid_t TURN_COMPLETED_ID = 17;
   static constexpr canid_t SAFETY_ARRIVED_ID = 18;
   static constexpr canid_t START_SEARCH_ID = 19;
+  static constexpr canid_t START_ALIGN_ID = 22;
   static constexpr canid_t DELIVERY_COMPLETED_ID = 20;
   static constexpr canid_t ARRIVAL_POINT_ID = 21;
   // 类型 8 只授权已提交路由的去程转向。类型 21 的受理为命令 5，完成另走类型 9。
@@ -77,17 +78,17 @@ public:
   static constexpr canid_t TURN_REQUEST_ID = 8;
   static constexpr canid_t GRIPPER_RESULT_ID = 9;
   static constexpr std::uint8_t TURN_COMPLETED = 1, SAFETY_ARRIVED = 2, START_SEARCH = 3,
-    DELIVERY_COMPLETED = 4, ARRIVAL_POINT = 5;
+    DELIVERY_COMPLETED = 4, ARRIVAL_POINT = 5, START_ALIGN = 6;
 
   // NONE 表示不属于本协议的指令；MALFORMED 表示已识别 ID，但长度或请求字节不合法。
-  enum class CommandKind { NONE, MALFORMED, ARRIVAL, MISSION, ARRIVAL_POINT };
+  enum class CommandKind { NONE, MALFORMED, ARRIVAL, PICKUP_ROUTE, MISSION, ARRIVAL_POINT };
 
   struct Command
   {
     CommandKind kind{CommandKind::NONE};
     // MISSION 为 MissionCommand 命令；ARRIVAL_POINT 为夹爪动作 kind。
     std::uint8_t command{0};
-    // 命令 1/2/4 为本轮 ROI 号低32位；3/ARRIVAL_POINT 为非零请求编号。
+    // 命令 1/2/4 为本轮 ROI 号低32位；搜索、首次对准和到点各自回显非零请求编号。
     std::uint32_t token{0};
   };
 
@@ -167,8 +168,11 @@ public:
   // 命令 1/3 成功还须确认模式完成；4 表示已记录送达，5 仅表示动作受理。
   static can_frame commandResult(bool accepted, std::uint8_t command, std::uint32_t token = 0)
   {
-    if (command < TURN_COMPLETED || command > ARRIVAL_POINT) {
+    if (command < TURN_COMPLETED || command > START_ALIGN) {
       throw std::invalid_argument("Unknown mission command");
+    }
+    if (command == START_ALIGN && token == 0) {
+      throw std::invalid_argument("Initial alignment requires a nonzero request ID");
     }
     can_frame frame{};
     frame.can_id = COMMAND_RESULT_ID;
@@ -218,8 +222,9 @@ public:
       return command;
     }
     if (frame.can_id == ARRIVAL_ID) {
-      command.kind = frame.len == 1 && frame.data[0] == 1 ?
-        CommandKind::ARRIVAL : CommandKind::MALFORMED;
+      command.kind = CommandKind::MALFORMED;
+      if (frame.len == 1 && frame.data[0] == 1) {command.kind = CommandKind::ARRIVAL;}
+      if (frame.len == 1 && frame.data[0] == 2) {command.kind = CommandKind::PICKUP_ROUTE;}
       return command;
     }
     if (frame.can_id == TURN_COMPLETED_ID || frame.can_id == SAFETY_ARRIVED_ID ||
@@ -234,11 +239,11 @@ public:
       }
       return command;
     }
-    if (frame.can_id == START_SEARCH_ID)
+    if (frame.can_id == START_SEARCH_ID || frame.can_id == START_ALIGN_ID)
     {
       command.kind = frame.len == 5 && frame.data[0] == 1 && getUnsigned(frame.data + 1) != 0 ?
         CommandKind::MISSION : CommandKind::MALFORMED;
-      command.command = START_SEARCH;
+      command.command = frame.can_id == START_SEARCH_ID ? START_SEARCH : START_ALIGN;
       if (command.kind == CommandKind::MISSION) {command.token = getUnsigned(frame.data + 1);}
       return command;
     }

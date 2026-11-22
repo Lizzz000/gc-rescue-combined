@@ -378,7 +378,7 @@ def launch_case(args, snapshot, directory, *, clock=False, replay=None):
 
 
 def case_snapshot(args, image=None, clock=False, directory=None, link_device=None, *,
-                  run='all', gripper_device=None):
+                  run='all', gripper_device=None, http_stream=False):
     """将场景覆盖值写入独立验收配置，再经生产装配器 load_configuration 读取；配置期能拦住哪些非法组合以 bringup 当前校验为准，其余在节点启动时暴露。"""
     import yaml
     cfg = configuration()
@@ -389,7 +389,8 @@ def case_snapshot(args, image=None, clock=False, directory=None, link_device=Non
                    'vision.detect.active_task': 'seg',
                    'vision.detect.publish_masks': True, 'vision.detect.publish_timing': True,
                    'vision.stream.draw_masks': True, 'vision.stream.overlay_stats': False,
-                   'vision.stream.stream_address': '127.0.0.1'})
+                   'vision.stream.stream_address': '127.0.0.1',
+                   'vision.stream.stream_enabled': http_stream and not clock})
     if gripper_device is not None:
         values['gripper.device'] = gripper_device
     with socket.socket() as channel:
@@ -409,8 +410,7 @@ def case_snapshot(args, image=None, clock=False, directory=None, link_device=Non
     if clock:
         # 模拟时钟不采图，但含分割的节点仍要求自动 GStreamer 管线。
         values.update({'vision.detect.camera_device': '/dev/rescue_validation_absent',
-                       'vision.detect.camera_backend': 'gstreamer', 'vision.detect.camera_pipeline': '',
-                       'vision.stream.stream_enabled': False})
+                       'vision.detect.camera_backend': 'gstreamer', 'vision.detect.camera_pipeline': ''})
     path = (directory or args.output) / ('clock-config.yaml' if clock else 'case-config.yaml')
     path.write_text(yaml.safe_dump(flat_to_document(values), sort_keys=False), encoding='utf-8')
     snapshot = cfg.load_configuration(path, run)
@@ -881,7 +881,8 @@ def capture(args):
                         can = UsbProbe(directory)
                         gripper = S288Probe(directory, motor_id)
                 snapshot = case_snapshot(args, replay, clock, directory, can.device if can else None,
-                                         run=run, gripper_device=gripper.device if gripper else None)
+                                         run=run, gripper_device=gripper.device if gripper else None,
+                                         http_stream=not clock)
                 before = asset_snapshot(snapshot)
                 record.update(parameters=snapshot['values'], assets=before)
                 with defer_creation_interrupt():
@@ -1111,7 +1112,7 @@ def camera_or_performance(args):
     args.output.mkdir(parents=True, exist_ok=True)
     can = UsbProbe(args.output)
     snapshot = case_snapshot(args, args.input if args.stage == 'performance' else None,
-                             link_device=can.device)
+                             link_device=can.device, http_stream=True)
     before = asset_snapshot(snapshot)
     if args.stage == 'camera':
         device = Path(snapshot['values']['vision.detect.camera_device'])
@@ -1340,74 +1341,6 @@ def freeze(args):
                'effective_parameters': snapshot, 'status': 'frozen_not_executed'})
 
 
-def field_sequence(args):
-    require(args.inputs and (args.inputs / 'sequence.json').is_file(), '--inputs/sequence.json is required')
-    parameters = args.inputs / 'effective.json'
-    require(parameters.is_file(), 'frozen full Field parameters are missing')
-    from .provenance import source_files, check_baseline
-    source = args.source.resolve()
-    production = source_files(source)
-    if args.kind == 'baseline':
-        check_baseline(source, production, ROOT, BASELINE)
-    snapshot = prepare(args)
-    frozen = json.loads(parameters.read_text(encoding='utf-8'))
-    field = {key[6:]: value for key, value in snapshot['nodes']['detect_node'].items() if key.startswith('field.')}
-    require(frozen.get('field') == field, 'Field frozen input configuration differs from actual unified configuration')
-    # 同一新探针分别链接被测实际核心；不编译旧测试，也不使用不受支持的 --help。
-    probe = args.probe
-    if probe is None:
-        standalone = args.build / ('field-' + args.kind)
-        command(['cmake', '-S', ROOT / 'src/vision_pkg/checks/field_sequence', '-B', standalone,
-                 '-DFIELD_SOURCE_ROOT=' + str((args.source / 'src/vision_pkg').resolve()),
-                 '-DCMAKE_BUILD_TYPE=RelWithDebInfo', *args.cmake_arg], args.output / 'field-configure.log')
-        command(['cmake', '--build', standalone, '-j2'], args.output / 'field-build.log')
-        probe = standalone / 'vision_field_sequence_probe'
-    require(probe.is_file() and os.access(probe, os.X_OK), 'Field sequence executable is missing')
-    before = asset_snapshot(snapshot)
-    compiled = fingerprint(probe)
-    write_json(args.output / 'field-command-identity.json', {'probe': fingerprint(probe),
-               'manifest': fingerprint(args.inputs / 'sequence.json'), 'parameters': fingerprint(parameters),
-               'declared_source_id': args.business_version, 'source_root': str(args.source.resolve())})
-    command([probe, '--manifest', (args.inputs / 'sequence.json').resolve(), '--parameters', parameters.resolve(),
-             '--source-id', args.business_version, '--output', args.output / 'field-observation'],
-            args.output / 'field-probe.log')
-    identity = json.loads((args.output / 'field-observation/identity.json').read_text(encoding='utf-8'))
-    require(identity.get('complete') is True and identity.get('frame_count', 0) > 0, 'Field probe incomplete')
-    require(identity.get('compiled_identity_verified') is True, 'Field probe lacks compiled source identity')
-    require(asset_snapshot(snapshot) == before, 'model/engine/cache changed during Field verification')
-    expected = {name: fingerprint(source / 'src/vision_pkg' / name)['sha256'] for name in (
-        'node/detect_node.cpp', 'node/detect_node.hpp')}
-    require(identity['core_files'] == expected, 'Field probe was compiled against another source root')
-    require(source_files(source) == production, 'production sources changed during Field verification')
-    require(fingerprint(probe) == compiled, 'Field probe changed during execution')
-    write_json(args.output / 'field-observation/execution.json', {
-        'schema': 'rescue.field-execution.v1', 'complete': True, 'kind': args.kind,
-        'verified_baseline': BASELINE if args.kind == 'baseline' else None,
-        'source_root': str(source), 'probe': compiled, 'core_files': expected,
-        'identity': fingerprint(args.output / 'field-observation/identity.json'),
-        'results': fingerprint(args.output / 'field-observation/results.jsonl')})
-
-
-def field_compare(args):
-    require(args.baseline and args.candidate, 'field-compare requires observation directories')
-    require(args.abs_tol is not None and args.rel_tol is not None,
-            'field-compare requires the existing explicit --abs-tol and --rel-tol')
-    for kind, folder in (('baseline', args.baseline), ('candidate', args.candidate)):
-        record = json.loads((folder / 'execution.json').read_text(encoding='utf-8'))
-        require(record.get('schema') == 'rescue.field-execution.v1' and
-                record.get('complete') is True and record['kind'] == kind,
-                'Field comparison requires verified baseline and candidate executions')
-        if kind == 'baseline':
-            require(record['verified_baseline'] == BASELINE, 'Field execution uses another baseline')
-        for key, name in (('identity', 'identity.json'), ('results', 'results.jsonl')):
-            require(fingerprint(folder / name) == record[key], 'Field artifact changed after execution: ' + name)
-    command([sys.executable, ROOT / 'src/vision_pkg/checks/compare_field_sequence.py', 'compare',
-             '--baseline', args.baseline, '--candidate', args.candidate, '--abs-tol', args.abs_tol,
-             '--rel-tol', args.rel_tol, '--report', args.output / 'field-comparison.json'],
-            args.output / 'field-comparison.log')
-
-
-
 # ---- 编辑器合同：从真实构建导出数据库，再检查 clangd 行为 ----
 
 def clangd_contract(args):
@@ -1532,7 +1465,7 @@ def isolated_stage(args, forwarded):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('stage', choices=('freeze', 'prepare', 'build', 'contracts', 'capture', 'compare',
-                                         'field', 'field-compare', 'transport', 'transport-compare', 'clangd', 'performance', 'performance-compare', 'camera'))
+                                         'transport', 'transport-compare', 'clangd', 'performance', 'performance-compare', 'camera'))
     parser.add_argument('--config', type=Path, default=ROOT / 'src/bringup_pkg/config/rescue.yaml')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--build', type=Path, default=ROOT / 'build/unified-runtime')
@@ -1545,8 +1478,6 @@ def main(argv=None):
     parser.add_argument('--input', type=Path)
     parser.add_argument('--baseline', type=Path)
     parser.add_argument('--candidate', type=Path)
-    parser.add_argument('--abs-tol', type=float)
-    parser.add_argument('--rel-tol', type=float)
     parser.add_argument('--cmake-arg', action='append', default=[])
     parser.add_argument('--isolated', action='store_true', help='create a private network namespace')
     args = parser.parse_args(argv)
@@ -1556,7 +1487,6 @@ def main(argv=None):
         not args.isolated and os.environ.get('RESCUE_TEST_HOST_NETNS')) else None
     args.run_id = inherited_run or uuid.uuid4().hex
     handlers = {'freeze': freeze, 'prepare': prepare, 'build': build, 'contracts': contracts, 'capture': capture,
-                'field': field_sequence, 'field-compare': field_compare,
                 'transport': transport_probe, 'transport-compare': transport_compare, 'clangd': clangd_contract,
                 'compare': compare, 'performance': camera_or_performance, 'camera': camera_or_performance,
                 'performance-compare': performance_compare}

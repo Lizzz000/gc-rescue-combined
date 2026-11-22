@@ -18,6 +18,11 @@ struct BridgeRuntimeTestAccess
   static const can_frame & reply(const BridgeRuntime & runtime)
   {return runtime.transactions_.replyFrame(CanProtocol::COMMAND_RESULT_ID);}
   static void sendPeriodicFrame(BridgeRuntime & runtime) {runtime.sendPeriodicFrame();}
+  static void completedGrasp(BridgeRuntime & runtime, std::uint32_t token)
+  {
+    CHECK(runtime.transactions_.handleArrivalPoint(1, token, true) == ArrivalPointDecision::Accept);
+    CHECK(runtime.arrival_point_.complete(true).has_value());
+  }
   static void expireMissionStatus(BridgeRuntime & runtime, BridgeRuntime::Clock::duration timeout)
   {
     runtime.mission_watchdog_.received({BridgeRuntime::Clock::now() - timeout});
@@ -68,10 +73,12 @@ struct Fixture
     std::make_shared<rclcpp::Client<interface_pkg::srv::CheckRoi>>();
   std::shared_ptr<rclcpp::Client<interface_pkg::srv::MissionCommand>> command =
     std::make_shared<rclcpp::Client<interface_pkg::srv::MissionCommand>>();
+  std::shared_ptr<rclcpp::Client<interface_pkg::srv::RegisterPickupRoute>> pickup =
+    std::make_shared<rclcpp::Client<interface_pkg::srv::RegisterPickupRoute>>();
   HostTransport * transport;
   std::unique_ptr<BridgeRuntime> runtime;
 
-  Fixture()
+  explicit Fixture(std::uint64_t generation = 10)
   {
     BridgeRuntime::Config config;
     config.request_timeout = std::chrono::seconds(1);
@@ -80,10 +87,10 @@ struct Fixture
     auto owned_transport = std::make_unique<HostTransport>();
     transport = owned_transport.get();
     runtime = std::make_unique<BridgeRuntime>(node, config, BridgeRuntime::Ports{
-      std::make_shared<rclcpp::Publisher<interface_pkg::msg::BridgeStatus>>(), roi, command},
+      std::make_shared<rclcpp::Publisher<interface_pkg::msg::BridgeStatus>>(), roi, command, pickup},
       std::move(owned_transport));
     task();
-    mission(10);
+    mission(generation);
   }
   void task(const char * task_name = "seg")
   {
@@ -165,6 +172,30 @@ void checkMissionStatusTimeout()
 void testDeliveryLocalization()
 {
   Group group("BridgeRuntime delivery localization");
+  Fixture registered;
+  registered.target();
+  BridgeRuntimeTestAccess::completedGrasp(*registered.runtime, 57);
+  CHECK(BridgeRuntimeTestAccess::receive(*registered.runtime, CanProtocol::ARRIVAL_ID, 0, 2));
+  CHECK(registered.pickup->requests.size() == 1 && registered.roi->requests.empty());
+  CHECK(registered.pickup->requests[0]->class_id == "0" && registered.pickup->requests[0]->grasp_token == 57);
+  registered.pickup->reply(0, {true, 1, 57, "registered"});
+  registered.mission(10, BridgeCyclePhase::WaitingTurn, BridgeOutcome::Success, 57);
+  CHECK(BridgeRuntimeTestAccess::authorized(*registered.runtime));
+  CHECK(BridgeRuntimeTestAccess::receive(*registered.runtime, CanProtocol::ARRIVAL_ID, 0, 2));
+  CHECK(registered.pickup->requests.size() == 1 && registered.roi->requests.empty());
+  // 首次定位从无路由启动，真实任务话题晚于 Mission 时，也必须等到 field 才能回命令 6。
+  Fixture initial(0);
+  const std::uint32_t initial_id = 0x11223344;
+  CHECK(BridgeRuntimeTestAccess::receive(*initial.runtime, CanProtocol::START_ALIGN_ID, initial_id));
+  CHECK(initial.command->requests.size() == 1 && initial.command->requests[0]->command == CanProtocol::START_ALIGN &&
+    initial.command->requests[0]->roi_request_id == 0);
+  initial.command->reply(0, {true});
+  initial.mission(1, BridgeCyclePhase::InitialLocalizing);
+  CHECK(!initial.result(true, initial_id, 6));
+  initial.task("field");
+  CHECK(initial.result(true, initial_id, 6));
+  CHECK(BridgeRuntimeTestAccess::receive(*initial.runtime, CanProtocol::START_ALIGN_ID, initial_id));
+  CHECK(initial.command->requests.size() == 1 && initial.result(true, initial_id, 6));
   // 两种回执顺序都沿用原路由，重复送达不发起第二条 ROS 请求。
   for (bool status_first : {false, true}) {
     Fixture fixture;

@@ -677,6 +677,22 @@
       }
     },
     "mission_node": {
+      "green_class_id": {
+        "path": "shared.classes.green",
+        "kind": "integer"
+      },
+      "blue_class_id": {
+        "path": "shared.classes.blue",
+        "kind": "integer"
+      },
+      "black_class_id": {
+        "path": "shared.classes.black",
+        "kind": "integer"
+      },
+      "orange_class_id": {
+        "path": "shared.classes.orange",
+        "kind": "integer"
+      },
       "detector_service": {
         "path": "mission.controller.detector_service",
         "kind": "string"
@@ -841,6 +857,26 @@
       },
       "gripper_open_deg": {
         "path": "gripper.open_deg",
+        "kind": "number"
+      },
+      "gripper_open_trim_deg": {
+        "path": "gripper.open_trim_deg",
+        "kind": "number"
+      },
+      "gripper_closed_trim_deg": {
+        "path": "gripper.closed_trim_deg",
+        "kind": "number"
+      },
+      "gripper_open_hold_max_nm": {
+        "path": "gripper.open_hold_max_nm",
+        "kind": "number"
+      },
+      "gripper_output_tolerance_deg": {
+        "path": "gripper.output_tolerance_deg",
+        "kind": "number"
+      },
+      "gripper_ramp_fraction": {
+        "path": "gripper.ramp_fraction",
         "kind": "number"
       },
       "gripper_move_s": {
@@ -1076,6 +1112,11 @@
     "gripper.closed_deg": "number",
     "gripper.open_deg": "number",
     "gripper.move_s": "number",
+    "gripper.ramp_fraction": "number",
+    "gripper.open_trim_deg": "number",
+    "gripper.closed_trim_deg": "number",
+    "gripper.open_hold_max_nm": "number",
+    "gripper.output_tolerance_deg": "number",
     "bridge.input_timeout_s": "number",
     "bridge.safety_hold_s": "number",
     "bridge.tx_queue_timeout_s": "number",

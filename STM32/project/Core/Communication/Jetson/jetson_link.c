@@ -132,10 +132,12 @@ void Jetson_CAN_Receive_At(uint16_t type, const uint8_t *data, uint8_t len, uint
         Jetson_CAN_Command_Reply_t reply = {0};
         reply.sequence = ++jetson_data.rx_sequence;
         if (data != NULL && len == 6U && data[0] <= 1U &&
-            data[1] >= 1U && data[1] <= JETSON_CAN_POINT_REPLY_COMMAND)
+            data[1] >= 1U && data[1] <= JETSON_CAN_START_ALIGN_COMMAND)
         {
             uint32_t token = Read_Token(data + 2U);
-            if ((data[1] != 3U && data[1] != JETSON_CAN_POINT_REPLY_COMMAND) || token != 0U)
+            const uint8_t needs_token = data[1] == 3U || data[1] == JETSON_CAN_POINT_REPLY_COMMAND ||
+                                        data[1] == JETSON_CAN_START_ALIGN_COMMAND;
+            if (!needs_token || token != 0U)
             {
                 reply.valid = 1U;
                 reply.accepted = data[0];
@@ -200,6 +202,10 @@ void Jetson_CAN_Expect_Command_Reply(uint16_t request_type, uint32_t token)
     {
         command = JETSON_CAN_POINT_REPLY_COMMAND;
     }
+    else if (request_type == JETSON_CAN_START_ALIGN_ID)
+    {
+        command = JETSON_CAN_START_ALIGN_COMMAND;
+    }
     else if (request_type >= JETSON_CAN_TURN_COMPLETED_ID && request_type <= JETSON_CAN_DELIVERY_COMPLETED_ID)
     {
         command = (uint8_t)(request_type - JETSON_CAN_TURN_COMPLETED_ID + 1U);
@@ -241,7 +247,8 @@ void Jetson_CAN_Get_Data(Jetson_CAN_Data_t *out)
 /** @brief 编码上行载荷。 @return 载荷长度，失败为 0。 */
 uint8_t Jetson_CAN_Encode_Uplink(uint16_t type, uint32_t argument, uint8_t data[8])
 {
-    if (data == NULL || (type == JETSON_CAN_START_SEARCH_ID && argument == 0U))
+    if (data == NULL ||
+        ((type == JETSON_CAN_START_SEARCH_ID || type == JETSON_CAN_START_ALIGN_ID) && argument == 0U))
     {
         return 0U;
     }
@@ -254,6 +261,7 @@ uint8_t Jetson_CAN_Encode_Uplink(uint16_t type, uint32_t argument, uint8_t data[
         break;
     case JETSON_CAN_TURN_COMPLETED_ID:
     case JETSON_CAN_START_SEARCH_ID:
+    case JETSON_CAN_START_ALIGN_ID:
     case JETSON_CAN_SAFETY_ARRIVED_ID:
     case JETSON_CAN_DELIVERY_COMPLETED_ID:
         length = 5U;
@@ -263,7 +271,8 @@ uint8_t Jetson_CAN_Encode_Uplink(uint16_t type, uint32_t argument, uint8_t data[
     }
 
     memset(data, 0, 8U);
-    data[0] = 1U;
+    data[0] = type == JETSON_CAN_ARRIVAL_ID && argument == JETSON_CAN_SELECTED_ROUTE ?
+              JETSON_CAN_SELECTED_ROUTE : 1U;
     if (length == 5U)
     {
         data[1] = (uint8_t)argument;

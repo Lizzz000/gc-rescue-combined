@@ -26,9 +26,11 @@ void BridgeTransactions::handleMissionCommand(std::uint8_t command, std::uint32_
   const auto reply = [this, command, token](bool accepted) {
       armCommandReply(accepted, command, token);
     };
-  // 搜索在途重发不续期，已结束事务只补原结果。更旧 ID 不能重新调用 Mission。
-  if (command == CanProtocol::START_SEARCH) {
-    const auto decision = search_request_.onRequest(token);
+  // 搜索和首次对准各自保存编号水位。在途重传不延长等待，已结束事务不再调用 Mission。
+  if (command == CanProtocol::START_SEARCH || command == CanProtocol::START_ALIGN) {
+    const bool initial = command == CanProtocol::START_ALIGN;
+    auto & session = initial ? initial_align_request_ : search_request_;
+    const auto decision = session.onRequest(token);
     if (decision == SearchRequestDecision::Reject) {
       reply(false);
       return;
@@ -38,13 +40,26 @@ void BridgeTransactions::handleMissionCommand(std::uint8_t command, std::uint32_
       return;
     }
     if (decision == SearchRequestDecision::Replay) {
-      reply(*search_request_.result());
+      reply(*session.result() && (!initial || switchConfirmed(command)));
       return;
     }
     // 新事务忙时的拒绝也是终态，不能让同 ID 在稍后变成一次新的模式切换。
     if (pending_mode_reply_ || roi_request_.waiting() || command_request_.waiting()) {
       reply(false);
       return;
+    }
+    if (initial) {
+      const auto & mission = state_.missionState();
+      if (!mission || mission->cycle_generation != 0 || mission->transport_phase != BridgeTransportPhase::First ||
+        mission->roi_request_id != 0 || mission->destination != BridgeDestination::None ||
+        mission->operation != BridgeOperation::Idle || route_aborted_ || state_.locallyHeld() ||
+        arrival_point_.busy() || (mission->cycle_phase != BridgeCyclePhase::SearchingTarget &&
+        mission->cycle_phase != BridgeCyclePhase::Fault))
+      {
+        reply(false);
+        return;
+      }
+      initial_align_deadline_ = ports_.monotonicNow() + request_timeout_;
     }
     requestCommand(command, token);
     return;
@@ -109,14 +124,30 @@ void BridgeTransactions::handleMissionCommand(std::uint8_t command, std::uint32_
 // 首次到达先停坐标并确认，再请求 ROI；重复到达只重发当前轮结果。
 // 待转向时核对授权；仅本进程未尝试过 ROI 才能按已提交状态恢复，失败不能被查询改成成功。
 // 非寻找、检查、待转向或 ROI 失败阶段拒绝到达。
-void BridgeTransactions::handleArrival()
+void BridgeTransactions::handleArrival(Service service)
 {
+  const auto & mission = state_.missionState();
+  if (initial_align_request_.busy() || (mission && roi_attempted_ &&
+    roi_cycle_generation_ == mission->cycle_generation && route_service_ != service)) {
+    armReply(CanProtocol::ARRIVAL_ACK_ID, CanProtocol::arrivalAck(false));
+    return;
+  }
   if (route_aborted_) {
-    arrival_point_.authorizeRejectOpen();
+    if (service == Service::Roi) {arrival_point_.authorizeRejectOpen();}
     armReply(CanProtocol::ARRIVAL_ACK_ID, CanProtocol::arrivalAck(false));
     return;
   }
   const auto phase = state_.cyclePhase();
+  if (service == Service::PickupRoute) {
+    // 闭爪期间目标可能移出画面，只使用这次抓取受理时锁定的类别及同编号终态。
+    const auto grasp = pickup_ ? arrival_point_.result(1, pickup_->grasp_token) : std::nullopt;
+    if (!grasp || !grasp->success || !mission || pickup_->cycle_generation != mission->cycle_generation ||
+      (phase != BridgeCyclePhase::SearchingTarget && phase != BridgeCyclePhase::WaitingTurn) ||
+      (phase == BridgeCyclePhase::WaitingTurn && mission->roi_request_id != grasp->request_id)) {
+      armReply(CanProtocol::ARRIVAL_ACK_ID, CanProtocol::arrivalAck(false));
+      return;
+    }
+  }
   if (phase == BridgeCyclePhase::SearchingTarget) {
     const bool duplicate = state_.locallyHeld();
     state_.holdCoordinates(ports_.sourceNow());
@@ -125,8 +156,9 @@ void BridgeTransactions::handleArrival()
       roi_passed_.reset();
       roi_confirmation_.reset();
       roi_attempted_ = true;
+      route_service_ = service;
       roi_cycle_generation_ = state_.missionState()->cycle_generation;
-      requestRoi();
+      requestRoute();
     } else if (roi_passed_.has_value()) {
       armReply(CanProtocol::ROI_RESULT_ID, replies_.frame(CanProtocol::ROI_RESULT_ID));
     }
@@ -161,7 +193,7 @@ void BridgeTransactions::handleArrival()
     }
     return;
   }
-  arrival_point_.authorizeRejectOpen();
+  if (service == Service::Roi) {arrival_point_.authorizeRejectOpen();}
   armReply(CanProtocol::ARRIVAL_ACK_ID, CanProtocol::arrivalAck(false));
 }
 
@@ -169,37 +201,45 @@ ArrivalPointDecision BridgeTransactions::handleArrivalPoint(
   std::uint8_t kind, std::uint32_t request_id, bool motion_lease_open)
 {
   const auto phase = state_.cyclePhase();
+  const auto class_id = kind == 1 ? state_.selectedClass(ports_.sourceNow(), {ports_.monotonicNow()}) : "";
   const bool can_grasp = kind == 1 && !route_aborted_ &&
-    phase == BridgeCyclePhase::SearchingTarget && !state_.locallyHeld();
+    phase == BridgeCyclePhase::SearchingTarget && !state_.locallyHeld() && !class_id.empty();
   const bool can_release = kind == 2 && !route_aborted_ && phase == BridgeCyclePhase::WaitingTransfer;
-  const bool authorized = kind == 0 || (motion_lease_open && (can_grasp || can_release || kind == 3));
+  const bool authorized = kind == 0 ||
+    (!initial_align_request_.busy() && motion_lease_open && (can_grasp || can_release || kind == 3));
   const auto decision = arrival_point_.onRequest(kind, request_id, authorized);
+  if (decision == ArrivalPointDecision::Accept && kind == 1) {
+    pickup_ = Pickup{class_id, request_id, state_.missionState()->cycle_generation};
+  }
+  if (decision == ArrivalPointDecision::Accept && kind == 3) {pickup_.reset();}
   armCommandReply(decision != ArrivalPointDecision::Reject, CanProtocol::ARRIVAL_POINT, request_id);
   return decision;
 }
 
 // 同类请求忙时忽略重复指令；服务缺席或超时均给失败快照，不延长旧等待。
-void BridgeTransactions::requestRoi()
+void BridgeTransactions::requestRoute()
 {
   checkRequestTimeouts(ports_.monotonicNow());
   if (roi_request_.waiting()) {
     ports_.dropRequest();
     return;
   }
-  if (!ports_.serviceReady(Service::Roi)) {
-    finishRoi();
-    ports_.warnRequest("arrival ROI service is not ready");
+  if (!ports_.serviceReady(route_service_)) {
+    failRoute();
+    ports_.warnRequest("arrival route service is not ready");
     return;
   }
   // 忙时不刷新截止；成功 begin 后捕获本代次，迟到服务响应不能完成重试中的新请求。
   const auto generation = *roi_request_.begin({ports_.monotonicNow()}, request_timeout_);
   try {
-    const auto request_id = ports_.sendRoi(generation);
+    const auto request_id = route_service_ == Service::PickupRoute ?
+      ports_.sendPickupRoute(generation, pickup_->class_id, pickup_->grasp_token) :
+      ports_.sendRoi(generation);
     roi_request_.bind(generation, request_id);
   } catch (const std::exception & error) {
     roi_request_.cancel();
     ports_.setRequestError(error.what());
-    finishRoi();
+    failRoute();
   }
 }
 
@@ -230,7 +270,8 @@ void BridgeTransactions::requestCommand(std::uint8_t command, std::uint32_t toke
   if (delivery_query) {
     pending_command_identity_ = *deliveryQueryIdentity(token);
     pending_command_identity_->delivery_query = true;
-  } else if (const auto & mission = state_.missionState(); mission && command != CanProtocol::START_SEARCH) {
+  } else if (const auto & mission = state_.missionState();
+    mission && command != CanProtocol::START_SEARCH && command != CanProtocol::START_ALIGN) {
     // 只有首次203从WaitingTurn开始切field才递增代次；后续阶段查询沿用当前代次。
     pending_command_identity_ = CommandIdentity{
       command, mission->cycle_generation +
@@ -267,14 +308,15 @@ void BridgeTransactions::commandReply(
   const auto identity = std::exchange(pending_command_identity_, std::nullopt);
   const auto token = pending_command_token_;
   // 命令 1/3 的服务成功只表示已经去切换。类型 7 要等 field/seg 真正确认，失败也必须回拒绝。
-  if (command == CanProtocol::TURN_COMPLETED || command == CanProtocol::START_SEARCH) {
+  if (command == CanProtocol::TURN_COMPLETED || command == CanProtocol::START_SEARCH ||
+    command == CanProtocol::START_ALIGN) {
     if (!accepted || modeSwitchFailed(command, requested_cycle_generation)) {
       armCommandReply(false, command, token);
       return;
     }
     if (command == CanProtocol::START_SEARCH) {commitSearchAbort(requested_cycle_generation);}
     if (switchConfirmed(command)) {
-      if (const auto & mission = state_.missionState(); mission && command != CanProtocol::START_SEARCH) {
+      if (const auto & mission = state_.missionState(); mission && command == CanProtocol::TURN_COMPLETED) {
         accepted_commands_[command - 1] = CommandIdentity{
           command, mission->cycle_generation, mission->roi_request_id,
           mission->destination, mission->cycle_phase, false};
@@ -283,7 +325,8 @@ void BridgeTransactions::commandReply(
       return;
     }
     pending_mode_reply_ = PendingModeReply{
-      command, token, requested_cycle_generation, current + request_timeout_};
+      command, token, requested_cycle_generation,
+      command == CanProtocol::START_ALIGN ? initial_align_deadline_ : current + request_timeout_};
     return;
   }
   // 这一代已经结束。身份对不上说明路由在调用期间变了，回拒绝，不能把回执吞掉。
@@ -365,6 +408,7 @@ bool BridgeTransactions::turnRequestCurrent() const
 void BridgeTransactions::armCommandReply(bool accepted, std::uint8_t command, std::uint32_t token)
 {
   if (command == CanProtocol::START_SEARCH) {search_request_.complete(token, accepted);}
+  if (command == CanProtocol::START_ALIGN) {initial_align_request_.complete(token, accepted);}
   armReply(CanProtocol::COMMAND_RESULT_ID, CanProtocol::commandResult(accepted, command, token));
 }
 
@@ -382,6 +426,18 @@ bool BridgeTransactions::modeSwitchFailed(
 {
   // 新搜索可从 Fault 恢复；服务响应先到时，旧代 Fault 不是这次切换的终态。
   const auto & mission = state_.missionState();
+  if (command == CanProtocol::START_ALIGN) {
+    if (!mission || mission->transport_phase != BridgeTransportPhase::First ||
+      mission->roi_request_id != 0 || mission->destination != BridgeDestination::None ||
+      mission->cycle_generation > requested_generation + 1) {return true;}
+    // 服务先到时可能仍是请求前无路由的 Fault，等新代状态判断本次切换的结果。
+    if (mission->cycle_generation == requested_generation) {
+      return mission->cycle_phase != BridgeCyclePhase::SearchingTarget &&
+             mission->cycle_phase != BridgeCyclePhase::Fault;
+    }
+    if (mission->cycle_phase != BridgeCyclePhase::SwitchingField &&
+      mission->cycle_phase != BridgeCyclePhase::InitialLocalizing) {return true;}
+  }
   if (command == CanProtocol::START_SEARCH && mission &&
     mission->cycle_generation <= requested_generation) {return false;}
   return switchFailed();
@@ -391,6 +447,9 @@ bool BridgeTransactions::switchConfirmed(std::uint8_t command) const
 {
   const auto & mission = state_.missionState();
   if (!mission || switchFailed()) {return false;}
+  if (command == CanProtocol::START_ALIGN) {
+    return mission->cycle_generation == 1 && state_.initialLocalizationConfirmed();
+  }
   if (command == CanProtocol::TURN_COMPLETED) {
     return !route_aborted_ &&
       mission->cycle_phase == BridgeCyclePhase::NavigatingSafety &&
@@ -404,6 +463,7 @@ bool BridgeTransactions::switchConfirmed(std::uint8_t command) const
 
 void BridgeTransactions::commitSearchAbort(std::uint64_t requested_cycle_generation)
 {
+  pickup_.reset();
   state_.holdForSearch(ports_.sourceNow(), requested_cycle_generation);
   // 若新搜索终态已先到，核心已经解除闭锁，不再等待下一次心跳清除此标志。
   route_aborted_ = state_.locallyHeld();
@@ -430,7 +490,7 @@ void BridgeTransactions::resolvePendingModeReply(Clock::time_point current)
   }
   if (!switchConfirmed(pending.command)) {return;}
   pending_mode_reply_.reset();
-  if (const auto & mission = state_.missionState(); mission && pending.command != CanProtocol::START_SEARCH) {
+  if (const auto & mission = state_.missionState(); mission && pending.command == CanProtocol::TURN_COMPLETED) {
     accepted_commands_[pending.command - 1] = CommandIdentity{
       pending.command, mission->cycle_generation, mission->roi_request_id,
       mission->destination, mission->cycle_phase, false};
@@ -463,14 +523,32 @@ void BridgeTransactions::refreshTurnRequest(Clock::time_point current, bool forc
 // 零编号可保留协议结果位，但不能建立转向身份；转向还须匹配 Mission 已提交状态。
 void BridgeTransactions::finishRoi(BridgeRoiResult result, std::uint64_t request_id)
 {
-  roi_passed_ = result.passed;
+  finishRoute(result.valid, result.passed, result.destination, request_id);
+}
+
+void BridgeTransactions::finishPickupRoute(bool accepted, BridgeDestination destination, std::uint64_t route_id)
+{
+  const auto & mission = state_.missionState();
+  const bool identity_matches = pickup_ && pickup_->grasp_token == route_id &&
+    mission && mission->cycle_generation == pickup_->cycle_generation &&
+    (destination == BridgeDestination::Left || destination == BridgeDestination::Right) &&
+    ((mission->cycle_phase == BridgeCyclePhase::SearchingTarget && mission->roi_request_id == 0) ||
+     (mission->cycle_phase == BridgeCyclePhase::WaitingTurn && mission->roi_request_id == route_id &&
+      mission->destination == destination));
+  finishRoute(!accepted || identity_matches, accepted && identity_matches, destination, route_id);
+}
+
+// 两条登记路径共用原类型 6 结果帧和类型 8 转向授权，分别保留服务语义。
+void BridgeTransactions::finishRoute(bool valid, bool accepted, BridgeDestination destination, std::uint64_t route_id)
+{
+  roi_passed_ = accepted;
   roi_confirmation_.reset();
-  if (!route_aborted_ && result.passed && request_id != 0) {
-    roi_confirmation_ = TurnIdentity{request_id, result.destination, roi_cycle_generation_};
+  if (!route_aborted_ && accepted && route_id != 0) {
+    roi_confirmation_ = TurnIdentity{route_id, destination, roi_cycle_generation_};
   }
   const auto frame = CanProtocol::roiResult(
-    result.valid, result.passed, static_cast<std::uint8_t>(result.destination));
-  if (!result.passed) {arrival_point_.authorizeRejectOpen();}
+    valid, accepted, static_cast<std::uint8_t>(destination));
+  if (!accepted && route_service_ == Service::Roi) {arrival_point_.authorizeRejectOpen();}
   armReply(CanProtocol::ROI_RESULT_ID, frame);
 }
 
@@ -492,6 +570,12 @@ void BridgeTransactions::armReply(canid_t id, const can_frame & frame)
 bool BridgeTransactions::replyCurrent(canid_t id) const
 {
   if (id == CanProtocol::TURN_REQUEST_ID) {return turnRequestCurrent();}
+  if (id == CanProtocol::COMMAND_RESULT_ID) {
+    const auto & reply = replies_.frame(id);
+    if (reply.data[0] && reply.data[1] == CanProtocol::START_ALIGN) {
+      return switchConfirmed(CanProtocol::START_ALIGN);
+    }
+  }
   if (id == CanProtocol::COMMAND_RESULT_ID && command_reply_identity_) {
     return commandIdentityCurrent(*command_reply_identity_);
   }
@@ -503,10 +587,10 @@ bool BridgeTransactions::replyCurrent(canid_t id) const
 void BridgeTransactions::checkRequestTimeouts(Clock::time_point current)
 {
   if (const auto timeout = roi_request_.expire({current})) {
-    ports_.cancelService(Service::Roi, timeout->request_id);
-    const char * error = "ROI service request timed out";
+    ports_.cancelService(route_service_, timeout->request_id);
+    const char * error = "arrival route service request timed out";
     ports_.setRequestError(error);
-    finishRoi();
+    failRoute();
     ports_.warnRequest(error);
   }
   if (const auto timeout = command_request_.expire({current})) {
@@ -523,12 +607,13 @@ void BridgeTransactions::checkRequestTimeouts(Clock::time_point current)
 // CAN 断线后旧代次不能完成新等待；任务状态和到达保持仍由 BridgeState 保留。
 void BridgeTransactions::disconnect()
 {
+  pickup_.reset();
   if (const auto cancelled = roi_request_.cancel()) {
-    ports_.cancelService(Service::Roi, cancelled->request_id);
+    ports_.cancelService(route_service_, cancelled->request_id);
     // 断线只取消本机等待，Mission仍可能迟到提交。保存失败供重连后的200查询，
     // 不给已关闭socket入队，也不能把后来的WaitingTurn当作本机ROI通过。
     roi_attempted_ = true;
-    finishRoi();
+    failRoute();
   }
   if (const auto cancelled = command_request_.cancel()) {
     pending_command_identity_.reset();
@@ -536,13 +621,15 @@ void BridgeTransactions::disconnect()
   }
   pending_mode_reply_.reset();
   if (search_request_.busy()) {search_request_.complete(search_request_.requestId(), false);}
+  if (initial_align_request_.busy()) {initial_align_request_.complete(initial_align_request_.requestId(), false);}
 }
 
 void BridgeTransactions::missionRestarted()
 {
+  pickup_.reset();
   // 不调用 finishRoi：旧请求失效不能在新 Mission 会话生成拒绝开爪授权。
   if (const auto cancelled = roi_request_.cancel()) {
-    ports_.cancelService(Service::Roi, cancelled->request_id);
+    ports_.cancelService(route_service_, cancelled->request_id);
   }
   if (const auto cancelled = command_request_.cancel()) {
     ports_.cancelService(Service::Command, cancelled->request_id);
@@ -551,6 +638,7 @@ void BridgeTransactions::missionRestarted()
   pending_command_identity_.reset();
   pending_command_token_ = 0;
   search_request_.invalidate();
+  initial_align_request_.invalidate();
   accepted_commands_.fill(std::nullopt);
   last_delivery_request_.reset();
   command_reply_identity_.reset();

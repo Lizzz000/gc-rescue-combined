@@ -104,8 +104,27 @@ class CodecContract(unittest.TestCase):
         self.assertEqual(encode('target', ['0.5', '0.25', '1193046']), 'T03#018813C409563412')
         self.assertEqual(decode('T04#0000000000000000')['valid'], False)
 
+    def test_start_align_is_a_distinct_nonzero_request(self):
+        self.assertEqual(encode('start_align', ['16909060']), 'T22#0104030201')
+        self.assertEqual(decode('T22#0104030201')['request_id'], 0x01020304)
+        for invalid in (False, True):
+            reply = encode('command_reply', ['start_align', '16909060'], invalid)
+            self.assertEqual(reply, ('T07#0006' if invalid else 'T07#0106') + '04030201')
+            self.assertEqual(decode(reply)['command'], 'start_align')
+        for frame in ('T22#01', 'T22#0100000000', 'T22#0001000000', 'T07#010600000000'):
+            with self.subTest(frame=frame), self.assertRaises(ValueError):
+                decode(frame)
+
 
 class ProbeContract(unittest.TestCase):
+    def test_start_align_probe_keeps_the_given_token(self):
+        probe = UsbProbe.__new__(UsbProbe)
+        sent = []
+        probe._send = lambda kind, values: sent.append((kind, values))
+        probe.command(22, 1234)
+        probe.command(22, 1234)
+        self.assertEqual(sent, [('start_align', ['1234']), ('start_align', ['1234'])])
+
     def test_search_retries_keep_identity_and_next_search_gets_new_id(self):
         probe = UsbProbe.__new__(UsbProbe)
         probe.action_sequence = 0
@@ -170,6 +189,23 @@ class ProbeContract(unittest.TestCase):
         targets.pop()
         with self.assertRaisesRegex(ContractFailure, 'disagrees with ROS coordinates'):
             probe.steady_periodic(observer, 'seg', 1, 2)
+
+    def test_initial_alignment_expects_only_whole_zone_coordinates(self):
+        probe = UsbProbe.__new__(UsbProbe)
+        probe.poll = lambda: None
+        payload = (struct.pack('<Bhh', 1, 5000, 7500) + (100).to_bytes(3, 'little')).hex()
+        probe.records = [{'steady': 1.1, 'id': 3, 'dlc': 8, 'data': '00' * 8},
+                         {'steady': 1.1, 'id': 4, 'dlc': 8, 'data': payload}]
+        observation = {'steady': 1.05, 'source': [100_000_000, 'field'],
+                       'value': {'side': 0, 'valid': True, 'x': 0.5, 'y': 0.75}}
+        observer = SimpleNamespace(records={'mission': [{'value': {
+            'operation': 0, 'cycle_phase': 10, 'transport_phase': 0, 'outcome': 2,
+            'roi_request_id': 0, 'destination': 0}}], 'safety': [observation]},
+            snapshot={'values': {'bridge.input_timeout_s': 0.5}})
+        self.assertEqual(probe.steady_periodic(observer, 'field', 1, 2)['04']['valid_bytes'], [payload])
+        observation['value']['side'] = 1
+        with self.assertRaisesRegex(ContractFailure, 'disagrees with ROS coordinates'):
+            probe.steady_periodic(observer, 'field', 1, 2)
 
 
 class ActionWaitContract(unittest.TestCase):

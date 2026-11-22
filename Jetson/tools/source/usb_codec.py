@@ -5,7 +5,7 @@
 
 arrival_point KIND REQUEST_ID；action_result KIND STATUS REQUEST_ID。
 KIND 为 0/startup、1/grasp、2/release、3/reject_open；STATUS 为 0/1；
-REQUEST_ID 为非零 uint32。start_search 同样携带请求 ID，命令 3/5 回显各自请求 ID。
+REQUEST_ID 为非零 uint32。start_search、start_align 同样携带请求 ID，命令 3/5/6 回显各自编号。
 """
 import argparse
 import json
@@ -17,11 +17,11 @@ IDS = {'manual': 2, 'target': 3, 'safety': 4,
        'arrival_ack': 5, 'roi_reply': 6, 'command_reply': 7,
        'turn_to_safety': 8, 'action_result': 9, 'arrival': 16,
        'turn_completed': 17, 'safety_arrived': 18, 'start_search': 19,
-       'delivery_completed': 20, 'arrival_point': 21}
+       'delivery_completed': 20, 'arrival_point': 21, 'start_align': 22}
 LENGTHS = {2: 7, 3: 8, 4: 8, 5: 1, 6: 3,
-           7: 6, 8: 6, 9: 6, 16: 1, 17: 5, 18: 5, 19: 5, 20: 5, 21: 5}
+           7: 6, 8: 6, 9: 6, 16: 1, 17: 5, 18: 5, 19: 5, 20: 5, 21: 5, 22: 5}
 COMMANDS = {'turn_completed': 1, 'safety_arrived': 2, 'start_search': 3,
-            'delivery_completed': 4, 'arrival_point': 5}
+            'delivery_completed': 4, 'arrival_point': 5, 'start_align': 6}
 KINDS = {value: name for name, value in IDS.items()}
 ACTION_KINDS = {'startup': 0, 'grasp': 1, 'release': 2, 'reject_open': 3}
 
@@ -48,8 +48,9 @@ def action_request_id(value) -> int:
 
 
 def reply_token(command, value) -> int:
-    return (action_request_id(value) if command in (COMMANDS['arrival_point'], COMMANDS['start_search'])
-            else route_token(value))
+    if command in (COMMANDS['arrival_point'], COMMANDS['start_search'], COMMANDS['start_align']):
+        return action_request_id(value)
+    return route_token(value)
 
 
 def fixed_point(value: float, scale: float) -> int:
@@ -111,14 +112,14 @@ def encode(kind: str, values: list[str], invalid: bool = False) -> str:
         if status not in (0, 1):
             raise ValueError('action result status must be 0 or 1')
         data = struct.pack('<BBI', action_kind(values[0]), status, action_request_id(values[2]))
-    elif kind == 'start_search':
+    elif kind in ('start_search', 'start_align'):
         if len(values) != 1 or invalid:
-            raise ValueError('start_search needs a nonzero uint32 request_id; --invalid is forbidden')
+            raise ValueError(f'{kind} needs a nonzero uint32 request_id; --invalid is forbidden')
         data = struct.pack('<BI', 1, action_request_id(values[0]))
     elif kind == 'arrival':
-        if values or invalid:
-            raise ValueError(f'{kind} needs no values and cannot use --invalid')
-        data = b'\x01'
+        if values not in ([], ['selected']) or invalid:
+            raise ValueError('arrival accepts optional selected and cannot use --invalid')
+        data = bytes([2 if values else 1])
     elif kind == 'arrival_ack':
         if values:
             raise ValueError('arrival_ack needs no values')
@@ -174,6 +175,13 @@ def decode(text: str) -> dict:
         if not data[0] and any(data[1:]):
             result['warning'] = 'invalid frame has nonzero payload; ignore its values'
         return result
+    if identifier == IDS['arrival']:
+        if data[0] not in (1, 2):
+            raise ValueError('arrival request must be 1 (diagnostic) or 2 (selected route)')
+        result['request'] = True
+        if data[0] == 2:
+            result['selected_route'] = True
+        return result
     if data[0] not in (0, 1):
         raise ValueError('first byte must be 0 or 1')
     if identifier in (IDS['target'], IDS['safety']):
@@ -184,14 +192,10 @@ def decode(text: str) -> dict:
             result['warning'] = 'invalid frame has nonzero payload; ignore its values'
     elif identifier == IDS['arrival_ack']:
         result['accepted'] = bool(data[0])
-    elif identifier == IDS['start_search']:
+    elif identifier in (IDS['start_search'], IDS['start_align']):
         if data[0] != 1:
             raise ValueError('command byte must be 1')
         result.update(request=True, request_id=action_request_id(struct.unpack('<I', data[1:])[0]))
-    elif identifier == IDS['arrival']:
-        if data != b'\x01':
-            raise ValueError('command byte must be 1')
-        result['request'] = True
     elif identifier == IDS['command_reply']:
         if data[1] not in COMMANDS.values():
             raise ValueError('unknown mission command')

@@ -91,9 +91,13 @@ void testCanProtocol()
   CHECK(bytesEqual(CanProtocol::roiResult(false, true, 1), CanProtocol::ROI_RESULT_ID, 3, roi_invalid));
   CHECK(threwInvalid([] { CanProtocol::roiResult(true, true, 0); }));
 
-  // 类型 7 token 小端。命令 3 没有身份，调用方带进来的 token 也不写出。
+  // 类型 7 的搜索、首次对准及路由命令都按小端回显原始 token。
   const std::uint8_t command_turn[] = {1, CanProtocol::TURN_COMPLETED, 0x04, 0x03, 0x02, 0x01};
   const std::uint8_t command_search[] = {1, CanProtocol::START_SEARCH, 0xff, 0xff, 0xff, 0xff};
+  const std::uint8_t command_align[] = {1, 6, 0x04, 0x03, 0x02, 0x01};
+  CHECK(bytesEqual(CanProtocol::commandResult(true, CanProtocol::START_ALIGN, 0x01020304u),
+    CanProtocol::COMMAND_RESULT_ID, 6, command_align));
+  CHECK(threwInvalid([] { CanProtocol::commandResult(true, CanProtocol::START_ALIGN, 0); }));
   const std::uint8_t command_reject[] = {0, CanProtocol::DELIVERY_COMPLETED, 0xd4, 0xc3, 0xb2, 0xa1};
   CHECK(bytesEqual(
     CanProtocol::commandResult(true, CanProtocol::TURN_COMPLETED, 0x01020304u),
@@ -128,6 +132,9 @@ void testCanProtocol()
 
   // 六条入站指令：长度或请求字节不对是 MALFORMED，不读 token。未知 ID 和标志位是 NONE。
   const auto arrival = CanProtocol::parseCommand(commandFrame(CanProtocol::ARRIVAL_ID, 1, 1, 0));
+  CHECK(CanProtocol::parseCommand(commandFrame(16, 1, 2, 0)).kind == CanProtocol::CommandKind::PICKUP_ROUTE);
+  CHECK(CanProtocol::parseCommand(commandFrame(16, 2, 2, 0)).kind == CanProtocol::CommandKind::MALFORMED);
+  CHECK(CanProtocol::parseCommand(commandFrame(16, 1, 3, 0)).kind == CanProtocol::CommandKind::MALFORMED);
   CHECK(arrival.kind == CanProtocol::CommandKind::ARRIVAL && arrival.token == 0);
   const auto arrival_len = CanProtocol::parseCommand(commandFrame(CanProtocol::ARRIVAL_ID, 2, 1, 0));
   CHECK(arrival_len.kind == CanProtocol::CommandKind::MALFORMED && arrival_len.token == 0);
@@ -146,6 +153,13 @@ void testCanProtocol()
   CHECK(delivery.kind == CanProtocol::CommandKind::MISSION && delivery.command == CanProtocol::DELIVERY_COMPLETED &&
     delivery.token == 0xa1b2c3d4u);
   const auto search = CanProtocol::parseCommand(commandFrame(CanProtocol::START_SEARCH_ID, 5, 1, 0xffffffffu));
+  const auto align = CanProtocol::parseCommand(commandFrame(22, 5, 1, 0x01020304u));
+  CHECK(align.kind == CanProtocol::CommandKind::MISSION && align.command == 6 && align.token == 0x01020304u);
+  CHECK(CanProtocol::parseCommand(commandFrame(22, 5, 1, 0)).kind == CanProtocol::CommandKind::MALFORMED);
+  CHECK(CanProtocol::parseCommand(commandFrame(22, 5, 0, 1)).kind == CanProtocol::CommandKind::MALFORMED);
+  for (std::uint8_t size : {0, 1, 4, 6, 8}) {
+    CHECK(CanProtocol::parseCommand(commandFrame(22, size, 1, 1)).kind == CanProtocol::CommandKind::MALFORMED);
+  }
   CHECK(search.kind == CanProtocol::CommandKind::MISSION && search.command == CanProtocol::START_SEARCH && search.token == 0xffffffffu);
   const auto search_len = CanProtocol::parseCommand(commandFrame(CanProtocol::START_SEARCH_ID, 1, 1, 1));
   CHECK(search_len.kind == CanProtocol::CommandKind::MALFORMED && search_len.command == CanProtocol::START_SEARCH && search_len.token == 0);

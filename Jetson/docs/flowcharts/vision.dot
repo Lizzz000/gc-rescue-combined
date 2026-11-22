@@ -1,29 +1,37 @@
 digraph vision {
   graph [
     fontname="Microsoft YaHei",
-    rankdir=LR,
-    label="一帧：采集、推理、发布、图传",
+    rankdir=TB,
+    label="相机采集、识别与可选 HTTP 图传",
     labelloc=t,
     fontsize=16
   ];
   node [fontname="Microsoft YaHei", shape=box, style="rounded,filled", fillcolor="#f7f7f7"];
-  edge [fontname="Microsoft YaHei"];
+  edge [fontname="Microsoft YaHei", fontsize=11];
 
   cam [label="/dev/video0\nMJPG 1920×1080"];
-  gst [label="v4l2src\njpegparse\nnvv4l2decoder\nnvvidconv"];
+  gst [label="v4l2src → jpegparse\nnvv4l2decoder → nvvidconv"];
   nvmm [label="NVMM I420"];
-  letter [label="nvmmLetterbox\n全范围色转、letterbox、/255、NCHW"];
-  trt [label="TensorRT fp16\nseg 或 field"];
-  post [label="后处理"];
-  topics [label="/detect_node/seg/detections\n/detect_node/field/results\n/detect_node/active_task"];
-  image [label="/detect_node/image_processed\n同帧源图"];
-  overlay [label="stream_node\n叠加框、场地和标签"];
-  jpeg [label="nvjpeg"];
-  http [label="HTTP :8080\n/healthz  /view\n/snapshot.jpg  /stream.mjpg"];
+  seg [label="seg：nvmmLetterbox\n色转、缩放、归一化、NCHW\nTensorRT 分割与后处理"];
+  field [label="field：OpenCV\n颜色与场地几何"];
+  seg_topic [label="/detect_node/seg/detections"];
+  field_topic [label="/detect_node/field/results"];
+  mode [label="/detect_node/set_field 切换识别模式\n/detect_node/active_task 发布识别会话",
+        shape=note, fillcolor="#fff8e8"];
+  image [label="/detect_node/image_processed\n同源处理帧"];
+  overlay [label="stream_node\n按阶段和源时间匹配结果\n叠加框、场地和标签"];
+  http [label="JPEG → HTTP :8080\n/healthz  /view\n/snapshot.jpg  /stream.mjpg"];
 
   cam -> gst -> nvmm;
-  nvmm -> letter -> trt -> post -> topics;
-  nvmm -> image [label="映射后拷出"];
-  image -> overlay -> jpeg -> http;
-  topics -> overlay [label="等时图层"];
+  nvmm -> seg -> seg_topic;
+  nvmm -> field [label="映射图像"];
+  field -> field_topic;
+  mode -> seg [style=dotted];
+  mode -> field [style=dotted];
+  nvmm -> image [label="按订阅发布", style=dashed];
+  image -> overlay [style=dashed];
+  seg_topic -> overlay [style=dashed];
+  field_topic -> overlay [style=dashed];
+  overlay -> http [label="默认关闭\nstream:=true 开启", style=dashed];
+  { rank=same; nvmm; mode; }
 }

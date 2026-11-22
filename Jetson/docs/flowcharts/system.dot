@@ -1,8 +1,8 @@
 digraph system {
   graph [
     fontname="Microsoft YaHei",
-    rankdir=LR,
-    label="完整部署：7 个进程，8 个节点",
+    rankdir=TB,
+    label="Jetson 自动搬运：7 个进程，8 个节点",
     labelloc=t,
     fontsize=16,
     nodesep=0.35,
@@ -16,47 +16,19 @@ digraph system {
     fontname="Microsoft YaHei";
     color="#4c78a8";
     detect [label="detect_node"];
-    stream [label="stream_node"];
+    stream [label="stream_node\nHTTP 图传默认关闭"];
   }
-  subgraph cluster_track {
-    label="tracking_runtime";
-    fontname="Microsoft YaHei";
-    color="#f58518";
-    track [label="track_node"];
-  }
-  subgraph cluster_select {
-    label="tracking_runtime";
-    fontname="Microsoft YaHei";
-    color="#f58518";
-    select [label="select_node"];
-  }
-  subgraph cluster_mission {
-    label="mission_runtime";
-    fontname="Microsoft YaHei";
-    color="#54a24b";
-    mission [label="mission_node"];
-  }
-  subgraph cluster_target {
-    label="mission_runtime";
-    fontname="Microsoft YaHei";
-    color="#54a24b";
-    target [label="target_node"];
-  }
-  subgraph cluster_safety {
-    label="mission_runtime";
-    fontname="Microsoft YaHei";
-    color="#54a24b";
-    safety [label="safety_node"];
-  }
-  subgraph cluster_bridge {
-    label="bridge_runtime";
-    fontname="Microsoft YaHei";
-    color="#e45756";
-    bridge [label="bridge_node"];
-  }
-
-  http [label="HTTP :8080", shape=ellipse, fillcolor="#e8f1ff"];
-  can [label="USB OTG FS\nlink.device", shape=ellipse, fillcolor="#fde8e8"];
+  track [label="tracking_runtime\ntrack_node", fillcolor="#fff3df"];
+  select [label="tracking_runtime\nselect_node", fillcolor="#fff3df"];
+  mission [label="mission_runtime\nmission_node", fillcolor="#edf5ed"];
+  target [label="mission_runtime\ntarget_node", fillcolor="#edf5ed"];
+  safety [label="mission_runtime\nsafety_node", fillcolor="#edf5ed"];
+  bridge [label="bridge_runtime\nbridge_node", fillcolor="#fbecec"];
+  http [label="HTTP :8080\nstream:=true 时可用", shape=ellipse, fillcolor="#e8f1ff"];
+  stm32 [label="STM32 USB CDC\nlink.device", shape=ellipse, fillcolor="#fde8e8"];
+  gripper [label="S288 USB 串口\ngripper.device", shape=ellipse, fillcolor="#fde8e8"];
+  status [label="任务话题订阅\n/mission_node/status：select、safety、bridge\n/mission_node/active_task：target、safety、bridge",
+          shape=note, fillcolor="#fff8e8"];
 
   detect -> track [label="/detect_node/seg/detections"];
   detect -> target [label="/detect_node/seg/detections"];
@@ -66,15 +38,14 @@ digraph system {
   mission -> detect [label="/detect_node/set_field", style=dashed];
   track -> select [label="/track_node/seg/tracks"];
   select -> target [label="/select_node/target"];
-  mission -> select [label="/mission_node/status"];
-  mission -> target [label="/mission_node/active_task", style=dashed];
-  mission -> target [label="/target_node/check_roi", style=dashed];
-  mission -> safety [label="/mission_node/status\n/mission_node/active_task"];
+  mission -> target [label="/target_node/check_roi\n独立诊断", style=dashed, color="#777777"];
   target -> bridge [label="/target_node/target"];
   safety -> bridge [label="/safety_node/target"];
-  mission -> bridge [label="/mission_node/status\n/mission_node/active_task"];
-  bridge -> mission [label="/mission_node/arrived\n/mission_node/command", style=dashed];
+  bridge -> mission [label="/mission_node/register_pickup\n/mission_node/command\n/mission_node/arrived（独立诊断）",
+                     style=dashed, constraint=false];
   stream -> http [label="/healthz  /view\n/snapshot.jpg  /stream.mjpg"];
-  bridge -> can [label="类型 3、4\n类型 5–9"];
-  can -> bridge [label="类型 16–18\n类型 19–21"];
+  bridge -> stm32 [label="类型 3、4\n类型 5–9"];
+  stm32 -> bridge [label="类型 16–22"];
+  bridge -> gripper [label="开合、查询与反馈", dir=both];
+  { rank=same; mission; status; }
 }

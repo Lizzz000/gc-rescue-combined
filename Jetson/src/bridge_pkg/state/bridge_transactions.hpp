@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <string_view>
 
 #include "protocol/arrival_point.hpp"
@@ -19,7 +20,7 @@ class BridgeTransactions
 {
 public:
   using Clock = std::chrono::steady_clock;
-  enum class Service {Roi, Command};
+  enum class Service {Roi, Command, PickupRoute};
   struct CommandRequest
   {
     std::uint8_t command;
@@ -36,6 +37,8 @@ public:
     virtual Clock::time_point monotonicNow() const = 0;
     virtual bool serviceReady(Service service) = 0;
     virtual std::int64_t sendRoi(std::uint64_t generation) = 0;
+    virtual std::int64_t sendPickupRoute(std::uint64_t generation, const std::string & class_id,
+      std::uint32_t grasp_token) = 0;
     virtual std::int64_t sendCommand(const CommandRequest & request) = 0;
     virtual void cancelService(Service service, std::int64_t request_id) = 0;
     virtual bool socketOpen() const = 0;
@@ -50,15 +53,17 @@ public:
     BridgeState & state, ArrivalPointSession & arrival_point, Ports & ports,
     Clock::duration request_timeout);
 
-  void handleArrival();
+  void handleArrival(Service service = Service::Roi);
   ArrivalPointDecision handleArrivalPoint(
     std::uint8_t kind, std::uint32_t request_id, bool motion_lease_open);
-  // command 由板间协议解析，取值为运输命令 1–4。
+  // command 由板间协议解析，取运输命令 1–4 或首次整区对准命令 6。
   void handleMissionCommand(std::uint8_t command, std::uint32_t token);
 
   // 先处理截止和代次，再由 ROS 适配层读取 future。
   bool acceptRoiReply(std::uint64_t generation, Clock::time_point current);
   void finishRoi(BridgeRoiResult result = {}, std::uint64_t request_id = 0);
+  void finishPickupRoute(bool accepted, BridgeDestination destination, std::uint64_t route_id);
+  void failRoute() {finishRoute(false, false, BridgeDestination::None, 0);}
   bool acceptCommandReply(std::uint64_t generation, Clock::time_point current);
   void commandReply(
     std::uint8_t command, std::uint64_t requested_cycle_generation, bool accepted,
@@ -100,7 +105,8 @@ private:
     Clock::time_point deadline;
   };
 
-  void requestRoi();
+  void requestRoute();
+  void finishRoute(bool valid, bool accepted, BridgeDestination destination, std::uint64_t route_id);
   void requestCommand(std::uint8_t command, std::uint32_t token, bool delivery_query = false);
   bool turnAuthorized() const;
   bool turnRequestCurrent() const;
@@ -119,9 +125,18 @@ private:
   Ports & ports_;
   Clock::duration request_timeout_;
   BridgeServiceRequest roi_request_, command_request_;
-  SearchRequestSession search_request_;
+  SearchRequestSession search_request_, initial_align_request_;
+  Clock::time_point initial_align_deadline_;
   BridgeReplySlots replies_;
   std::optional<TurnIdentity> turn_, roi_confirmation_;
+  struct Pickup
+  {
+    std::string class_id;
+    std::uint32_t grasp_token;
+    std::uint64_t cycle_generation;
+  };
+  std::optional<Pickup> pickup_;
+  Service route_service_{Service::Roi};
   Clock::time_point next_turn_;
   std::uint64_t roi_cycle_generation_{0};
   bool roi_attempted_{false};

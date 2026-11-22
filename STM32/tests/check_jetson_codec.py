@@ -12,7 +12,7 @@ import sys
 import tempfile
 
 # Jetson→STM32：2 手动，3 目标，4 安全区，5 到达回执，6 ROI，7 命令回执，8 转向请求，9 动作结果。
-# STM32→Jetson：16 到达，17 转向完成，18 安全区到达，19 开始搜索，20 投送，21 到点。
+# STM32→Jetson：16 到达，17 转向完成，18 安全区到达，19 开始搜索，20 投送，21 到点，22 首次整区对准。
 MANUAL = 2
 TARGET = 3
 SAFETY = 4
@@ -27,6 +27,7 @@ SAFETY_ARRIVED = 18
 START_SEARCH = 19
 DELIVERY = 20
 POINT = 21
+START_ALIGN = 22
 DOWNLINK = {TARGET, SAFETY, ARRIVAL_ACK, ROI, COMMAND_REPLY, TURN, ACTION_RESULT}
 COMMANDS = {
     "turn_completed": 1,
@@ -34,6 +35,7 @@ COMMANDS = {
     "start_search": 3,
     "delivery_completed": 4,
     "arrival_point": 5,
+    "start_align": 6,
 }
 
 sys.dont_write_bytecode = True
@@ -171,7 +173,7 @@ def scenarios():
         append(wire(ROI, payload), "roi_reply", fields)
 
     for command, name in COMMANDS.items():
-        tokens = (1, 0x89ABCDEF, 0xFFFFFFFF) if name in (3, 5) else (0, 1, 0x89ABCDEF, 0xFFFFFFFF)
+        tokens = (1, 0x89ABCDEF, 0xFFFFFFFF) if name in (3, 5, 6) else (0, 1, 0x89ABCDEF, 0xFFFFFFFF)
         for token in tokens:
             payload = struct.pack("<BBI", 1, name, token)
             append(wire(COMMAND_REPLY, payload), "command_reply",
@@ -181,7 +183,8 @@ def scenarios():
                    {"valid": 1, "accepted": 0, "command": name, "token": token})
     append(wire(COMMAND_REPLY, struct.pack("<BBI", 1, 3, 0)), "command_reply", label="命令3搜索编号为0")
     append(wire(COMMAND_REPLY, struct.pack("<BBI", 1, 5, 0)), "command_reply", label="命令5动作编号为0")
-    append(wire(COMMAND_REPLY, struct.pack("<BBI", 1, 6, 0)), "command_reply", label="命令号越界")
+    append(wire(COMMAND_REPLY, struct.pack("<BBI", 1, 6, 0)), "command_reply", label="命令6对准编号为0")
+    append(wire(COMMAND_REPLY, struct.pack("<BBI", 1, 7, 1)), "command_reply", label="命令号越界")
 
     for destination in (1, 2):
         for token in (0, 0x89ABCDEF, 0xFFFFFFFF):
@@ -207,18 +210,18 @@ def uplink_cases():
     """上行期望与 Jetson_CAN_Encode_Uplink 一致。"""
     def pack(type_number, argument):
         if type_number == ARRIVAL:
-            return bytes([1])
-        if type_number == START_SEARCH and argument == 0:
+            return bytes([2 if argument == 2 else 1])
+        if type_number in (START_SEARCH, START_ALIGN) and argument == 0:
             return b""
-        if type_number in (TURN_COMPLETED, SAFETY_ARRIVED, START_SEARCH, DELIVERY):
+        if type_number in (TURN_COMPLETED, SAFETY_ARRIVED, START_SEARCH, DELIVERY, START_ALIGN):
             return struct.pack("<BI", 1, argument)
         return b""
 
-    requests = [(f"^{ARRIVAL:03X}:0", pack(ARRIVAL, 0))]
+    requests = [(f"^{ARRIVAL:03X}:{mode}", pack(ARRIVAL, mode)) for mode in (0, 2)]
     for kind in range(4):
         for request_id in (1, 0x89ABCDEF, 0xFFFFFFFF):
             requests.append((f"^{POINT:03X}:{kind}:{request_id}", struct.pack("<BI", kind, request_id)))
-    for type_number in (TURN_COMPLETED, SAFETY_ARRIVED, START_SEARCH, DELIVERY):
+    for type_number in (TURN_COMPLETED, SAFETY_ARRIVED, START_SEARCH, DELIVERY, START_ALIGN):
         for token in (0, 1, 0x89ABCDEF, 0xFFFFFFFF):
             requests.append((f"^{type_number:03X}:{token}", pack(type_number, token)))
     for kind, request_id in ((0, 0), (3, 0), (4, 1), (256, 1)):
@@ -280,7 +283,11 @@ def jetson_cross_check(codec, sender):
         ("manual", ["0.08", "0", "0"], False, wire(MANUAL, struct.pack("<Bhhh", 1, 80, 0, 0))),
         ("target", ["0.5", "0.75", str(0xABCDEF)], False, wire(TARGET, target)),
         ("arrival_ack", [], True, wire(ARRIVAL_ACK, b"\x00")),
+        ("arrival", ["selected"], False, wire(ARRIVAL, b"\x02")),
         ("start_search", ["4294967295"], False, wire(START_SEARCH, struct.pack("<BI", 1, 0xFFFFFFFF))),
+        ("start_align", ["4294967295"], False, wire(START_ALIGN, struct.pack("<BI", 1, 0xFFFFFFFF))),
+        ("command_reply", ["start_align", "2309737967"], False,
+         wire(COMMAND_REPLY, struct.pack("<BBI", 1, 6, 0x89ABCDEF))),
         ("command_reply", ["start_search", "2309737967"], False,
          wire(COMMAND_REPLY, struct.pack("<BBI", 1, 3, 0x89ABCDEF))),
         ("roi_reply", ["left"], False, wire(ROI, b"\x01\x01\x01")),

@@ -281,11 +281,14 @@ class UsbProbe:
         from source.usb_codec import IDS
         names = {IDS['arrival']: 'arrival', IDS['turn_completed']: 'turn_completed',
                  IDS['safety_arrived']: 'safety_arrived', IDS['start_search']: 'start_search',
-                 IDS['delivery_completed']: 'delivery_completed'}
-        with_token = {IDS['turn_completed'], IDS['safety_arrived'], IDS['delivery_completed'], IDS['start_search']}
-        require(identifier in names and (identifier in with_token) == (token is not None),
+                 IDS['delivery_completed']: 'delivery_completed', IDS['start_align']: 'start_align'}
+        require(identifier in names and (identifier != IDS['arrival']) == (token is not None),
                 'unsupported mission event or missing/unexpected trip token')
         return self._send(names[identifier], [] if token is None else [str(token)])
+
+    def selected_route(self):
+        """抓取完成后查询本趟的投送路线。"""
+        return self._send('arrival', ['selected'])
 
     def begin_action(self, kind):
         self.action_sequence = (self.action_sequence + 1) & 0xffffffff or 1
@@ -376,7 +379,10 @@ class UsbProbe:
                 y = quantize(center['y'] / values['shared.image.height'])
                 if x is not None and y is not None and detection['id']:
                     add_center(target_type, row, x, y)
-        if task == 'field' and idle and mission.get('cycle_phase') == 4 and mission['outcome'] == 2 and mission['destination'] in (1, 2):
+        routed = idle and mission.get('cycle_phase') == 4 and mission['destination'] in (1, 2)
+        initial = (idle and mission.get('cycle_phase') == 10 and mission['transport_phase'] == 0
+                   and mission['destination'] == 0 and mission['roi_request_id'] == 0)
+        if task == 'field' and (routed or initial) and mission['outcome'] == 2:
             for row in observer.records['safety']:
                 safety = row['value']
                 if (row['steady'] < since - values['bridge.input_timeout_s'] or

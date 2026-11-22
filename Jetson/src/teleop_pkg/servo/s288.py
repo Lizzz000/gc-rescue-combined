@@ -5,6 +5,8 @@
 6 Mbps 用 termios2，数值在 Orin aarch64 上核对过。
 """
 
+from collections.abc import Callable
+from dataclasses import dataclass
 import math
 import os
 import select
@@ -22,6 +24,14 @@ MAX_MOVE_SECONDS = 10.0
 FEEDBACK_WAIT_S = 0.2
 STOP_ATTEMPTS = 3
 COMMAND_PERIOD_S = 0.02
+OUTPUT_COUNTS_PER_REV = 8192
+MAX_OPEN_HOLD_NM = 0.6
+HOLD_CAPTURE_S = 0.5
+HOLD_MAX_STEP_S = 0.04
+HOLD_CORRECTION_GAIN = 6.0
+HOLD_MAX_CORRECTION_RADPS = 0.45
+HOLD_STABLE_SPEED_RADPS = 0.12
+HOLD_STABLE_SAMPLES = 3
 CONTROL_MARK = b'\xfe\xee'
 FEEDBACK_MARK = b'\xfc\xee'
 FEEDBACK_BYTES = 26
@@ -64,6 +74,46 @@ def check_goto(target_deg, seconds):
             f'目标角须在 {MIN_MOVE_DEGREES:g} 到 {MAX_MOVE_DEGREES:g} 度之间')
     if not MIN_MOVE_SECONDS <= seconds <= MAX_MOVE_SECONDS:
         raise ValueError(f'时长须在 {MIN_MOVE_SECONDS:g} 到 {MAX_MOVE_SECONDS:g} 秒之间')
+
+
+def check_ramp_fraction(fraction):
+    if type(fraction) is bool or not isinstance(fraction, (int, float)) or not 0 <= fraction <= 1:
+        raise ValueError('gripper.ramp_fraction 须为 0 到 1 之间的数值')
+
+
+def output_degrees(encoder, zero_encoder):
+    half = OUTPUT_COUNTS_PER_REV // 2
+    delta = (encoder - zero_encoder + half) % OUTPUT_COUNTS_PER_REV - half
+    return delta * 360.0 / OUTPUT_COUNTS_PER_REV
+
+
+def output_error_degrees(target_deg, encoder, zero_encoder):
+    error = target_deg - output_degrees(encoder, zero_encoder)
+    return (error + 180.0) % 360.0 - 180.0
+
+
+@dataclass(frozen=True)
+class OpenHold:
+    zero_encoder: int
+    target_deg: float
+    max_nm: float
+    tolerance_deg: float
+    report: Callable[[dict], None]
+
+
+def check_servo_feedback(feedback):
+    if feedback['error'] or feedback['timeout'] or feedback['warning']:
+        raise RuntimeError(f"舵机反馈异常（错误 {feedback['error']}，"
+                           f"超时 {int(feedback['timeout'])}，告警 {feedback['warning']}）")
+
+
+def check_run_feedback(feedback, first_run):
+    check_servo_feedback(feedback)
+    if feedback['mode'] == MODE_RUN:
+        return True
+    if first_run and feedback['mode'] == MODE_STOP:
+        return False
+    raise RuntimeError('未收到舵机运行模式反馈')
 
 
 class ServoBusy(RuntimeError):
@@ -212,13 +262,25 @@ class ServoLink:
         initial = self._prepare_motion(kp, kd)
         return self._run_to(initial['position'] + math.radians(degrees), seconds, kp, kd, cancel, initial)
 
-    def goto_degrees(self, target_deg, seconds, kp, kd, cancel, zero_rad):
+    def goto_degrees(self, target_deg, seconds, kp, kd, cancel, zero_rad, *, ramp_fraction=0.0,
+                     trim_deg=0.0, open_hold=None, check_warning=False):
         """转到相对上电零点的目标角，到时或取消后停机。返回停机反馈。"""
         check_goto(target_deg, seconds)
+        check_goto(target_deg + trim_deg, seconds)
+        check_ramp_fraction(ramp_fraction)
         if not math.isfinite(zero_rad):
             raise RuntimeError('尚未记录上电零点')
+        if open_hold is not None:
+            if not 0 < open_hold.max_nm <= MAX_OPEN_HOLD_NM or not 0 < open_hold.tolerance_deg < 180:
+                raise ValueError('张开保位的力矩或角度容差超出范围')
+            if kp <= 0:
+                raise ValueError('张开保位需要正的 gripper.kp')
         initial = self._prepare_motion(kp, kd)
-        final = self._run_to(zero_rad + math.radians(target_deg), seconds, kp, kd, cancel, initial)
+        if open_hold is not None or check_warning:
+            check_servo_feedback(initial)
+        final = self._run_to(zero_rad + math.radians(target_deg + trim_deg), seconds, kp, kd,
+                             cancel, initial, ramp_fraction, open_hold=open_hold,
+                             check_warning=check_warning)
         final['target_deg'] = target_deg
         return final
 
@@ -230,21 +292,127 @@ class ServoLink:
             raise RuntimeError('舵机反馈有错误或超时，未开始转动')
         return initial
 
-    def _run_to(self, target, seconds, kp, kd, cancel, initial):
-        command = control_packet(self.motor_id, MODE_RUN, 1, 0, 0, target, kp, kd)
+    def _run_to(self, target, seconds, kp, kd, cancel, initial, ramp_fraction=0.0, *,
+                open_hold=None, check_warning=False):
+        target_packet = control_packet(self.motor_id, MODE_RUN, 1, 0, 0, target, kp, kd)
+        initial_position = initial['position']
+        ramp_seconds = seconds * ramp_fraction
+        check_output = open_hold is not None or check_warning
         started = time.monotonic()
+        deadline = started + seconds
+        motion_end = deadline
+        if open_hold is not None:
+            # 阶跃配置也先留出运动段，之后再交给独立输出轴闭环。
+            motion_end = started + (ramp_seconds if ramp_seconds > 0 else 0.8 * seconds)
+        # 给最后一个周期留出发送目标角的时间，避免比例为 1 时只能在截止后到达目标。
+        final_window = deadline - COMMAND_PERIOD_S
+        tick = started
+        previous_tick = started
+        position = initial_position
+        feedback = initial
+        sent_target = False
+        first_run = True
+        received_run = False
         try:
-            while time.monotonic() - started < seconds:
-                if cancel.is_set():
+            while not cancel.is_set() and tick < motion_end:
+                position = target
+                if ramp_seconds > 0 and tick < final_window:
+                    progress = min((tick - started) / ramp_seconds, 1.0)
+                    if progress < 1.0:
+                        weight = progress * progress * (3.0 - 2.0 * progress)
+                        position = initial_position + (target - initial_position) * weight
+                command = target_packet if position == target else control_packet(
+                    self.motor_id, MODE_RUN, 1, 0, 0, position, kp, kd)
+                if cancel.is_set() or time.monotonic() >= motion_end:
                     break
                 feedback = self.exchange(command)
-                if feedback['error'] or feedback['timeout']:
+                if check_output:
+                    running = check_run_feedback(feedback, first_run)
+                    received_run = received_run or running
+                elif feedback['error'] or feedback['timeout']:
                     raise RuntimeError('舵机反馈错误或超时')
-                time.sleep(COMMAND_PERIOD_S)
+                first_run = False
+                sent_target = sent_target or position == target
+                if ramp_seconds == 0 and open_hold is None:
+                    time.sleep(COMMAND_PERIOD_S)
+                else:
+                    next_boundary = deadline if sent_target else final_window
+                    next_boundary = min(next_boundary, motion_end) if open_hold is not None else next_boundary
+                    # 避免浮点舍入让整拍落在截止点前一个可表示值，额外发一帧。
+                    next_period = math.nextafter(tick + COMMAND_PERIOD_S, math.inf)
+                    wake = min(next_period, next_boundary)
+                    cancel.wait(max(0.0, wake - time.monotonic()))
+                previous_tick = tick
+                tick = time.monotonic()
+            if open_hold is not None and not cancel.is_set():
+                capture_end = min(deadline + HOLD_CAPTURE_S, started + MAX_MOVE_SECONDS)
+                self._hold_open(open_hold, position, feedback, previous_tick, deadline, capture_end,
+                                kp, kd, cancel, first_run)
         finally:
             final = self.stop()
+        if check_output:
+            check_servo_feedback(final)
+        if check_output and open_hold is None and not received_run and not cancel.is_set():
+            raise RuntimeError('未收到舵机运行模式反馈')
+        if open_hold is None and ramp_seconds > 0 and not sent_target and not cancel.is_set():
+            raise RuntimeError('舵机动作超时，未发送最终目标角')
         final['turned_deg'] = math.degrees(final['position'] - initial['position'])
         return final
+
+    def _hold_open(self, hold, anchor, feedback, previous_tick, deadline, capture_end,
+                   kp, kd, cancel, first_run):
+        # 梯度用独立输出轴误差。限位以电机反馈为中心，只限制位置刚度对应的力矩。
+        max_position_error = hold.max_nm / kp
+        stable_samples = 0
+        holding = False
+        outside_since = None
+        while not cancel.is_set():
+            tick = time.monotonic()
+            error = output_error_degrees(hold.target_deg, feedback['output_encoder'], hold.zero_encoder)
+            if not holding and tick >= deadline and stable_samples >= HOLD_STABLE_SAMPLES:
+                holding = True
+                hold.report({**feedback, 'target_deg': hold.target_deg, 'output_error_deg': error})
+            if not holding and tick >= capture_end:
+                raise RuntimeError('张开保位捕获超时')
+            dt = min(tick - previous_tick, HOLD_MAX_STEP_S)
+            if abs(error) > hold.tolerance_deg:
+                speed = max(-HOLD_MAX_CORRECTION_RADPS, min(
+                    HOLD_MAX_CORRECTION_RADPS, HOLD_CORRECTION_GAIN * math.radians(error)))
+                anchor += speed * dt
+            motor = feedback['position']
+            anchor = max(motor - max_position_error, min(motor + max_position_error, anchor))
+            packet = control_packet(self.motor_id, MODE_RUN, 1, 0, 0, anchor, kp, kd)
+            if cancel.is_set():
+                return
+            if not holding and time.monotonic() >= capture_end:
+                raise RuntimeError('张开保位捕获超时')
+            feedback = self.exchange(packet)
+            running = check_run_feedback(feedback, first_run)
+            first_run = False
+
+            now = time.monotonic()
+            error = output_error_degrees(hold.target_deg, feedback['output_encoder'], hold.zero_encoder)
+            within = abs(error) <= hold.tolerance_deg
+            if not holding:
+                if now > capture_end:
+                    raise RuntimeError('张开保位捕获超时')
+                stable = running and within and abs(feedback['speed']) <= HOLD_STABLE_SPEED_RADPS
+                stable_samples = stable_samples + 1 if stable else 0
+                holding = now >= deadline and stable_samples >= HOLD_STABLE_SAMPLES
+            elif within:
+                outside_since = None
+            elif outside_since is None:
+                outside_since = now
+            elif now - outside_since >= HOLD_CAPTURE_S:
+                raise RuntimeError(f'张开保位持续超差（{error:+.2f}°）')
+            if holding and not cancel.is_set():
+                hold.report({**feedback, 'target_deg': hold.target_deg, 'output_error_deg': error})
+            previous_tick = tick
+            wake = tick + COMMAND_PERIOD_S
+            if not holding:
+                boundary = deadline if now < deadline and stable_samples >= HOLD_STABLE_SAMPLES else capture_end
+                wake = min(wake, boundary)
+            cancel.wait(max(0.0, wake - time.monotonic()))
 
     def close(self):
         if self._fd is None:
@@ -261,24 +429,37 @@ class ServoLink:
 class ServoSession:
     """网页或自动夹爪的一次舵机会话。底盘停车和租约到期不会取消它；只有舵机停机或进程退出会。"""
 
-    def __init__(self, device, motor_id, kp, kd, closed_deg=None, open_deg=None):
+    def __init__(self, device, motor_id, kp, kd, closed_deg=None, open_deg=None, *,
+                 ramp_fraction=0.0, open_hold_max_nm=0.0, output_tolerance_deg=1.0,
+                 open_trim_deg=0.0, closed_trim_deg=0.0):
         self._lock = threading.Lock()
-        # 转角、停机和关闭都走这把锁，避免两个线程同时写同一串口。
-        self._motion = threading.Lock()
+        # 网页请求在接管串口前交接工作线程。线程只拿状态锁，退出时不依赖请求锁。
+        self._requests = threading.Lock()
         self._cancel = threading.Event()
+        self._finished = threading.Event()
+        self._finished.set()
         self._link = None
         self._worker = None
         self._result = None
         self._error = None
         self._zero_rad = None
+        self._output_zero = None
         self.busy = False
+        self.holding = False
         self.position_deg = None
+        self.output_position_deg = None
+        self.output_error_deg = None
         self.message = '未配置舵机串口'
         self.device = device
         self.kp = kp
         self.kd = kd
         self.closed_deg = closed_deg
         self.open_deg = open_deg
+        self.ramp_fraction = ramp_fraction
+        self.open_hold_max_nm = open_hold_max_nm
+        self.output_tolerance_deg = output_tolerance_deg
+        self.open_trim_deg = open_trim_deg
+        self.closed_trim_deg = closed_trim_deg
         if not device:
             return
         try:
@@ -291,11 +472,14 @@ class ServoSession:
             feedback = self._link.stop()
             if feedback['error'] or feedback['timeout']:
                 raise RuntimeError('舵机反馈有错误或超时')
+            if self.open_hold_max_nm > 0:
+                check_servo_feedback(feedback)
         except (OSError, TimeoutError, RuntimeError) as error:
             self.message = f'已打开串口，但未能记录上电零点：{error}'
             return
         self._zero_rad = feedback['position']
-        self.position_deg = math.degrees(feedback['position'])
+        self._output_zero = feedback.get('output_encoder')
+        self._record_feedback(feedback)
         self.message = '已连接，上电零点已记录'
 
     @property
@@ -306,7 +490,9 @@ class ServoSession:
         with self._lock:
             return {
                 'available': self.available, 'busy': self.busy, 'device': self.device,
-                'position_deg': self.position_deg, 'message': self.message,
+                'position_deg': self.position_deg, 'output_position_deg': self.output_position_deg,
+                'output_error_deg': self.output_error_deg, 'holding': self.holding,
+                'message': self.message,
             }
 
     def start_move(self, degrees, seconds):
@@ -314,15 +500,39 @@ class ServoSession:
         self._submit(f'正在转动 {degrees:g}°',
                      lambda cancel: self._link.move_degrees(degrees, seconds, self.kp, self.kd, cancel))
 
-    def start_goto(self, target_deg, seconds):
+    def start_goto(self, target_deg, seconds, *, ramp_fraction=0.0):
         check_goto(target_deg, seconds)
-        self._submit(f'正在转到 {target_deg:g}°', lambda cancel: self._goto(target_deg, seconds, cancel))
+        self._submit(f'正在转到 {target_deg:g}°',
+                     lambda cancel: self._goto(target_deg, seconds, cancel, ramp_fraction))
 
     def start_open(self, seconds):
-        self.start_goto(self.open_deg, seconds)
+        self._start_preset(self.open_deg, self.open_trim_deg, seconds, self.open_hold_max_nm > 0)
 
     def start_close(self, seconds):
-        self.start_goto(self.closed_deg, seconds)
+        self._start_preset(self.closed_deg, self.closed_trim_deg, seconds, False)
+
+    def _start_preset(self, target_deg, trim_deg, seconds, hold_open):
+        check_goto(target_deg, seconds)
+        check_goto(target_deg + trim_deg, seconds)
+        self._submit(f'正在转到 {target_deg:g}°',
+                     lambda cancel: self._run_preset(target_deg, trim_deg, seconds, hold_open, cancel))
+
+    def _run_preset(self, target_deg, trim_deg, seconds, hold_open, cancel):
+        options = {}
+        if trim_deg != 0:
+            options['trim_deg'] = trim_deg
+        if self.open_hold_max_nm > 0 or trim_deg != 0:
+            options['check_warning'] = True
+        if hold_open:
+            if self._output_zero is None:
+                raise RuntimeError('尚未记录独立输出轴零位')
+            options['open_hold'] = OpenHold(self._output_zero, target_deg, self.open_hold_max_nm,
+                                            self.output_tolerance_deg, self._report_hold)
+        feedback = self._goto(target_deg, seconds, cancel, self.ramp_fraction, **options)
+        if self._output_zero is not None:
+            feedback['output_error_deg'] = output_error_degrees(target_deg, feedback['output_encoder'],
+                                                                 self._output_zero)
+        return feedback
 
     def move(self, degrees, seconds):
         """同步相对转动，供单元测试等待完成；网页接口走 start_move。"""
@@ -330,81 +540,117 @@ class ServoSession:
         return self.wait()
 
     def wait(self, timeout=None):
-        worker = self._worker
-        if worker is not None:
-            worker.join(timeout=timeout)
-            if worker.is_alive():
-                raise TimeoutError('等待舵机动作结束超时')
-        if self._error is not None:
-            raise self._error
-        return self._result
+        with self._lock:
+            finished = self._finished
+        if not finished.wait(timeout):
+            raise TimeoutError('等待舵机动作结束超时')
+        with self._lock:
+            if self._error is not None:
+                raise self._error
+            return self._result
 
-    def _goto(self, target_deg, seconds, cancel):
+    def _goto(self, target_deg, seconds, cancel, ramp_fraction, **options):
         if self._zero_rad is None:
             raise RuntimeError('尚未记录上电零点')
-        return self._link.goto_degrees(target_deg, seconds, self.kp, self.kd, cancel, self._zero_rad)
+        return self._link.goto_degrees(target_deg, seconds, self.kp, self.kd, cancel,
+                                       self._zero_rad, ramp_fraction=ramp_fraction, **options)
 
     def _submit(self, message, work):
-        with self._lock:
-            if self._link is None:
-                raise RuntimeError(self.message)
-            if self.busy:
-                raise ServoBusy('舵机正在转动')
-            self.busy = True
-            self._cancel.clear()
-            self._result = None
-            self._error = None
-            self.message = message
-            self._worker = threading.Thread(target=self._run, args=(work,), daemon=True)
-            self._worker.start()
+        with self._requests:
+            with self._lock:
+                if self._link is None:
+                    raise RuntimeError(self.message)
+                if self.busy:
+                    raise ServoBusy('舵机正在转动')
+                worker = self._worker
+                interrupting_hold = self.holding
+                if interrupting_hold:
+                    self._cancel.set()
+            if worker is not None:
+                worker.join()
+            with self._lock:
+                if interrupting_hold and self._error is not None:
+                    raise RuntimeError(self.message)
+                self.busy = True
+                self._cancel = threading.Event()
+                self._finished = threading.Event()
+                self._result = None
+                self._error = None
+                self.output_error_deg = None
+                self.message = message
+                self._worker = threading.Thread(target=self._run, args=(work,), daemon=True)
+                self._worker.start()
 
     def _run(self, work):
         try:
-            with self._motion:
-                feedback = work(self._cancel)
+            feedback = work(self._cancel)
         except Exception as error:
             with self._lock:
                 self.busy = False
+                self.holding = False
                 self._error = error
                 self.message = str(error)
+                self._finished.set()
             return
         with self._lock:
             self.busy = False
+            self.holding = False
             self._result = feedback
-            self.position_deg = math.degrees(feedback['position'])
+            self._record_feedback(feedback)
             if 'target_deg' in feedback:
                 self.message = f'已停机，位置 {self.position_deg:.2f}°'
             else:
                 self.message = f"已停机，实际转动 {feedback['turned_deg']:.2f}°"
+            self._finished.set()
+
+    def _record_feedback(self, feedback):
+        self.position_deg = math.degrees(feedback['position'])
+        if self._output_zero is not None:
+            self.output_position_deg = output_degrees(feedback['output_encoder'], self._output_zero)
+        if 'output_error_deg' in feedback:
+            self.output_error_deg = feedback['output_error_deg']
+
+    def _report_hold(self, feedback):
+        with self._lock:
+            if self._cancel.is_set():
+                return
+            self._record_feedback(feedback)
+            if not self.holding:
+                self.holding = True
+                self.busy = False
+                self._result = feedback
+                self.message = '张开保位中'
+                self._finished.set()
 
     def stop(self):
         """请求正在进行的转角停机；空闲时再发一次停机命令。"""
-        self._cancel.set()
-        with self._lock:
-            if self.busy or self._link is None:
-                return None
-            link = self._link
-        with self._motion:
-            feedback = link.stop()
-        with self._lock:
-            self.position_deg = math.degrees(feedback['position'])
-            self.message = '已停机'
-        return feedback
+        with self._requests:
+            self._cancel.set()
+            with self._lock:
+                if self.busy or self.holding or self._link is None:
+                    return None
+            if self._worker is not None:
+                self._worker.join()
+            feedback = self._link.stop()
+            with self._lock:
+                self._record_feedback(feedback)
+                self.message = '已停机'
+            return feedback
 
     def close(self):
-        self._cancel.set()
-        worker = self._worker
-        if worker is not None:
-            worker.join(timeout=2)
-        with self._motion:
+        with self._requests:
+            self._cancel.set()
+            worker = self._worker
+            if worker is not None:
+                worker.join()
             with self._lock:
                 link = self._link
                 self._link = None
                 self.busy = False
-        if link is None:
-            return
-        try:
-            link.stop()
-        except (OSError, TimeoutError, RuntimeError):
-            pass
-        link.close()
+                self.holding = False
+            if link is not None:
+                try:
+                    link.stop()
+                except (OSError, TimeoutError, RuntimeError):
+                    pass
+                link.close()

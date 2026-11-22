@@ -122,13 +122,14 @@
         <label>时长（s）<input id="servo_s" type="number" step="0.1" value="2"></label>
       </div>
       <button class="submit" id="servo_move">转动</button>
+      <label class="gap-top">开合时长（s）<input id="servo_preset_s" type="number" step="0.1" value="__SERVO_PRESET_SECONDS__"></label>
       <button class="submit gap-top" id="servo_open">张开</button>
       <button class="submit gap-top" id="servo_close">闭合</button>
       <button class="stop gap-top" id="servo_stop">舵机停机</button>
       <div id="servo_error" class="error"></div>
       <div class="stats gap-top">
         <div class="stat"><div class="label">舵机</div><div class="value small" id="servo_state">–</div></div>
-        <div class="stat"><div class="label">反馈位置（°）</div><div class="value" id="servo_pos">–</div></div>
+        <div class="stat"><div class="label">输出轴相对零位（°）</div><div class="value" id="servo_pos">–</div></div>
       </div>
     </section>
   </div>
@@ -286,10 +287,10 @@ $('servo_move').addEventListener('click', () => {
   postServo('/api/servo', {degrees: Number($('servo_deg').value), seconds: Number($('servo_s').value)});
 });
 $('servo_open').addEventListener('click', () => {
-  postServo('/api/servo/open', {seconds: Number($('servo_s').value)});
+  postServo('/api/servo/open', {seconds: Number($('servo_preset_s').value)});
 });
 $('servo_close').addEventListener('click', () => {
-  postServo('/api/servo/close', {seconds: Number($('servo_s').value)});
+  postServo('/api/servo/close', {seconds: Number($('servo_preset_s').value)});
 });
 $('servo_stop').addEventListener('click', () => { postServo('/api/servo/stop'); });
 
@@ -342,8 +343,9 @@ function show(state) {
       servoText = '就绪';
     }
     $('servo_state').textContent = servoText;
-    $('servo_pos').textContent = state.servo.position_deg === null || state.servo.position_deg === undefined
-      ? '–' : fixed(state.servo.position_deg, 2);
+    const outputPosition = state.servo.output_position_deg;
+    $('servo_pos').textContent = outputPosition === null || outputPosition === undefined
+      ? '–' : fixed(outputPosition, 2);
   }
 }
 function rate(state) {

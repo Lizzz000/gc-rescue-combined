@@ -1,7 +1,7 @@
 #pragma once
 
 // 阶段、等待和运输规则。不读时钟、不创建线程。
-// 先看 CyclePhase，再看 requestRoi 和 requestCommand。
+// 先看 CyclePhase，再看 registerPickupRoute 和 requestCommand。
 // Copyright 2026 li
 // SPDX-License-Identifier: Apache-2.0
 
@@ -24,16 +24,17 @@ struct MissionState
   // NavigatingSafety / LocalizingStart 沿用本趟目的区身份。
   enum class CyclePhase : std::uint8_t
   {
-    SearchingTarget = 0,  // 寻找目标，允许 arrived 或显式重找。
+    SearchingTarget = 0,  // 寻找目标，允许登记路线、独立到达诊断或显式重找。
     CheckingRoi = 1,      // 等待原始 ROI；候选尚未提交时仍停坐标。
-    WaitingTurn = 2,      // ROI 已提交；只等去程转向完成，或显式放弃路由。
+    WaitingTurn = 2,      // 路由已登记，等返航到位或显式放弃。
     SwitchingField = 3,   // 等待 field 服务与实际阶段双确认。
     NavigatingSafety = 4, // 按已提交目的区导航，等待安全区到达。
     WaitingTransfer = 5,  // 等待盲推、释放与回撤完成，保持坐标关闭。
-    SwitchingSeg = 6,     // seg 双确认成功后清目的区和 ROI 编号，恢复寻找。
+    SwitchingSeg = 6,     // seg 双确认成功后清目的区和路由编号，恢复寻找。
     RoiFailed = 7,        // ROI 拒绝、无效或超时，等待显式重找。
     Fault = 8,           // 启动初态或运行故障；仅初态可由首个合法 seg 解除。
-    LocalizingStart = 9  // 送达确认后按整块安全区中心定位，直到显式重找。
+    LocalizingStart = 9, // 送达确认后按整块安全区中心定位，直到显式重找。
+    InitialLocalizing = 10  // 首次出发前按整块安全区定位，此时尚无目的区和路由。
   };
 
   // 检测端首个合法 seg 状态到来前保持故障门控，不发布可行驶坐标。
@@ -46,7 +47,7 @@ struct MissionState
   Outcome outcome{Outcome::None};
   // 首绿实际送达确认后 First → Later；重找不回滚，重建控制器才重置。
   Transport transport_phase{Transport::First};
-  // Target 给出的检查编号，不是 ROS 客户端用于移除 pending request 的编号。
+  // 当前路由编号。正式流程用成功的夹取编号，独立诊断用 Target 的检查编号。
   std::uint64_t roi_request_id{0};
   std::string reason;
 };
@@ -140,17 +141,17 @@ MissionTransportDecision applyTransportRules(
 // 错序或未知命令不改状态和截止；模式切换受理后仍须服务与实际阶段双确认。
 enum class MissionCommand : std::uint8_t
 {
-  // ROI 授权后的去程转向完成；闭合与检查前后退已在请求 ROI 前结束。
-  // 投送后的起点定位与再次转向完成后，用 StartSearch 开启下一轮。
-  // 首次受理仅 WaitingTurn + 匹配非零完整 ROI 编号；受理后请求 field，目的区保持到双确认。
+  // 首次受理仅 WaitingTurn + 匹配非零路由编号；里程计返航到位后请求 field。
+  // 投送后重新记点并转身，用 StartSearch 开启下一轮。
   TurnCompleted = 1,
-  // 首次受理仅 NavigatingSafety + 匹配非零完整 ROI 编号；进入待搬运，不调用检测模式服务。
+  // 首次受理仅 NavigatingSafety + 匹配非零路由编号；进入待搬运，不调用检测模式服务。
   SafetyArrived = 2,
   // 显式重找或恢复。无活动等待、无待提交候选的 CheckingRoi 也可恢复；完整准入见 requestCommand。
   // 受理后请求 seg，双确认成功才清目的区；首趟/后续进度保留。
   StartSearch = 3,
-  // 新确认仅 WaitingTransfer + 匹配 ROI 编号；最近已确认编号可只读重试，不触发发布。
-  DeliveryCompleted = 4
+  // 新确认仅 WaitingTransfer + 匹配路由编号；最近已确认编号可只读重试，不触发发布。
+  DeliveryCompleted = 4,
+  StartAlign = 6
 };
 
 // 控制器向外的 ROS。节点实现它，控制器直接调用。
@@ -174,6 +175,14 @@ struct MissionCommandResult
   bool accepted{false};
   // 本次发出了状态或切换。只读回执为 false，节点据此保留 Fault 里的送达收据。
   bool acted{false};
+  std::string message;
+};
+
+struct PickupRouteResult
+{
+  bool accepted;
+  MissionState::Destination destination;
+  std::uint64_t route_id;
   std::string message;
 };
 
@@ -202,6 +211,8 @@ public:
   // STM32 张开接近、闭合限位、后退并停车后请求；检查期间保持闭合。
   // 核心不观测机械位置。只在 SearchingTarget 受理，继续用当前 seg 的原始帧做 ROI。
   void requestRoi();
+  PickupRouteResult registerPickupRoute(
+    const std::string & class_id, std::uint32_t grasp_token, const RoiClassIds & class_ids);
   // 转向/安全区到达/新送达须匹配非零完整 ROI 编号；StartSearch 不要求编号。
   // 1/2 在本趟对应后续阶段只读确认；Fault、重找后拒绝。
   // 4 的最近送达收据可跨 Fault/重找查询；所有查询均不刷新等待截止。
@@ -297,6 +308,8 @@ private:
   // Target 编号在其进程内递增。仅当前有效代次的非零应答推进高水位，
   // 单独重启 Target 导致编号回退时拒绝新路由，不能与旧送达收据混用。
   std::uint64_t roi_response_id_high_water_{0};
+  std::uint32_t last_grasp_token_{0};
+  std::string last_grasp_class_;
   TransportPolicy policy_;
   RoiContext roi_;
   AutomaticSwitchContext automatic_;

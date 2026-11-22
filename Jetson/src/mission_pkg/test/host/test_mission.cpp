@@ -159,9 +159,69 @@ void testMissionTrajectory()
   CHECK(session.controller.state().cycle_generation == 2);
 }
 
+void testSelectedPickupRoute()
+{
+  Group group("MissionController.selectedPickup");
+  using Destination = MissionState::Destination;
+  const RoiClassIds ids{4, 6, 8, 10};
+  Session session;
+  session.out.roi_ready = false;
+  auto & mission = session.controller;
+  CHECK(!mission.registerPickupRoute("4", 1, ids).accepted);
+  mission.taskChanged(taskAt("seg", 1, 100), kNow);
+  CHECK(!mission.registerPickupRoute("4", 0, ids).accepted);
+  for (const auto * other : {"8", "10", "6", "x"}) {
+    CHECK(!mission.registerPickupRoute(other, 3, ids).accepted);
+  }
+  const auto first = mission.registerPickupRoute("4", 3, ids);
+  CHECK(first.accepted && first.destination == Destination::Left && first.route_id == 3);
+  const int published = session.out.status_count;
+  CHECK(mission.registerPickupRoute("4", 3, ids).accepted);
+  CHECK(session.out.status_count == published);
+  CHECK(!mission.registerPickupRoute("8", 3, ids).accepted);
+  CHECK(!mission.registerPickupRoute("4", 4, ids).accepted);
+  CHECK(mission.requestCommand(MissionCommand::TurnCompleted, 3).accepted);
+  CHECK(confirmSwitch(session, "field", 200, 2));
+  CHECK(mission.requestCommand(MissionCommand::SafetyArrived, 3).accepted);
+  CHECK(mission.requestCommand(MissionCommand::DeliveryCompleted, 3).accepted);
+  CHECK(mission.requestCommand(MissionCommand::StartSearch, 0).accepted);
+  CHECK(confirmSwitch(session, "seg", 300, 3));
+  CHECK(!mission.registerPickupRoute("4", 3, ids).accepted);
+  CHECK(!mission.registerPickupRoute("6", 4, ids).accepted);
+  const auto orange = mission.registerPickupRoute("10", 4, ids);
+  CHECK(orange.accepted && orange.destination == Destination::Right && orange.route_id == 4);
+  CHECK(mission.requestCommand(MissionCommand::StartSearch, 0).accepted);
+  CHECK(confirmSwitch(session, "seg", 400, 4));
+  const auto black = mission.registerPickupRoute("8", 5, ids);
+  CHECK(black.accepted && black.destination == Destination::Left);
+  CHECK(session.out.roi_sends == 0 && session.out.published_roi_id == 0);
+}
+
 void testMissionErrors()
 {
   Group group("MissionController.errors");
+
+  // 已在 field 的静止首次启动仍须显式请求和双确认，再由首圈搜索切回 seg。
+  Session initial;
+  initial.controller.taskChanged(taskAt("field", 1, 100), kNow);
+  CHECK(initial.controller.state().cycle_phase == Phase::Fault);
+  CHECK(!initial.controller.requestCommand(MissionCommand::StartAlign, 42).accepted);
+  const auto align = initial.controller.requestCommand(MissionCommand::StartAlign);
+  CHECK(align.accepted && align.acted && initial.controller.state().cycle_phase == Phase::SwitchingField);
+  CHECK(initial.controller.beginSwitchWait(PendingOperation::Kind::AutomaticSwitch,
+    initial.out.switch_generation, kNow));
+  initial.controller.taskChanged(taskAt("field", 1, 100), kNow);
+  CHECK(initial.controller.state().cycle_phase == Phase::SwitchingField);
+  initial.controller.switchReply(PendingOperation::Kind::AutomaticSwitch,
+    initial.out.switch_generation, true, "ok");
+  CHECK(initial.controller.state().cycle_phase == Phase::InitialLocalizing);
+  CHECK(initial.controller.state().destination == MissionState::Destination::None);
+  CHECK(initial.controller.state().roi_request_id == 0);
+  CHECK(initial.controller.state().outcome == MissionState::Outcome::Success);
+  CHECK(!initial.controller.requestCommand(MissionCommand::SafetyArrived, 0).accepted);
+  CHECK(initial.controller.requestCommand(MissionCommand::StartSearch).accepted);
+  CHECK(confirmSwitch(initial, "seg", 200, 2));
+  CHECK(!initial.controller.requestCommand(MissionCommand::StartAlign).accepted);
 
   // 零编号和上一趟编号都不能推动当前路由。
   Session numbered;
@@ -176,6 +236,7 @@ void testMissionErrors()
   CHECK(numbered.controller.state().cycle_phase == Phase::WaitingTurn);
   CHECK(numbered.controller.state().roi_request_id == 42);
   CHECK(numbered.controller.state().cycle_generation == 0);
+  CHECK(!numbered.controller.requestCommand(MissionCommand::StartAlign).accepted);
 
   // 乱序：还在等转向时不能报到达或送达；故障态不能报转向。
   const auto early_arrival = numbered.controller.requestCommand(MissionCommand::SafetyArrived, 42);

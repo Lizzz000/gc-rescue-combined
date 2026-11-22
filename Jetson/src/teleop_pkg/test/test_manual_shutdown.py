@@ -42,7 +42,9 @@ class ShutdownTest(unittest.TestCase):
         args = SimpleNamespace(lease_s=0.2, arm_zero_s=0.1, rate_hz=100, port=0,
             max_linear_mps=0.4, max_angular_radps=3.0, max_timed_s=3600.0,
             manual_config=dict(link_device='/fake', gripper_device='', gripper_id=0,
-                               kp=0, kd=0, closed_deg=None, open_deg=None))
+                               kp=0, kd=0, closed_deg=None, open_deg=None, move_s=None,
+                               ramp_fraction=0.0, open_hold_max_nm=0.0, output_tolerance_deg=1.0,
+                               open_trim_deg=0.0, closed_trim_deg=0.0))
         clock = [0.0]
 
         def sleep(seconds):

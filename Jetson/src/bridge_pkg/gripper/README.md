@@ -1,14 +1,14 @@
 # S288 夹爪调试
 
-该工具供单个宇树 S288 舵机通过 USB 转单总线模块进行独立调试；它不接入 ROS、CAN 桥接或自动搬运状态机。协议由本目录 `s288_protocol.py` 薄转发到 `teleop_pkg/servo/s288.py`，此处不保留第二份实现。STM32 原夹爪动作尚未迁移，不能用此工具代替两端握手。
+该工具供单个宇树 S288 舵机通过 USB 转单总线模块进行独立调试；它不接入 ROS、CAN 桥接或自动搬运状态机。协议由本目录 `s288_protocol.py` 薄转发到 `teleop_pkg/servo/s288.py`，此处不保留第二份实现。正式搬运的夹爪执行与两端握手见 [USB 协议](../../../docs/usb-protocol.md)。
 
 舵机必须由与 S288 匹配的独立电源供电。连接 USB 模块后，在 Jetson 上确认 `/dev/serial/by-id/` 中的设备路径，并确保其他程序没有占用此串口。程序使用 Python 3 和 `pyserial`；Jetson 上可通过系统包 `python3-serial` 安装。模块和 Linux 驱动必须支持 6 Mbps，能否工作需要板端实测。
 
 协议从已安装的 `servo` 包导入。先编译并 source 工作区，再运行调试工具或本目录测试：
 
 ```bash
-# 在 $REPO/Jetson（ROS 2 Jazzy 工作区）
-source /opt/ros/jazzy/setup.bash   # 或本机等效的 RoboStack 环境
+# 在 $REPO/Jetson（板端 ROS 2 Humble 工作区）
+source /opt/ros/humble/setup.bash
 colcon build --packages-select teleop_pkg
 source install/setup.bash
 python3 src/bridge_pkg/gripper/s288_debug.py --device /dev/serial/by-id/实际设备名 --id 0

@@ -1,4 +1,5 @@
 #include "gripper/s288_servo.hpp"
+#include "gripper/s288_control.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -130,7 +131,8 @@ struct Feedback
 {
   int id{0}, mode{0};
   bool timeout{false};
-  double position{0};
+  double position{0}, speed{0};
+  int temperature{0}, winding_temperature{0}, output_encoder{0}, warning{0};
   std::uint32_t error{0};
 };
 
@@ -148,9 +150,34 @@ Feedback parse_feedback(const std::uint8_t * packet, int expected_id)
   feedback.id = mode & 15;
   feedback.mode = (mode >> 4) & 7;
   feedback.timeout = (mode & 128) != 0;
+  feedback.temperature = static_cast<std::int8_t>(packet[3]);
+  feedback.winding_temperature = packet[4];
+  const auto raw_speed = static_cast<std::int16_t>(packet[8] | (packet[9] << 8));
+  feedback.speed = raw_speed * (2 * M_PI) / (kSpeedScale * kRatio);
   feedback.position = static_cast<double>(get_le32(packet + 10)) * (2 * M_PI) / (kPositionScale * kRatio);
   feedback.error = static_cast<std::uint32_t>(get_le32(packet + 14));
+  const auto output = packet[18] | (packet[19] << 8);
+  feedback.output_encoder = output & 0x1fff;
+  feedback.warning = output >> 13;
   return feedback;
+}
+
+void checkFeedback(const Feedback & feedback, int mode)
+{
+  if (feedback.mode != mode || feedback.timeout || feedback.warning || feedback.error) {
+    throw std::runtime_error("舵机反馈异常 mode=" + std::to_string(feedback.mode) +
+      " timeout=" + std::to_string(feedback.timeout) + " warning=" + std::to_string(feedback.warning) +
+      " error=" + std::to_string(feedback.error) + " 温度=" + std::to_string(feedback.temperature) +
+      "/" + std::to_string(feedback.winding_temperature));
+  }
+}
+
+using CommandTime = std::chrono::time_point<std::chrono::steady_clock, std::chrono::duration<double>>;
+
+void waitForCommandTime(CommandTime next)
+{
+  // 有些宿主定时器会在小于一毫秒的余量内提前唤醒，不能据此多发一个运行帧。
+  while (std::chrono::steady_clock::now() < next) {std::this_thread::sleep_until(next);}
 }
 
 }  // namespace
@@ -281,32 +308,62 @@ public:
   Feedback prepare()
   {
     auto initial = stop();
-    if (initial.error || initial.timeout) {
-      throw std::runtime_error("舵机反馈有错误或超时，未开始转动");
-    }
+    checkFeedback(initial, kModeStop);
+    first_run_after_stop_ = true;
     return initial;
   }
 
-  Feedback run_to(double target, double seconds, double kp, double kd, const std::atomic<bool> & cancel)
+  Feedback runCommand(const std::vector<std::uint8_t> & packet)
   {
-    const auto command = control_packet(motor_id_, kModeRun, 1, 0, 0, target, kp, kd);
-    const auto started = std::chrono::steady_clock::now();
-    const auto limit = std::chrono::duration<double>(seconds);
+    auto feedback = exchange(packet);
+    // 适配器首个 RUN 可能回报上一帧 Stop。仅允许一次，告警和错误照常检查。
+    const int expected_mode = first_run_after_stop_ && feedback.mode == kModeStop ? kModeStop : kModeRun;
+    first_run_after_stop_ = false;
+    checkFeedback(feedback, expected_mode);
+    return feedback;
+  }
+
+  Feedback run_to(double initial, double target, double seconds, const SessionConfig & config,
+                  const std::atomic<bool> & cancel, bool handoff)
+  {
+    using Clock = std::chrono::steady_clock;
+    using Seconds = std::chrono::duration<double>;
+    const auto final_command = control_packet(motor_id_, kModeRun, 1, 0, 0, target, config.kp, config.kd);
+    const auto started = Clock::now();
+    const auto deadline = started + Seconds(seconds);
+    const auto period = Seconds(kCommandPeriodS);
+    const auto final_slot = deadline - period;
+    auto tick = started;
+    bool sent_target = false;
+    Feedback feedback;
     try {
-      while (std::chrono::steady_clock::now() - started < limit) {
-        if (cancel.load()) {break;}
-        auto feedback = exchange(command);
-        if (feedback.error || feedback.timeout) {
-          throw std::runtime_error("舵机反馈错误或超时");
+      while (!cancel.load() && tick < deadline && !(handoff && sent_target)) {
+        double position = target;
+        if (config.ramp_fraction > 0 && tick < final_slot) {
+          const double elapsed = Seconds(tick - started).count();
+          const double u = tick == started ? 0.0 : std::min(1.0, elapsed / (seconds * config.ramp_fraction));
+          if (u < 1.0) {position = initial + (target - initial) * (u * u * (3.0 - 2.0 * u));}
         }
-        const auto period = std::chrono::duration<double>(kCommandPeriodS);
-        std::this_thread::sleep_for(std::chrono::duration_cast<std::chrono::nanoseconds>(period));
+        feedback = position == target ? runCommand(final_command) :
+          runCommand(control_packet(motor_id_, kModeRun, 1, 0, 0, position, config.kp, config.kd));
+        sent_target = sent_target || position == target;
+        // 为最后一个完整目标留出一拍；慢反馈占用本拍时间，超期后只发 Stop。
+        const auto wake = std::min(tick + period, sent_target ? deadline : final_slot);
+        waitForCommandTime(wake);
+        tick = Clock::now();
       }
+      if (!sent_target && !cancel.load()) {throw std::runtime_error("舵机动作超时，未发送最终目标角");}
+      if (handoff && !cancel.load()) {return feedback;}
     } catch (...) {
       try {stop();} catch (...) {}
       throw;
     }
     return stop();
+  }
+
+  Feedback hold(double position, const SessionConfig & config)
+  {
+    return runCommand(control_packet(motor_id_, kModeRun, 1, 0, 0, position, config.kp, config.kd));
   }
 
   void close()
@@ -320,6 +377,7 @@ public:
 private:
   int fd_{-1};
   int motor_id_{0};
+  bool first_run_after_stop_{false};
 };
 
 Session::Session(SessionConfig config)
@@ -327,6 +385,11 @@ Session::Session(SessionConfig config)
 {
   if (config_.device.empty()) {return;}
   try {
+    if (!validRampFraction(config_.ramp_fraction)) {throw std::invalid_argument("舵机渐变时长比例超出范围");}
+    if (!validHoldConfig(config_.open_hold_max_nm, config_.output_tolerance_deg, config_.kp,
+        config_.open_deg, config_.open_trim_deg, config_.closed_deg, config_.closed_trim_deg)) {
+      throw std::invalid_argument("舵机保位参数或角度修正无效");
+    }
     control_packet(config_.motor_id, kModeRun, 1, 0, 0, 0, config_.kp, config_.kd);
     link_ = std::make_unique<Link>(config_.device, config_.motor_id);
   } catch (const std::exception & error) {
@@ -336,6 +399,7 @@ Session::Session(SessionConfig config)
   try {
     const auto feedback = link_->prepare();
     zero_rad_ = feedback.position;
+    zero_encoder_ = feedback.output_encoder;
     have_zero_ = true;
     message_ = "已连接，上电零点已记录";
   } catch (const std::exception & error) {
@@ -346,7 +410,11 @@ Session::Session(SessionConfig config)
 
 Session::~Session() {close();}
 
-bool Session::available() const {return static_cast<bool>(link_) && have_zero_;}
+bool Session::available() const
+{
+  std::lock_guard<std::mutex> guard(lock_);
+  return have_zero_;
+}
 
 std::string Session::message() const
 {
@@ -354,72 +422,161 @@ std::string Session::message() const
   return message_;
 }
 
-bool Session::start_open(double seconds) {return start_goto(config_.open_deg, seconds);}
+bool Session::start_open(double seconds) {return start_goto({config_.open_deg, seconds, true});}
 
-bool Session::start_close(double seconds) {return start_goto(config_.closed_deg, seconds);}
+bool Session::start_close(double seconds) {return start_goto({config_.closed_deg, seconds, false});}
 
-bool Session::start_goto(double target_deg, double seconds)
+bool Session::start_goto(Motion motion)
 {
   try {
-    check_goto(target_deg, seconds);
+    check_goto(motion.target_deg, motion.seconds);
   } catch (const std::exception & error) {
     std::lock_guard<std::mutex> guard(lock_);
     message_ = error.what();
     return false;
   }
-  if (!available()) {return false;}
   {
     std::lock_guard<std::mutex> guard(lock_);
-    if (status_.load() == MotionStatus::Busy) {return false;}
-    if (worker_.joinable()) {worker_.join();}
-    cancel_.store(false);
+    if (!have_zero_ || cancel_.load() || status_.load() == MotionStatus::Busy) {return false;}
+    if (!worker_.joinable()) {worker_ = std::thread([this] {run();});}
+    pending_ = motion;
+    leave_hold_.store(true);
     status_.store(MotionStatus::Busy);
     message_ = "正在转到目标角";
-    worker_ = std::thread([this, target_deg, seconds] {run(target_deg, seconds);});
   }
+  wake_.notify_one();
   return true;
 }
 
-void Session::run(double target_deg, double seconds)
+void Session::run()
 {
-  try {
-    if (!have_zero_) {throw std::runtime_error("尚未记录上电零点");}
-    auto * link = link_.get();
-    link->prepare();
-    const auto final = link->run_to(
-      zero_rad_ + target_deg * M_PI / 180.0, seconds, config_.kp, config_.kd, cancel_);
-    if (final.error || final.timeout || cancel_.load()) {
-      throw std::runtime_error("舵机动作已取消或停机反馈异常");
+  for (;;) {
+    Motion motion;
+    {
+      std::unique_lock<std::mutex> lock(lock_);
+      wake_.wait(lock, [this] {return cancel_.load() || pending_.has_value();});
+      if (cancel_.load()) {return;}
+      motion = *pending_;
+      pending_.reset();
+      leave_hold_.store(false);
     }
-    std::lock_guard<std::mutex> guard(lock_);
-    message_ = "已停机";
-    status_.store(MotionStatus::Succeeded);
-  } catch (const std::exception & error) {
-    std::lock_guard<std::mutex> guard(lock_);
-    message_ = error.what();
-    status_.store(MotionStatus::Failed);
+    try {
+      execute(motion);
+    } catch (const std::exception & error) {
+      std::lock_guard<std::mutex> guard(lock_);
+      // 保位退出未确认 Stop 时，同时拒绝已排队的后续动作。
+      pending_.reset();
+      message_ = error.what();
+      status_.store(MotionStatus::Failed);
+    }
   }
 }
 
-void Session::acknowledge()
+void Session::execute(const Motion & motion)
 {
-  const auto current = status_.load();
-  if (current == MotionStatus::Succeeded || current == MotionStatus::Failed) {
-    status_.store(MotionStatus::Idle);
+  using Clock = std::chrono::steady_clock;
+  using Seconds = std::chrono::duration<double>;
+  auto feedback = link_->prepare();
+  const bool calibrated = config_.open_hold_max_nm > 0;
+  const double trim = motion.open ? config_.open_trim_deg : config_.closed_trim_deg;
+  const double target = trimmedTargetRad(zero_rad_, motion.target_deg, calibrated ? trim : 0.0);
+  auto error = [&] {return outputErrorRad(motion.target_deg, zero_encoder_, feedback.output_encoder);};
+  if (!motion.open || !calibrated) {
+    feedback = link_->run_to(feedback.position, target, motion.seconds, config_, cancel_, false);
+    checkFeedback(feedback, kModeStop);
+    if (cancel_.load()) {return;}
+    std::lock_guard<std::mutex> guard(lock_);
+    message_ = "已停机";
+    if (!motion.open) {
+      message_ += "，独立输出轴目标减实测 " + std::to_string(error() / kRadiansPerDegree) + "°";
+    }
+    status_.store(MotionStatus::Succeeded);
+    return;
+  }
+
+  const auto began = Clock::now();
+  const auto move_deadline = began + Seconds(motion.seconds);
+  const auto grace = Seconds(0.5);
+  const auto capture_deadline = std::min(move_deadline + grace, began + Seconds(kMaxMoveS));
+  const double tolerance = config_.output_tolerance_deg * kRadiansPerDegree;
+  double anchor = feedback.position;
+  // 初次张开时机械角通常已在零点，直接以当前电机角开始轻力保位。
+  if (std::abs(error()) > tolerance) {
+    feedback = link_->run_to(feedback.position, target, motion.seconds, config_, cancel_, true);
+    if (cancel_.load()) {return;}
+    anchor = target;
+  }
+  try {
+    auto previous = Clock::now();
+    auto last_sample = previous;
+    std::optional<Clock::time_point> outside_since;
+    int good_samples = 0;
+    bool confirmed = false;
+    while (!cancel_.load() && !leave_hold_.load()) {
+      const auto tick = Clock::now();
+      if (!confirmed && tick >= move_deadline && good_samples >= 3 &&
+          tick - last_sample <= Seconds(kFeedbackWaitS)) {
+        std::lock_guard<std::mutex> guard(lock_);
+        message_ = "张开已到位，持续轻力保位";
+        status_.store(MotionStatus::Succeeded);
+        confirmed = true;
+      }
+      if (!confirmed && tick >= capture_deadline) {throw std::runtime_error("张开输出轴未在期限内停稳到位");}
+      anchor = openHoldAnchorRad(anchor, error(), tolerance, feedback.position, config_.kp,
+        config_.open_hold_max_nm, Seconds(tick - previous).count());
+      previous = tick;
+      feedback = link_->hold(anchor, config_);
+      const auto received = Clock::now();
+      last_sample = received;
+      const bool in_window = std::abs(error()) <= tolerance;
+      if (!confirmed) {
+        if (feedback.mode != kModeRun || !in_window || std::abs(feedback.speed) > 0.12) {good_samples = 0;}
+        else if (received <= capture_deadline) {good_samples = std::min(3, good_samples + 1);}
+      } else if (in_window) {
+        outside_since.reset();
+      } else if (!outside_since) {
+        outside_since = received;
+      } else if (received - *outside_since >= grace) {
+        throw std::runtime_error("张开输出轴持续超出保位容差");
+      }
+      auto next = tick + Seconds(kCommandPeriodS);
+      if (!confirmed) {
+        next = std::min(next, capture_deadline);
+        if (good_samples >= 3 && tick < move_deadline) {next = std::min(next, move_deadline);}
+      }
+      waitForCommandTime(next);
+    }
+  } catch (...) {
+    try {link_->stop();} catch (...) {}
+    throw;
+  }
+  // 新动作只能在退出保位并收到 Stop 反馈后开始。
+  checkFeedback(link_->stop(), kModeStop);
+}
+
+void Session::acknowledge(MotionStatus observed)
+{
+  if (observed == MotionStatus::Succeeded || observed == MotionStatus::Failed) {
+    status_.compare_exchange_strong(observed, MotionStatus::Idle);
   }
 }
 
 void Session::close()
 {
-  cancel_.store(true);
-  if (worker_.joinable()) {worker_.join();}
-  std::lock_guard<std::mutex> guard(lock_);
-  if (link_) {
-    try {link_->stop();} catch (...) {}
-    link_.reset();
-  }
-  have_zero_ = false;
-  status_.store(MotionStatus::Idle);
+  std::call_once(close_once_, [this] {
+    {
+      std::lock_guard<std::mutex> guard(lock_);
+      have_zero_ = false;
+      cancel_.store(true);
+    }
+    wake_.notify_one();
+    if (worker_.joinable()) {worker_.join();}
+    if (link_) {
+      try {link_->stop();} catch (...) {}
+      link_.reset();
+    }
+    status_.store(MotionStatus::Idle);
+  });
 }
 
 }  // namespace s288

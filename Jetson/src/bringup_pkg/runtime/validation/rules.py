@@ -112,6 +112,19 @@ def _validate_gripper(values, run):
             raise ConfigurationError(f'{name}: expected a nonnegative gain, got {values[name]!r}')
     for name in ('gripper.closed_deg', 'gripper.open_deg'):
         _finite_number(name, values[name])
+    fraction = _finite_number('gripper.ramp_fraction', values['gripper.ramp_fraction'])
+    if not 0.0 <= fraction <= 1.0:
+        raise ConfigurationError(f'gripper.ramp_fraction: expected [0, 1], got {fraction!r}')
+    for end in ('closed', 'open'):
+        trim = _finite_number(f'gripper.{end}_trim_deg', values[f'gripper.{end}_trim_deg'])
+        if abs(values[f'gripper.{end}_deg'] + trim) > 360:
+            raise ConfigurationError(f'gripper.{end}_trim_deg: compensated target exceeds ±360°')
+    cap = _finite_number('gripper.open_hold_max_nm', values['gripper.open_hold_max_nm'])
+    if not 0.0 <= cap <= 0.6 or (cap > 0 and values['gripper.kp'] <= 0):
+        raise ConfigurationError('gripper.open_hold_max_nm: expected [0, 0.6] and positive kp for holding')
+    tolerance = _finite_number('gripper.output_tolerance_deg', values['gripper.output_tolerance_deg'])
+    if not 0 < tolerance < 180:
+        raise ConfigurationError('gripper.output_tolerance_deg: expected (0, 180)')
     move_s = values['gripper.move_s']
     if move_s is not None:
         _finite_number('gripper.move_s', move_s)
