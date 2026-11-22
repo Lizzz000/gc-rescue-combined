@@ -7,6 +7,7 @@
 #include "node/mission_node.hpp"
 #include "node/target_node.hpp"
 #include "node/safety_node.hpp"
+#include <interface_pkg/app/ros/ros.hpp>
 
 int main(int argc, char ** argv)
 {

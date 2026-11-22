@@ -70,26 +70,3 @@ private:
   rclcpp::Publisher<vision_msgs::msg::Detection2DArray>::SharedPtr tracks_pub_;
   rclcpp::TimerBase::SharedPtr timeout_timer_;
 };
-
-#include "node/select_node.hpp"
-
-/** @brief 跟踪与选择的ROS输出边界；复用节点实现，不另设转换文件。 */
-struct TrackRosConversion
-{
-  /**
-   * @brief 按原输入索引复制完整检测，空索引仍保留数组源帧头。
-   * @param[in] input 原始ROS检测数组，额外假设和位姿均保留。
-   * @param[in] index 选择器返回的原始位置或空值；非空时须在数组范围内。
-   * @return 零个或一个检测；越界抛out_of_range，原数组不变。
-   */
-  static vision_msgs::msg::Detection2DArray selected(
-    const vision_msgs::msg::Detection2DArray & input, std::optional<std::size_t> index);
-  /**
-   * @brief 将关联核心生成的框映射成ROS消息，保留源图帧头。
-   * @param[in] tracks 核心生成的只读像素框和轨迹身份。
-   * @param[in] header 原始图像帧头，不使用本机接收时间替代。
-   * @return 新ROS数组；原输入不变，不代表消息已发布。
-   */
-  static vision_msgs::msg::Detection2DArray tracked(
-    const RecognitionDetections & tracks, const std_msgs::msg::Header & header);
-};

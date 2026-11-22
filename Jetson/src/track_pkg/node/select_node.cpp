@@ -2,7 +2,7 @@
 // 轨迹从 TrackNode 来，选中的目标交给 mission 的 target 与 bridge。
 
 #include "node/select_node.hpp"
-#include "node/track_node.hpp"
+#include "node/track_ros_conversion.hpp"
 
 #include <exception>
 #include <interface_pkg/app/core.hpp>
@@ -12,7 +12,6 @@
 #include <stdexcept>
 #include <utility>
 #include <rcl_interfaces/msg/parameter_descriptor.hpp>
-#include <interface_pkg/app/core.hpp>
 #include <limits>
 
 // ---- SelectNode：构造与参数 ----

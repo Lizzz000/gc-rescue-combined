@@ -14,7 +14,6 @@ from typing import Callable
 
 # ROLES、FULL_ROLES、ConfigurationError 由本模块再导出，工具通过 cfg.ROLES 等访问，勿当作未用导入删除。
 from .core import FIELDS, FULL_ROLES, NODE_PARAMETERS, ROLES, ConfigurationError  # noqa: F401
-from .ros.launch import _parameter_value
 from .validation.rules import _typed, _validate
 from .yaml_io.reader import _flatten, _package_directory, _read_yaml, resolve_path
 
@@ -66,6 +65,12 @@ def read_configuration(config_file, package_resolver: Callable | None = None):
 
 
 # ---- 运行装配：读取 → 验证 → 路径/后端检查 → 节点映射 → 快照 ----
+
+def _parameter_value(values, mapping):
+    """ROS 仍接收原标量键，节点映射按索引提取数组项。"""
+    value = values[mapping['path']]
+    return value[mapping['index']] if 'index' in mapping else value
+
 
 def load_configuration(config_file, run='all', package_resolver: Callable | None = None,
                        require_assets=True):

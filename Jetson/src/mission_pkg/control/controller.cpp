@@ -3,7 +3,6 @@
 // 阶段迁移。ROI 应答与诊断成功才建路由；206 才记录送达；205 双确认才恢复寻找。
 // Copyright 2026 li
 // SPDX-License-Identifier: Apache-2.0
-#include <interface_pkg/app/core.hpp>
 #include <cmath>
 #include <stdexcept>
 #include <utility>

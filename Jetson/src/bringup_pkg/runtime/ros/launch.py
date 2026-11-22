@@ -10,14 +10,9 @@ import tempfile
 
 import yaml
 
+from ..configuration import load_configuration
 from ..core import ROLES
 from ..yaml_io.reader import _package_directory
-
-
-def _parameter_value(values, mapping):
-    """ROS仍接收原标量键；仅在装配边界按数组索引取值。"""
-    value = values[mapping['path']]
-    return value[mapping['index']] if 'index' in mapping else value
 
 
 # ---- 物化：将已装配快照写为唯一参数文件与有效配置记录 ----
@@ -58,9 +53,6 @@ def _start(context):
     from launch.events import Shutdown
     from launch.substitutions import LaunchConfiguration
     from launch_ros.actions import Node
-
-    # 延迟导入：configuration 依赖本模块的 _parameter_value，顶层导入会循环。
-    from ..configuration import load_configuration
 
     snapshot = load_configuration(LaunchConfiguration('config').perform(context),
                                   LaunchConfiguration('run').perform(context))

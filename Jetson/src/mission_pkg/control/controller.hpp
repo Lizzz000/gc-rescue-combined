@@ -9,7 +9,6 @@
 #include <string>
 #include <chrono>
 #include <optional>
-#include <interface_pkg/app/core.hpp>
 #include "roi/roi.hpp"
 
 // 枚举值与 MissionStatus.msg 对齐；核心不依赖 ROS，节点负责转换。

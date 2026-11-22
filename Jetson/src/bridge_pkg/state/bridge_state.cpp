@@ -5,7 +5,6 @@
 // 职责：请求等待、队列和货物复核。
 // Copyright 2026 li
 // SPDX-License-Identifier: Apache-2.0
-#include <interface_pkg/app/core.hpp>
 #include <algorithm>
 #include <cmath>
 #include <limits>

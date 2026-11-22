@@ -37,7 +37,11 @@ target_compile_features(track_core PUBLIC cxx_std_17)
 ament_target_dependencies(track_core interface_pkg)
 set_property(TARGET track_core PROPERTY POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(track_core ocsort_core)
-add_library(track_node_obj OBJECT node/track_node.cpp node/select_node.cpp)
+add_library(track_node_obj OBJECT
+  node/track_node.cpp
+  node/select_node.cpp
+  node/track_ros_conversion.cpp
+)
 configure_node_target(track_node_obj)
 set_property(TARGET track_node_obj PROPERTY POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(track_node_obj track_core)

@@ -1,6 +1,5 @@
-// 跟踪运行时合在一个实现文件里，节顺序与头文件一致。
-
 #include "node/track_node.hpp"
+#include "node/track_ros_conversion.hpp"
 
 // ---- 跟踪节点实现 ----
 // 职责：ROS 装配、运行循环和进程入口。
@@ -15,7 +14,6 @@
 #include <stdexcept>
 #include <utility>
 #include <rcl_interfaces/msg/parameter_descriptor.hpp>
-#include <interface_pkg/app/core.hpp>
 #include <limits>
 
 // ---- TrackNode：构造与参数 ----
@@ -160,61 +158,6 @@ void TrackNode::checkTimeout()
     clearTracks(static_cast<builtin_interfaces::msg::Time>(cutoff));
     frame_gate_.clear(cutoff.nanoseconds());
   }
-}
-
-// SelectNode 的实现在 select_node.cpp。
-
-/**
- * @brief 按原始位置复制完整ROS检测，空结果仍携带源帧头。
- * @param[in] input 原始检测数组，不修改。
- * @param[in] index 原数组有效位置或空值；越界抛out_of_range。
- * @return 零个或一个完整检测，不表示发布已完成。
- */
-vision_msgs::msg::Detection2DArray TrackRosConversion::selected(
-  const vision_msgs::msg::Detection2DArray & input, std::optional<std::size_t> index)
-{
-  vision_msgs::msg::Detection2DArray output;
-  output.header = input.header;
-  // 没有选中项时仍保留这一源帧的数组头，用空数组明确表达本帧没有安全目标。
-  if (index) {
-    // 索引指向原始消息；完整复制包括全部假设、pose、ID 与检测自己的 header。
-    // 使用 at 保留索引越界的显式失败；不能静默改成另一条轨迹或吞掉错误。
-    output.detections.push_back(input.detections.at(*index));
-  }
-  return output;
-}
-
-
-/**
- * @brief 将核心生成的轨迹映射成ROS像素框。
- * @param[in] tracks 核心轨迹与类别，输入不变。
- * @param[in] header 源图像帧头，数组和单框共同沿用。
- * @return 新构建的ROS检测数组，不表示发布已完成。
- */
-vision_msgs::msg::Detection2DArray TrackRosConversion::tracked(
-  const RecognitionDetections & tracks, const std_msgs::msg::Header & header)
-{
-  vision_msgs::msg::Detection2DArray output;
-  output.header = header;
-  // 跟踪是重新生成框，沿用源帧时间；不复制原检测的额外假设或推测其 pose。
-  output.detections.reserve(tracks.size());
-  for (const auto & track : tracks) {
-    vision_msgs::msg::Detection2D detection;
-    detection.header = header;
-    detection.id = track.id;
-    detection.bbox.center.position.x = track.box.center_x;
-    detection.bbox.center.position.y = track.box.center_y;
-    detection.bbox.size_x = track.box.width;
-    detection.bbox.size_y = track.box.height;
-    if (track.hypothesis) {
-      vision_msgs::msg::ObjectHypothesisWithPose result;
-      result.hypothesis.class_id = track.hypothesis->class_id;
-      result.hypothesis.score = track.hypothesis->score;
-      detection.results.push_back(result);
-    }
-    output.detections.push_back(std::move(detection));
-  }
-  return output;
 }
 
 #include <rclcpp_components/register_node_macro.hpp>

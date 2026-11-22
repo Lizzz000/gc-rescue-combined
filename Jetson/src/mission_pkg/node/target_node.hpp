@@ -12,7 +12,7 @@
 #include <interface_pkg/msg/roi_check.hpp>
 #include <interface_pkg/msg/task_state.hpp>
 #include <interface_pkg/srv/check_roi.hpp>
-#include <interface_pkg/app/core.hpp>
+#include <interface_pkg/app/core/frame_gate.hpp>
 #include <chrono>
 #include <cstdint>
 #include <optional>

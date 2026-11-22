@@ -34,7 +34,7 @@ set_property(TARGET bridge_transport PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 add_library(bridge_state STATIC state/bridge_state.cpp)
 target_link_libraries(bridge_state PUBLIC bridge_protocol)
-ament_target_dependencies(bridge_state PUBLIC rclcpp interface_pkg)
+ament_target_dependencies(bridge_state PUBLIC interface_pkg)
 set_property(TARGET bridge_state PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 add_library(bridge_node_obj OBJECT

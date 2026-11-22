@@ -53,13 +53,13 @@ install(TARGETS mission_components ARCHIVE DESTINATION lib LIBRARY DESTINATION l
 
 if(BUILD_TESTING)
   find_package(ament_cmake_test REQUIRED)
-  # 将现有纯核心回归纳入板端 colcon；仅使用接口桩，不创建 ROS 节点或设备。
+  # 纯核心回归直接使用生产头文件，不创建 ROS 节点或设备。
   add_executable(test_mission_host
     test/host/test_main.cpp test/host/test_mission.cpp test/host/test_roi.cpp
     test/host/test_field_geometry.cpp control/controller.cpp roi/roi.cpp)
   target_compile_features(test_mission_host PRIVATE cxx_std_17)
   target_include_directories(test_mission_host BEFORE PRIVATE
-    test/host test/host/stubs ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    test/host ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
   ament_add_test(test_mission_host COMMAND $<TARGET_FILE:test_mission_host>
     GENERATE_RESULT_FOR_RETURN_CODE_ZERO TIMEOUT 60)
 endif()

@@ -9,7 +9,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // BridgeRuntime 与 BridgeNode 共用默认互斥回调组。源帧用 ROS 时间，队列期限用单调时间。
 
-#include <interface_pkg/app/core.hpp>
+#include <interface_pkg/app/ros/ros.hpp>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -18,7 +18,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include <rcl_interfaces/msg/parameter_descriptor.hpp>
 #include <exception>
 #include <linux/can/error.h>
 

@@ -2,6 +2,7 @@
 // ---- 节点内部 ROI 消息搬运；业务规则只在核心入口判定 ----
 
 #include <vision_msgs/msg/detection2_d_array.hpp>
+#include <interface_pkg/app/ros/ros.hpp>
 #include <interface_pkg/msg/roi_check.hpp>
 #include "roi/roi.hpp"
 

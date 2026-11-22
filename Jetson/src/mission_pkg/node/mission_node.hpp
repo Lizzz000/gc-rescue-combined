@@ -13,7 +13,6 @@
 #include <interface_pkg/msg/task_state.hpp>
 #include <interface_pkg/srv/check_roi.hpp>
 #include <interface_pkg/srv/mission_command.hpp>
-#include <interface_pkg/app/core.hpp>
 #include <chrono>
 #include <cstdint>
 #include "control/controller.hpp"

@@ -8,14 +8,13 @@ $env:PATH = "$(Split-Path (Get-Command g++).Source);$env:PATH"
 $package = (Resolve-Path (Join-Path $here "..\..")).Path
 # 头文件写成 <interface_pkg/...>，所以 -I 指到 src，而不是包目录本身。
 $src = (Resolve-Path (Join-Path $package "..")).Path
-$stubs = Join-Path $here "stubs"
 $out = Join-Path $env:TEMP "gc_rescue_host\mission_pkg"
 $log = Join-Path $out "test.log"
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 
 $watch = [Diagnostics.Stopwatch]::StartNew()
 & g++ -std=c++17 -Wall -Wextra -finput-charset=UTF-8 `
-  "-I$here" "-I$stubs" "-I$package" "-I$src" `
+  "-I$here" "-I$package" "-I$src" `
   "$here\test_main.cpp" `
   "$here\test_mission.cpp" `
   "$here\test_roi.cpp" `

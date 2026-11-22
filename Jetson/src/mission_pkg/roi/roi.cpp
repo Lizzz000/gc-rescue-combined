@@ -6,8 +6,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // 实现原始 ROI 规则与构造校验，不读取 ROS 消息或系统时间。
 
-#include <interface_pkg/app/core.hpp>
-
 #include <cmath>
 #include <limits>
 #include <stdexcept>

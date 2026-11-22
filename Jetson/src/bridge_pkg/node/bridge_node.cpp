@@ -9,7 +9,7 @@
 // BridgeNode 装配 ROS 边界。BridgeRuntime 持有 CAN 会话，二者共用默认互斥回调组。
 // 发送队列在 bridge_session.cpp。帧格式在 protocol/usb_protocol.hpp。
 
-#include <interface_pkg/app/core.hpp>
+#include <interface_pkg/app/ros/ros.hpp>
 #include <chrono>
 #include <cmath>
 #include <cstdint>

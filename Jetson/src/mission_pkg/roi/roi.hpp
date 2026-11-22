@@ -7,7 +7,8 @@
 
 #include <cstdint>
 #include <string>
-#include <interface_pkg/app/core.hpp>
+#include <interface_pkg/app/core/cargo.hpp>
+#include <interface_pkg/app/core/recognition.hpp>
 
 // 颜色身份使用模型类别编号，四个编号必须非负且两两不同。
 struct RoiClassIds

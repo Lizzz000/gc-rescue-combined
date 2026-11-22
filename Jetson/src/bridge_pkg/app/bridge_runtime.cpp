@@ -3,7 +3,7 @@
 // 下一份：node/bridge_node.hpp。状态在 state/bridge_state.hpp，帧格式在 protocol/usb_protocol.hpp。
 // ---- 角色入口：与节点共用一份生产对象 ----
 #include "node/bridge_node.hpp"
-#include <interface_pkg/app/core.hpp>
+#include <interface_pkg/app/ros/ros.hpp>
 
 /**
  * @brief 在程序入口解析角色，再交由统一 ROS 生命周期运行对应节点。

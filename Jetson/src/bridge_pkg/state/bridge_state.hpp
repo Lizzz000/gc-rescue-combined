@@ -10,7 +10,7 @@
 #include <optional>
 #include <string>
 #include <vector>
-#include <interface_pkg/app/core.hpp>
+#include <interface_pkg/app/core/recognition.hpp>
 
 // 明确区分源时间与本机单调时间，供 Bridge 状态和请求组件使用。
 

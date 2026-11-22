@@ -8,7 +8,7 @@
 #include <chrono>
 #include <exception>
 #include <rcl_interfaces/msg/parameter_descriptor.hpp>
-#include <interface_pkg/app/core.hpp>
+#include <interface_pkg/app/ros/ros.hpp>
 #include <stdexcept>
 #include <memory>
 #include <rclcpp_components/register_node_macro.hpp>
