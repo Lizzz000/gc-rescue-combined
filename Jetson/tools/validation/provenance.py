@@ -11,12 +11,18 @@ import re
 import shlex
 import subprocess
 import time
+import xml.etree.ElementTree as ET
 
 from .evidence import fingerprint, require, write_json
 
 SCHEMA = 'rescue.build-identity.v2'
 IDENTITY = '.rescue-build-identity.json'
 PACKAGES = ('interface_pkg', 'vision_pkg', 'track_pkg', 'mission_pkg', 'bridge_pkg', 'bringup_pkg')
+BRIDGE_SUPPORT = 'teleop_pkg'
+HOST_REBUILD_TARGETS = {
+    'bridge_pkg': ('test_bridge_runtime_host', 'test_cdc_write', 'test_s288_timing'),
+    'mission_pkg': ('test_mission_host',),
+}
 EXCLUDED = {'.git', '.vscode', '__pycache__', '.cache', 'test', 'tests', 'checks', 'models',
             'build', 'install', 'log', 'logs', 'CMakeFiles', 'test_results', 'node_modules'}
 SOURCE_SUFFIXES = {'.cpp', '.cc', '.cxx', '.c', '.h', '.hpp', '.hxx', '.cu', '.cuh', '.in',
@@ -26,9 +32,20 @@ SOURCE_SUFFIXES = {'.cpp', '.cc', '.cxx', '.c', '.h', '.hpp', '.hxx', '.cu', '.c
 
 # ---- 来源清单：生产源码、验收文件、基线与工具身份分别留证 ----
 
-def production_path(relative):
+def build_packages(source):
+    # 依据待构建源码选取 Bridge 的 S288 依赖，兼容尚未声明该依赖的旧基线。
+    manifest = Path(source) / 'src/bridge_pkg/package.xml'
+    require(manifest.is_file(), 'missing production package descriptor: bridge_pkg')
+    dependency_tags = {'depend', 'build_depend', 'build_export_depend', 'exec_depend', 'test_depend'}
+    if any(item.tag in dependency_tags and (item.text or '').strip() == BRIDGE_SUPPORT
+           for item in ET.parse(manifest).getroot()):
+        return (*PACKAGES, BRIDGE_SUPPORT)
+    return PACKAGES
+
+
+def production_path(relative, packages):
     parts = Path(relative).parts
-    return (len(parts) >= 3 and parts[0] == 'src' and parts[1] in PACKAGES and
+    return (len(parts) >= 3 and parts[0] == 'src' and parts[1] in packages and
             not any(part in EXCLUDED for part in parts[2:-1]) and
             (Path(relative).suffix in SOURCE_SUFFIXES or parts[-1] in ('CMakeLists.txt', 'COLCON_IGNORE')))
 
@@ -39,8 +56,9 @@ def digest(value):
 
 def source_files(source):
     source = Path(source).resolve(strict=True)
+    packages = build_packages(source)
     result = {}
-    for package in PACKAGES:
+    for package in packages:
         require((source / 'src' / package / 'CMakeLists.txt').is_file(), 'missing production package: ' + package)
     for folder, dirs, files in os.walk(source / 'src', followlinks=False):
         dirs[:] = sorted(name for name in dirs if name not in EXCLUDED)
@@ -49,7 +67,7 @@ def source_files(source):
         for name in sorted(files):
             path = Path(folder) / name
             relative = path.relative_to(source).as_posix()
-            if not production_path(relative):
+            if not production_path(relative, packages):
                 continue
             # 不把链接悄悄解引用成另一棵源码；Git blob 对应链接文本，其目标另存身份。
             if path.is_symlink():
@@ -76,7 +94,7 @@ def source_files(source):
 def contract_files(source, root):
     """绑定候选的全部测试/工具文件（含MD），与生产清单分开；不表示每项都会编译。"""
     paths = set()
-    for package in PACKAGES:
+    for package in build_packages(source):
         for name in ('test', 'checks'):
             folder = source / 'src' / package / name
             if folder.is_dir():
@@ -89,9 +107,9 @@ def contract_files(source, root):
             for path in sorted(paths)}
 
 
-def contract_binaries(build):
+def contract_binaries(build, packages):
     """收集各包构建根的可执行普通文件（含测试和业务程序），保存其实际身份。"""
-    paths = [path for package in PACKAGES for path in (build / package).glob('*')
+    paths = [path for package in packages for path in (build / package).glob('*')
              if path.is_file() and os.access(path, os.X_OK)]
     require(paths, 'candidate build has no executable contract artifacts')
     return {str(path.resolve()): fingerprint(path) for path in sorted(paths)}
@@ -108,6 +126,7 @@ def check_baseline(source, files, tool_root, baseline):
     require(source.resolve() != tool_root.resolve() and
             (source / 'src').resolve() != (tool_root / 'src').resolve(),
             'baseline must use a separately frozen source tree, never the current candidate tree')
+    packages = build_packages(source)
     listing = subprocess.check_output(['git', '-C', str(tool_root), 'ls-tree', '-rz', baseline, '--', 'src'])
     expected = {}
     for record in listing.split(b'\0'):
@@ -115,7 +134,7 @@ def check_baseline(source, files, tool_root, baseline):
             continue
         header, path = record.split(b'\t', 1)
         relative = path.decode('utf-8')
-        if production_path(relative):
+        if production_path(relative, packages):
             _, kind, oid = header.split()
             require(kind == b'blob', 'unsupported baseline source object: ' + relative)
             expected[relative] = oid.decode('ascii')
@@ -133,7 +152,7 @@ def tool_files(root):
 
 def cache_files(build, source, install):
     result = {}
-    for package in PACKAGES:
+    for package in build_packages(source):
         path = build / package / 'CMakeCache.txt'
         require(path.is_file(), 'missing actual CMake cache: ' + str(path))
         values = {}
@@ -155,22 +174,29 @@ def beneath(path, root):
 
 def compiler_dependencies(build, source, install, started_ns):
     """读取实际生产编译命令及其 .o.d；排除本项目生成物，保留外部实际头文件依赖。"""
+    packages = build_packages(source)
     dependencies, commands, databases = {}, {}, {}
     for database in sorted(build.glob('*/compile_commands.json')):
         databases[str(database)] = fingerprint(database)
+        test_objects = [database.parent / 'CMakeFiles' / (target + '.dir')
+                        for target in HOST_REBUILD_TARGETS.get(database.parent.name, ())]
         for entry in json.loads(database.read_text(encoding='utf-8')):
             directory = Path(entry['directory']).resolve()
             file = (directory / entry['file']).resolve()
             if not beneath(file, source):
                 continue  # ROS 生成源码不冒充手写源码；对应接口源定义在生产树身份中。
-            if not production_path(file.relative_to(source).as_posix()):
+            if not production_path(file.relative_to(source).as_posix(), packages):
                 continue
             argv = entry.get('arguments') or shlex.split(entry['command'])
             output = entry.get('output')
             if output is None:
                 require('-o' in argv, 'production compile command has no output identity')
                 output = argv[argv.index('-o') + 1]
-            dependency_file = Path(str((directory / output).resolve()) + '.d')
+            object_path = (directory / output).resolve()
+            # 宿主回归会用桩头文件重新编译生产源文件，按 CMake 目标区分两种编译。
+            if any(beneath(object_path, target) for target in test_objects):
+                continue
+            dependency_file = Path(str(object_path) + '.d')
             require(dependency_file.is_file(), 'actual compiler dependency file missing: ' + str(dependency_file))
             text = dependency_file.read_text(encoding='utf-8').replace('\\\n', '').replace('\\\r\n', '')
             rule = text.splitlines()[0]
@@ -185,7 +211,8 @@ def compiler_dependencies(build, source, install, started_ns):
                 # 路径已 resolve：经 .deps 链接回测试目录仍按生产边界拒绝；依赖照常核对时间并留完整指纹。
                 if beneath(path, source) and not beneath(path, source / '.deps'):
                     relative = path.relative_to(source).as_posix()
-                    require(production_path(relative), 'production compile depends on excluded test/generated/asset: ' + relative)
+                    require(production_path(relative, packages),
+                            'production compile depends on excluded test/generated/asset: ' + relative)
                 else:
                     require(path.stat().st_mtime_ns <= started_ns,
                             'external compiler dependency changed during build: ' + str(path))
@@ -361,7 +388,7 @@ def finish_build(args, identity, root, baseline):
         identity['build_binaries'][key] = built
     require(identity['contract_files'] == (contract_files(source, root) if args.kind == 'candidate' else None),
             'contract inputs changed while building')
-    identity['contract_binaries'] = contract_binaries(build) if args.kind == 'candidate' else None
+    identity['contract_binaries'] = contract_binaries(build, identity['cmake']) if args.kind == 'candidate' else None
     identity['installed_libraries'] = installed_libraries(install)
     identity['runtime_dependencies'] = runtime_dependencies(identity['binaries'], install)
     if identity.get('noncompiled_tool_refresh'):
@@ -397,7 +424,7 @@ def verify_install(args, root, baseline, role_executables, directory):
     require(tool_files(root) == identity['tools'], 'validation tools changed since the recorded build')
     require(identity['contract_files'] == (contract_files(source, root) if args.kind == 'candidate' else None),
             'contract inputs changed since the recorded build')
-    require(identity['contract_binaries'] == (contract_binaries(Path(identity['build_root']))
+    require(identity['contract_binaries'] == (contract_binaries(Path(identity['build_root']), build_packages(source))
             if args.kind == 'candidate' else None), 'contract executables changed since the recorded build')
     require(installed_libraries(args.install.resolve()) == identity['installed_libraries'],
             'installed component/shared-library artifacts changed since the recorded build')

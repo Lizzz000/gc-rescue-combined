@@ -72,7 +72,7 @@ CPU 分割后处理在 `src/vision_pkg/yolo/postprocess.cpp`，GPU 提交在 `yo
 
 ### Linux ROS 软件合同
 
-在仓库的 `Jetson/` 目录运行。先加载 ROS 2 Humble 和含 `teleop_pkg` 的下层工作区（Bridge 的 S288 测试依赖），安装 Jetson 生产构建所需的 OpenCV、GStreamer、CUDA、TensorRT 和多媒体 SDK。使用能通过 `run:=all` 校验的现场配置，包括已标定的夹爪参数。`contracts` 使用本轮 `validate.py build` 记录的构建和安装身份，运行前需加载同一份安装。
+在仓库的 `Jetson/` 目录运行。先加载 ROS 2 Humble，安装 Jetson 生产构建所需的 OpenCV、GStreamer、CUDA、TensorRT 和多媒体 SDK。`validate.py build` 会按 Bridge 包声明一起构建 S288 测试依赖 `teleop_pkg`。使用能通过 `run:=all` 校验的现场配置，包括已标定的夹爪参数。`contracts` 使用本轮构建和安装的身份记录，运行前需加载同一份安装。
 
 ```bash
 validation_dir="$(mktemp -d)"

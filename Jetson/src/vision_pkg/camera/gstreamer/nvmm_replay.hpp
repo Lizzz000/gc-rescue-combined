@@ -54,6 +54,8 @@ inline std::shared_ptr<NvBufSurface> uploadReplayBgr(
     error = "NVMM replay surface cannot contain its visible BGRx pixels";
     return {};
   }
+  // Jetson 驱动按已填充帧数检查同步的缓冲索引。
+  surface->numFilled = 1;
   if (NvBufSurfaceMap(surface.get(), 0, 0, NVBUF_MAP_WRITE) != 0) {
     error = "NvBufSurfaceMap failed for NVMM replay";
     return {};
@@ -89,7 +91,6 @@ inline std::shared_ptr<NvBufSurface> uploadReplayBgr(
     error = "NvBufSurfaceUnMap failed for NVMM replay";
     return {};
   }
-  surface->numFilled = 1;
   error.clear();
   return surface;
 }

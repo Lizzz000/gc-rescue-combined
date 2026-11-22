@@ -141,10 +141,35 @@ class ProbeContract(unittest.TestCase):
         probe.records = [{'steady': 1, 'id': kind, 'dlc': 8, 'data': '00' * 8} for kind in (3, 4)]
         observer = SimpleNamespace(records={'mission': [], 'target': [], 'safety': []},
                                    snapshot={'values': {}})
-        self.assertEqual(set(probe.steady_periodic(observer, 'seg', 0)), {'03', '04'})
+        self.assertEqual(set(probe.steady_periodic(observer, 'seg', 0, 2)), {'03', '04'})
         probe.records.append({'steady': 1, 'id': 1, 'dlc': 8, 'data': '00' * 8})
         with self.assertRaises(ContractFailure):
-            probe.steady_periodic(observer, 'seg', 0)
+            probe.steady_periodic(observer, 'seg', 0, 2)
+
+    def test_periodic_matching_accounts_for_independent_ros_and_usb_queues(self):
+        probe = UsbProbe.__new__(UsbProbe)
+        probe.poll = lambda: None
+        detection = {'id': '1', 'results': [{'hypothesis': {'class_id': '0'}}],
+                     'bbox': {'center': {'position': {'x': 50, 'y': 50}}}}
+        targets = []
+        frames = []
+        for stamp, ros_at, usb_at in ((90, 0.9, 1.01), (150, 1.5, 1.51), (190, 2.01, 1.99)):
+            targets.append({'steady': ros_at, 'source': [stamp * 1_000_000, 'camera'],
+                            'value': {'detections': [detection]}})
+            payload = struct.pack('<Bhh', 1, 5000, 5000) + stamp.to_bytes(3, 'little')
+            frames.append({'steady': usb_at, 'id': 3, 'dlc': 8, 'data': payload.hex()})
+        probe.records = frames + [{'steady': 1.1, 'id': 4, 'dlc': 8, 'data': '00' * 8}]
+        observer = SimpleNamespace(
+            records={'mission': [{'value': {'operation': 0, 'cycle_phase': 0, 'transport_phase': 0}}],
+                     'target': targets},
+            snapshot={'values': {'bridge.input_timeout_s': 0.5, 'shared.image.width': 100,
+                                 'shared.image.height': 100},
+                      'nodes': {'bridge_node': {'target_class_ids': [0], 'first_target_class_id': 0}}})
+        observed = probe.steady_periodic(observer, 'seg', 1, 2)['03']
+        self.assertEqual(observed['valid_bytes'], sorted(frame['data'] for frame in frames))
+        targets.pop()
+        with self.assertRaisesRegex(ContractFailure, 'disagrees with ROS coordinates'):
+            probe.steady_periodic(observer, 'seg', 1, 2)
 
 
 class ActionWaitContract(unittest.TestCase):

@@ -15,9 +15,26 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from validation import workflow
 from validation.evidence import ContractFailure
+from validation.observations import Observer, frame_key
 
 
 REPLAY_ENV = 'RESCUE_VALIDATION_NVMM_REPLAY'
+
+
+class CaptureEvidenceTests(unittest.TestCase):
+    def test_observed_sources_validate_before_writing_json(self):
+        rows = []
+        for second in range(1, 6):
+            stamp = SimpleNamespace(sec=second, nanosec=0)
+            source = frame_key(SimpleNamespace(stamp=stamp, frame_id='camera'))
+            header = {'stamp': vars(stamp), 'frame_id': 'camera'}
+            self.assertEqual(source, workflow.evidence_source(header))
+            rows.append({'source': source, 'value': {'header': header, 'detections': []}})
+        observer = Observer.__new__(Observer)
+        observer.records = {'detections': rows}
+        pairs = observer.paired(['detections'], 5)
+        workflow.paired_evidence(pairs, ['detections'])
+        self.assertEqual(pairs, json.loads(json.dumps(pairs)))
 
 
 class CaptureReplayTests(unittest.TestCase):

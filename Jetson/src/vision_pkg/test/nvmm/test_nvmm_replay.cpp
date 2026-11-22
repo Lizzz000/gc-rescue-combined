@@ -87,6 +87,7 @@ int NvBufSurfaceMap(NvBufSurface * surface, int index, int plane, NvBufSurfaceMe
 int NvBufSurfaceSyncForDevice(NvBufSurface * surface, int index, int plane)
 {
   check(surface == &sdk_surface && index == 0 && plane == 0, "只同步已上传的第一个平面");
+  check(surface->numFilled == 1, "同步前驱动要求表面已记录填充帧数");
   calls.push_back("sync");
   return failure == Failure::Sync ? -1 : 0;
 }

@@ -31,7 +31,7 @@ from .evidence import (CapabilityMissing, ContractFailure, OwnedProcess, asset_s
                        HostFileUseWitness, host_file_use)
 
 from .transport import run_probe as transport_probe, compared as transport_compare
-from .provenance import PACKAGES, begin_build, finish_build, verify_install
+from .provenance import begin_build, build_packages, finish_build, verify_install
 
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE = 'c1f83e9ed987d6dd24bc59641e22f6b2a44f6717'
@@ -134,7 +134,7 @@ def build(args):
     # 一份安装：CPU业务合同始终执行；只有模型执行选择真实GPU，绝不运行两套全包矩阵。
     argv = ['colcon', '--log-base', args.output / 'colcon-log', 'build', '--base-paths', args.source / 'src',
              '--build-base', args.build, '--install-base', args.install,
-             '--packages-select', *PACKAGES,
+             '--packages-select', *build_packages(args.source),
              '--cmake-args', '-DBUILD_TESTING=' + ('OFF' if args.kind == 'baseline' else 'ON'), '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON',
              '-DVISION_ENABLE_TENSORRT=' + ('ON' if gpu else 'OFF'), '-DCMAKE_CUDA_ARCHITECTURES=87',
              *args.cmake_arg]
@@ -582,6 +582,15 @@ def gripper_action(observer, can, owner, kind):
     return dict(action_kind=kind, request_id=request_id, accepted=True, success=True)
 
 
+def observe_periodic(observer, can, owner, task, http=None):
+    since = time.monotonic()
+    observer.spin(1.5, owner, http)
+    until = time.monotonic()
+    # USB 和 ROS 独立排队，窗口结束后略等 ROS 补齐已收到 USB 帧的来源。
+    observer.spin(0.2, owner, http)
+    return can.steady_periodic(observer, task, since, until)
+
+
 def chain_arrival(observer, can, owner, result):
     """失败固定输入只覆盖失败恢复，不用直接切 Field 冒充成功运输。"""
     from interface_pkg.srv import CheckRoi
@@ -894,9 +903,7 @@ def capture(args):
                     record['result'] = {'seg': observer.paired(names, 5)}
                     if can:
                         record['result']['startup_action'] = gripper_action(observer, can, owner, 'startup')
-                        settled = time.monotonic()
-                        observer.spin(1.5, owner)
-                        record['result']['seg_can'] = can.steady_periodic(observer, 'seg', settled)
+                        record['result']['seg_can'] = observe_periodic(observer, can, owner, 'seg')
                     if scenario == 'chain':
                         state = chain_arrival(observer, can, owner, record['result'])
                     else:
@@ -916,15 +923,14 @@ def capture(args):
                     observer.wait(lambda: http.frames >= 3, owner=owner, http=http, reason='complete multipart JPEG')
                     record['http'] = {'frames': http.frames, 'snapshot': http.snapshot()}
                     if can and state is not None:
-                        settled = time.monotonic()
-                        observer.spin(1.5, owner, http)
-                        record['result']['field_can'] = can.steady_periodic(observer, 'field', settled)
+                        record['result']['field_can'] = observe_periodic(observer, can, owner, 'field', http)
                         record['result']['handshake']['safety_arrival'] = mission_command(observer, can, owner, 2, 5)
                         can.require_paused(observer, owner)
                         record['result']['handshake']['release'] = gripper_action(observer, can, owner, 'release')
                         # STM32 伪终端报告送达，随后确认定位阶段再模拟重找。
                         record['result']['handshake']['delivery'] = mission_command(
                             observer, can, owner, 4, LOCALIZING_START)
+                        http.allow_stage_transition('seg')
                         record['result']['handshake']['restart'] = mission_command(observer, can, owner, 3, 0)
                     record['result']['mission_states'] = [row['value'] for row in observer.records['mission']]
                     record['result']['roi_diagnostics'] = [row['value'] for row in observer.records['roi']]

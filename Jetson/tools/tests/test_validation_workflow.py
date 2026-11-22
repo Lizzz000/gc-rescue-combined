@@ -5,6 +5,7 @@ import importlib
 import json
 import os
 from pathlib import Path
+import shlex
 import sys
 import tempfile
 from types import ModuleType, SimpleNamespace
@@ -16,6 +17,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from validation import workflow
 from validation.evidence import ContractFailure
+from validation.provenance import PACKAGES, build_packages, compiler_dependencies, source_files
 
 
 class ContractRegistrationTests(unittest.TestCase):
@@ -42,7 +44,7 @@ class ContractRegistrationTests(unittest.TestCase):
             returncode=0, stderr='', stdout=json.dumps({'tests': self.listings[Path(argv[3]).name]}))
 
     def test_interface_is_built_but_not_enumerated(self):
-        self.assertIn('interface_pkg', workflow.PACKAGES)
+        self.assertIn('interface_pkg', PACKAGES)
         with patch.object(workflow.subprocess, 'run', side_effect=self.list_ctest) as ctest:
             rows, expected = workflow.contract_registrations(self.build, self.output, {})
         self.assertEqual({Path(call.args[0][3]).name for call in ctest.call_args_list}, self.packages)
@@ -65,6 +67,79 @@ class ContractRegistrationTests(unittest.TestCase):
         with patch.object(workflow.subprocess, 'run', side_effect=self.list_ctest):
             with self.assertRaisesRegex(ContractFailure, 'reuse one result XML'):
                 workflow.contract_registrations(self.build, self.output, {})
+
+
+class BuildPackageTests(unittest.TestCase):
+    def test_clean_build_selects_the_bridge_dependency(self):
+        args = SimpleNamespace(source=workflow.ROOT, build=Path('build'), install=Path('install'),
+                               output=Path('output'), kind='candidate', cmake_arg=[])
+        with (
+            patch.object(workflow, 'prepare', return_value={'required_backends': ['cpu']}),
+            patch.object(workflow, 'begin_build'),
+            patch.object(workflow, 'finish_build'),
+            patch.object(workflow, 'command') as command,
+        ):
+            workflow.build(args)
+        argv = command.call_args.args[0]
+        packages = argv[argv.index('--packages-select') + 1:argv.index('--cmake-args')]
+        self.assertEqual(packages, [*PACKAGES, 'teleop_pkg'])
+        self.assertNotIn('teleop_pkg', workflow.REQUIRED_CONTRACTS)
+        self.assertIn('src/teleop_pkg/servo/s288.py', source_files(workflow.ROOT))
+
+    def test_older_source_without_bridge_dependency_uses_the_original_packages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            for name in PACKAGES:
+                package = source / 'src' / name
+                package.mkdir(parents=True)
+                (package / 'CMakeLists.txt').touch()
+            manifest = source / 'src/bridge_pkg/package.xml'
+            manifest.write_text('<package><name>bridge_pkg</name></package>', encoding='utf-8')
+            self.assertEqual(build_packages(source), PACKAGES)
+            self.assertIn('src/bridge_pkg/package.xml', source_files(source))
+            manifest.write_text('<package><exec_depend>teleop_pkg</exec_depend></package>',
+                                encoding='utf-8')
+            with self.assertRaisesRegex(ContractFailure, 'missing production package: teleop_pkg'):
+                source_files(source)
+
+
+class CompilerProvenanceTests(unittest.TestCase):
+    def test_host_rebuild_stubs_are_excluded_and_production_stubs_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory).resolve()
+            package = source / 'src/bridge_pkg'
+            package.mkdir(parents=True)
+            (package / 'package.xml').write_text('<package/>', encoding='utf-8')
+            production_source = package / 'bridge_io.cpp'
+            production_source.touch()
+            stub = package / 'test/host/runtime_stubs/rclcpp.hpp'
+            stub.parent.mkdir(parents=True)
+            stub.touch()
+            build = source / 'build'
+            package_build = build / 'bridge_pkg'
+            objects = [Path('CMakeFiles') / (target + '.dir') / 'bridge_io.cpp.o'
+                       for target in ('bridge_nodes', 'test_bridge_runtime_host')]
+            production_rule = 'object.o: ' + shlex.quote(production_source.as_posix())
+            test_rule = production_rule + ' ' + shlex.quote(stub.as_posix())
+            entries, depfiles = [], []
+            for obj, rule in zip(objects, (production_rule, test_rule)):
+                depfile = package_build / (obj.as_posix() + '.d')
+                depfile.parent.mkdir(parents=True)
+                depfile.write_text(rule, encoding='utf-8')
+                depfiles.append(depfile)
+                entries.append({'file': str(production_source), 'directory': str(package_build),
+                                'arguments': ['c++', '-o', obj.as_posix(), '-c', str(production_source)]})
+            database = package_build / 'compile_commands.json'
+            database.write_text(json.dumps(entries), encoding='utf-8')
+
+            evidence = compiler_dependencies(build, source, source / 'install', 0)
+            self.assertEqual(set(evidence['commands']), {str(depfiles[0])})
+            self.assertEqual(set(evidence['files']), {str(production_source)})
+            self.assertEqual(set(evidence['databases']), {str(database)})
+
+            depfiles[0].write_text(test_rule, encoding='utf-8')
+            with self.assertRaisesRegex(ContractFailure, 'production compile depends on excluded'):
+                compiler_dependencies(build, source, source / 'install', 0)
 
 
 class Node(SimpleNamespace):

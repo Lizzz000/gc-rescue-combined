@@ -22,7 +22,7 @@ from .evidence import ContractFailure, require
 # ---- 观测值基础：源帧身份、统计、原始消息与 JPEG 完整性 ----
 
 def frame_key(header):
-    return (header.stamp.sec * 1_000_000_000 + header.stamp.nanosec, header.frame_id)
+    return [header.stamp.sec * 1_000_000_000 + header.stamp.nanosec, header.frame_id]
 
 
 def percentile(values, fraction=0.95):
@@ -328,16 +328,18 @@ class UsbProbe:
         require(not any(row['id'] in centers and row['steady'] >= since and row['data'].startswith('01')
                         for row in self.records), 'coordinates emitted while mission waits for STM32')
 
-    def steady_periodic(self, observer, task, since):
-        """只比较收敛窗口，并将有效载荷与同窗口真实 ROS 输出逐项核对。"""
+    def steady_periodic(self, observer, task, since, until):
+        """核对窗口内 USB 载荷与真实 ROS 输出，计入窗口前仍有效和稍后到达的观察。"""
         from source.usb_codec import IDS
         target_type, safety_type = IDS['target'], IDS['safety']
         self.poll()
-        require(not any(row['id'] == 1 and row['steady'] >= since for row in self.records),
+        frames = [row for row in self.records if since <= row['steady'] <= until]
+        require(not any(row['id'] == 1 for row in frames),
                 'removed USB type 1 was emitted')
         result = {}
         invalid = {target_type: bytes(8).hex(), safety_type: bytes(8).hex()}
         expected = {target_type: set(), safety_type: set()}
+        observed = {target_type: set(), safety_type: set()}
         mission = observer.records['mission'][-1]['value'] if observer.records['mission'] else None
         idle = mission is not None and mission['operation'] == 0
         values = observer.snapshot['values']
@@ -348,9 +350,17 @@ class UsbProbe:
                 return fixed_point(value, 10000)
             except ValueError:
                 return None
+
+        def add_center(identifier, row, x, y):
+            stamp = ((row['source'][0] // 1000000) & 0xffffff).to_bytes(3, 'little')
+            payload = (struct.pack('<Bhh', 1, x, y) + stamp).hex()
+            observed[identifier].add(payload)
+            if since <= row['steady'] <= until:
+                expected[identifier].add(payload)
+
         if task == 'seg' and idle and mission.get('cycle_phase') == 0:
             for row in observer.records['target']:
-                if row['steady'] < since:
+                if row['steady'] < since - values['bridge.input_timeout_s']:
                     continue
                 detections = row['value']['detections']
                 if not detections or not detections[0]['results']:
@@ -365,25 +375,28 @@ class UsbProbe:
                 x = quantize(center['x'] / values['shared.image.width'])
                 y = quantize(center['y'] / values['shared.image.height'])
                 if x is not None and y is not None and detection['id']:
-                    expected[target_type].add((struct.pack('<Bhh', 1, x, y) + ((row['source'][0] // 1000000) & 0xffffff).to_bytes(3, 'little')).hex())
+                    add_center(target_type, row, x, y)
         if task == 'field' and idle and mission.get('cycle_phase') == 4 and mission['outcome'] == 2 and mission['destination'] in (1, 2):
             for row in observer.records['safety']:
                 safety = row['value']
-                if row['steady'] < since or not safety['valid'] or safety['side'] != mission['destination']:
+                if (row['steady'] < since - values['bridge.input_timeout_s'] or
+                        not safety['valid'] or safety['side'] != mission['destination']):
                     continue
                 x, y = quantize(safety['x']), quantize(safety['y'])
                 if x is not None and y is not None:
-                    expected[safety_type].add((struct.pack('<Bhh', 1, x, y) + ((row['source'][0] // 1000000) & 0xffffff).to_bytes(3, 'little')).hex())
+                    add_center(safety_type, row, x, y)
         for identifier, length in ((target_type, 8), (safety_type, 8)):
-            rows = [row for row in self.records if row['id'] == identifier and row['steady'] >= since]
+            rows = [row for row in frames if row['id'] == identifier]
             require(rows and all(row['dlc'] == length for row in rows), f'missing/wrong USB type {identifier}')
             require(all(row['data'][:2] in ('00', '01') for row in rows), 'center valid byte outside 0/1')
             require(all(row['data'] == invalid[identifier] for row in rows if row['data'].startswith('00')),
                     'invalid center frame contains nonzero coordinates')
             actual = {row['data'] for row in rows if row['data'].startswith('01')}
-            require(actual <= expected[identifier], f'USB type {identifier} disagrees with ROS coordinates/gates')
-            require(not expected[identifier] or actual, f'no valid USB type {identifier} for valid ROS output')
-            result[f'{identifier:02d}'] = {'valid_bytes': sorted(actual), 'ros_expected_bytes': sorted(expected[identifier]),
+            require(actual <= observed[identifier], f'USB type {identifier} disagrees with ROS coordinates/gates')
+            require(not expected[identifier] or actual & expected[identifier],
+                    f'no valid USB type {identifier} for valid ROS output')
+            result[f'{identifier:02d}'] = {'valid_bytes': sorted(actual),
+                                          'ros_expected_bytes': sorted(expected[identifier] | actual),
                                           'invalid_only': not actual}
         return result
 
@@ -526,7 +539,8 @@ class Observer:
         mappings = {name: {tuple(row['source']): row['value'] for row in self.records[name]} for name in names}
         common = set.intersection(*(set(mapping) for mapping in mappings.values()))
         require(len(common) >= minimum, 'missing same-source pairing: ' + ','.join(names))
-        pairs = [dict(source=key, **{name: mappings[name][key] for name in names}) for key in sorted(common)[-minimum:]]
+        pairs = [dict(source=list(key), **{name: mappings[name][key] for name in names})
+                 for key in sorted(common)[-minimum:]]
         for pair in pairs:
             for name in names:
                 value = pair[name]
