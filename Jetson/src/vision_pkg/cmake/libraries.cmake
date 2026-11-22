@@ -28,6 +28,7 @@ vision_core_target(vision_field)
 target_link_libraries(vision_field PUBLIC ${OpenCV_LIBS})
 
 vision_static_library(vision_stream
+  runtime/stream_runtime.cpp
   stream/opencv/overlay.cpp
   stream/jpeg/jpeg.cpp
   stream/mjpeg/mjpeg.cpp
@@ -37,13 +38,18 @@ vision_ros_target(vision_stream)
 target_compile_definitions(vision_stream PRIVATE RESCUE_HAS_NVJPEG=$<BOOL:${VISION_ENABLE_NVJPEG}>)
 target_link_libraries(vision_stream PRIVATE PkgConfig::GSTREAMER_APP PkgConfig::GSTREAMER_VIDEO ${CMAKE_DL_LIBS})
 
+vision_static_library(vision_detection_session
+  node/detector.cpp
+  runtime/detect_runtime.cpp)
+vision_core_target(vision_detection_session)
+target_compile_definitions(vision_detection_session PUBLIC VISION_ENABLE_TENSORRT=1)
+target_link_libraries(vision_detection_session PUBLIC
+  vision_camera vision_field vision_yolo_headers vision_yolo)
+
 add_library(vision_nodes OBJECT
   node/detect_node.cpp
-  node/detector.cpp
   node/seg_ros.cpp
-  node/detect_workers.cpp
   node/stream_node.cpp)
 vision_ros_target(vision_nodes)
 set_property(TARGET vision_nodes PROPERTY POSITION_INDEPENDENT_CODE ON)
-target_compile_definitions(vision_nodes PUBLIC VISION_ENABLE_TENSORRT=1)
-target_link_libraries(vision_nodes PUBLIC vision_camera vision_field vision_stream vision_yolo_headers vision_yolo)
+target_link_libraries(vision_nodes PUBLIC vision_detection_session vision_stream)

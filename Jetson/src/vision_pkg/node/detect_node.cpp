@@ -1,27 +1,55 @@
 #include "node/detect_node.hpp"
 
-// ---- 视觉节点实现 ----
-// 职责：检测角色、运行循环；进程入口在 app/vision_runtime.cpp。
 // Copyright 2026 jetson_yolo integration
 // SPDX-License-Identifier: Apache-2.0
-// DetectNode 在构造时完成一次配置检查，随后启动采集、推理和发布。
-// 一帧依次经过 captureLoop → inferenceLoop → resultLoop → publishSeg/publishField。
-// 原图由 rawLoop 独立投递；所有最终发布仍在原阶段/相机会话闸门内复核。
-#include <interface_pkg/app/core.hpp>
-#include <rclcpp_components/register_node_macro.hpp>
+
 #include <algorithm>
-#include <atomic>
 #include <cmath>
-#include <exception>
 #include <filesystem>
 #include <limits>
 #include <stdexcept>
-#include <thread>
 #include <utility>
-#include <vector>
 
+#include <interface_pkg/app/ros/ros.hpp>
+#include <rclcpp_components/register_node_macro.hpp>
+
+#include "node/field_parameters.hpp"
+#include "node/ros_convert.hpp"
 #include "node/seg_ros.hpp"
+#include "runtime/detect_runtime.hpp"
 
+namespace
+{
+// 不同错误保留各自的 ROS 日志节流窗口。
+void logRuntime(
+  DetectRuntime::Log event, const std::string & message, rclcpp::Node & node)
+{
+  using Log = DetectRuntime::Log;
+  switch (event) {
+    case Log::Info:
+      RCLCPP_INFO(node.get_logger(), "%s", message.c_str());
+      break;
+    case Log::Reopening:
+      RCLCPP_WARN(node.get_logger(), "%s", message.c_str());
+      break;
+    case Log::OpenFailed:
+      RCLCPP_ERROR_THROTTLE(node.get_logger(), *node.get_clock(), 5000, "%s", message.c_str());
+      break;
+    case Log::ReadFailed:
+      RCLCPP_ERROR_THROTTLE(node.get_logger(), *node.get_clock(), 5000, "%s", message.c_str());
+      break;
+    case Log::InferenceFailed:
+      RCLCPP_ERROR_THROTTLE(node.get_logger(), *node.get_clock(), 5000, "%s", message.c_str());
+      break;
+    case Log::ResultPublishFailed:
+      RCLCPP_ERROR_THROTTLE(node.get_logger(), *node.get_clock(), 5000, "%s", message.c_str());
+      break;
+    case Log::RawPublishFailed:
+      RCLCPP_ERROR_THROTTLE(node.get_logger(), *node.get_clock(), 5000, "%s", message.c_str());
+      break;
+  }
+}
+}  // namespace
 
 // 先检查范围，再把 ROS 的 int64 收成后端用的 int。
 static int checkedInt(const rclcpp::Node & node, const char * name, int minimum, int maximum)
@@ -60,7 +88,20 @@ static std::string configuredPath(const rclcpp::Node & node, const char * name)
 
 // 参数校验→后端装配→ROS 接口/初始阶段→工作线程；相机实际打开仍归采集线程。
 DetectNode::DetectNode(const rclcpp::NodeOptions & options)
-: rclcpp::Node("detect_node", options), runtime_(std::make_unique<Runtime>(*this))
+: rclcpp::Node("detect_node", options),
+  runtime_(std::make_unique<DetectRuntime>(DetectRuntime::Ports{
+    [this] {return now().nanoseconds();},
+    [this] {return raw_pub_ && raw_pub_->get_subscription_count() > 0;},
+    [this] {return seg_mask_pub_ && seg_mask_pub_->get_subscription_count() > 0;},
+    [this](const DetectFrame & frame, const SegRun & run) {return publishSeg(frame, run);},
+    [this](const DetectFrame & frame, const FieldResult & run) {return publishField(frame, run);},
+    [this](const DetectFrame & frame) {publishRaw(frame);},
+    [this](int mask, std::int64_t stamp_ns, std::uint64_t epoch) {
+      publishTaskState(mask, stamp_ns, epoch);
+    },
+    [this](DetectRuntime::Log event, const std::string & message) {
+      logRuntime(event, message, *this);
+    }}))
 {
   declareParameters();
   loadParameters();
@@ -70,12 +111,12 @@ DetectNode::DetectNode(const rclcpp::NodeOptions & options)
   const auto detector_config = initializeDetector();
   // 协作取消后节点仍完整构造，入口看到关闭的 context 后跳过 spin；此时未启动相机工作线程。
   if (!detector_config || !rclcpp::ok(get_node_base_interface()->get_context())) {return;}
-  runtime_->camera_ = std::make_unique<UsbCamera>(camera_config_);
+  runtime_->setCamera(camera_config_, raw_max_fps_);
   createRosOutputs();
   applyModeParameters();
 
   createStageService();
-  runtime_->start();
+  runtime_->start(static_cast<bool>(raw_pub_));
   if (!rclcpp::ok(get_node_base_interface()->get_context())) {
     runtime_->stop();
     return;
@@ -244,8 +285,7 @@ void DetectNode::loadParameters()
   {
     throw rescue::ConfigurationError("seg_max_fps and field_max_fps must be finite and >= 0");
   }
-  runtime_->seg_max_fps_.store(seg_rate);
-  runtime_->field_max_fps_.store(field_rate);
+  runtime_->setRates(seg_rate, field_rate);
 
   mode_param_cb_ = add_on_set_parameters_callback(
     [this](const std::vector<rclcpp::Parameter> & parameters) {
@@ -275,15 +315,16 @@ std::optional<DetectorConfig> DetectNode::initializeDetector()
   std::string error;
   std::vector<std::string> notes;
   bool cancelled = false;
-  runtime_->detector_ = Detector::create(detector_config, error, notes, &cancelled);
+  auto detector = Detector::create(detector_config, error, notes, &cancelled);
   if (cancelled) {
     RCLCPP_INFO(get_logger(), "detector initialization cancelled before camera workers started");
     return std::nullopt;
   }
-  if (!runtime_->detector_) {
+  if (!detector) {
     RCLCPP_ERROR(get_logger(), "%s", error.c_str());
     throw std::runtime_error("detect_node: requested detection backend failed to initialize");
   }
+  runtime_->setDetector(std::move(detector));
   for (const auto & note : notes) {
     if (note.find("did not succeed") != std::string::npos ||
       note.find("is empty") != std::string::npos)
@@ -303,7 +344,7 @@ std::optional<DetectorConfig> DetectNode::initializeDetector()
 // 只有阶段通知采用可靠且持久保留的 QoS；诊断状态/耗时仍采用 SensorDataQoS。
 void DetectNode::createRosOutputs()
 {
-  if (runtime_->detector_->hasSeg()) {
+  if (runtime_->hasSeg()) {
     seg_det_pub_ = create_publisher<vision_msgs::msg::Detection2DArray>(
       "~/seg/detections", rclcpp::SensorDataQoS().keep_last(1));
     if (publish_masks_) {
@@ -315,7 +356,7 @@ void DetectNode::createRosOutputs()
         "~/seg/timing", rclcpp::SensorDataQoS());
     }
   }
-  if (runtime_->detector_->hasField()) {
+  if (runtime_->hasField()) {
     if (publish_field_results_) {
       field_results_pub_ = create_publisher<interface_pkg::msg::FieldObservation>(
         "~/field/results", rclcpp::SensorDataQoS().keep_last(1));
@@ -347,8 +388,8 @@ void DetectNode::createRosOutputs()
     "~/active_task", rclcpp::QoS(1).reliable().transient_local(), mode_options);
   // 阶段重发不受 publish_status 控制；墙钟继续运行，ROS 时钟尚为零或回退时也能等待恢复。
   status_timer_ = create_wall_timer(std::chrono::seconds(1), [this] {
-      runtime_->workers_.rethrowIfFailed();
-      refreshActiveTask();
+      runtime_->rethrowIfFailed();
+      if (rclcpp::ok() && mode_pub_) {runtime_->refreshTask();}
       publishStatus();
     });
 }
@@ -378,8 +419,7 @@ rcl_interfaces::msg::SetParametersResult DetectNode::onParameters(
   rcl_interfaces::msg::SetParametersResult result;
   result.successful = false;
   const rclcpp::Parameter * requested_task = nullptr;
-  double seg_rate = runtime_->seg_max_fps_.load();
-  double field_rate = runtime_->field_max_fps_.load();
+  auto [seg_rate, field_rate] = runtime_->rates();
 
   // 整批参数先检查完，再改工作线程的状态。
   for (const auto & parameter : parameters) {
@@ -416,22 +456,9 @@ rcl_interfaces::msg::SetParametersResult DetectNode::onParameters(
   if (requested_task && !applyActiveTask(requested_task->as_string(), result.reason)) {
     return result;
   }
-  runtime_->seg_max_fps_.store(seg_rate);
-  runtime_->field_max_fps_.store(field_rate);
+  runtime_->setRates(seg_rate, field_rate);
   result.successful = true;
   return result;
-}
-
-bool DetectNode::segActive() const
-{
-  return (runtime_->stage_.active() & 1) != 0 && runtime_->detector_ &&
-         runtime_->detector_->hasSeg();
-}
-
-bool DetectNode::fieldActive() const
-{
-  return (runtime_->stage_.active() & 2) != 0 && runtime_->detector_ &&
-         runtime_->detector_->hasField();
 }
 
 // 在发布/采集闸门内切换阶段并清槽，之后公布稳定的源时间截止与代次。
@@ -447,18 +474,11 @@ bool DetectNode::applyActiveTask(const std::string & value, std::string & reason
     reason = "active_task must be seg or field; got '" + value + "'";
     return false;
   }
-  if (runtime_->detector_ && (((mask & 1) && !runtime_->detector_->hasSeg()) ||
-    ((mask & 2) && !runtime_->detector_->hasField())))
-  {
+  if (!runtime_->supportsTask(mask)) {
     reason = "active_task requests an engine that is not loaded";
     return false;
   }
-  // StageGate 管理采集与发布顺序；节点负责 ROS 消息适配。
-  runtime_->stage_.transition(mask, [this] {return now().nanoseconds();}, [&] {
-      runtime_->clearPendingFrames();
-    }, [&](std::int64_t stamp_ns, std::uint64_t epoch) {
-      publishTaskState(mask, stamp_ns, epoch);
-    });
+  runtime_->setTask(mask);
   return true;
 }
 
@@ -483,35 +503,10 @@ void DetectNode::publishTaskState(int mask, std::int64_t stamp_ns, std::uint64_t
   mode_pub_->publish(message);
 }
 
-// 与状态采样开关无关，保证模拟时钟从零启动、回退后追上时仍能恢复阶段通知。
-void DetectNode::refreshActiveTask()
-{
-  if (!rclcpp::ok() || !mode_pub_) {return;}
-  runtime_->stage_.refresh([this] {return now().nanoseconds();}, [&] {
-      runtime_->clearPendingFrames();
-    }, [this](int mask, std::int64_t stamp_ns, std::uint64_t epoch) {
-      publishTaskState(mask, stamp_ns, epoch);
-    });
-}
-
-// 提前检查减少无效工作；发布路径仍在闸门锁内再次调用，以阻断切换/重连竞争。
-bool DetectNode::frameIsCurrent(const Frame & frame, int task_bit) const
-{
-  if (!runtime_->workers_.running() ||
-    !runtime_->stage_.current(frame.generation, frame.camera_session))
-  {
-    return false;
-  }
-  if (task_bit == 1) {return segActive();}
-  if (task_bit == 2) {return fieldActive();}
-  // 原图路径已核对阶段/相机会话，还要求源时间不早于当前阶段起点。
-  return frame.stamp.nanoseconds() >= runtime_->stage_.cutoff();
-}
-
 // ---- DetectNode：同帧消息准备与最终发布 ----
 
 std::unique_ptr<sensor_msgs::msg::Image> DetectNode::prepareProcessed(
-  const Frame & frame, const std_msgs::msg::Header & header)
+  const DetectFrame & frame, const std_msgs::msg::Header & header)
 {
   // 有订阅者时为本次取出的结果准备实际输入帧；最终发布仍须通过阶段/相机会话复核。
   // raw_max_fps 只限制原图，不对这一路处理帧另行限速。
@@ -520,13 +515,12 @@ std::unique_ptr<sensor_msgs::msg::Image> DetectNode::prepareProcessed(
 }
 
 // 锁外转换完整同帧消息，锁内复核阶段/相机会话并移交所有权。
-void DetectNode::publishSeg(const Frame & frame, const SegRun & run)
+bool DetectNode::publishSeg(const DetectFrame & frame, const SegRun & run)
 {
-  if (!frameIsCurrent(frame, 1)) {return;}
   const auto t0 = std::chrono::steady_clock::now();
   // 分割消息在锁外准备；闸门内按处理帧 → 检测 → 掩膜 → 耗时发布。
   std_msgs::msg::Header header;
-  header.stamp = frame.stamp;
+  header.stamp = rclcpp::Time(frame.stamp_ns);
   header.frame_id = frame_id_;
 
   // 锁外：处理帧（可选）、检测框与标签掩膜全部先组好。
@@ -544,10 +538,7 @@ void DetectNode::publishSeg(const Frame & frame, const SegRun & run)
     mask = std::make_unique<sensor_msgs::msg::Image>(toLabelMaskImage(run.label_mask, header));
   }
 
-  {
-    // 发布闸门：推理期间可能已切换阶段，旧代次结果在这里整体丢弃（含处理帧与耗时消息）。
-    auto gate = runtime_->stage_.lockPublication();
-    if (!frameIsCurrent(frame, 1)) {return;}
+  return runtime_->publishCurrent(frame, 1, [&] {
     if (processed) {processed_pub_->publish(std::move(processed));}
     if (detections) {seg_det_pub_->publish(std::move(detections));}
     if (mask) {seg_mask_pub_->publish(std::move(mask));}
@@ -566,32 +557,26 @@ void DetectNode::publishSeg(const Frame & frame, const SegRun & run)
       timing.instances = run.detections.size();
       seg_timing_pub_->publish(timing);
     }
-  }
-  runtime_->seg_meter_.record(run.inference_ms);
-  runtime_->seg_gpu_ms_.store(run.gpu_ms);
-  runtime_->seg_post_ms_.store(run.post_ms);
+  });
 }
 
 // 场地观测与处理帧共用源图 header；仅 ok 且 committed 的可用几何能成为有效观测。
 // 状态名或历史角点本身不能代替提交标志，候选和无效帧仍保留各自诊断字段。
-void DetectNode::publishField(const Frame & frame, const FieldResult & run)
+bool DetectNode::publishField(const DetectFrame & frame, const FieldResult & run)
 {
-  if (!frameIsCurrent(frame, 2)) {return;}
   const auto t0 = std::chrono::steady_clock::now();
   // 纯算法结果先经 ROS 转换；闸门内按处理帧 → 观测 → 耗时发布。
   std_msgs::msg::Header header;
-  header.stamp = frame.stamp;
+  header.stamp = rclcpp::Time(frame.stamp_ns);
   header.frame_id = frame_id_;
   // 与 seg 阶段相同：结果消息用的那一帧与结果一起发出，两者 header 逐字段一致。
   auto processed = prepareProcessed(frame, header);
   std::unique_ptr<interface_pkg::msg::FieldObservation> observation;
   if (field_results_pub_ && field_results_pub_->get_subscription_count() > 0) {
     observation = std::make_unique<interface_pkg::msg::FieldObservation>(
-      toFieldObservation(run, runtime_->detector_->config().field, frame.image.size(), header));
+      toFieldObservation(run, runtime_->fieldConfig(), frame.image.size(), header));
   }
-  {
-    auto gate = runtime_->stage_.lockPublication();
-    if (!frameIsCurrent(frame, 2)) {return;}
+  return runtime_->publishCurrent(frame, 2, [&] {
     if (processed) {processed_pub_->publish(std::move(processed));}
     if (observation) {field_results_pub_->publish(std::move(observation));}
     const double publish_ms = std::chrono::duration<double, std::milli>(
@@ -608,29 +593,18 @@ void DetectNode::publishField(const Frame & frame, const FieldResult & run)
       timing.instances = run.ok && run.committed ? 1 : 0;
       field_timing_pub_->publish(timing);
     }
-  }
-  runtime_->field_meter_.record(run.ms_total);
-  runtime_->field_post_ms_.store(run.ms_warp + run.ms_split);
+  });
 }
 
-void DetectNode::publishRaw(const Frame & frame)
+void DetectNode::publishRaw(const DetectFrame & frame)
 {
-  // 没有订阅者就不做图像转换，然后再套帧率限制。
-  if (!raw_pub_ || raw_pub_->get_subscription_count() == 0) {return;}
-
-  if (!frameIsCurrent(frame, 0) ||
-    !runtime_->raw_limiter_.allow(std::chrono::steady_clock::now(), raw_max_fps_)) {return;}
-
   std_msgs::msg::Header header;
-  header.stamp = frame.stamp;
+  header.stamp = rclcpp::Time(frame.stamp_ns);
   header.frame_id = frame_id_;
-  // 锁外完成唯一一次整帧拷贝；闸门内只核对代次并移交所有权。
   auto message = vision_ros::makeBgrImageMessage(frame.image, header);
-  // 原图同样按代次过滤，切换后已排队的旧帧不再发布，避免图传画面回跳。
-  auto gate = runtime_->stage_.lockPublication();
-  if (!frameIsCurrent(frame, 0)) {return;}
-  raw_pub_->publish(std::move(message));
-  runtime_->raw_published_.fetch_add(1);
+  runtime_->publishCurrent(frame, 0, [&] {
+    raw_pub_->publish(std::move(message));
+  });
 }
 
 // ---- 状态与部署诊断 ----
@@ -649,32 +623,28 @@ void DetectNode::publishStatus()
 {
   if (!rclcpp::ok() || !status_pub_) {return;}
 
-  const double capture_fps = runtime_->capture_window_.rate(runtime_->captured_frames_.load());
-  const double seg_fps = runtime_->seg_window_.rate(runtime_->seg_meter_.count());
-  const double field_fps = runtime_->field_window_.rate(runtime_->field_meter_.count());
-  const double raw_fps = runtime_->raw_window_.rate(runtime_->raw_published_.load());
-
+  const auto sample = runtime_->sampleStatus();
   interface_pkg::msg::DetectorStatus status;
   status.header.stamp = now();
   status.header.frame_id = frame_id_;
-  status.capture_fps = capture_fps;
-  status.seg_fps = seg_fps;
-  status.field_fps = field_fps;
-  status.seg_inference_ms = runtime_->seg_meter_.latencyMs();
-  status.field_inference_ms = runtime_->field_meter_.latencyMs();
-  status.raw_fps = raw_fps;
+  status.capture_fps = sample.capture_fps;
+  status.seg_fps = sample.seg_fps;
+  status.field_fps = sample.field_fps;
+  status.seg_inference_ms = sample.seg_inference_ms;
+  status.field_inference_ms = sample.field_inference_ms;
+  status.raw_fps = sample.raw_fps;
   status.raw_subscribers = raw_pub_ ? raw_pub_->get_subscription_count() : 0;
-  status.inference_replaced = runtime_->inference_slot_.overwritten();
-  status.raw_replaced = runtime_->raw_slot_.overwritten();
-  status.camera_reopens = runtime_->camera_reopens_.load();
-  status.seg_gpu_ms = runtime_->seg_gpu_ms_.load();
-  status.seg_post_ms = runtime_->seg_post_ms_.load();
+  status.inference_replaced = sample.inference_replaced;
+  status.raw_replaced = sample.raw_replaced;
+  status.camera_reopens = sample.camera_reopens;
+  status.seg_gpu_ms = sample.seg_gpu_ms;
+  status.seg_post_ms = sample.seg_post_ms;
   status.field_gpu_ms = 0.0;
-  status.field_post_ms = runtime_->field_post_ms_.load();
-  status.seg_skipped = runtime_->seg_skipped_.load();
-  status.field_skipped = runtime_->field_skipped_.load();
-  status.seg_active = segActive();
-  status.field_active = fieldActive();
+  status.field_post_ms = sample.field_post_ms;
+  status.seg_skipped = sample.seg_skipped;
+  status.field_skipped = sample.field_skipped;
+  status.seg_active = sample.seg_active;
+  status.field_active = sample.field_active;
   status.serial_inference = true;
   status_pub_->publish(status);
 
@@ -682,18 +652,15 @@ void DetectNode::publishStatus()
                        "capture %.1f fps | seg %.1f fps %.1f ms (gpu %.1f post %.1f) | "
                        "field %.1f fps %.1f ms (gpu %.1f post %.1f) | "
                        "raw %.1f fps to %lu | replaced %lu/%lu | result replaced %lu",
-                       capture_fps, seg_fps, runtime_->seg_meter_.latencyMs(),
-                       runtime_->seg_gpu_ms_.load(), runtime_->seg_post_ms_.load(),
-                       field_fps, runtime_->field_meter_.latencyMs(), 0.0,
-                       runtime_->field_post_ms_.load(), raw_fps,
+                       sample.capture_fps, sample.seg_fps, sample.seg_inference_ms,
+                       sample.seg_gpu_ms, sample.seg_post_ms,
+                       sample.field_fps, sample.field_inference_ms, 0.0,
+                       sample.field_post_ms, sample.raw_fps,
                        static_cast<unsigned long>(
                          raw_pub_ ? raw_pub_->get_subscription_count() : 0),
-                       static_cast<unsigned long>(runtime_->inference_slot_.overwritten()),
-                       static_cast<unsigned long>(runtime_->raw_slot_.overwritten()),
-                       static_cast<unsigned long>(runtime_->result_slot_.overwritten()));
+                       static_cast<unsigned long>(sample.inference_replaced),
+                       static_cast<unsigned long>(sample.raw_replaced),
+                       static_cast<unsigned long>(sample.result_replaced));
 }
-
-
-// 采集、推理、原图和结果线程在 detect_workers.cpp。连续读失败次数也在那里。
 
 RCLCPP_COMPONENTS_REGISTER_NODE(DetectNode)

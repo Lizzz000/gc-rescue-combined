@@ -43,7 +43,7 @@
 2. `src/bringup_pkg/runtime/core.py`：唯一角色表。
 3. `src/bringup_pkg/runtime/ros/launch.py`：校验配置、写出参数文件、按角色启动。
 4. `src/bringup_pkg/config/rescue.yaml` 与 `rescue_advanced.yaml`：日常项和其余参数。
-5. `src/vision_pkg/app/vision_runtime.cpp`，然后 `node/detect_node.cpp`、`camera/camera.cpp`、`yolo/cuda/nvmm_preprocess.hpp`、`stream/mjpeg/mjpeg.cpp`。
+5. `src/vision_pkg/app/vision_runtime.cpp`，然后 `runtime/detect_runtime.cpp`（采集、推理、帧发布和停机）和 `runtime/stream_runtime.cpp`（同帧配对、编码与图传）。ROS 接口在 `node/detect_node.cpp` 和 `node/stream_node.cpp`。
 6. `src/track_pkg/node/track_node.cpp` 与 `select_node.cpp`。
 7. `src/mission_pkg/control/controller.hpp`，然后 `node/mission_node.cpp`、`target_node.cpp`、`safety_node.cpp`。
 8. `src/bridge_pkg/protocol/usb_protocol.hpp`，然后 `state/bridge_transactions.cpp`（到达、ROI 与命令回执）和 `node/bridge_io.cpp`（USB 轮询与 ROS 服务）。

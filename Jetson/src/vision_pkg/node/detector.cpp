@@ -1,4 +1,4 @@
-// Detector 的创建、分割和场地转发。话题和线程在 detect_node.cpp、detect_workers.cpp。
+// Detector 的创建、分割和场地转发。线程由 runtime/detect_runtime.cpp 管理。
 
 #include "node/detector.hpp"
 
