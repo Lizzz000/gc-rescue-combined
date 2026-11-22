@@ -18,6 +18,11 @@ def _number(value):
 
 
 def _typed(name, value, kind):
+    # 这些值会在节点自身校验之前送到 V4L2；先拒绝字符串、布尔值和异常亮度。
+    if kind == 'uvc_integer' and type(value) is not int:
+        raise ConfigurationError(f'{name}: expected an integer, got {value!r}')
+    if name == 'vision.detect.camera_brightness' and (type(value) is not int or not -1 <= value <= 255):
+        raise ConfigurationError(f'{name}: expected an integer in [-1, 255], got {value!r}')
     if kind == 'numbers':
         # ARRAY_EXPANSION 按 [lo,hi] 下标映射节点标量键，形状必须在此确认。
         if not isinstance(value, list) or len(value) != 2:

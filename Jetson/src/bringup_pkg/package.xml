@@ -14,6 +14,7 @@
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>v4l-utils</exec_depend>
   <!-- 装配层启动以下已安装包，不把业务代码编译进 launch 或配置解析器。 -->
   <exec_depend>interface_pkg</exec_depend>
   <exec_depend>vision_pkg</exec_depend>

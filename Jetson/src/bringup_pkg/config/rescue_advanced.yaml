@@ -32,9 +32,25 @@ vision:
     publish_processed: true
     # 各 max_fps 的 0 表示不额外限速，实际速度仍受相机和处理吞吐约束。
     raw_max_fps: 100.0
-    # 自动 GStreamer 管线在每次打开相机时设置亮度；-1 为不修改。
-    # 150 是当前光照下的临时标定值，其他光照与场地仍需验证。
-    camera_brightness: 150
+    # 本场 USB 相机。启动前写入并回读；自动 GStreamer 管线重开时复用同一亮度。-1 跳过亮度。
+    camera_brightness: 175
+    camera_controls:
+      # 先切手动曝光；曝光时间单位为 100 µs，150 即 15 ms。
+      auto_exposure: 1
+      exposure_time_absolute: 150
+      exposure_dynamic_framerate: 0
+      # 由相机跟踪白平衡和焦点，不写手动色温或焦距。
+      white_balance_automatic: 1
+      focus_automatic_continuous: 1
+      contrast: 68
+      saturation: 90
+      hue: 200
+      gamma: 138
+      gain: 48
+      sharpness: 2000
+      power_line_frequency: 1  # 50 Hz
+      backlight_compensation: 0
+      zoom_absolute: 100       # 100%
     # 仅 V4L2 后端请求驱动队列深度；GStreamer 不读取此值，其最新帧队列固定为 1。
     camera_buffer_size: 2
     # 留空使用自动管线；非空是开发用完整 GStreamer 管线，须自行保证输出格式及最新帧策略。

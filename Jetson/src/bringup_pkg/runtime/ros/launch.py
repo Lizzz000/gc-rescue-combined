@@ -10,6 +10,7 @@ import tempfile
 
 import yaml
 
+from ..camera_controls import apply_camera_controls
 from ..configuration import load_configuration
 from ..core import ROLES
 from ..yaml_io.reader import _package_directory
@@ -59,6 +60,10 @@ def _start(context):
     directory = os.environ.get('RESCUE_RUN_DIR') or tempfile.mkdtemp(prefix='rescue-run-')
     parameter_file = materialize(snapshot, directory)
     actions = [LogInfo(msg='Effective configuration: ' + str(Path(directory) / 'effective-configuration.json'))]
+    camera_controls = apply_camera_controls(snapshot)
+    if camera_controls:
+        readback = ', '.join(f'{name}={value}' for name, value in camera_controls.items())
+        actions.append(LogInfo(msg=f"USB camera {snapshot['nodes']['detect_node']['camera_device']}: {readback}"))
     for role in snapshot['roles']:
         package, executable, _ = ROLES[role]
         node = Node(

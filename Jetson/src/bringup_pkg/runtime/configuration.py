@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable
 
 # ROLES、FULL_ROLES、ConfigurationError 由本模块再导出，工具通过 cfg.ROLES 等访问，勿当作未用导入删除。
+from .camera_controls import CONTROLS_PREFIX
 from .core import FIELDS, FULL_ROLES, NODE_PARAMETERS, ROLES, ConfigurationError  # noqa: F401
 from .validation.rules import _typed, _validate
 from .yaml_io.reader import _flatten, _package_directory, _read_yaml, resolve_path
@@ -39,7 +40,9 @@ def _read_configuration(config_file, package_resolver):
     if repeated:
         raise ConfigurationError(f'configuration fields defined in both files: {sorted(repeated)}')
     values = {**basic_values, **advanced_values}
-    unknown, missing = set(values) - set(FIELDS), set(FIELDS) - set(values)
+    unknown = set(values) - set(FIELDS)
+    # 早期整份配置只登记亮度。未提供的扩展控件保留设备当前值。
+    missing = {name for name in FIELDS if name not in values and not name.startswith(CONTROLS_PREFIX)}
     if unknown or missing:
         raise ConfigurationError(f'configuration fields: unknown={sorted(unknown)}, missing={sorted(missing)}')
     origins = {name: str(path) for name in basic_values}

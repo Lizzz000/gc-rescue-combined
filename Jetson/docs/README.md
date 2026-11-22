@@ -123,9 +123,13 @@ ros2 launch bringup_pkg rescue.launch.py run:=all
 
 自动控制的通信保护复用类型 3/4，不增加心跳或改变载荷。正常丢目标时继续发送 `valid=0`，STM32 继续搜索；夹爪、转向和等待阶段也持续发送。MissionStatus 超过既有 500 ms 有效期时 bridge 停发周期流。STM32 在 USB 离线、会话改变或周期流断开达到 250 ms 后触发制动，确认停稳或制动达到 500 ms 后请求失能；这些是检测和制动期限，不保证 250 ms 内物理停稳。故障锁存至显式重新初始化，恢复连接不会自动续跑。启动前必须收到当前 USB 会话中的周期帧，详细时序见 [板间帧说明](usb-protocol.md)。
 
-自动 GStreamer 相机管线每次打开设备时应用 `rescue_advanced.yaml` 中的 `vision.detect.camera_brightness`；当前标定值为 150，设为 -1 可不修改设备亮度。该值只适用于自动 GStreamer 管线，其他后端或自定义管线需自行配置亮度；不同相机的支持范围和其他光照下的效果需实测。
+相机的现场标定保存在 `rescue_advanced.yaml` 的 `vision.detect.camera_brightness` 和 `vision.detect.camera_controls`。当前标定为亮度 175、对比度 68、饱和度 90、色调 200、伽马 138、增益 48、手动曝光 150，并开启自动白平衡和连续自动对焦。这些数值是当前相机的 V4L2 控件值。使用完整配置快照启动时，快照中的参数优先，现场改动应同步到实际启动配置。
 
-当前现场固定光照下，亮度 150 在远景和近景的短时采样均保持有效，无安全区画面的采样没有误报；这是识别有效率，不代表位置已按真实坐标标定。使用旧版完整配置快照时，需要补充 `vision.detect.camera_brightness` 字段。
+在 Jetson 上用正式入口启动 `vision`、`detect` 或 `all` 时，自动 GStreamer 管线会在创建节点前通过 `v4l2-ctl`（来自 `v4l-utils`）先设置曝光等自动模式，再写手动参数，并回读全部目标值。缺少工具、设备写入失败或回读不符都会中止本次启动。文件回放、自定义管线和单独的 `stream` 角色跳过这一步。检查正在出图的相机时可直接读取驱动值：
+
+```bash
+v4l2-ctl -d /dev/video0 --get-ctrl=brightness,contrast,saturation,hue,gamma,gain,auto_exposure,exposure_time_absolute,white_balance_automatic,focus_automatic_continuous
+```
 
 此前搬运实测中，车辆横向对准安全区后连续 796 帧未得到有效场地观测。当前 STM32 正式流程的横移、盲推和直线退出使用锁航向的定时动作，各段停稳后才交接。退出并确认送达后，用整区中心重新定位。返航采用 20 s 总时限，停稳后复核位姿。正式搬运须标定 `JETSON_AUTO_ALIGN_MAX_M`、`JETSON_AUTO_ROI_BACK_M`、`JETSON_AUTO_RECOVERY_BACK_M`。`JETSON_AUTO_SAFETY_STRAIGHT_M` 只在单次底盘联调中标定。位姿留在 STM32 本地，USB 类型和载荷沿用原协议，通信与底盘故障制动继续生效。轮滑和实际行程须在现场复核。详见 [里程计与定距控制](../../STM32/docs/ODOMETRY.md)。
 
