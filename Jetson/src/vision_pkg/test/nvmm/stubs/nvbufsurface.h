@@ -7,7 +7,15 @@ enum NvBufSurfaceColorFormat {
   NVBUF_COLOR_FORMAT_YUV420, NVBUF_COLOR_FORMAT_YUV420_ER,
   NVBUF_COLOR_FORMAT_BGRx, NVBUF_COLOR_FORMAT_NV12, NVBUF_COLOR_FORMAT_RGBA
 };
-enum NvBufSurfaceMemMapFlags {NVBUF_MAP_READ};
+enum NvBufSurfaceMemMapFlags {NVBUF_MAP_READ, NVBUF_MAP_WRITE};
+enum NvBufSurfaceLayout {NVBUF_LAYOUT_PITCH};
+enum NvBufSurfaceMemType {NVBUF_MEM_SURFACE_ARRAY};
+struct NvBufSurfaceCreateParams {
+  std::uint32_t width{}, height{};
+  NvBufSurfaceColorFormat colorFormat{};
+  NvBufSurfaceLayout layout{};
+  NvBufSurfaceMemType memType{};
+};
 struct NvBufSurfacePlaneParams {
   std::uint32_t num_planes{};
   std::uint32_t width[4]{}, height[4]{}, pitch[4]{}, offset[4]{}, psize[4]{}, bytesPerPix[4]{};
@@ -25,4 +33,7 @@ struct NvBufSurface {
 };
 int NvBufSurfaceMap(NvBufSurface *, int, int, NvBufSurfaceMemMapFlags);
 int NvBufSurfaceSyncForCpu(NvBufSurface *, int, int);
+int NvBufSurfaceSyncForDevice(NvBufSurface *, int, int);
 int NvBufSurfaceUnMap(NvBufSurface *, int, int);
+int NvBufSurfaceCreate(NvBufSurface **, std::uint32_t, NvBufSurfaceCreateParams *);
+int NvBufSurfaceDestroy(NvBufSurface *);

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <limits>
 #include <stdexcept>
@@ -300,8 +301,13 @@ std::optional<DetectorConfig> DetectNode::initializeDetector()
 {
   DetectorConfig detector_config = loadDetectorConfig();
 #if VISION_ENABLE_TENSORRT
-  // 分割只读自动管线留在 NVMM 上的 I420 或 BGRx。file、V4L2 和自定义管线没有这份契约。
+  // 验收只授权本次已选定的冻结图。普通 file 与自定义管线保持原来的准入规则。
+  const auto * replay_image = std::getenv("RESCUE_VALIDATION_NVMM_REPLAY");
+  camera_config_.validation_replay_nvmm =
+    detector_config.task != DetectTask::Field && camera_config_.backend == "file" &&
+    camera_config_.pipeline.empty() && replay_image && camera_config_.device == replay_image;
   if (detector_config.task != DetectTask::Field &&
+    !camera_config_.validation_replay_nvmm &&
     !(camera_config_.backend == "gstreamer" && camera_config_.pipeline.empty()))
   {
     throw rescue::ConfigurationError(

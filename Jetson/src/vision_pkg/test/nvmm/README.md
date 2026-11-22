@@ -11,4 +11,5 @@ ctest --test-dir /path/to/build/nvmm --output-on-failure
 测试直接调用采集路径使用的 `camera/gstreamer/nvmm_pixels.hpp`。桩仅提供 SDK
 结构和 map/sync/unmap 调用结果，不重写生产校验。覆盖默认 I420、全范围 I420、BGRx，
 自定义管线 BGR 约束、拒绝 NV12/RGBA、损坏平面和尺寸，以及失败/异常路径的解除映射。
+同一入口也测试 `camera/gstreamer/nvmm_replay.hpp` 的冻结图上传，覆盖 BGRx 像素顺序、带行填充的内存布局、设备同步失败和共享所有权。
 不能代替板端 GStreamer、实际像素色转或 CUDA 集成测试。

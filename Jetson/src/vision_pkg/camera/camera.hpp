@@ -52,6 +52,9 @@ struct CameraConfig
 
   /// 完整自定义 GStreamer 管线；为空时按相机配置生成默认管线。
   std::string pipeline;
+
+  // 仅由验收工具对本次冻结图片开启，不属于 ROS 参数。
+  bool validation_replay_nvmm{false};
 };
 
 /// 配置的宽和高都为正时，交付帧必须与之一致。任一请求尺寸 <= 0 表示不检查，调用方自行对齐下游 image_width。
@@ -76,7 +79,7 @@ struct CameraFrame
   /// file 后端没有曝光/驱动队列，此处记录节拍等待结束后的交付时刻；所有后端均用 steady_clock。
   std::chrono::steady_clock::time_point at{};
   /// H13：GStreamer 自动管线（TensorRT 构建）时为同一帧的 NvBufSurface（MJPEG→I420，raw→BGRx），
-  /// 推理只从这里取输入；file/V4L2/自定义管线为空，分割推理无法进行。持有期间占用一个 NVMM 缓冲。
+  /// 验收冻结图也可提供真实 BGRx NVMM。普通 file/V4L2/自定义管线不提供推理缓冲。
   std::shared_ptr<void> nvmm;
 };
 
@@ -138,6 +141,8 @@ private:
   std::string last_error_;
   // file 后端状态：still_ 非空表示单张图片模式；next_frame_ 是下一帧的节拍时刻。
   cv::Mat still_;
+  // 冻结图每次打开只上传一次；已交付帧持有表面的共享所有权。
+  std::shared_ptr<void> still_nvmm_;
   std::chrono::steady_clock::time_point next_frame_{};
 };
 

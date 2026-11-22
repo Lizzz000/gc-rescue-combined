@@ -86,9 +86,21 @@ python3 tools/validate.py contracts --config "$config" --output "$validation_dir
 
 登记了 `vision_contract_yolo_transfer` 的构建还需要与配置一致的引擎、标签和 `--inputs` 指定的 3 张冻结图。合同阶段以软件配置覆盖实车 USB 路径，检查五个测试包的必需 CTest 登记和本轮产生的 XML。`interface_pkg` 参与构建和安装核验。用 `contract-status.json` 检查缺失、过期、跳过和失败项，各包的结果汇总在 `contract-results/`。安全区实拍回放可通过 `FIELD_REPLAY_DIR` 提供标注数据，跳过和失败都会使 ROS 合同验收无法通过。
 
-### Jetson 整链
+### Jetson 冻结图整链
 
-用正式 `rescue.launch.py` 和匹配的 Jetson 相机、自动 GStreamer/NVMM 管线及 TensorRT 引擎补验。当前 `validate.py capture` 的分割与整链场景会把图片设为 `file` 相机后端，生产分割要求自动 GStreamer/NVMM。该输入路径需更新并验证后，才能用 `capture` 记录当前整链证据。
+在 Jetson 上加载 ROS 2 Humble 和上一步的验收安装。输入目录放 3 张不同的 JPG/PNG，配置须有本机能够加载的 TensorRT 引擎和类别表，并通过 `run:=all` 的配置校验。要覆盖成功运输，至少一张图须同时满足货物 ROI 规则和目的区识别条件。
+
+```bash
+python3 tools/validate.py capture --config "$config" --inputs /path/to/frozen-images \
+  --output "$validation_dir/capture" --build "$validation_dir/build" \
+  --install "$validation_dir/install"
+```
+
+回放在生产推理入口前为本轮冻结图上传 BGRx NVMM，每次打开只上传一次。整链的 STM32 和 S288 各走本轮自建伪终端，报告保留 USB 帧和 S288 反馈证据。送达命令确认到 `LocalizingStart` 后，测试端再模拟重找。该场景验证真实 TensorRT 分割、ROS 话题与服务、图传及串口软件握手，实际相机、底盘运动和夹爪力学另在实车验收。
+
+### 实车整链
+
+使用正式 `rescue.launch.py` 和匹配的相机、自动 GStreamer/NVMM 管线及 TensorRT 引擎。
 
 1. 核对 `all` 为 7 个进程、8 个节点，`vision` 在同一进程运行检测和图传。让 Bridge 退出后，核对正式 launch 关闭本次全栈进程。
 2. 让 `MissionStatus` 超过配置的有效期，确认 Bridge 停止发送类型 3/4 周期帧。

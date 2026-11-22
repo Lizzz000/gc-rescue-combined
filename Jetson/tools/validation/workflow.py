@@ -37,13 +37,15 @@ ROOT = Path(__file__).resolve().parents[2]
 BASELINE = 'c1f83e9ed987d6dd24bc59641e22f6b2a44f6717'
 MISSION_CONTRACT = 'stm32-handshake-v4'
 CAPTURE_SCENARIOS = (('detect', (0, 1, 2)), ('clock', (0,)), ('chain', (0, 1, 2)))
+CAPTURE_REPLAY_ENV = 'RESCUE_VALIDATION_NVMM_REPLAY'
+LOCALIZING_START = 9  # MissionStatus.CYCLE_LOCALIZING_START
 
 # 验收要求独立于 CTest 实际登记，避免漏掉一个测试后仍给出通过结论。
 REQUIRED_CONTRACTS = {
     'vision_pkg': ('test_field_matrix', 'test_field_sequence', 'test_field_replay',
                    'test_field_colour', 'test_corner_order', 'test_field_centers',
                    'test_field_truth', 'test_field_split', 'test_field_geometry',
-                   'test_nvmm_pixels', 'test_postprocess', 'test_image_view'),
+                   'test_nvmm_pixels', 'test_nvmm_replay', 'test_postprocess', 'test_image_view'),
     'track_pkg': ('test_ocsort_core', 'test_tracking_core'),
     'mission_pkg': ('test_mission_host',),
     'bridge_pkg': ('test_bridge_core_host', 'test_bridge_runtime_host', 'test_cdc_write',
@@ -318,10 +320,18 @@ def executable(install, package, name):
     raise CapabilityMissing(f'missing executable {package}/{name} in {install}')
 
 
-def launch_case(args, snapshot, directory, *, clock=False):
+def launch_case(args, snapshot, directory, *, clock=False, replay=None):
     """同一有效参数启动基线/候选。"""
-    import yaml
     cfg = configuration()
+    env = os.environ.copy()
+    env.pop(CAPTURE_REPLAY_ENV, None)
+    if replay is not None:
+        device = str(replay.resolve())
+        values = snapshot['values']
+        require(not clock and values['vision.detect.camera_backend'] == 'file' and
+                values['vision.detect.camera_device'] == device,
+                'NVMM replay image does not match the validated file camera')
+        env[CAPTURE_REPLAY_ENV] = device
     directory.mkdir(parents=True, exist_ok=True)
     roles = snapshot['roles']
     role_executables = {}
@@ -346,7 +356,6 @@ def launch_case(args, snapshot, directory, *, clock=False):
                     'installed production launch/configuration differs from validated source: ' + relative)
             identity[relative] = row
         write_json(directory / 'launch-configuration-identity.json', identity)
-        env = os.environ.copy()
         env['RESCUE_RUN_DIR'] = str((directory / 'launch').resolve())
         return OwnedProcess(['ros2', 'launch', 'bringup_pkg', 'rescue.launch.py',
                               'config:=' + snapshot['configuration'], 'run:=' + snapshot['run']],
@@ -365,10 +374,11 @@ def launch_case(args, snapshot, directory, *, clock=False):
                       'def generate_launch_description():\n    return LaunchDescription([' + ','.join(actions) + '])\n', encoding='utf-8')
     write_json(directory / 'effective-configuration.json', snapshot)
     return OwnedProcess(['ros2', 'launch', str(launch.resolve())], directory / 'launcher.log',
-                        role_executables=role_executables)
+                         env=env, role_executables=role_executables)
 
 
-def case_snapshot(args, image=None, clock=False, directory=None, link_device=None, *, run='all'):
+def case_snapshot(args, image=None, clock=False, directory=None, link_device=None, *,
+                  run='all', gripper_device=None):
     """将场景覆盖值写入独立验收配置，再经生产装配器 load_configuration 读取；配置期能拦住哪些非法组合以 bringup 当前校验为准，其余在节点启动时暴露。"""
     import yaml
     cfg = configuration()
@@ -380,6 +390,8 @@ def case_snapshot(args, image=None, clock=False, directory=None, link_device=Non
                    'vision.detect.publish_masks': True, 'vision.detect.publish_timing': True,
                    'vision.stream.draw_masks': True, 'vision.stream.overlay_stats': False,
                    'vision.stream.stream_address': '127.0.0.1'})
+    if gripper_device is not None:
+        values['gripper.device'] = gripper_device
     with socket.socket() as channel:
         channel.bind(('127.0.0.1', 0))
         values['vision.stream.stream_port'] = channel.getsockname()[1]
@@ -387,7 +399,10 @@ def case_snapshot(args, image=None, clock=False, directory=None, link_device=Non
         import cv2
         decoded = cv2.imread(str(image))
         require(decoded is not None, 'fixed input cannot be decoded: ' + str(image))
+        require(decoded.shape[1] >= 2 and decoded.shape[0] >= 2,
+                'fixed input must be at least 2 by 2 pixels: ' + str(image))
         values.update({'vision.detect.camera_backend': 'file', 'vision.detect.camera_device': str(image.resolve()),
+                       'vision.detect.camera_brightness': -1, 'vision.detect.camera_pipeline': '',
                        'vision.detect.camera_fps': (original['values']['vision.detect.camera_fps']
                                                   if args.stage == 'performance' else 10),
                        'shared.image.width': decoded.shape[1], 'shared.image.height': decoded.shape[0]})
@@ -478,15 +493,17 @@ def resource_sample(owner):
     return sample
 
 
-def cleanup_case(record, observer, owner, http, can, snapshot, before, port):
+def cleanup_case(record, observer, owner, http, can, snapshot, before, port, *, gripper=None):
     """某一步清理失败也继续关闭其余自有资源，并在原始报告保留每个错误。"""
     errors = []
     for name, action in (
             ('http', lambda: http.stop() if http else None),
             ('launcher', lambda: record.update(shutdown=owner.stop(snapshot['roles'], port)) if owner else None),
+            ('gripper', lambda: gripper.close() if gripper else None),
             ('can', lambda: can.close() if can else None),
             ('observer', lambda: observer.close() if observer else None),
-            ('assets', lambda: record.update(assets_unchanged=asset_snapshot(snapshot) == before))):
+            ('assets', lambda: record.update(assets_unchanged=asset_snapshot(snapshot) == before)
+             if before is not None else None)):
         try:
             action()
         except BaseException as error:
@@ -738,7 +755,8 @@ def result_evidence(case):
                     action.get('success') is True, 'action terminal evidence missing or inconsistent')
             require(action['request_id'] not in request_ids, 'different actions reused a request ID')
             request_ids.add(action['request_id'])
-        commands = (('turn', 1, 4), ('safety_arrival', 2, 5), ('delivery', 4, 5), ('restart', 3, 0)) if field_executed else (('restart', 3, 0),)
+        commands = (('turn', 1, 4), ('safety_arrival', 2, 5),
+                    ('delivery', 4, LOCALIZING_START), ('restart', 3, 0)) if field_executed else (('restart', 3, 0),)
         for name, command_id, phase in commands:
             command = handshake.get(name)
             require(isinstance(command, dict) and type(command.get('command')) is int and
@@ -825,6 +843,7 @@ def capture_cases(capture):
 
 def capture(args):
     from .observations import Observer, MjpegClient, UsbProbe, value_record
+    from .s288_probe import S288Probe
     import rclpy
     args.output.mkdir(parents=True, exist_ok=True)
     require(args.inputs and args.inputs.is_dir(), '--inputs frozen directory is required')
@@ -833,29 +852,36 @@ def capture(args):
     identities = [fingerprint(path) for path in inputs]
     capture_inputs(identities)
     scenarios = capture_scenarios(inputs)
+    motor_id = configuration().load_configuration(args.config, 'all')['values']['gripper.id']
     rclpy.init()
     output = {'business_version': args.business_version, 'kind': args.kind,
               'mission_contract': MISSION_CONTRACT, 'cases': [], 'inputs': identities}
     try:
         for scenario, image in scenarios:
-            directory = args.output / f'{scenario}-{image.stem}'
+            directory = args.output / f'{scenario}-{image.name}'
             directory.mkdir(parents=True, exist_ok=True)
             clock = scenario == 'clock'
             run = 'all' if scenario == 'chain' else 'detect' if clock else 'vision'
-            can = UsbProbe(directory) if scenario == 'chain' else None
-            snapshot = case_snapshot(args, image if not clock else None, clock, directory,
-                                     can.device if can else None, run=run)
-            before = asset_snapshot(snapshot)
-            observer = Observer(snapshot, directory)
-            owner = None
-            http = None
-            record = {'scenario': scenario, 'input': fingerprint(image),
-                      'parameters': snapshot['values'], 'assets': before, 'status': 'failed'}
+            replay = None if clock else image
+            can = gripper = snapshot = before = observer = owner = http = None
+            record = {'scenario': scenario, 'input': fingerprint(image), 'status': 'failed'}
             output['cases'].append(record)
             try:
-                if can:
+                if scenario == 'chain':
+                    with defer_creation_interrupt():
+                        can = UsbProbe(directory)
+                        gripper = S288Probe(directory, motor_id)
+                snapshot = case_snapshot(args, replay, clock, directory, can.device if can else None,
+                                         run=run, gripper_device=gripper.device if gripper else None)
+                before = asset_snapshot(snapshot)
+                record.update(parameters=snapshot['values'], assets=before)
+                with defer_creation_interrupt():
+                    observer = Observer(snapshot, directory)
+                if gripper:
                     observer.pollers.append(can.poll)
-                owner = launch_case(args, snapshot, directory, clock=clock)
+                    observer.pollers.append(gripper.check)
+                with defer_creation_interrupt():
+                    owner = launch_case(args, snapshot, directory, clock=clock, replay=replay)
                 if scenario == 'clock':
                     record['result'] = clock_contract(observer, owner)
                 else:
@@ -896,20 +922,23 @@ def capture(args):
                         record['result']['handshake']['safety_arrival'] = mission_command(observer, can, owner, 2, 5)
                         can.require_paused(observer, owner)
                         record['result']['handshake']['release'] = gripper_action(observer, can, owner, 'release')
-                        # 伪终端模拟送达事件，只验证软件握手。
-                        record['result']['handshake']['delivery'] = mission_command(observer, can, owner, 4, 5)
+                        # STM32 伪终端报告送达，随后确认定位阶段再模拟重找。
+                        record['result']['handshake']['delivery'] = mission_command(
+                            observer, can, owner, 4, LOCALIZING_START)
                         record['result']['handshake']['restart'] = mission_command(observer, can, owner, 3, 0)
                     record['result']['mission_states'] = [row['value'] for row in observer.records['mission']]
                     record['result']['roi_diagnostics'] = [row['value'] for row in observer.records['roi']]
                     record['result']['task_states'] = copy.deepcopy(observer.states)
                 # 观察完成仍待清理核验；进程、输入和资产均满足条件后才记为 executed。
+                result_evidence(record)
                 record['status'] = 'observed_pending_shutdown'
             except BaseException as error:
                 record['error'] = str(error)
                 raise
             finally:
                 cleanup_case(record, observer, owner, http, can, snapshot, before,
-                             None if clock else snapshot['values']['vision.stream.stream_port'])
+                             snapshot['values']['vision.stream.stream_port'] if snapshot and not clock else None,
+                             gripper=gripper)
                 record['input_unchanged'] = fingerprint(image) == record['input']
                 if (record['status'] == 'observed_pending_shutdown' and not record['cleanup_errors'] and
                         record.get('shutdown', {}).get('clean') and record.get('assets_unchanged') and record['input_unchanged']):

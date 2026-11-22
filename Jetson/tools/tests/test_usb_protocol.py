@@ -273,6 +273,40 @@ class CaptureEvidenceContract(unittest.TestCase):
         workflow.result_evidence(second)
         self.assertEqual(workflow.semantic_result(first), workflow.semantic_result(second))
 
+    def test_successful_capture_checks_post_delivery_localization(self):
+        case = self.rejected_case()
+        result = case['result']
+        roi = result['/mission_node/roi_result']
+        roi.update(valid=True, passed=True, green_count=1)
+        result['mission_roi_wire'] = '010101'
+        result['mission_states'][-1].update(cycle_generation=3, transport_phase=1)
+        handshake = result['handshake']
+        del handshake['reject_open']
+        handshake.update(
+            field_executed=True, phase_after_roi=2,
+            turn=dict(command=1, phase=4, cycle_generation=2, roi_request_id=55),
+            safety_arrival=dict(command=2, phase=5, cycle_generation=2, roi_request_id=55),
+            delivery=dict(command=4, phase=9, cycle_generation=2, roi_request_id=55),
+            restart=dict(command=3, phase=0, cycle_generation=3),
+            release=dict(action_kind=2, request_id=3, accepted=True, success=True),
+        )
+        result['field_can'] = copy.deepcopy(result['seg_can'])
+        field_frames = []
+        for row in result['seg']:
+            header = row['processed']['header']
+            field = dict(header=header, valid=True, committed=True, corners=[], left_region=[],
+                         right_region=[], split_line=[], split_x=0)
+            safety = dict(header=header, valid=True, side=1, x=0.5, y=0.5)
+            field_frames.append(dict(source=row['source'], field=field, safety=safety))
+        result.update(field=field_frames, field_safety_pairs=field_frames, field_phase=dict(
+            task='field', epoch=2, stage_header=field_frames[0]['field']['header'],
+            source_frames=5, valid_geometry_frames=5, first_source=field_frames[0]['source'],
+            last_source=field_frames[-1]['source']))
+        workflow.result_evidence(case)
+        handshake['delivery']['phase'] = 5
+        with self.assertRaisesRegex(ContractFailure, 'delivery'):
+            workflow.result_evidence(case)
+
 
 class ChainSequenceContract(unittest.TestCase):
     def test_grasp_finishes_before_arrival_in_both_roi_branches(self):

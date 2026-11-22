@@ -16,6 +16,9 @@
 #include <opencv2/imgproc.hpp>
 
 #include "camera/neon/i420.hpp"
+#if VISION_ENABLE_NVMM
+#include "camera/gstreamer/nvmm_replay.hpp"
+#endif
 
 namespace {
 // 自动管线的组帧/丢帧顺序与 read() 的本地 I420 转 BGR 必须同时认这两个 fourcc。
@@ -170,6 +173,10 @@ bool UsbCamera::openFile()
 {
   // 先当图片读：成功就进入单张循环模式；否则当视频文件交给 OpenCV（FFmpeg 等后端）。
   still_ = cv::imread(config_.device, cv::IMREAD_COLOR);
+  if (config_.validation_replay_nvmm && still_.empty()) {
+    last_error_ = "NVMM validation replay requires a decodable still image";
+    return false;
+  }
   if (still_.empty() && !camera_.open(config_.device, cv::CAP_ANY)) {
     return false;
   }
@@ -179,6 +186,16 @@ bool UsbCamera::openFile()
     (still_.cols != config_.width || still_.rows != config_.height))
   {
     cv::resize(still_, still_, cv::Size(config_.width, config_.height));
+  }
+  if (config_.validation_replay_nvmm) {
+#if VISION_ENABLE_NVMM
+    still_nvmm_ = vision_camera::uploadReplayBgr(
+      still_.data, still_.cols, still_.rows, still_.step[0], last_error_);
+    if (!still_nvmm_) {return false;}
+#else
+    last_error_ = "NVMM validation replay is unavailable in this build";
+    return false;
+#endif
   }
   next_frame_ = std::chrono::steady_clock::now();
   return true;
@@ -231,6 +248,7 @@ bool UsbCamera::readFile(CameraFrame & out)
     out.at = {};
     return false;
   }
+  out.nvmm = still_nvmm_;
   last_error_.clear();
   return true;
 }
@@ -299,6 +317,7 @@ void UsbCamera::close()
     camera_.release();
   }
   still_.release();
+  still_nvmm_.reset();
 }
 
 // 供启动日志描述后端属性：帧率/格式可能只是驱动报值，缓冲数打印的是请求值（不是查询值），实际速率由节点统计。
