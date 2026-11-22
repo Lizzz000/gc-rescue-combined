@@ -7,7 +7,6 @@
 
 #include <chrono>
 #include <optional>
-#include <array>
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
 #include <vision_msgs/msg/detection2_d_array.hpp>
@@ -17,6 +16,7 @@
 #include <cstdint>
 #include <exception>
 #include <string>
+#include <string_view>
 #include <interface_pkg/msg/bridge_status.hpp>
 #include <interface_pkg/msg/roi_check.hpp>
 #include <interface_pkg/srv/check_roi.hpp>
@@ -24,9 +24,7 @@
 
 
 #include "transport/transport.hpp"
-#include "state/bridge_state.hpp"
-#include "protocol/arrival_point.hpp"
-#include "protocol/search_request.hpp"
+#include "state/bridge_transactions.hpp"
 
 class BridgeRuntime;
 namespace s288 { class Session; }
@@ -68,8 +66,8 @@ private:
 // ---- BridgeRuntime：CAN 会话与异步握手 ----
 // 所有入口共用节点默认互斥回调组，不创建执行器。自动夹爪在进程内用工作线程，不得阻塞 io()。
 // 节点必须比运行上下文存活更久。
-// 销毁前停止执行器访问。七槽队列保存发送机会，回复槽保存载荷；ROI 与命令各有独立等待。
-class BridgeRuntime
+// 销毁前停止执行器访问。发送队列保留机会，事务模块保存载荷和应答资格。
+class BridgeRuntime : private BridgeTransactions::Ports
 {
 public:
   using Clock = std::chrono::steady_clock;
@@ -96,7 +94,7 @@ public:
   };
   BridgeRuntime(
     rclcpp::Node & node, Config config, Ports ports, std::unique_ptr<CanTransport> transport);
-  ~BridgeRuntime();
+  ~BridgeRuntime() override;
   BridgeRuntime(const BridgeRuntime &) = delete;
   BridgeRuntime & operator=(const BridgeRuntime &) = delete;
 
@@ -113,7 +111,6 @@ public:
 
 private:
   friend struct BridgeRuntimeTestAccess;
-  struct CommandIdentity;
   // socket 准入与有界收发；打开或读写失败时本轮不再提交。
   void openSocket();
   void closeSocket(const std::string & reason);
@@ -123,40 +120,32 @@ private:
   void handleIoFailure(const std::exception & error);
   // ROS 输入只入队。周期载荷在写 socket 前由 currentFrame 重建。
   can_frame currentFrame(canid_t id) const;
-  // STM32 指令、ROI、转向授权和回复快照。
   bool handleCommand(const can_frame & frame);
-  void holdCoordinates();
-  void handleArrival();
-  void requestRoi();
-  void onRoiReply(
-    std::uint64_t generation,
-    rclcpp::Client<interface_pkg::srv::CheckRoi>::SharedFuture result);
-  void requestCommand(std::uint8_t command, std::uint32_t token = 0, bool delivery_query = false);
-  void onCommandReply(
-    std::uint64_t generation, std::uint8_t command, std::uint64_t requested_cycle_generation,
-    rclcpp::Client<interface_pkg::srv::MissionCommand>::SharedFuture result);
-  void refreshTurnRequest(Clock::time_point current, bool force = false);
-  bool turnAuthorized() const;
-  bool turnRequestCurrent() const;
-  bool commandAlreadyAccepted(std::uint8_t command, std::uint32_t token, bool delivery_query) const;
-  bool commandIdentityCurrent(const CommandIdentity & identity) const;
-  const CommandIdentity * deliveryQueryIdentity(std::uint32_t token) const;
-  void checkRequestTimeouts(Clock::time_point current = Clock::now());
-  void clearRequests();
   void missionRestarted();
-  void armReply(canid_t id, const can_frame & frame);
-  void armCommandReply(bool accepted, std::uint8_t command, std::uint32_t token);
-  // 命令 1/3 的成功要等 Mission 进入目标阶段；失败即使身份已变也要回拒绝。
-  void resolvePendingModeReply(Clock::time_point current);
-  bool switchConfirmed(std::uint8_t command) const;
-  bool switchFailed() const;
-  bool modeSwitchFailed(std::uint8_t command, std::uint64_t requested_generation) const;
-  // 重找被 Mission 接受后才停坐标并撤销旧路由，拒绝时不能提前作废。
-  void commitSearchAbort(std::uint64_t requested_cycle_generation);
-  void finishRoi(BridgeRoiResult result = {}, std::uint64_t request_id = 0);
   void handleArrivalPoint(std::uint8_t kind, std::uint32_t request_id);
-  void armGripperResult(const GripperResult & result);
   void pollGripper();
+
+  BridgeSourceTime sourceNow() const override {return {now().nanoseconds()};}
+  Clock::time_point monotonicNow() const override {return Clock::now();}
+  bool socketOpen() const override {return can_->socketOpen();}
+  bool serviceReady(BridgeTransactions::Service service) override;
+  std::int64_t sendRoi(std::uint64_t generation) override;
+  std::int64_t sendCommand(const BridgeTransactions::CommandRequest & command) override;
+  void cancelService(BridgeTransactions::Service service, std::int64_t request_id) override;
+  void queueReply(canid_t id) override
+  {
+    if (can_->socketOpen()) {queue_.queue(id, Clock::now());}
+  }
+  void dropReply(canid_t id) override {dropped_frames_ += queue_.drop(id);}
+  void dropRequest() override {++dropped_frames_;}
+  void setRequestError(std::string_view message) override {last_error_ = message;}
+  void warnRequest(const char * message) override;
+  void onRoiReply(
+    std::uint64_t generation, rclcpp::Client<interface_pkg::srv::CheckRoi>::SharedFuture result);
+  void onCommandReply(
+    const BridgeTransactions::CommandRequest & command,
+    rclcpp::Client<interface_pkg::srv::MissionCommand>::SharedFuture result);
+
   rclcpp::Time now() const {return node_.now();}
   rclcpp::Logger get_logger() const {return node_.get_logger();}
   rclcpp::Clock::SharedPtr get_clock() {return node_.get_clock();}
@@ -165,7 +154,7 @@ private:
   rclcpp::Node & node_;
   std::string can_interface_;
   std::unique_ptr<CanTransport> can_;
-  Clock::duration tx_queue_timeout_, request_timeout_;
+  Clock::duration tx_queue_timeout_;
   BridgeState state_;
   CanTxQueue queue_;
   CanPeriodicSchedule periodic_schedule_;
@@ -175,54 +164,9 @@ private:
   std::optional<Clock::time_point> motion_lease_suspended_until_;
   Config::GripperConfig gripper_config_;
   ArrivalPointSession arrival_point_;
-  SearchRequestSession search_request_;
   std::unique_ptr<s288::Session> gripper_;
   std::uint64_t tx_frames_{0}, rx_frames_{0}, dropped_frames_{0};
   std::string last_error_;
-  // ROI 与命令各一等待槽，可同时在途；五个回复快照独立于服务等待。
-  // roi_confirmation_ 是本机通过的 ROI，匹配 Mission 身份后才授权转向；turn_ 标识已入队的授权。
-  // 各命令缓存受理身份，共用192发送槽；1/2未缓存成功可在本趟后续阶段再询问Mission。
-  // 查询只补回执，不能新建运动或续期；205恢复始终由Mission判断当前资格。
-  // roi_attempted_ 防止重复到达把本机失败改成成功。
-  BridgeServiceRequest roi_request_, command_request_;
-  BridgeReplySlots replies_;
-  struct TurnIdentity
-  {
-    std::uint64_t roi_request_id;
-    BridgeDestination destination;
-    std::uint64_t cycle_generation;
-  };
-  std::optional<TurnIdentity> turn_;
-  std::optional<TurnIdentity> roi_confirmation_;
-  std::uint64_t roi_cycle_generation_{0};
-  bool roi_attempted_{false};
-  // 205立即撤销本轮运动授权，跨CAN重连保留；新search解除保持后才清除。
-  bool route_aborted_{false};
-  struct CommandIdentity
-  {
-    std::uint8_t command;
-    std::uint64_t expected_generation;
-    std::uint64_t roi_request_id;
-    BridgeDestination destination;
-    BridgeCyclePhase origin_phase;
-    bool delivery_query{false};
-  };
-  std::optional<CommandIdentity> pending_command_identity_, command_reply_identity_;
-  std::array<std::optional<CommandIdentity>, 4> accepted_commands_{};
-  // 最近已发起206保留不确定结果的完整身份；最近成功另存命令4缓存，均跨205/socket重连。
-  std::optional<CommandIdentity> last_delivery_request_;
-  std::uint32_t pending_command_token_{0};
-  // 命令 1/3 已开始切换、类型 7 尚未发出；原代次的 Fault 不能误判新搜索失败。
-  struct PendingModeReply
-  {
-    std::uint8_t command{0};
-    std::uint32_t token{0};
-    std::uint64_t requested_generation{0};
-    Clock::time_point deadline{};
-  };
-  std::optional<PendingModeReply> pending_mode_reply_;
-  Clock::time_point next_turn_;
-  // 空值表示尚无本轮结果；判定失败重放使用语义，不能反解 CAN 字节。
-  std::optional<bool> roi_passed_;
   Ports ports_;
+  BridgeTransactions transactions_;
 };

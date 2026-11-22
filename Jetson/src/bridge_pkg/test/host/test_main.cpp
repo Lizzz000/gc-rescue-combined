@@ -9,6 +9,7 @@ void testSearchReplyOrdering();
 void testArrivalPoint();
 void testMissionRestart();
 void testSearchRequest();
+void testBridgeTransactions();
 
 int main()
 {
@@ -21,5 +22,6 @@ int main()
   testArrivalPoint();
   testMissionRestart();
   testSearchRequest();
+  testBridgeTransactions();
   return finishTests("bridge_pkg");
 }

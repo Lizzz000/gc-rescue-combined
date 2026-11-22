@@ -16,20 +16,20 @@ struct BridgeRuntimeTestAccess
     return runtime.handleCommand(frame);
   }
   static const can_frame & reply(const BridgeRuntime & runtime)
-  {return runtime.replies_.frame(CanProtocol::COMMAND_RESULT_ID);}
+  {return runtime.transactions_.replyFrame(CanProtocol::COMMAND_RESULT_ID);}
   static void sendPeriodicFrame(BridgeRuntime & runtime) {runtime.sendPeriodicFrame();}
   static bool held(const BridgeRuntime & runtime) {return runtime.state_.locallyHeld();}
-  static bool aborted(const BridgeRuntime & runtime) {return runtime.route_aborted_;}
-  static bool authorized(const BridgeRuntime & runtime) {return runtime.turnAuthorized();}
-  static bool modePending(const BridgeRuntime & runtime) {return runtime.pending_mode_reply_.has_value();}
+  static bool aborted(const BridgeRuntime & runtime) {return runtime.transactions_.route_aborted_;}
+  static bool authorized(const BridgeRuntime & runtime) {return runtime.transactions_.turnAuthorized();}
+  static bool modePending(const BridgeRuntime & runtime) {return runtime.transactions_.pending_mode_reply_.has_value();}
   static bool routeCachesEmpty(const BridgeRuntime & runtime)
   {
-    for (const auto & accepted : runtime.accepted_commands_) {if (accepted) {return false;}}
-    return !runtime.roi_confirmation_ && !runtime.turn_ && !runtime.last_delivery_request_ &&
-      !runtime.command_reply_identity_ && !runtime.pending_command_identity_;
+    for (const auto & accepted : runtime.transactions_.accepted_commands_) {if (accepted) {return false;}}
+    return !runtime.transactions_.roi_confirmation_ && !runtime.transactions_.turn_ && !runtime.transactions_.last_delivery_request_ &&
+      !runtime.transactions_.command_reply_identity_ && !runtime.transactions_.pending_command_identity_;
   }
   static void expire(BridgeRuntime & runtime)
-  {runtime.checkRequestTimeouts(BridgeRuntime::Clock::now() + std::chrono::seconds(10));}
+  {runtime.transactions_.checkRequestTimeouts(BridgeRuntime::Clock::now() + std::chrono::seconds(10));}
   static void disconnect(BridgeRuntime & runtime) {runtime.closeSocket("host test disconnect");}
   static bool targetValid(const BridgeRuntime & runtime)
   {return runtime.currentFrame(CanProtocol::TARGET_ID).data[0] != 0;}

@@ -32,8 +32,8 @@ add_library(bridge_transport STATIC
 target_link_libraries(bridge_transport PUBLIC bridge_protocol)
 set_property(TARGET bridge_transport PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-add_library(bridge_state STATIC state/bridge_state.cpp)
-target_link_libraries(bridge_state PUBLIC bridge_protocol)
+add_library(bridge_state STATIC state/bridge_state.cpp state/bridge_transactions.cpp)
+target_link_libraries(bridge_state PUBLIC bridge_protocol PRIVATE bridge_transport)
 ament_target_dependencies(bridge_state PUBLIC interface_pkg)
 set_property(TARGET bridge_state PROPERTY POSITION_INDEPENDENT_CODE ON)
 
@@ -63,10 +63,19 @@ install(TARGETS bridge_components LIBRARY DESTINATION lib ARCHIVE DESTINATION li
 if(BUILD_TESTING)
   find_package(ament_cmake_test REQUIRED)
   find_package(teleop_pkg REQUIRED)
+  add_executable(test_bridge_core_host
+    test/host/test_main.cpp test/host/test_usb_protocol.cpp test/host/test_tx_queue.cpp
+    test/host/test_bridge_state.cpp test/host/test_arrival_point.cpp test/host/test_search_request.cpp
+    test/host/test_bridge_transactions.cpp)
+  target_link_libraries(test_bridge_core_host PRIVATE bridge_state bridge_transport)
+  ament_add_test(test_bridge_core_host COMMAND $<TARGET_FILE:test_bridge_core_host>
+    GENERATE_RESULT_FOR_RETURN_CODE_ZERO TIMEOUT 60)
+
   # 独立故障注入目标：编译生产代码，仅系统调用/ROS边界用桩，不链接真实设备后端。
   add_executable(test_bridge_runtime_host
     test/host/test_runtime_main.cpp test/host/test_bridge_runtime.cpp
-    node/bridge_io.cpp node/bridge_session.cpp state/bridge_state.cpp transport/transport.cpp)
+    node/bridge_io.cpp node/bridge_session.cpp state/bridge_state.cpp state/bridge_transactions.cpp
+    transport/transport.cpp)
   target_compile_features(test_bridge_runtime_host PRIVATE cxx_std_17)
   target_include_directories(test_bridge_runtime_host BEFORE PRIVATE
     test/host/runtime_stubs test/host/stubs test/host ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)

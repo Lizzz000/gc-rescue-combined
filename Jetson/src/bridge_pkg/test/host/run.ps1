@@ -22,7 +22,9 @@ $watch = [Diagnostics.Stopwatch]::StartNew()
   "$here\test_bridge_state.cpp" `
   "$here\test_arrival_point.cpp" `
   "$here\test_search_request.cpp" `
+  "$here\test_bridge_transactions.cpp" `
   "$package\state\bridge_state.cpp" `
+  "$package\state\bridge_transactions.cpp" `
   "$package\transport\transport.cpp" `
   "-o$out\bridge_host_tests.exe" *> $log
 $compile = $LASTEXITCODE
@@ -37,7 +39,10 @@ $tests = $LASTEXITCODE
 if ($tests -eq 0) {
   $suites = @(
     @{Name='bridge_runtime'; Includes=@("$here/runtime_stubs", $stubs, $here, $package, $src);
-      Sources=@("$here/test_runtime_main.cpp", "$here/test_bridge_runtime.cpp", "$package/node/bridge_io.cpp", "$package/node/bridge_session.cpp", "$package/state/bridge_state.cpp", "$package/transport/transport.cpp")},
+      Sources=@("$here/test_runtime_main.cpp", "$here/test_bridge_runtime.cpp",
+        "$package/node/bridge_io.cpp", "$package/node/bridge_session.cpp",
+        "$package/state/bridge_state.cpp", "$package/state/bridge_transactions.cpp",
+        "$package/transport/transport.cpp")},
     @{Name='cdc_write'; Includes=@("$here/posix_stubs", $stubs, $here, $package, $src);
       Sources=@("$here/test_cdc_write.cpp", "$package/transport/cdc/cdc.cpp")},
     @{Name='s288_timing'; Includes=@("$here/posix_stubs", $here, $package);

@@ -1,9 +1,6 @@
-// 阅读：每 5 毫秒的 io() 先处理超时和到达，再把待发帧交给 flushTxQueue。
-// 发送队列、状态和重连在 bridge_session.cpp。ROS 订阅也在那份文件的前半。
-// 帧里每个字段的含义在 protocol/usb_protocol.hpp。
+// 每 5 毫秒轮询 USB。事务模块处理到达及命令，ROS 服务通过这里提交。
 
 #include "node/bridge_node.hpp"
-#include "transport/cdc/cdc.hpp"
 
 // Copyright 2026 li
 // SPDX-License-Identifier: Apache-2.0
@@ -11,29 +8,26 @@
 
 #include <interface_pkg/app/core/recognition.hpp>
 #include <chrono>
-#include <cmath>
 #include <cstdint>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <utility>
-#include <vector>
 #include <exception>
 
 
-// ---- BridgeRuntime：CAN 事件与到达握手 ----
+// ---- BridgeRuntime：传输轮询 ----
 
 // 单轮顺序：服务超时 → socket 准入 → 有界读取 → 刷新转向授权 → 事件帧 → 一帧周期数据。
 // EINTR 计入收发预算；异常仍由本轮 catch 收尾。
 void BridgeRuntime::io()
 {
   try {
-    checkRequestTimeouts();
+    transactions_.checkRequestTimeouts(Clock::now());
     // 夹爪工作线程独立于 USB；断线期间也先保存其终态，重连后按编号查询。
     pollGripper();
     if (!ensureSocketReady()) {return;}
     if (!readAvailableFrames()) {return;}
-    refreshTurnRequest(Clock::now());
+    transactions_.refreshTurnRequest(Clock::now());
     if (!can_->socketOpen()) {return;}
     flushTxQueue();
     if (can_->socketOpen()) {sendPeriodicFrame();}
@@ -104,8 +98,7 @@ bool BridgeRuntime::readAvailableFrames()
   return true;
 }
 
-// 协议校验后按阶段与请求身份分流；已受理的重复命令只重发回执，在途重复不刷新截止。
-// 安全区到达先核对阶段再停坐标；转向完成必须已获授权，之后才调用 Mission。
+// 校验业务心跳及帧格式后，将合法事件交给对应入口。
 bool BridgeRuntime::handleCommand(const can_frame & frame)
 {
   if (!mission_watchdog_.alive({Clock::now()})) {return false;}
@@ -116,195 +109,51 @@ bool BridgeRuntime::handleCommand(const can_frame & frame)
     return true;
   }
   if (command.kind == CanProtocol::CommandKind::ARRIVAL) {
-    handleArrival();
+    transactions_.handleArrival();
     return true;
   }
   if (command.kind == CanProtocol::CommandKind::ARRIVAL_POINT) {
     handleArrivalPoint(command.command, command.token);
     return true;
   }
-  // 命令应答只有受理与拒绝两种载荷；拒绝同样回显收到的原始 token，不能替换成当前路由编号。
-  const auto reply = [this, &command](bool accepted) {
-      armCommandReply(accepted, command.command, command.token);
-    };
-  // 搜索在途重发不续期，已结束事务只补原结果。更旧 ID 不能重新调用 Mission。
-  if (command.command == CanProtocol::START_SEARCH) {
-    const auto decision = search_request_.onRequest(command.token);
-    if (decision == SearchRequestDecision::Reject) {
-      reply(false);
-      return true;
-    }
-    if (decision == SearchRequestDecision::Pending) {
-      ++dropped_frames_;
-      return true;
-    }
-    if (decision == SearchRequestDecision::Replay) {
-      reply(*search_request_.result());
-      return true;
-    }
-    // 新事务忙时的拒绝也是终态，不能让同 ID 在稍后变成一次新的模式切换。
-    if (pending_mode_reply_ || roi_request_.waiting() || command_request_.waiting()) {
-      reply(false);
-      return true;
-    }
-    requestCommand(command.command, command.token);
-    return true;
-  }
-  // 模式确认尚未回执时，同一命令的重发先丢掉。另起一条命令直接拒绝。
-  if (pending_mode_reply_) {
-    if (command.command == pending_mode_reply_->command) {
-      ++dropped_frames_;
-    } else {
-      reply(false);
-    }
-    return true;
-  }
-  const auto & mission = state_.missionState();
-  const bool current_route = !route_aborted_ && mission && mission->roi_request_id != 0 &&
-    mission->destination != BridgeDestination::None &&
-    command.token == static_cast<std::uint32_t>(mission->roi_request_id);
-  const bool transfer_route = current_route &&
-    (mission->cycle_phase == BridgeCyclePhase::WaitingTransfer ||
-    mission->cycle_phase == BridgeCyclePhase::LocalizingStart);
-  const bool current_delivery = transfer_route &&
-    mission->operation == BridgeOperation::Idle;
-  const bool delivery_query = command.command == CanProtocol::DELIVERY_COMPLETED &&
-    !current_delivery && deliveryQueryIdentity(command.token);
-  if (!delivery_query && (!current_route ||
-    (command.command == CanProtocol::DELIVERY_COMPLETED && !current_delivery)))
-  {
-    // 1/2/4先核对完整路由的低位；拒绝也回显收到的token，不拿当前token替换旧请求。
-    reply(false);
-    return true;
-  }
-  if (commandAlreadyAccepted(command.command, command.token, delivery_query)) {
-    reply(true);
-    command_reply_identity_->delivery_query = delivery_query;
-    return true;
-  }
-  // 原服务还在途时重复命令不消费新槽，也不能把未完成请求伪装成失败/成功。
-  if (command_request_.waiting() && command_request_.command() == command.command) {
-    ++dropped_frames_;
-    return true;
-  }
-  // 成功ROS回包丢失时，不从MissionStatus直接伪造成功：同趟后续阶段可再询问Mission。
-  // 查询不重新保持坐标或建立转向授权；Fault/205/换趟仍由前面的路由门和回复身份撤销。
-  const auto phase = state_.cyclePhase();
-  if (command.command == CanProtocol::SAFETY_ARRIVED) {
-    if (phase != BridgeCyclePhase::NavigatingSafety && !transfer_route) {
-      reply(false);
-      return true;
-    }
-    if (phase == BridgeCyclePhase::NavigatingSafety) {holdCoordinates();}
-  }
-  if (command.command == CanProtocol::TURN_COMPLETED && !turnAuthorized() &&
-    phase != BridgeCyclePhase::SwitchingField && phase != BridgeCyclePhase::NavigatingSafety)
-  {
-    reply(false);
-    return true;
-  }
-  requestCommand(command.command, command.token, delivery_query);
+  transactions_.handleMissionCommand(command.command, command.token);
   return true;
 }
 
-// 正式搬运在夹取并完成后退定距后发类型 16 请求 ROI；夹爪动作由类型 21 单独触发。
-// 首次到达先停坐标并确认，再请求 ROI；重复到达只重发当前轮结果。
-// 待转向时核对授权；仅本进程未尝试过 ROI 才能按已提交状态恢复，失败不能被查询改成成功。
-// 非寻找、检查、待转向或 ROI 失败阶段拒绝到达。
-void BridgeRuntime::handleArrival()
+bool BridgeRuntime::serviceReady(BridgeTransactions::Service service)
 {
-  if (route_aborted_) {
-    arrival_point_.authorizeRejectOpen();
-    armReply(CanProtocol::ARRIVAL_ACK_ID, CanProtocol::arrivalAck(false));
-    return;
-  }
-  const auto phase = state_.cyclePhase();
-  if (phase == BridgeCyclePhase::SearchingTarget) {
-    const bool duplicate = state_.locallyHeld();
-    holdCoordinates();
-    armReply(CanProtocol::ARRIVAL_ACK_ID, CanProtocol::arrivalAck());
-    if (!duplicate) {
-      roi_passed_.reset();
-      roi_confirmation_.reset();
-      roi_attempted_ = true;
-      roi_cycle_generation_ = state_.missionState()->cycle_generation;
-      requestRoi();
-    } else if (roi_passed_.has_value()) {
-      armReply(CanProtocol::ROI_RESULT_ID, replies_.frame(CanProtocol::ROI_RESULT_ID));
-    }
-    return;
-  }
-  if (phase == BridgeCyclePhase::CheckingRoi || phase == BridgeCyclePhase::WaitingTurn ||
-    phase == BridgeCyclePhase::RoiFailed)
-  {
-    // 重发是当前轮的确认机会，不重新发起 ROI，也不重放运输提交。
-    armReply(CanProtocol::ARRIVAL_ACK_ID, CanProtocol::arrivalAck());
-    if (phase == BridgeCyclePhase::WaitingTurn) {
-      // 尚未尝试ROI时显式查询可核对已提交身份；本机失败或放弃不能借重复200改成功。
-      if (!roi_attempted_ && state_.waitingTurn()) {
-        const auto & mission = *state_.missionState();
-        roi_confirmation_ = TurnIdentity{
-          mission.roi_request_id, mission.destination, mission.cycle_generation};
-      }
-      refreshTurnRequest(Clock::now(), true);
-      if (roi_attempted_ && roi_passed_.has_value() &&
-        (turnAuthorized() || roi_passed_ == false))
-      {
-        // 成功191丢失也须可查询；失败仍只重放失败，不能被迟到提交改成通过。
-        armReply(CanProtocol::ROI_RESULT_ID, replies_.frame(CanProtocol::ROI_RESULT_ID));
-      }
-    }
-    // 本地失败可能先于Mission终态，甚至遇到状态发布失败；CheckingRoi也能补失败结果。
-    // 只重发已保存的191，不再请求ROI；成功结果仍沿WaitingTurn的身份核对路径查询。
-    if ((phase == BridgeCyclePhase::RoiFailed && roi_passed_.has_value()) ||
-      (phase == BridgeCyclePhase::CheckingRoi && roi_passed_ == false))
-    {
-      armReply(CanProtocol::ROI_RESULT_ID, replies_.frame(CanProtocol::ROI_RESULT_ID));
-    }
-    return;
-  }
-  arrival_point_.authorizeRejectOpen();
-  armReply(CanProtocol::ARRIVAL_ACK_ID, CanProtocol::arrivalAck(false));
+  return service == BridgeTransactions::Service::Roi ?
+    ports_.roi_client->service_is_ready() : ports_.command_client->service_is_ready();
 }
 
-void BridgeRuntime::holdCoordinates()
-{
-  state_.holdCoordinates({now().nanoseconds()});
-}
-
-// ---- BridgeRuntime：服务请求与身份确认 ----
-
-// ROI 与命令各一等待槽；服务回包和 Mission 状态可乱序，双身份匹配才发193。
-// 收齐 191 通过与 193 后只启动一次去程转向，191 本身不授权转向。
-
-// 同类请求忙时忽略重复指令；服务缺席或超时均给失败快照，不延长旧等待。
-void BridgeRuntime::requestRoi()
+std::int64_t BridgeRuntime::sendRoi(std::uint64_t generation)
 {
   using CheckRoi = interface_pkg::srv::CheckRoi;
-  checkRequestTimeouts();
-  if (roi_request_.waiting()) {
-    ++dropped_frames_;
-    return;
-  }
-  if (!ports_.roi_client->service_is_ready()) {
-    finishRoi();
-    RCLCPP_WARN(get_logger(), "arrival ROI service is not ready");
-    return;
-  }
-  // 忙时不刷新截止；成功 begin 后捕获本代次，迟到服务响应不能完成重试中的新请求。
-  const auto generation = *roi_request_.begin({Clock::now()}, request_timeout_);
-  try {
-    const auto pending =
-      ports_.roi_client->async_send_request(
-      std::make_shared<CheckRoi::Request>(),
-      [this, generation](rclcpp::Client<CheckRoi>::SharedFuture result) {
-        onRoiReply(generation, std::move(result));
-      });
-    roi_request_.bind(generation, pending.request_id);
-  } catch (const std::exception & error) {
-    roi_request_.cancel();
-    last_error_ = error.what();
-    finishRoi();
+  return ports_.roi_client->async_send_request(
+    std::make_shared<CheckRoi::Request>(),
+    [this, generation](rclcpp::Client<CheckRoi>::SharedFuture result) {
+      onRoiReply(generation, std::move(result));
+    }).request_id;
+}
+
+std::int64_t BridgeRuntime::sendCommand(const BridgeTransactions::CommandRequest & command)
+{
+  using Command = interface_pkg::srv::MissionCommand;
+  auto request = std::make_shared<Command::Request>();
+  request->command = command.command;
+  request->roi_request_id = command.roi_request_id;
+  return ports_.command_client->async_send_request(
+    request, [this, command](rclcpp::Client<Command>::SharedFuture result) {
+      onCommandReply(command, std::move(result));
+    }).request_id;
+}
+
+void BridgeRuntime::cancelService(BridgeTransactions::Service service, std::int64_t request_id)
+{
+  if (service == BridgeTransactions::Service::Roi) {
+    ports_.roi_client->remove_pending_request(request_id);
+  } else {
+    ports_.command_client->remove_pending_request(request_id);
   }
 }
 
@@ -312,9 +161,7 @@ void BridgeRuntime::onRoiReply(
   std::uint64_t generation, rclcpp::Client<interface_pkg::srv::CheckRoi>::SharedFuture result)
 {
   const auto current = Clock::now();
-  // 使用同一次单调采样先过期再完成，恰好到截止也执行超时；通过代次检查后才读取结果。
-  checkRequestTimeouts(current);
-  if (!roi_request_.complete(generation, {current})) {return;}
+  if (!transactions_.acceptRoiReply(generation, current)) {return;}
   try {
     const auto & checked = result.get()->result;
     BridgeRoiResult outcome;
@@ -324,254 +171,30 @@ void BridgeRuntime::onRoiReply(
       outcome.destination = static_cast<BridgeDestination>(
         RecognitionValueValidation::cargoSide(checked.orange_count));
     }
-    finishRoi(outcome, checked.request_id);
-    refreshTurnRequest(current);
+    transactions_.finishRoi(outcome, checked.request_id);
+    transactions_.refreshTurnRequest(current);
   } catch (const std::exception & error) {
     last_error_ = error.what();
-    finishRoi();
-  }
-}
-
-// 服务应答回显本次命令；1/3 仍须等模式确认，4 成功表示已记录送达。
-void BridgeRuntime::requestCommand(std::uint8_t command, std::uint32_t token, bool delivery_query)
-{
-  using Command = interface_pkg::srv::MissionCommand;
-  checkRequestTimeouts();
-  if (command_request_.waiting()) {
-    ++dropped_frames_;
-    return;
-  }
-  if (!ports_.command_client->service_is_ready()) {
-    armCommandReply(false, command, token);
-    RCLCPP_WARN(get_logger(), "mission command service is not ready");
-    return;
-  }
-  const auto generation = *command_request_.begin({Clock::now()}, request_timeout_, command);
-  // handleCommand 已要求合法 Mission 心跳；必须在发送前保存，响应时状态可能已推进。
-  const auto requested_cycle_generation = state_.missionState()->cycle_generation;
-  pending_command_token_ = token;
-  pending_command_identity_.reset();
-  if (delivery_query) {
-    pending_command_identity_ = *deliveryQueryIdentity(token);
-    pending_command_identity_->delivery_query = true;
-  } else if (const auto & mission = state_.missionState(); mission && command != CanProtocol::START_SEARCH) {
-    // 只有首次203从WaitingTurn开始切field才递增代次；后续阶段查询沿用当前代次。
-    pending_command_identity_ = CommandIdentity{
-      command, mission->cycle_generation +
-      (command == CanProtocol::TURN_COMPLETED &&
-      mission->cycle_phase == BridgeCyclePhase::WaitingTurn ? 1 : 0),
-      mission->roi_request_id, mission->destination, mission->cycle_phase};
-  }
-  try {
-    auto request = std::make_shared<Command::Request>();
-    request->command = command;
-    if (pending_command_identity_) {
-      request->roi_request_id = pending_command_identity_->roi_request_id;
-    }
-    const auto pending = ports_.command_client->async_send_request(
-      request,
-      [this, command, generation, requested_cycle_generation](rclcpp::Client<Command>::SharedFuture result) {
-        onCommandReply(generation, command, requested_cycle_generation, std::move(result));
-      });
-    command_request_.bind(generation, pending.request_id);
-    if (command == CanProtocol::DELIVERY_COMPLETED && !delivery_query) {
-      last_delivery_request_ = pending_command_identity_;
-    }
-  } catch (const std::exception & error) {
-    command_request_.cancel();
-    pending_command_identity_.reset();
-    last_error_ = error.what();
-    armCommandReply(false, command, token);
+    transactions_.finishRoi();
   }
 }
 
 void BridgeRuntime::onCommandReply(
-  std::uint64_t generation, std::uint8_t command, std::uint64_t requested_cycle_generation,
+  const BridgeTransactions::CommandRequest & command,
   rclcpp::Client<interface_pkg::srv::MissionCommand>::SharedFuture result)
 {
   const auto current = Clock::now();
-  checkRequestTimeouts(current);
-  // 与 ROI 相同：先核对截止和代次再 get，失效回包不能读取 future 或消费新等待。
-  if (!command_request_.complete(generation, {current})) {return;}
-  const auto identity = std::exchange(pending_command_identity_, std::nullopt);
-  // 205只撤销旧回复资格，不取消原等待或回滚Mission已经记录的投送。
-  // 新授权也不能接收旧服务的结论；先核对身份，再读取future。
+  if (!transactions_.acceptCommandReply(command.generation, current)) {return;}
   bool accepted = false;
   try {
     accepted = result.get()->accepted;
   } catch (const std::exception & error) {
     last_error_ = error.what();
   }
-  const auto token = pending_command_token_;
-  // 命令 1/3 的服务成功只表示已经去切换。类型 7 要等 field/seg 真正确认，失败也必须回拒绝。
-  if (command == CanProtocol::TURN_COMPLETED || command == CanProtocol::START_SEARCH) {
-    if (!accepted || modeSwitchFailed(command, requested_cycle_generation)) {
-      armCommandReply(false, command, token);
-      return;
-    }
-    if (command == CanProtocol::START_SEARCH) {commitSearchAbort(requested_cycle_generation);}
-    if (switchConfirmed(command)) {
-      if (const auto & mission = state_.missionState(); mission && command != CanProtocol::START_SEARCH) {
-        accepted_commands_[command - 1] = CommandIdentity{
-          command, mission->cycle_generation, mission->roi_request_id,
-          mission->destination, mission->cycle_phase, false};
-      }
-      armCommandReply(true, command, token);
-      return;
-    }
-    pending_mode_reply_ = PendingModeReply{
-      command, token, requested_cycle_generation, current + request_timeout_};
-    return;
-  }
-  // 这一代已经结束。身份对不上说明路由在调用期间变了，回拒绝，不能把回执吞掉。
-  if (!accepted || !identity || !commandIdentityCurrent(*identity)) {
-    armCommandReply(false, command, token);
-    return;
-  }
-  accepted_commands_[command - 1] = identity;
-  armCommandReply(true, command, token);
+  transactions_.commandReply(command.command, command.requested_cycle_generation, accepted, current);
 }
 
-bool BridgeRuntime::turnAuthorized() const
+void BridgeRuntime::warnRequest([[maybe_unused]] const char * message)
 {
-  const auto & mission = state_.missionState();
-  return !route_aborted_ && roi_confirmation_ && state_.waitingTurn() && mission &&
-         roi_confirmation_->roi_request_id == mission->roi_request_id &&
-         roi_confirmation_->destination == mission->destination &&
-         roi_confirmation_->cycle_generation == mission->cycle_generation;
+  RCLCPP_WARN(get_logger(), "%s", message);
 }
-
-bool BridgeRuntime::commandAlreadyAccepted(
-  std::uint8_t command, std::uint32_t token, bool delivery_query) const
-{
-  const auto & accepted = accepted_commands_[command - 1];
-  if (!accepted || static_cast<std::uint32_t>(accepted->roi_request_id) != token) {return false;}
-  auto identity = *accepted;
-  // 当前投送必须匹配完整ROI；历史查询成功不能绕过下一趟的完整身份检查。
-  identity.delivery_query = delivery_query;
-  return commandIdentityCurrent(identity);
-}
-
-const BridgeRuntime::CommandIdentity * BridgeRuntime::deliveryQueryIdentity(std::uint32_t token) const
-{
-  // 成功事实和最近尝试分开，可能属于不同趟；未确认的新尝试不能挤掉已确认收据。
-  // 缓存未命中时查询仍占用唯一命令等待，不能用Later代替这个完整编号的应答。
-  for (const auto * identity : {&accepted_commands_[CanProtocol::DELIVERY_COMPLETED - 1],
-      &last_delivery_request_})
-  {
-    if (*identity && static_cast<std::uint32_t>((*identity)->roi_request_id) == token) {
-      return &**identity;
-    }
-  }
-  return nullptr;
-}
-
-bool BridgeRuntime::commandIdentityCurrent(const CommandIdentity & identity) const
-{
-  if (identity.delivery_query) {
-    const auto * known = deliveryQueryIdentity(static_cast<std::uint32_t>(identity.roi_request_id));
-    return known && known->roi_request_id == identity.roi_request_id;
-  }
-  const auto & mission = state_.missionState();
-  if (route_aborted_ || !mission || identity.roi_request_id != mission->roi_request_id ||
-    identity.destination != mission->destination) {return false;}
-  // 服务先于状态话题完成时也可重发已确认的回执；既不重做请求，也不解坐标保持。
-  if (identity.origin_phase == mission->cycle_phase &&
-    identity.expected_generation == mission->cycle_generation +
-    (identity.command == CanProtocol::TURN_COMPLETED &&
-    identity.origin_phase == BridgeCyclePhase::WaitingTurn ? 1 : 0)) {return true;}
-  if (identity.expected_generation != mission->cycle_generation) {return false;}
-  if (identity.command == CanProtocol::TURN_COMPLETED) {
-    return mission->cycle_phase == BridgeCyclePhase::SwitchingField ||
-           mission->cycle_phase == BridgeCyclePhase::NavigatingSafety;
-  }
-  // 到达、送达回执可能跨入起点定位阶段，仍须通过上面的完整路由核对。
-  return mission->cycle_phase == BridgeCyclePhase::WaitingTransfer ||
-         mission->cycle_phase == BridgeCyclePhase::LocalizingStart;
-}
-
-bool BridgeRuntime::turnRequestCurrent() const
-{
-  const auto & mission = state_.missionState();
-  return turn_ && turnAuthorized() && mission &&
-         turn_->roi_request_id == mission->roi_request_id &&
-         turn_->destination == mission->destination &&
-         turn_->cycle_generation == mission->cycle_generation;
-}
-
-void BridgeRuntime::armCommandReply(bool accepted, std::uint8_t command, std::uint32_t token)
-{
-  if (command == CanProtocol::START_SEARCH) {search_request_.complete(token, accepted);}
-  armReply(CanProtocol::COMMAND_RESULT_ID, CanProtocol::commandResult(accepted, command, token));
-}
-
-bool BridgeRuntime::switchFailed() const
-{
-  const auto & mission = state_.missionState();
-  if (!mission) {return false;}
-  return mission->cycle_phase == BridgeCyclePhase::Fault ||
-    mission->outcome == BridgeOutcome::Rejected ||
-    mission->outcome == BridgeOutcome::Timeout;
-}
-
-bool BridgeRuntime::modeSwitchFailed(
-  std::uint8_t command, std::uint64_t requested_generation) const
-{
-  // 新搜索可从 Fault 恢复；服务响应先到时，旧代 Fault 不是这次切换的终态。
-  const auto & mission = state_.missionState();
-  if (command == CanProtocol::START_SEARCH && mission &&
-    mission->cycle_generation <= requested_generation) {return false;}
-  return switchFailed();
-}
-
-bool BridgeRuntime::switchConfirmed(std::uint8_t command) const
-{
-  const auto & mission = state_.missionState();
-  if (!mission || switchFailed()) {return false;}
-  if (command == CanProtocol::TURN_COMPLETED) {
-    return !route_aborted_ &&
-      mission->cycle_phase == BridgeCyclePhase::NavigatingSafety &&
-      mission->destination != BridgeDestination::None;
-  }
-  if (command == CanProtocol::START_SEARCH) {
-    return !state_.locallyHeld() && mission->cycle_phase == BridgeCyclePhase::SearchingTarget;
-  }
-  return false;
-}
-
-void BridgeRuntime::commitSearchAbort(std::uint64_t requested_cycle_generation)
-{
-  state_.holdForSearch({now().nanoseconds()}, requested_cycle_generation);
-  // 若新搜索终态已先到，核心已经解除闭锁，不再等待下一次心跳清除此标志。
-  route_aborted_ = state_.locallyHeld();
-  arrival_point_.beginSearch();
-  dropped_frames_ += queue_.drop(CanProtocol::GRIPPER_RESULT_ID);
-  roi_confirmation_.reset();
-  accepted_commands_[CanProtocol::TURN_COMPLETED - 1].reset();
-  accepted_commands_[CanProtocol::SAFETY_ARRIVED - 1].reset();
-  command_reply_identity_.reset();
-  dropped_frames_ += queue_.drop(CanProtocol::COMMAND_RESULT_ID);
-  turn_.reset();
-  dropped_frames_ += queue_.drop(CanProtocol::TURN_REQUEST_ID);
-}
-
-void BridgeRuntime::resolvePendingModeReply(Clock::time_point current)
-{
-  if (!pending_mode_reply_) {return;}
-  const auto pending = *pending_mode_reply_;
-  if (modeSwitchFailed(pending.command, pending.requested_generation) || current >= pending.deadline) {
-    pending_mode_reply_.reset();
-    last_error_ = "recognition switch was not confirmed";
-    armCommandReply(false, pending.command, pending.token);
-    return;
-  }
-  if (!switchConfirmed(pending.command)) {return;}
-  pending_mode_reply_.reset();
-  if (const auto & mission = state_.missionState(); mission && pending.command != CanProtocol::START_SEARCH) {
-    accepted_commands_[pending.command - 1] = CommandIdentity{
-      pending.command, mission->cycle_generation, mission->roi_request_id,
-      mission->destination, mission->cycle_phase, false};
-  }
-  armCommandReply(true, pending.command, pending.token);
-}
-

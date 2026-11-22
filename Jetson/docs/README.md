@@ -46,7 +46,7 @@
 5. `src/vision_pkg/app/vision_runtime.cpp`，然后 `node/detect_node.cpp`、`camera/camera.cpp`、`yolo/cuda/nvmm_preprocess.hpp`、`stream/mjpeg/mjpeg.cpp`。
 6. `src/track_pkg/node/track_node.cpp` 与 `select_node.cpp`。
 7. `src/mission_pkg/control/controller.hpp`，然后 `node/mission_node.cpp`、`target_node.cpp`、`safety_node.cpp`。
-8. `src/bridge_pkg/protocol/usb_protocol.hpp`，然后 `node/bridge_io.cpp`。
+8. `src/bridge_pkg/protocol/usb_protocol.hpp`，然后 `state/bridge_transactions.cpp`（到达、ROI 与命令回执）和 `node/bridge_io.cpp`（USB 轮询与 ROS 服务）。
 9. `src/interface_pkg/msg/` 与 `src/interface_pkg/srv/`。
 10. `src/record_pkg/` 与 `src/teleop_pkg/` 各自阅读。
 
@@ -151,4 +151,4 @@ python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/manual_control.py
 
 `flowcharts/mission.svg` 是 CyclePhase 0–8，以及命令 1–4 怎样换阶段。枚举在 `controller.hpp` 第 34–45 行，服务在 `mission_node.cpp` 第 99–120 行。
 
-`flowcharts/usb.svg` 是 USB 握手顺序和两条中心周期帧。类型、载荷与失联制动规则见 [usb-protocol.md](usb-protocol.md)。到达分支在 `bridge_io.cpp` 的 `handleArrival`。
+`flowcharts/usb.svg` 是 USB 握手顺序和两条中心周期帧。类型、载荷与失联制动规则见 [usb-protocol.md](usb-protocol.md)。到达分支在 `state/bridge_transactions.cpp` 的 `handleArrival`。
