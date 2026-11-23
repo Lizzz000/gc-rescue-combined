@@ -34,7 +34,8 @@
             "name": "Debug-Auto",
             "inherits": "Debug",
             "cacheVariables": {
-                "JETSON_AUTO_ENABLED": "ON"
+                "JETSON_AUTO_ENABLED": "ON",
+                "JETSON_AUTO_DELIVERY_LIMIT": "0"
             }
         },
         {

@@ -195,7 +195,7 @@ mdh <SAFETY_X> 2
 
 ### 指定搬运趟数与 SWD 终态
 
-`JETSON_AUTO_DELIVERY_LIMIT` 指定本次启动的搬运趟数。`Debug-Auto` 默认值为 `0`，连续搬运。单绿验收设为 `1`。绿、橙各一块设为 `2`，绿色左投后继续取橙，右投并复定位后失能。以下命令在本机仓库根目录的 PowerShell 执行，ARM GNU 工具链需在 PATH 中。
+`JETSON_AUTO_DELIVERY_LIMIT` 指定本次启动的搬运趟数。`Debug-Auto` 预设显式设为 `0`，即使复用曾构建五趟的目录，重新按预设配置也恢复连续搬运。单绿验收时可在配置命令覆盖为 `1`。绿、橙各一块设为 `2`，绿色左投后继续取橙，右投并复定位后失能。以下命令在本机仓库根目录的 PowerShell 执行，ARM GNU 工具链需在 PATH 中。
 
 ```powershell
 $clionBin = 'C:/Program Files/JetBrains/CLion 2026.2.3.1/bin'
