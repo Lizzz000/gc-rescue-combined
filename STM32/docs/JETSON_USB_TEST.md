@@ -40,6 +40,40 @@ CAN1 只收发达妙电机。反馈要求 DLC=8，帧内电机 ID 为 1、2、3�
 
 上行只走 USB。三个电机保持 MIT 模式，反馈 ID 0，发送 ID 1–3。
 
+### Jetson 热烧录后无法枚举 STM32
+
+2026-11-23 现场反复出现 `device descriptor read/64` 和 `-110/-71`。在 Jetson 上手动复位专用 Realtek USB 2.0 集线器后，STM32 和夹爪立即恢复为 `ttyACM0`、`ttyACM1`。操作前先停稳车辆，停止 ROS launch、bridge 和夹爪程序。核对实物接线与下方命令的输出。目标集线器只接尚未枚举的 STM32 和空闲夹爪，树上唯一已枚举的下游设备应为夹爪 `2e3c:7640`，相机及其他设备均在别处。确认 STM32 的 by-id 缺失、夹爪的 by-id 存在，且 `fuser` 没有报告占用进程或访问错误。
+
+```bash
+lsusb -t
+lsusb -d 0bda:5489
+lsusb -d 2e3c:7640
+ls -l /dev/serial/by-id/
+sudo fuser -v /dev/serial/by-id/usb-Artery_*
+```
+
+满足上述条件后，手动输入刚核实的 Realtek **Bus、Device** 两个编号（如 `001 009`）。下列命令核对已打开设备的 VID/PID，只向该集线器发送一次复位。待串口重新出现，用 by-id 确认两只设备身份，枚举编号可能变化。
+
+```bash
+read -rp 'Realtek USB2 hub Bus Device: ' bus dev
+sudo python3 - "$bus" "$dev" <<'PY'
+import fcntl, os, sys
+from pathlib import Path
+bus, dev = map(int, sys.argv[1:])
+with open(f'/dev/bus/usb/{bus:03d}/{dev:03d}', 'r+b', buffering=0) as hub:
+    if hub.read(18)[8:12] != bytes.fromhex('da 0b 89 54'):
+        sys.exit('设备身份不符，已中止')
+    number = os.fstat(hub.fileno()).st_rdev
+    port = Path(f'/sys/dev/char/{os.major(number)}:{os.minor(number)}')
+    children = [(p.read_text().strip(), p.with_name('idProduct').read_text().strip())
+                for p in port.glob('*/idVendor')]
+    if children != [('2e3c', '7640')]:
+        sys.exit('目标下游设备与现场接线不符，已中止')
+    fcntl.ioctl(hub, 0x5514, 0)  # Linux USBDEVFS_RESET
+PY
+ls -l /dev/serial/by-id/
+```
+
 ## 手动速度联调
 
 1. 上电保持车体静止。姿态就绪后固件自动申请使能，三台电机提交零目标并反馈正常后进入 `MANUAL_READY`。准备期限为 1000 ms，未接管时可持续零速待机。
@@ -81,7 +115,16 @@ CAN1 只收发达妙电机。反馈要求 DLC=8，帧内电机 ID 为 1、2、3�
 
 左右横移为 0.30 m/s、0.70 s，盲推为 0.40 m/s、1.20 s，直线退出为 0.40 m/s、1.00 s。各段计时包含加速，到期提交零目标并等待停稳。正常丢目标沿用减速与停稳确认，通信或底盘故障沿用直接零目标和失能保护。
 
-正式盲推和直退各给减速送零、实测停稳两段各 1.5 s。三轮连续三组新反馈均不超过 0.20 rad/s 可确认停稳。若零速附近仍有速度估计偏置，也可从送零后开始连续核对 300 ms：三轮各自的编码器角度全程变化范围须在 0.006 rad 内，反馈速度均不超过 0.32 rad/s，有效实测陀螺偏航角速度不超过 0.05 rad/s。缺轮、跳帧、姿态过期或运动超限须重验，原截止时间继续计时。
+正式盲推和直退分别给减速送零、实测停稳两段各 1.5 s。三轮连续三组新反馈均不超过 0.20 rad/s 可确认停稳。若轮速估计在零速附近仍有偏置，底盘也会从送零起连续核对三轮编码器和实测陀螺。两组条件独立累计，达到其中一组即可确认停稳。
+
+| 连续观测 | 每轮编码角最大跨度 | 每轮速度绝对值上限 | 陀螺偏航角速度绝对值上限 |
+| --- | --- | --- | --- |
+| 300 ms | 0.006 rad | 0.32 rad/s | 0.05 rad/s |
+| 600 ms | 0.004 rad | 0.42 rad/s | 0.025 rad/s |
+
+两组均要求三轮反馈逐帧连续、位置有效、IMU 为新鲜实测值。缺轮、跳帧或姿态过期后须重新收集证据，1.5 s 截止时间继续计时。SWD 可查看 `encoder_stop_debug` 的拒绝原因和 `accepted`，取值 1 表示 300 ms 条件通过，2 表示 600 ms 条件通过。
+
+盲推或回撤送零后，若速度反馈抖动，而三轮角位置已连续 120 ms 稳定，可临时对三轮同时撤掉速度阻尼。收到各轮新反馈后再连续观察 600 ms。此时允许的瞬时反馈峰值为 0.80 rad/s，每轮仍须满足角跨度 0.004 rad、持续超速时间与累计往返行程限制，且平均绝对速度不超过 0.42 rad/s、实测偏航角速度不超过 0.025 rad/s。三轮重新收到常规阻尼命令并反馈后才允许续行。`encoder_stop_debug.accepted=3` 表示这条路径通过。`neutral_stop_debug` 保留了卸力、恢复的时间以及各轮的位置和速度证据。
 
 自动导航加速可通过 CMake 的 `CHASSIS_NAV_SPEED_CONTROLLER` 选择实验方法。默认 `0` 沿用逐拍加速，`1` 为有限候选 MPC，`2` 为边界层 SMC，`3` 为带扩张状态观测器的 ADRC。例如使用 `cmake --preset Debug-Auto -DCHASSIS_NAV_SPEED_CONTROLLER=1` 构建 MPC 版。三种方法从当前航向坐标系下的新轮速反馈调整加速步长，反馈未更新或轮角与陀螺持续分歧时沿用原加速上限。反向、停车和定时盲推动作继续使用各自的限制。 [算法说明](../project/Core/Algorithm/Chassis/README.md#自动导航速度实验)
 

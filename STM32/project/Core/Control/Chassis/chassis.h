@@ -116,6 +116,8 @@ uint8_t Chassis_Attitude_Ready(void);
 uint8_t Chassis_Is_Stopped(void);
 /* 正式推退专用。在首组零 MIT 成功后用 begin=1 建立新窗口，后续每控制拍复核。 */
 uint8_t Chassis_Encoder_Stop_Confirmed(uint8_t begin);
+/* 推退专用。常规停车或已卸载复测并恢复正常三轮阻尼时才返回 1。 */
+uint8_t Chassis_Longitudinal_Stop_Confirmed(uint8_t begin);
 
 /** @brief 检查零目标已提交、无待执行动作、三轮及姿态有效时的运动准入。
  * @note 定距到达后按有效里程计核验并消费终点；诊断要求静止时应使用 Chassis_Is_Stopped。

@@ -631,7 +631,7 @@ static uint8_t Timed_Move_Complete(uint32_t duration_ms, uint32_t now_ms)
         stage_started_ms = now_ms;
         begin_encoder_check = 1U;
     }
-    return Chassis_Is_Stopped() || (longitudinal && Chassis_Encoder_Stop_Confirmed(begin_encoder_check));
+    return longitudinal ? Chassis_Longitudinal_Stop_Confirmed(begin_encoder_check) : Chassis_Is_Stopped();
 }
 #endif
 

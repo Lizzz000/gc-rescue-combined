@@ -118,10 +118,10 @@ uint8_t Chassis_Can_Enable(void) { return can_enable; }
 uint8_t Chassis_Is_Enabled(void) { return enabled; }
 /** @brief 读取场景独立给出的停车反馈。 @return 已使能且确认停车为 1。 */
 uint8_t Chassis_Is_Stopped(void) { return enabled && stopped; }
-uint8_t Chassis_Encoder_Stop_Confirmed(uint8_t begin)
+uint8_t Chassis_Longitudinal_Stop_Confirmed(uint8_t begin)
 {
-    assert(enabled && motion_ready && begin <= 1U);
-    return encoder_stop_confirmed;
+    assert(enabled && begin <= 1U);
+    return stopped || (motion_ready && encoder_stop_confirmed);
 }
 uint8_t Chassis_Motion_Ready(void) { return enabled && motors_ready && motion_ready; }
 
@@ -1034,7 +1034,25 @@ static void Complete_Coarse_Recenter(double outbound_lateral, int16_t center_x, 
     assert(velocity_requests == before_visual && turn_count == 1U && sent_count == 7U);
 }
 
-enum { PUSH_RAMP_STUCK = 19U, RETRACT_RAMP_STUCK, RETRACT_WHEELS_MOVING, ENCODER_CONFIRMED };
+enum { PUSH_RAMP_STUCK = 19U, RETRACT_RAMP_STUCK, RETRACT_WHEELS_MOVING, ENCODER_CONFIRMED, EMPTY_NEXT_SEARCH };
+
+/* 第六次搜索只接收摄像头周期发送的无目标帧，直到补货。 */
+static void Wait_For_Resupply(void)
+{
+    const uint8_t no_target[8] = {0};
+    const unsigned moves = velocity_requests, frames = sent_count;
+    periodic_stream = 0U;
+    for (unsigned elapsed_ms = 0U; elapsed_ms < 15000U; elapsed_ms += 20U)
+    {
+        Jetson_CAN_Receive(JETSON_CAN_TARGET_CENTER_ID, no_target, sizeof(no_target));
+        Steps(4U);
+        assert(enabled && stopped && motion_ready && !disables && !hard_stops);
+        assert(last_vx == 0.0f && last_vy == 0.0f && last_wz == 0.0f);
+        assert(velocity_requests == moves && sent_count == frames && !distance_count);
+        assert(jetson_completed_deliveries == 5U && total_turns == 6U);
+    }
+    periodic_stream = 1U;
+}
 
 /* 现场时间线约 850 ms 送出零目标，轮速到约 1700 ms 才进入门限。 */
 static void Delayed_Timed_Stop(void)
@@ -1341,6 +1359,8 @@ static void Transport_From_Route(uint8_t destination, uint32_t token, uint8_t st
     Receive_Command_Ack(1U, 3U, token);
     Step();
     assert(velocity_requests == velocities_before);
+    if (stuck == EMPTY_NEXT_SEARCH)
+        Wait_For_Resupply();
     Receive_Center(JETSON_CAN_TARGET_CENTER_ID, 5000, 4000);
     Wait_For_Count(&velocity_requests, velocities_before + 1U);
     assert(last_vx > 0.0f && last_wz == 0.0f);
@@ -1438,22 +1458,22 @@ static void Test_Consecutive_Transports(uint8_t second_fault)
     puts("PASS: left/right timed deliveries with refreshed common-center origins");
 }
 
-/* 板端消费 Jetson 已登记的目的区：绿、橙、绿、绿、橙对应左、右、左、左、右。 */
-static void Test_Five_Deliveries(void)
+/* 按 Jetson 登记的目的区跨趟传送，每趟沿用同一 USB 会话、控制器和请求序号。 */
+static void Test_Delivery_Batch(const uint8_t *destinations, unsigned count)
 {
-    const uint8_t destinations[] = {1U, 2U, 1U, 1U, 2U};
     Begin_Target_Test_At_Heading(100U, 0.37f);
     uint32_t search = initial_search_id;
     const uint32_t startup = startup_id;
-    for (unsigned leg = 0U; leg < 5U; ++leg)
+    for (unsigned leg = 0U; leg < count; ++leg)
     {
         assert(enabled && !disables && total_turns == leg + 1U && jetson_completed_deliveries == leg);
         const uint32_t grasp = Prepare_Selected_Route_From_Target(destinations[leg]);
         assert(grasp == sent[0].request_id && grasp > search);
-        Transport_From_Route(destinations[leg], grasp, 0U);
+        const uint8_t scenario = !JETSON_AUTO_DELIVERY_LIMIT && leg == 4U ? EMPTY_NEXT_SEARCH : 0U;
+        Transport_From_Route(destinations[leg], grasp, scenario);
         assert(sent[4].request_id > grasp && jetson_completed_deliveries == leg + 1U);
         assert(startup == startup_id && enables == 1U);
-        if (leg + 1U < 5U)
+        if (leg + 1U < count)
         {
             assert(enabled && !disables && total_turns == leg + 2U);
             search = sent[7].token;
@@ -1463,9 +1483,17 @@ static void Test_Five_Deliveries(void)
             turn_count = 1U;
         }
     }
-    assert(!enabled && disables == 1U && total_turns == 5U && disabled_wheel_mask == 7U);
-    assert(jetson_completed_deliveries == 5U && sent_count == 7U && !hard_stops);
-    puts("PASS: five deliveries left/right/left/left/right, five search turns, confirmed disable after the fifth");
+    assert(jetson_completed_deliveries == count && !hard_stops);
+    if (JETSON_AUTO_DELIVERY_LIMIT)
+    {
+        assert(!enabled && disables == 1U && total_turns == count && disabled_wheel_mask == 7U && sent_count == 7U);
+        puts("PASS: five deliveries left/right/left/left/right, five search turns, confirmed disable after the fifth");
+    }
+    else
+    {
+        assert(enabled && !disables && total_turns == count + 1U && sent[7].token > sent[4].request_id);
+        puts("PASS: continuous left/left/right/right/left, 15 s waiting at zero, sixth delivery and seventh search");
+    }
 }
 
 /** @brief 进入转向完成握手并暂时阻塞发送邮箱。
@@ -2141,9 +2169,17 @@ int main(void)
         puts("PASS: single delivery stops after relocalization and confirmed disable, with fault latching");
     }
     else if (JETSON_AUTO_DELIVERY_LIMIT == 5U)
-        Test_Five_Deliveries();
+    {
+        const uint8_t destinations[] = {1U, 2U, 1U, 1U, 2U};
+        Test_Delivery_Batch(destinations, sizeof(destinations) / sizeof(destinations[0]));
+    }
     else
         Test_Consecutive_Transports(0U);
+    if (!JETSON_AUTO_DELIVERY_LIMIT)
+    {
+        const uint8_t destinations[] = {1U, 1U, 2U, 2U, 1U, 2U};
+        Test_Delivery_Batch(destinations, sizeof(destinations) / sizeof(destinations[0]));
+    }
     if (JETSON_AUTO_DELIVERY_LIMIT == 2U)
     {
         Test_Consecutive_Transports(2U);  /* 第二次松爪失败不计数。 */

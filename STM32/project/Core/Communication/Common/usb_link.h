@@ -21,7 +21,7 @@ typedef struct
  */
 void UsbLink_Get_State(UsbLink_State_t *out);
 
-/** @return 1 表示 USB 外设已启动，可以创建收发任务。 */
+/** @return 1 表示 USB 外设已配置并保持断开，可创建接入总线并处理收发的任务。 */
 uint8_t UsbLink_Init(void);
 void UsbLink_Task(void const *argument);
 int UsbLink_Send(uint8_t type, const uint8_t *data, uint8_t length);

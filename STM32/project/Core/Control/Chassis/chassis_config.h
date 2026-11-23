@@ -118,6 +118,17 @@
 #define CHASSIS_ENCODER_STOP_SPAN_RAD 0.006f   /* 约 16 个编码器计数，轮缘约 0.21 mm。 */
 #define CHASSIS_ENCODER_STOP_SPEED_RAD_S 0.32f
 #define CHASSIS_ENCODER_STOP_GYRO_RAD_S 0.05f
+/* 第五趟送零后实测轮速偏置 0.342 rad/s。较宽速度上限须配更长窗口、更小逐轮位移和角速度。 */
+#define CHASSIS_ENCODER_BIAS_WINDOW_MS 600U
+#define CHASSIS_ENCODER_BIAS_SPAN_RAD 0.004f   /* 约 10 个位置计数，轮缘约 0.14 mm。 */
+#define CHASSIS_ENCODER_BIAS_SPEED_RAD_S 0.42f
+#define CHASSIS_ENCODER_BIAS_GYRO_RAD_S 0.025f
+/* 纵向停车时才允许短时取消速度阻尼。按轮保留逐帧角增量，2 个原始角度码覆盖静态跳码。 */
+#define CHASSIS_NEUTRAL_ARM_MS 120U
+#define CHASSIS_NEUTRAL_PEAK_SPEED_RAD_S 0.80f
+#define CHASSIS_NEUTRAL_SPEED_BURST_MS 100U
+#define CHASSIS_NEUTRAL_POSITION_NOISE_RAD (2.0f * 25.0f / 65535.0f)
+#define CHASSIS_NEUTRAL_TRAVEL_RAD 0.016f
 /* 即使接收端仍在刷新，持续无法提交完整速度组也必须中止旧运动。 */
 #define CHASSIS_CAN_TX_TIMEOUT_MS 250U
 

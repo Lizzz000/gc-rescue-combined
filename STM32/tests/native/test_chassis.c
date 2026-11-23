@@ -23,6 +23,10 @@ static uint8_t predicted_imu;
 static uint8_t read_injects_feedback;
 static uint8_t fail_enable_id, fail_disable_id, last_sent_id;
 static unsigned critical_depth;
+static struct {
+    uint8_t observe, fail_unload, fail_restore, injected;
+    uint32_t unload_groups, first_unload_ms, restore_groups, first_restore_ms;
+} longitudinal_can;
 
 /** @brief 模拟任务屏蔽 CAN RX 中断。 @return 无。 */
 void test_enter_critical(void) { ++critical_depth; }
@@ -82,7 +86,19 @@ HAL_StatusTypeDef ctrl_motor(CAN_HandleTypeDef *can, uint16_t id, float position
     const float expected_kd[3] = {0.2f, 0.25f, 0.2f};
     assert(can == &hcan1 && id >= 1U && id <= 3U && free_mailboxes > 0U);
     assert(position == 0.0f && kp == 0.0f);
-    if (!tuning_test)
+    if (longitudinal_can.observe)
+    {
+        assert(torque == 0.0f && velocity == 0.0f);
+        assert(kd == 0.0f || kd == expected_kd[id-1U]);
+        if (id == 2U && !longitudinal_can.injected &&
+            ((longitudinal_can.fail_unload && kd == 0.0f) ||
+             (longitudinal_can.fail_restore && longitudinal_can.unload_groups && kd != 0.0f)))
+        {
+            fail_control_id = 2U;
+            longitudinal_can.injected = 1U;
+        }
+    }
+    else if (!tuning_test)
         assert(torque == 0.0f && kd == expected_kd[id-1U]);
     assert(isfinite(torque) && fabsf(torque) <= 0.05f);
     assert(isfinite(velocity) && fabsf(velocity) <= 40.0f && !abort_pending);
@@ -92,6 +108,22 @@ HAL_StatusTypeDef ctrl_motor(CAN_HandleTypeDef *can, uint16_t id, float position
     motor_velocity[id-1U] = velocity;
     captured_torque[id-1U] = torque;
     captured_kd[id-1U] = kd;
+    if (longitudinal_can.observe && id == 3U)
+    {
+        /* 第三帧成功才算一组，以实际发送而非任务请求的时刻计时。 */
+        for (unsigned i = 0U; i < 3U; ++i)
+            assert(captured_kd[i] == (kd == 0.0f ? 0.0f : expected_kd[i]));
+        if (kd == 0.0f)
+        {
+            if (!longitudinal_can.unload_groups) longitudinal_can.first_unload_ms = test_tick;
+            ++longitudinal_can.unload_groups;
+        }
+        else if (longitudinal_can.unload_groups)
+        {
+            if (!longitudinal_can.restore_groups) longitudinal_can.first_restore_ms = test_tick;
+            ++longitudinal_can.restore_groups;
+        }
+    }
     --free_mailboxes; ++controls;
     return HAL_OK;
 }
@@ -179,6 +211,7 @@ static void reset_case(uint32_t us, uint32_t ms)
     fail_enable_id = fail_disable_id = last_sent_id = 0U;
     yaw_deg = yaw_rate = 0.0f;
     tuning_test = 0U;
+    memset(&longitudinal_can, 0, sizeof longitudinal_can);
     memset(motor_velocity, 0, sizeof(motor_velocity));
     memset((void *)dm_motor, 0, sizeof(dm_motor));
     Chassis_Init();
@@ -267,8 +300,10 @@ static uint8_t enable_ready(void)
 static void test_encoder_stop_feedback(void)
 {
     enum { STILL, ONE_WHEEL_ROLLS, ROLLS_THEN_RETURNS, TURNING, SPEED_SPIKE, MISSING_WHEEL,
-           SKIPPED_FEEDBACK, STALE_IMU, INVALID_POSITION, PREDICTED_IMU, DISABLED_WHEEL };
-    for (unsigned scenario = STILL; scenario <= DISABLED_WHEEL; ++scenario)
+           SKIPPED_FEEDBACK, STALE_IMU, INVALID_POSITION, PREDICTED_IMU, DISABLED_WHEEL,
+           NORMAL_WITH_WIDER_SPAN, NORMAL_WITH_MORE_GYRO,
+           BIASED_STILL, BIASED_SLOW_ROLL, BIASED_OSCILLATION, BIASED_ROTATION };
+    for (unsigned scenario = STILL; scenario <= BIASED_ROTATION; ++scenario)
     {
         reset_case(0U, UINT32_MAX - 200U);
         assert(enable_ready());
@@ -279,7 +314,7 @@ static void test_encoder_stop_feedback(void)
             wheel_feedback(wheel, wheel == 2U ? -0.28f : 0.25f, 1U);
         }
         assert(!Chassis_Encoder_Stop_Confirmed(1U));
-        for (unsigned frame = 1U; frame <= 65U; ++frame)
+        for (unsigned frame = 1U; frame <= 145U; ++frame)
         {
             test_tick += 10U;
             counter_us += 10000U;
@@ -290,21 +325,38 @@ static void test_encoder_stop_feedback(void)
                 /* 安静样本含编码器跨 ±12.5 rad 抖动。运动反例只动其中一轮。 */
                 float delta = (frame & 1U) ? 0.0015f : 0.0f;
                 float speed = wheel == 2U ? -0.28f : 0.25f;
+                if (scenario >= BIASED_STILL)
+                {
+                    /* 五趟实测首 625 ms 的逐轮位置包络为 2/6/6 个码。
+                     * 每 80 ms 重现轮 2 的 0.342 峰，确保短窗始终得不到放行。 */
+                    const unsigned counts = frame / 10U < 6U ? frame / 10U : 6U;
+                    delta = (25.0f / 65535.0f) * (wheel == 0U ? (float)(2U * (frame & 1U)) :
+                                                  wheel == 1U ? (float)counts : -(float)counts);
+                    if (wheel == 1U && frame % 8U == 0U) speed = 0.34188f;
+                }
                 if (wheel == 2U)
                 {
                     if (scenario == ONE_WHEEL_ROLLS) delta = frame * 0.0010f;
                     if (scenario == ROLLS_THEN_RETURNS) delta = (frame % 12U < 6U) ? 0.004f : -0.004f;
-                    if (scenario == SPEED_SPIKE && frame % 10U == 0U) speed = -0.36f;
+                    if (scenario == SPEED_SPIKE && frame % 10U == 0U) speed = -0.44f;
                     if (scenario == SKIPPED_FEEDBACK && frame % 10U == 0U) ++dm_motor[wheel].feedback_seq;
                     if (scenario == INVALID_POSITION && frame % 10U == 0U) delta = NAN;
+                    if (scenario == BIASED_SLOW_ROLL) delta = frame * 0.00009f; /* 单轮 0.009 rad/s。 */
+                    if (scenario == NORMAL_WITH_WIDER_SPAN || scenario == BIASED_OSCILLATION)
+                        delta = frame % 12U < 6U ? 0.0025f : -0.0025f;
                 }
                 dm_motor[wheel].position = remainderf(12.4995f + delta, 25.0f);
                 wheel_feedback(wheel, speed, !(scenario == DISABLED_WHEEL && wheel == 0U));
             }
             yaw_rate = scenario == TURNING && frame % 10U == 0U ? 0.12f : 0.0f;
+            if (scenario == BIASED_STILL) yaw_rate = frame & 1U ? 0.00758f : -0.00758f;
+            if (scenario == NORMAL_WITH_MORE_GYRO || scenario == BIASED_ROTATION) yaw_rate = 0.034f;
             sample_age = scenario == STALE_IMU && frame % 10U == 0U ? 25U : 0U;
             predicted_imu = scenario == PREDICTED_IMU && frame % 10U == 0U;
-            const uint8_t expected = scenario == STILL && frame * 10U >= CHASSIS_ENCODER_STOP_WINDOW_MS;
+            const uint8_t normal = scenario == STILL || scenario == NORMAL_WITH_WIDER_SPAN ||
+                                   scenario == NORMAL_WITH_MORE_GYRO;
+            const uint8_t expected = (normal && frame * 10U >= CHASSIS_ENCODER_STOP_WINDOW_MS) ||
+                                     (scenario == BIASED_STILL && frame * 10U >= CHASSIS_ENCODER_BIAS_WINDOW_MS);
             assert(!Chassis_Is_Stopped());
             assert(Chassis_Encoder_Stop_Confirmed(0U) == expected);
             assert(Chassis_Encoder_Stop_Confirmed(0U) == expected);
@@ -316,6 +368,97 @@ static void test_encoder_stop_feedback(void)
             assert(!Chassis_Encoder_Stop_Confirmed(0U));
         }
     }
+    puts("PASS: independent 300/600 ms encoder stops, field bias, slow roll, oscillation, gyro, missing feedback");
+}
+
+static void test_longitudinal_stop_feedback(void)
+{
+    enum { FIELD_BIAS, NORMAL_BRAKE, SUSTAINED_SPEED, HIGH_MEAN, LONG_BURST, ISOLATED_PEAK,
+           SLOW_DRIFT, SMALL_OSCILLATION, GYRO_PULSE, LOST_FRAME, PARTIAL_UNLOAD, PARTIAL_RESTORE };
+    const float position_count = 25.0f / 65535.0f;
+    for (unsigned scenario = FIELD_BIAS; scenario <= PARTIAL_RESTORE; ++scenario)
+    {
+        reset_case(0U, UINT32_MAX - 350U);
+        assert(enable_ready());
+        longitudinal_can.observe = 1U;
+        longitudinal_can.fail_unload = scenario == PARTIAL_UNLOAD;
+        longitudinal_can.fail_restore = scenario == PARTIAL_RESTORE;
+        for (unsigned i = 0U; i < 3U; ++i)
+        {
+            dm_motor[i].position = 12.4995f;
+            dm_motor[i].feedback_seq = UINT32_MAX - 20U;
+            wheel_feedback(i, i == 2U ? -0.244f : 0.24f, 1U);
+        }
+        const uint32_t begin_ms = test_tick;
+        assert(!Chassis_Longitudinal_Stop_Confirmed(1U));
+        uint8_t confirmed = 0U;
+        for (unsigned frame = 1U; frame <= 149U && !confirmed; ++frame)
+        {
+            const uint8_t unloaded = longitudinal_can.unload_groups != 0U;
+            const uint32_t off_ms = test_tick - longitudinal_can.first_unload_ms;
+            test_tick += 10U;
+            counter_us += 10000U;
+            for (unsigned i = 0U; i < 3U; ++i)
+            {
+                if (scenario == FIELD_BIAS && i == 0U && longitudinal_can.restore_groups &&
+                    test_tick - longitudinal_can.first_restore_ms < 30U)
+                    continue; /* 恢复阻尼后，第三只返回新反馈的电机暂迟两拍。 */
+                float delta = ((frame / 12U) & 1U) * position_count;
+                float speed = i == 2U ? -0.244f : 0.04884f;
+                if (i == 1U)
+                {
+                    /* 实车第三趟的同轮双向速度尖峰，真实位置包络仅几个码。 */
+                    if (scenario != NORMAL_BRAKE && frame % 5U == 1U) speed = 0.65446f;
+                    if (scenario != NORMAL_BRAKE && frame % 5U == 3U) speed = -0.45910f;
+                    if (unloaded && scenario == SUSTAINED_SPEED) speed = 0.65446f;
+                    if (unloaded && scenario == HIGH_MEAN) speed = frame % 10U < 7U ? 0.65446f : 0.20513f;
+                    if (unloaded && scenario == LONG_BURST) speed = frame % 35U < 14U ? 0.48f : 0.04884f;
+                    if (unloaded && scenario == ISOLATED_PEAK && off_ms == 200U) speed = -0.82f;
+                    if (unloaded && scenario == SLOW_DRIFT) delta = off_ms * 0.000012f;
+                    if (unloaded && scenario == SMALL_OSCILLATION)
+                        delta = (frame & 1U ? 4.0f : -4.0f) * position_count;
+                    if (unloaded && scenario == LOST_FRAME && frame % 7U == 0U) ++dm_motor[i].feedback_seq;
+                }
+                dm_motor[i].position = remainderf(12.4995f + delta, 25.0f);
+                wheel_feedback(i, speed, 1U);
+            }
+            yaw_rate = unloaded && scenario == GYRO_PULSE && frame % 7U == 0U ? 0.045f : 0.00964f;
+            /* 正例人为占用邮箱，仅请求卸载或恢复都不能作为已经发出三帧的证据。 */
+            const uint8_t delay_unload = frame >= 12U && frame <= 20U;
+            const uint8_t delay_restore = unloaded && off_ms >= 570U && off_ms < 670U;
+            const uint8_t can_ready = scenario != FIELD_BIAS || !(delay_unload || delay_restore);
+            step(0U, can_ready); /* 先提交本拍 CAN，再运行 Jetson 的停稳查询。 */
+            confirmed = Chassis_Longitudinal_Stop_Confirmed(0U);
+        }
+
+        const uint8_t expected = scenario == FIELD_BIAS || scenario == NORMAL_BRAKE;
+        if (confirmed != expected)
+            fprintf(stderr, "longitudinal stop case %u: confirmed=%u, unload groups=%lu, restore groups=%lu\n",
+                    scenario, confirmed, (unsigned long)longitudinal_can.unload_groups,
+                    (unsigned long)longitudinal_can.restore_groups);
+        assert(confirmed == expected);
+        if (scenario == NORMAL_BRAKE)
+        {
+            assert(!longitudinal_can.unload_groups && test_tick - begin_ms < 500U);
+            continue;
+        }
+        if (scenario == PARTIAL_UNLOAD || scenario == PARTIAL_RESTORE)
+        {
+            assert(longitudinal_can.injected && aborts > 0U);
+            if (scenario == PARTIAL_UNLOAD) assert(!longitudinal_can.unload_groups);
+            continue;
+        }
+        assert(longitudinal_can.unload_groups && longitudinal_can.first_unload_ms - begin_ms >= 120U);
+        assert(longitudinal_can.restore_groups);
+        if (scenario == FIELD_BIAS)
+        {
+            assert(longitudinal_can.first_unload_ms - begin_ms >= 210U);
+            assert(longitudinal_can.first_restore_ms - longitudinal_can.first_unload_ms >= 670U);
+            assert(test_tick - longitudinal_can.first_restore_ms >= 30U);
+            assert(test_tick - begin_ms < 1500U);
+        }
+    }
+    puts("PASS chassis: timed zero-damping CAN group, fresh three-wheel recheck and damping restore");
 }
 
 static void test_stop_feedback(void)
@@ -2436,6 +2579,7 @@ int main(void)
     test_frame_spacing();
     test_stop_feedback();
     test_encoder_stop_feedback();
+    test_longitudinal_stop_feedback();
     test_timed_brake();
     test_kinematics();
     test_timing_and_parameters();

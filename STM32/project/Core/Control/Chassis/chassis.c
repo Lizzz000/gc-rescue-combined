@@ -179,70 +179,297 @@ uint8_t Chassis_Is_Stopped(void)
     return stopped;
 }
 
+typedef struct {
+    uint8_t tracking;
+    uint32_t started_ms;
+    float origin[3], minimum[3], maximum[3];
+} Encoder_Stop_Window_t;
+
+/* SWD：从本段首组零 MIT 起累计各项拒绝次数，超时后保留。accepted 1/2 为短窗/长窗。 */
+typedef struct {
+    uint32_t started_ms;
+    uint16_t invalid_state, invalid_imu, gyro, invalid_wheel, speed, frame_gap;
+    uint16_t normal_speed, normal_span, bias_gyro, bias_span;
+    uint8_t accepted;
+} Encoder_Stop_Debug_t;
+static volatile Encoder_Stop_Debug_t encoder_stop_debug;
+
+typedef enum { NEUTRAL_ARM, NEUTRAL_REQUESTED, NEUTRAL_SUBMITTED, NEUTRAL_OBSERVING,
+               NEUTRAL_RESTORE, NEUTRAL_RESTORED, NEUTRAL_FAILED } Neutral_Phase_t;
+static Neutral_Phase_t neutral_phase;
+static uint32_t neutral_sent_seq[3];
+static struct {
+    uint8_t tracking, overspeed;
+    uint32_t last_ms[3], sequence[3], start_ms[3], last_quiet_ms[3];
+    float previous[3], origin[3], minimum[3], maximum[3], speed_area[3], excess_area[3];
+} neutral_window;
+/* SWD 在故障和阶段交接后保留本次的接管时间、三轮实测包络和首个拒绝原因。 */
+typedef struct {
+    uint32_t requested_ms, submitted_ms, restored_ms;
+    float span[3], travel[3], mean_abs_speed[3];
+    uint8_t rejected, wheel;
+} Neutral_Stop_Debug_t;
+static volatile Neutral_Stop_Debug_t neutral_stop_debug;
+
+/* 每轮全窗保留极值，以免往返或轮间抵消伪装成静止。时间由各轮最后一帧独立确认。 */
+static uint8_t Encoder_Window_Quiet(Encoder_Stop_Window_t *window, const Chassis_Feedback_Snapshot_t *snapshot,
+                                    uint8_t restart, uint32_t duration_ms, float span_rad, volatile uint16_t *span_rejections)
+{
+    if (restart || !window->tracking)
+    {
+        window->started_ms = snapshot->now_ms;
+        window->tracking = 1U;
+        for (unsigned i = 0U; i < 3U; ++i)
+        {
+            window->origin[i] = snapshot->wheel[i].position;
+            window->minimum[i] = window->maximum[i] = 0.0f;
+        }
+        return 0U;
+    }
+    uint8_t confirmed = (uint32_t)(snapshot->now_ms - window->started_ms) >= duration_ms;
+    for (unsigned i = 0U; i < 3U; ++i)
+    {
+        const Chassis_Wheel_Feedback_t *wheel = &snapshot->wheel[i];
+        const float delta = remainderf(wheel->position - window->origin[i], CHASSIS_ODOMETRY_ENCODER_PERIOD_RAD);
+        window->minimum[i] = fminf(window->minimum[i], delta);
+        window->maximum[i] = fmaxf(window->maximum[i], delta);
+        if (window->maximum[i] - window->minimum[i] > span_rad)
+        {
+            ++*span_rejections;
+            window->tracking = 0U;
+            return 0U;
+        }
+        if ((uint32_t)(wheel->feedback_time_ms - window->started_ms) < duration_ms)
+            confirmed = 0U;
+    }
+    return confirmed;
+}
+
 uint8_t Chassis_Encoder_Stop_Confirmed(uint8_t begin)
 {
-    static struct {
-        uint8_t tracking;
-        uint32_t started_ms, last_poll_ms, last_ms[3], sequence[3];
-        float origin[3], minimum[3], maximum[3];
-    } window;
+    static Encoder_Stop_Window_t normal, biased;
+    static uint8_t have_feedback;
+    static uint32_t last_poll_ms, last_ms[3], sequence[3];
+    if (begin)
+        encoder_stop_debug = (Encoder_Stop_Debug_t){ .started_ms = Chassis_Time_Now_Ms() };
     INS_control_data_t imu;
-    if (!enabled || disable_after_stop || mode != IDLE || !monitoring_stop || distance_completion_pending ||
-        !Read_IMU(&imu) || imu.yaw_predicted || fabsf(imu.world_z_rad_s) > CHASSIS_ENCODER_STOP_GYRO_RAD_S)
+    if (!enabled || disable_after_stop || mode != IDLE || !monitoring_stop || distance_completion_pending)
     {
-        window.tracking = 0U;
+        ++encoder_stop_debug.invalid_state;
+        have_feedback = 0U;
+        return 0U;
+    }
+    if (!Read_IMU(&imu) || imu.yaw_predicted)
+    {
+        ++encoder_stop_debug.invalid_imu;
+        have_feedback = 0U;
+        return 0U;
+    }
+    if (fabsf(imu.world_z_rad_s) > CHASSIS_ENCODER_STOP_GYRO_RAD_S)
+    {
+        ++encoder_stop_debug.gyro;
+        have_feedback = 0U;
         return 0U;
     }
     Chassis_Feedback_Snapshot_t snapshot;
     Chassis_Feedback_Read(&snapshot);
-    const uint8_t baseline = begin || !window.tracking ||
-        (uint32_t)(snapshot.now_ms - window.last_poll_ms) > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS;
-    if (baseline)
-        window.started_ms = snapshot.now_ms;
-    uint8_t confirmed = (uint32_t)(snapshot.now_ms - window.started_ms) >= CHASSIS_ENCODER_STOP_WINDOW_MS;
+    const uint8_t poll_gap = !begin && have_feedback &&
+        (uint32_t)(snapshot.now_ms - last_poll_ms) > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS;
+    if (poll_gap)
+        ++encoder_stop_debug.frame_gap;
+    const uint8_t baseline = begin || !have_feedback || poll_gap;
+    uint8_t normal_speed = 1U;
     for (unsigned i = 0U; i < 3U; ++i)
     {
         const Chassis_Wheel_Feedback_t *wheel = &snapshot.wheel[i];
         if (wheel->id != chassis_wheel_config[i].id || wheel->state != 1U ||
             !(fabsf(wheel->position) <= CHASSIS_ODOMETRY_ENCODER_PERIOD_RAD * 0.5f) ||
-            !(fabsf(wheel->velocity) <= CHASSIS_ENCODER_STOP_SPEED_RAD_S) ||
             (uint32_t)(snapshot.now_ms - wheel->feedback_time_ms) > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS)
         {
-            window.tracking = 0U;
+            ++encoder_stop_debug.invalid_wheel;
+            have_feedback = 0U;
             return 0U;
         }
-        if (baseline)
+        if (!(fabsf(wheel->velocity) <= CHASSIS_ENCODER_BIAS_SPEED_RAD_S))
         {
-            window.origin[i] = wheel->position;
-            window.minimum[i] = window.maximum[i] = 0.0f;
+            ++encoder_stop_debug.speed;
+            have_feedback = 0U;
+            return 0U;
         }
-        else
+        if (!baseline)
         {
-            const uint32_t frames = wheel->feedback_seq - window.sequence[i];
-            const uint32_t dt = wheel->feedback_time_ms - window.last_ms[i];
+            const uint32_t frames = wheel->feedback_seq - sequence[i];
+            const uint32_t dt = wheel->feedback_time_ms - last_ms[i];
             /* 同一帧可反复读取，但不推进该轮时间。跳号或间断的中间位移不可验证。 */
             if (frames > 1U || (frames == 0U) != (dt == 0U) || dt > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS)
             {
-                window.tracking = 0U;
+                ++encoder_stop_debug.frame_gap;
+                have_feedback = 0U;
                 return 0U;
             }
-            const float delta = remainderf(wheel->position - window.origin[i], CHASSIS_ODOMETRY_ENCODER_PERIOD_RAD);
-            window.minimum[i] = fminf(window.minimum[i], delta);
-            window.maximum[i] = fmaxf(window.maximum[i], delta);
-            if (window.maximum[i] - window.minimum[i] > CHASSIS_ENCODER_STOP_SPAN_RAD)
-            {
-                window.tracking = 0U;
-                return 0U;
-            }
-            if ((uint32_t)(wheel->feedback_time_ms - window.started_ms) < CHASSIS_ENCODER_STOP_WINDOW_MS)
-                confirmed = 0U;
         }
-        window.last_ms[i] = wheel->feedback_time_ms;
-        window.sequence[i] = wheel->feedback_seq;
+        if (fabsf(wheel->velocity) > CHASSIS_ENCODER_STOP_SPEED_RAD_S)
+            normal_speed = 0U;
+        last_ms[i] = wheel->feedback_time_ms;
+        sequence[i] = wheel->feedback_seq;
     }
-    window.tracking = 1U;
-    window.last_poll_ms = snapshot.now_ms;
-    return confirmed;
+    have_feedback = 1U;
+    last_poll_ms = snapshot.now_ms;
+    if (!normal_speed)
+    {
+        ++encoder_stop_debug.normal_speed;
+        normal.tracking = 0U;
+    }
+    const uint8_t bias_gyro_quiet = fabsf(imu.world_z_rad_s) <= CHASSIS_ENCODER_BIAS_GYRO_RAD_S;
+    if (!bias_gyro_quiet)
+    {
+        ++encoder_stop_debug.bias_gyro;
+        biased.tracking = 0U;
+    }
+    const uint8_t normal_quiet = normal_speed &&
+        Encoder_Window_Quiet(&normal, &snapshot, baseline, CHASSIS_ENCODER_STOP_WINDOW_MS,
+                             CHASSIS_ENCODER_STOP_SPAN_RAD, &encoder_stop_debug.normal_span);
+    const uint8_t bias_quiet = bias_gyro_quiet &&
+        Encoder_Window_Quiet(&biased, &snapshot, baseline, CHASSIS_ENCODER_BIAS_WINDOW_MS,
+                             CHASSIS_ENCODER_BIAS_SPAN_RAD, &encoder_stop_debug.bias_span);
+    if (normal_quiet || bias_quiet)
+        encoder_stop_debug.accepted = normal_quiet ? 1U : 2U;
+    return normal_quiet || bias_quiet;
+}
+
+/* 1 状态或姿态，2 陀螺，3 电机或陈旧帧，4 序号/时间间断，5 角跨度，
+ * 6 累计往返行程，7 速度读数持续或积分异常。卸载期间任何拒绝都立即恢复常规阻尼。 */
+static uint8_t Neutral_Reject(uint8_t reason, unsigned wheel)
+{
+    neutral_stop_debug.rejected = reason;
+    neutral_stop_debug.wheel = (uint8_t)wheel;
+    neutral_window.tracking = neutral_window.overspeed = 0U;
+    if (neutral_phase != NEUTRAL_ARM)
+        neutral_phase = NEUTRAL_FAILED;
+    return 0U;
+}
+
+uint8_t Chassis_Longitudinal_Stop_Confirmed(uint8_t begin)
+{
+    if (begin)
+    {
+        neutral_phase = NEUTRAL_ARM;
+        neutral_window.tracking = neutral_window.overspeed = 0U;
+        neutral_stop_debug = (Neutral_Stop_Debug_t){0};
+    }
+    if (neutral_phase == NEUTRAL_ARM && (Chassis_Is_Stopped() || Chassis_Encoder_Stop_Confirmed(begin)))
+        return 1U;
+    if (neutral_phase == NEUTRAL_FAILED)
+        return 0U;
+    INS_control_data_t imu;
+    if (!enabled || disable_after_stop || mode != IDLE || !monitoring_stop || distance_completion_pending ||
+        !Read_IMU(&imu) || imu.yaw_predicted)
+        return Neutral_Reject(1U, 0U);
+    if (fabsf(imu.world_z_rad_s) > CHASSIS_ENCODER_BIAS_GYRO_RAD_S)
+        return Neutral_Reject(2U, 0U);
+
+    Chassis_Feedback_Snapshot_t snapshot;
+    Chassis_Feedback_Read(&snapshot);
+    uint8_t all_after_command = 1U;
+    for (unsigned i = 0U; i < 3U; ++i)
+    {
+        const Chassis_Wheel_Feedback_t *w = &snapshot.wheel[i];
+        if (w->id != chassis_wheel_config[i].id || w->state != 1U ||
+            !(fabsf(w->position) <= CHASSIS_ODOMETRY_ENCODER_PERIOD_RAD * 0.5f) ||
+            !(fabsf(w->velocity) <= chassis_wheel_config[i].max_motor_rad_s) ||
+            (uint32_t)(snapshot.now_ms - w->feedback_time_ms) > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS)
+            return Neutral_Reject(3U, i + 1U);
+        if (w->feedback_seq == neutral_sent_seq[i])
+            all_after_command = 0U;
+    }
+    if (neutral_phase == NEUTRAL_SUBMITTED && all_after_command)
+    {
+        neutral_phase = NEUTRAL_OBSERVING;
+        neutral_window.tracking = 0U;
+    }
+    /* 首个卸载组和首个恢复阻尼组都由正常 100 Hz 发送路径提交。 */
+    if (neutral_phase == NEUTRAL_SUBMITTED)
+        return 0U;
+    const uint8_t arming = neutral_phase == NEUTRAL_ARM || neutral_phase == NEUTRAL_REQUESTED;
+    const uint32_t duration = arming ? CHASSIS_NEUTRAL_ARM_MS : CHASSIS_ENCODER_BIAS_WINDOW_MS;
+    uint8_t position_quiet = 1U, mean_quiet = 1U;
+    for (unsigned i = 0U; i < 3U; ++i)
+    {
+        const Chassis_Wheel_Feedback_t *w = &snapshot.wheel[i];
+        const float speed = fabsf(w->velocity);
+        if (!arming && speed > CHASSIS_NEUTRAL_PEAK_SPEED_RAD_S)
+            return Neutral_Reject(7U, i + 1U);
+        if (speed > CHASSIS_ENCODER_BIAS_SPEED_RAD_S)
+            neutral_window.overspeed = 1U;
+        if (!neutral_window.tracking)
+        {
+            neutral_window.start_ms[i] = neutral_window.last_quiet_ms[i] = w->feedback_time_ms;
+            neutral_window.origin[i] = w->position;
+            neutral_window.minimum[i] = neutral_window.maximum[i] = 0.0f;
+            neutral_window.speed_area[i] = neutral_window.excess_area[i] = 0.0f;
+            neutral_stop_debug.span[i] = neutral_stop_debug.travel[i] = neutral_stop_debug.mean_abs_speed[i] = 0.0f;
+        }
+        else
+        {
+            const uint32_t frames = w->feedback_seq - neutral_window.sequence[i];
+            const uint32_t dt = w->feedback_time_ms - neutral_window.last_ms[i];
+            if (frames > 1U || (frames == 0U) != (dt == 0U) || dt > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS)
+                return Neutral_Reject(4U, i + 1U);
+            const float delta = remainderf(w->position - neutral_window.origin[i], CHASSIS_ODOMETRY_ENCODER_PERIOD_RAD);
+            neutral_window.minimum[i] = fminf(neutral_window.minimum[i], delta);
+            neutral_window.maximum[i] = fmaxf(neutral_window.maximum[i], delta);
+            neutral_stop_debug.span[i] = neutral_window.maximum[i] - neutral_window.minimum[i];
+            if (neutral_stop_debug.span[i] > CHASSIS_ENCODER_BIAS_SPAN_RAD)
+                return Neutral_Reject(5U, i + 1U);
+            const float step = remainderf(w->position - neutral_window.previous[i], CHASSIS_ODOMETRY_ENCODER_PERIOD_RAD);
+            neutral_stop_debug.travel[i] += fmaxf(0.0f, fabsf(step) - CHASSIS_NEUTRAL_POSITION_NOISE_RAD);
+            if (neutral_stop_debug.travel[i] > CHASSIS_NEUTRAL_TRAVEL_RAD)
+                return Neutral_Reject(6U, i + 1U);
+            if (!arming)
+            {
+                if (speed <= CHASSIS_ENCODER_BIAS_SPEED_RAD_S)
+                    neutral_window.last_quiet_ms[i] = w->feedback_time_ms;
+                neutral_window.speed_area[i] += speed * (float)dt;
+                neutral_window.excess_area[i] = fmaxf(0.0f, neutral_window.excess_area[i] +
+                    (speed - CHASSIS_ENCODER_BIAS_SPEED_RAD_S) * (float)dt);
+                if ((uint32_t)(w->feedback_time_ms - neutral_window.last_quiet_ms[i]) > CHASSIS_NEUTRAL_SPEED_BURST_MS ||
+                    neutral_window.excess_area[i] > CHASSIS_ENCODER_BIAS_SPEED_RAD_S * CHASSIS_NEUTRAL_SPEED_BURST_MS)
+                    return Neutral_Reject(7U, i + 1U);
+            }
+        }
+        const uint32_t elapsed = w->feedback_time_ms - neutral_window.start_ms[i];
+        if (elapsed < duration)
+            position_quiet = 0U;
+        if (!arming && elapsed != 0U)
+        {
+            neutral_stop_debug.mean_abs_speed[i] = neutral_window.speed_area[i] / (float)elapsed;
+            if (neutral_stop_debug.mean_abs_speed[i] > CHASSIS_ENCODER_BIAS_SPEED_RAD_S)
+                mean_quiet = 0U;
+        }
+        neutral_window.last_ms[i] = w->feedback_time_ms;
+        neutral_window.sequence[i] = w->feedback_seq;
+        neutral_window.previous[i] = w->position;
+    }
+    neutral_window.tracking = 1U;
+    if (!position_quiet)
+        return 0U;
+    if (neutral_phase == NEUTRAL_ARM && neutral_window.overspeed)
+    {
+        neutral_phase = NEUTRAL_REQUESTED;
+        neutral_stop_debug.rejected = neutral_stop_debug.wheel = 0U;
+        neutral_stop_debug.requested_ms = snapshot.now_ms;
+    }
+    else if (!arming && !mean_quiet)
+        return Neutral_Reject(7U, 0U);
+    else if (neutral_phase == NEUTRAL_OBSERVING)
+        neutral_phase = NEUTRAL_RESTORE;
+    else if (neutral_phase == NEUTRAL_RESTORED && all_after_command)
+    {
+        neutral_phase = NEUTRAL_ARM;
+        encoder_stop_debug.accepted = 3U;
+        return 1U;
+    }
+    return 0U;
 }
 
 static uint8_t Zero_Target_Ready(INS_control_data_t *imu, uint8_t allow_holding)
@@ -398,6 +625,7 @@ static void Update_Odometry(uint32_t now_us,
  */
 void Chassis_Stop(void)
 {
+    neutral_phase = NEUTRAL_ARM;
     if (mode != IDLE)
         monitoring_stop = 0U;
     mode = IDLE;
@@ -839,6 +1067,7 @@ static uint8_t Set_Velocity(float vx, float vy, float wz, uint8_t hold_yaw, uint
         Velocity_Profile_Seed(&velocity_profile, last_body_target[0], last_body_target[1], last_body_target[2]);
     if (mode == IDLE)
         control_clock.step_start_us = Chassis_Time_Now_Us();
+    neutral_phase = NEUTRAL_ARM;
     if (hold_yaw && wz == 0.0f && (mode != VELOCITY || vector_target[2] != 0.0f || !vector_hold_yaw))
     {
         target_yaw_deg = CHASSIS_STRAIGHT_YAW_SIGN * imu.yaw_deg;
@@ -898,6 +1127,8 @@ uint8_t Chassis_Set_Test_Rotation(float wz)
  */
 static uint8_t Send_Chassis_Targets(float vx, float vy, float wz)
 {
+    const uint8_t neutral = mode == IDLE && !disable_after_stop &&
+        (neutral_phase == NEUTRAL_REQUESTED || neutral_phase == NEUTRAL_SUBMITTED || neutral_phase == NEUTRAL_OBSERVING);
     float wheel[3];
     Motor_Chassis_Inverse(vx, vy, wz, wheel);
     float scale = 1.0f;
@@ -954,7 +1185,8 @@ static uint8_t Send_Chassis_Targets(float vx, float vy, float wz)
                   chassis_tuning_friction[i] * target / (fabsf(target) + CHASSIS_FRICTION_SPEED_RAD_S) : 0.0f);
             ff = fmaxf(-CHASSIS_FEEDFORWARD_LIMIT_NM, fminf(CHASSIS_FEEDFORWARD_LIMIT_NM, ff));
         }
-        if (ctrl_motor(&MOTOR_CAN, config->id, 0.0f, target, 0.0f, chassis_tuning_kd[i], ff) != HAL_OK)
+        const float kd = neutral ? 0.0f : chassis_tuning_kd[i];
+        if (ctrl_motor(&MOTOR_CAN, config->id, 0.0f, target, 0.0f, kd, ff) != HAL_OK)
         {
             Chassis_Disable();
             return 0U;
@@ -963,6 +1195,24 @@ static uint8_t Send_Chassis_Targets(float vx, float vy, float wz)
         chassis_motor_ff[i] = ff;
         if (i < 2U)
             vTaskDelay(pdMS_TO_TICKS(CHASSIS_CAN_INTERFRAME_DELAY_MS));
+    }
+    if (neutral_phase == NEUTRAL_REQUESTED || neutral_phase == NEUTRAL_RESTORE)
+    {
+        /* 记录三次 HAL 发送均成功之后的序号，每只电机都必须再返回一帧。 */
+        Chassis_Feedback_Snapshot_t submitted;
+        Chassis_Feedback_Read(&submitted);
+        for (unsigned i = 0U; i < 3U; ++i)
+            neutral_sent_seq[i] = submitted.wheel[i].feedback_seq;
+        if (neutral)
+        {
+            neutral_phase = NEUTRAL_SUBMITTED;
+            neutral_stop_debug.submitted_ms = submitted.now_ms;
+        }
+        else
+        {
+            neutral_phase = NEUTRAL_RESTORED;
+            neutral_stop_debug.restored_ms = submitted.now_ms;
+        }
     }
     last_body_target[0] = vx * scale;
     last_body_target[1] = vy * scale;

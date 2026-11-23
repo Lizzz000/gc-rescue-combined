@@ -20,6 +20,7 @@ static TestRcc test_rcc;
 static uint32_t test_sysclk_source, test_sysclk_hz;
 static HAL_StatusTypeDef test_init_status, test_start_status;
 static unsigned init_calls, start_calls, irq_enables;
+static unsigned attach_delays, task_deletes, forced_connects, forced_disconnects, critical_depth;
 static HAL_StatusTypeDef test_tx_status = HAL_OK;
 static uint32_t test_rx_count;
 #define RCC (&test_rcc)
@@ -81,19 +82,20 @@ static uint32_t Test_Rx_Count(PCD_HandleTypeDef *pcd, uint8_t ep)
 #define HAL_PCD_SetAddress(...) Test_Hal_Ok(0U, __VA_ARGS__)
 #define HAL_GPIO_Init(...) Test_Hal_Ok(0U, __VA_ARGS__)
 #define HAL_NVIC_SetPriority(...) Test_Hal_Ok(0U, __VA_ARGS__)
-#define HAL_NVIC_EnableIRQ(irq) (++irq_enables)
+#define HAL_NVIC_EnableIRQ(irq) do { assert(critical_depth == 1U && test_start_status == HAL_OK && start_calls == attach_delays); ++irq_enables; } while (0)
 #define HAL_PCD_Init(pcd) (++init_calls, test_init_status)
 #define HAL_PCDEx_SetRxFiFo(...) Test_Hal_Ok(0U, __VA_ARGS__)
 #define HAL_PCDEx_SetTxFiFo(...) Test_Hal_Ok(0U, __VA_ARGS__)
-#define HAL_PCD_Start(pcd) (++start_calls, test_start_status)
+#define HAL_PCD_Start(pcd) (assert(critical_depth == 1U && start_calls + 1U == attach_delays), ++start_calls, test_start_status)
 #define HAL_PCD_IRQHandler(...) Test_Hal_Ok(0U, __VA_ARGS__)
-#define HAL_PCD_DevDisconnect(...) Test_Hal_Ok(0U, __VA_ARGS__)
-#define HAL_PCD_DevConnect(...) Test_Hal_Ok(0U, __VA_ARGS__)
+#define HAL_PCD_DevDisconnect(...) (++forced_disconnects, Test_Hal_Ok(0U, __VA_ARGS__))
+#define HAL_PCD_DevConnect(...) (++forced_connects, Test_Hal_Ok(0U, __VA_ARGS__))
+#define vTaskDelete(handle) do { assert((handle) == NULL && critical_depth == 0U); ++task_deletes; } while (0)
 
 #include "../../project/Core/Communication/Common/usb_link.c"
 
 uint32_t test_tick;
-static unsigned critical_depth, critical_entries;
+static unsigned critical_entries;
 static jmp_buf task_finished;
 static unsigned task_step;
 static uint8_t task_frame[LINK_FRAME_MAX_BYTES], task_frame_length;
@@ -229,17 +231,31 @@ static void Check_Callbacks(void)
 void test_delay_ms(uint32_t ms)
 {
     test_tick += ms;
-    if (ms == 200U)
+    if (ms == 500U)
     {
-        Set_Configuration(1U);
+        assert(!State().connected && !irq_enables && attach_delays == start_calls);
+        ++attach_delays;
         return;
     }
     assert(ms == 1U && !critical_depth);
     switch (task_step++)
     {
     case 0U:
+    {
+        assert(irq_enables == 1U && !State().connected);
+        HAL_PCD_ResetCallback(&hpcd);
+        const uint8_t get_device[] = {0x80U, 6U, 0U, 1U, 0U, 0U, 64U, 0U};
+        memcpy(hpcd.Setup, get_device, sizeof(get_device));
+        HAL_PCD_SetupStageCallback(&hpcd);
+        assert(ep0_in_total == 18U && ep0_in_sent == 18U && ep0_status_out);
+        assert(!memcmp(ep0_buffer, device_descriptor, 18U));
+        HAL_PCD_DataInStageCallback(&hpcd, 0U);
+        assert(!ep0_status_out);
+        Set_Configuration(1U);
+        assert(State().connected);
         UsbRxBuffer_Push(&rx_buffer, task_frame, 5U, test_tick);
         break;
+    }
     case 1U:
         assert(parser.count == 5U && !Periodic_Seen());
         HAL_PCD_SuspendCallback(&hpcd);
@@ -264,7 +280,7 @@ void test_delay_ms(uint32_t ms)
     }
 }
 
-/** @brief 仅当时钟和 PCD 启动都成功时允许创建接收任务并启用中断。 */
+/** @brief 启动前完成配置保持断开。任务 Start 失败时保持 IRQ 关闭并退出。 */
 static void Check_Init(void)
 {
     test_sysclk_hz = 168000000U;
@@ -282,13 +298,14 @@ static void Check_Init(void)
     assert(!UsbLink_Init());
     assert(init_calls == 1U && start_calls == 0U && irq_enables == 0U);
     test_init_status = HAL_OK;
-    test_start_status = HAL_BUSY;
-    assert(!UsbLink_Init());
-    assert(init_calls == 2U && start_calls == 1U && irq_enables == 0U);
-    test_start_status = HAL_OK;
     assert(UsbLink_Init());
-    assert(init_calls == 3U && start_calls == 2U && irq_enables == 1U);
+    assert(init_calls == 2U && start_calls == 0U && irq_enables == 0U && !State().connected);
     assert(strcmp(serial_text, "0123456789ABCDEFAABBCCDD") == 0);
+    test_start_status = HAL_BUSY;
+    UsbLink_Task(NULL);
+    assert(attach_delays == 1U && start_calls == 1U && task_deletes == 1U);
+    assert(!irq_enables && !task_step && !State().connected);
+    test_start_status = HAL_OK;
 }
 
 /** @brief 运行 USB 启动、状态与接收任务回归。 */
@@ -303,7 +320,9 @@ int main(void)
     assert(task_frame_length == LINK_FRAME_MAX_BYTES);
     if (setjmp(task_finished) == 0)
         UsbLink_Task(NULL);
-    assert(task_step == 5U);
+    assert(task_step == 5U && start_calls == 2U && irq_enables == 1U && task_deletes == 1U);
+    assert(!forced_connects && !forced_disconnects);
+    puts("PASS: one attach after 500 ms offline, first device descriptor, no second pull-up");
     puts("PASS: USB session callbacks, short disconnect, stale RX and periodic stream");
     return 0;
 }

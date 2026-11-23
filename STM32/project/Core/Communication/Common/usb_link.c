@@ -17,6 +17,7 @@
 
 #define USB_EP_OUT 0x01U
 #define USB_EP_IN 0x81U
+#define USB_ATTACH_DELAY_MS 500U
 
 static PCD_HandleTypeDef hpcd;
 static uint8_t out_buffer[64];
@@ -485,11 +486,7 @@ uint8_t UsbLink_Init(void)
     HAL_PCDEx_SetTxFiFo(&hpcd, 0, 0x40);
     HAL_PCDEx_SetTxFiFo(&hpcd, 1, 0x60);
     HAL_PCDEx_SetTxFiFo(&hpcd, 2, 0x20);
-    if (HAL_PCD_Start(&hpcd) != HAL_OK)
-    {
-        return 0U;
-    }
-    HAL_NVIC_EnableIRQ(OTG_FS_IRQn);
+    /* HAL_PCD_Init 已断开设备并屏蔽核心中断；待 USB 任务就绪后再让主机看见设备。 */
     return 1U;
 }
 
@@ -521,15 +518,18 @@ int UsbLink_Send(uint8_t type, const uint8_t *data, uint8_t length)
 void UsbLink_Task(void const *argument)
 {
     (void)argument;
-    /* 主机可能还停在上一次描述符失败里。拉低 D+ 再放开，让它重新枚举。 */
-    osDelay(200);
+    /* 热下载后先留出连续的断开间隔，之后一次接入。主机的首轮描述符读取可完整进行。 */
+    osDelay(USB_ATTACH_DELAY_MS);
     taskENTER_CRITICAL();
-    configured = 0U;
-    link_offline();
-    HAL_PCD_DevDisconnect(&hpcd);
+    const HAL_StatusTypeDef started = HAL_PCD_Start(&hpcd);
+    if (started == HAL_OK)
+        HAL_NVIC_EnableIRQ(OTG_FS_IRQn);
     taskEXIT_CRITICAL();
-    osDelay(200);
-    HAL_PCD_DevConnect(&hpcd);
+    if (started != HAL_OK)
+    {
+        vTaskDelete(NULL);
+        return;
+    }
     uint32_t parsed_generation = rx_buffer.generation;
     uint32_t frame_started_ms = 0U;
     for (;;)
