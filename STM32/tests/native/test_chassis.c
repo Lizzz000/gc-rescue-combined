@@ -374,9 +374,10 @@ static void test_encoder_stop_feedback(void)
 static void test_longitudinal_stop_feedback(void)
 {
     enum { FIELD_BIAS, NORMAL_BRAKE, SUSTAINED_SPEED, HIGH_MEAN, LONG_BURST, ISOLATED_PEAK,
-           SLOW_DRIFT, SMALL_OSCILLATION, GYRO_PULSE, LOST_FRAME, PARTIAL_UNLOAD, PARTIAL_RESTORE };
+           SLOW_DRIFT, SMALL_OSCILLATION, GYRO_PULSE, LOST_FRAME, PARTIAL_UNLOAD, PARTIAL_RESTORE,
+           FIRST_UNLOADED_STEP, EARLY_WHEEL_RETURNS, FIRST_UNLOADED_FRAME_GAP, PRE_SUBMIT_PULSE };
     const float position_count = 25.0f / 65535.0f;
-    for (unsigned scenario = FIELD_BIAS; scenario <= PARTIAL_RESTORE; ++scenario)
+    for (unsigned scenario = FIELD_BIAS; scenario <= PRE_SUBMIT_PULSE; ++scenario)
     {
         reset_case(0U, UINT32_MAX - 350U);
         assert(enable_ready());
@@ -403,6 +404,8 @@ static void test_longitudinal_stop_feedback(void)
                 if (scenario == FIELD_BIAS && i == 0U && longitudinal_can.restore_groups &&
                     test_tick - longitudinal_can.first_restore_ms < 30U)
                     continue; /* 恢复阻尼后，第三只返回新反馈的电机暂迟两拍。 */
+                if (scenario == EARLY_WHEEL_RETURNS && unloaded && i == 0U && off_ms < 20U)
+                    continue; /* 轮 2 可以在轮 1 首个卸载反馈前已往返。 */
                 float delta = ((frame / 12U) & 1U) * position_count;
                 float speed = i == 2U ? -0.244f : 0.04884f;
                 if (i == 1U)
@@ -415,6 +418,9 @@ static void test_longitudinal_stop_feedback(void)
                     if (unloaded && scenario == LONG_BURST) speed = frame % 35U < 14U ? 0.48f : 0.04884f;
                     if (unloaded && scenario == ISOLATED_PEAK && off_ms == 200U) speed = -0.82f;
                     if (unloaded && scenario == SLOW_DRIFT) delta = off_ms * 0.000012f;
+                    if (unloaded && scenario == FIRST_UNLOADED_STEP) delta += 0.025f;
+                    if (unloaded && scenario == EARLY_WHEEL_RETURNS && off_ms == 0U) delta += 0.025f;
+                    if (unloaded && scenario == FIRST_UNLOADED_FRAME_GAP && off_ms == 0U) ++dm_motor[i].feedback_seq;
                     if (unloaded && scenario == SMALL_OSCILLATION)
                         delta = (frame & 1U ? 4.0f : -4.0f) * position_count;
                     if (unloaded && scenario == LOST_FRAME && frame % 7U == 0U) ++dm_motor[i].feedback_seq;
@@ -423,15 +429,17 @@ static void test_longitudinal_stop_feedback(void)
                 wheel_feedback(i, speed, 1U);
             }
             yaw_rate = unloaded && scenario == GYRO_PULSE && frame % 7U == 0U ? 0.045f : 0.00964f;
+            if (scenario == PRE_SUBMIT_PULSE && frame == 15U) yaw_rate = 0.045f;
             /* 正例人为占用邮箱，仅请求卸载或恢复都不能作为已经发出三帧的证据。 */
             const uint8_t delay_unload = frame >= 12U && frame <= 20U;
             const uint8_t delay_restore = unloaded && off_ms >= 570U && off_ms < 670U;
-            const uint8_t can_ready = scenario != FIELD_BIAS || !(delay_unload || delay_restore);
+            const uint8_t can_ready = !(scenario == FIELD_BIAS && (delay_unload || delay_restore)) &&
+                                      !(scenario == PRE_SUBMIT_PULSE && delay_unload);
             step(0U, can_ready); /* 先提交本拍 CAN，再运行 Jetson 的停稳查询。 */
             confirmed = Chassis_Longitudinal_Stop_Confirmed(0U);
         }
 
-        const uint8_t expected = scenario == FIELD_BIAS || scenario == NORMAL_BRAKE;
+        const uint8_t expected = scenario == FIELD_BIAS || scenario == NORMAL_BRAKE || scenario == PRE_SUBMIT_PULSE;
         if (confirmed != expected)
             fprintf(stderr, "longitudinal stop case %u: confirmed=%u, unload groups=%lu, restore groups=%lu\n",
                     scenario, confirmed, (unsigned long)longitudinal_can.unload_groups,
@@ -450,6 +458,8 @@ static void test_longitudinal_stop_feedback(void)
         }
         assert(longitudinal_can.unload_groups && longitudinal_can.first_unload_ms - begin_ms >= 120U);
         assert(longitudinal_can.restore_groups);
+        if (scenario == PRE_SUBMIT_PULSE)
+            assert(longitudinal_can.first_unload_ms - begin_ms >= 150U + CHASSIS_NEUTRAL_ARM_MS);
         if (scenario == FIELD_BIAS)
         {
             assert(longitudinal_can.first_unload_ms - begin_ms >= 210U);

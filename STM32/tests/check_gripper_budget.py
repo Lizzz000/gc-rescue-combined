@@ -25,7 +25,7 @@ def main():
 constexpr double stop_s = s288::kStopAttempts * s288::kFeedbackWaitS;
 constexpr double exchange_and_tick_s = s288::kFeedbackWaitS + s288::kCommandPeriodS;
 constexpr double total_ms = 1000 * (3 * stop_s + 2 * exchange_and_tick_s +
-    s288::kMaxMoveS + s288::kHoldCaptureS) +
+    s288::openCaptureLimitS(s288::kMaxMoveS)) +
     JETSON_AUTO_REQUEST_LINK_MARGIN_MS;
 static_assert(JETSON_AUTO_ACTION_TIMEOUT_MS >= total_ms,
               "STM32 action deadline does not cover the full S288 action");

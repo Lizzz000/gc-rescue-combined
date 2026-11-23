@@ -181,6 +181,16 @@ void testBridgeTransactions()
   changed.arrival.complete(true);
   changed.transactions.handleArrival(Service::PickupRoute);
   CHECK(changed.ports.pickup_class == "3" && changed.ports.pickup_token == 33);
+  // 回绕后 Mission 路由保留高位，USB 抓取与转向确认沿用相同的低 32 位。
+  constexpr auto wrapped_route = 0x100000021ULL;
+  changed.mission(BridgeCyclePhase::WaitingTurn, 7, wrapped_route, BridgeDestination::Right,
+    BridgeTransportPhase::Later);
+  CHECK(changed.transactions.acceptRoiReply(changed.ports.roi_generation, changed.ports.monotonic));
+  changed.transactions.finishPickupRoute(true, BridgeDestination::Right, wrapped_route);
+  changed.transactions.refreshTurnRequest(changed.ports.monotonic);
+  CHECK(changed.replyIs(CanProtocol::turnRequest(2, 33)));
+  changed.transactions.handleArrival(Service::PickupRoute);
+  CHECK(changed.replyIs(CanProtocol::arrivalAck()) && changed.ports.pickup_requests == 1);
 
   // 两次选中结果落在同一毫秒，截短的源时刻有歧义，等待下一个独立编号。
   Fixture collision;

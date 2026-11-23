@@ -124,7 +124,7 @@ ls -l /dev/serial/by-id/
 
 两组均要求三轮反馈逐帧连续、位置有效、IMU 为新鲜实测值。缺轮、跳帧或姿态过期后须重新收集证据，1.5 s 截止时间继续计时。SWD 可查看 `encoder_stop_debug` 的拒绝原因和 `accepted`，取值 1 表示 300 ms 条件通过，2 表示 600 ms 条件通过。
 
-盲推或回撤送零后，若速度反馈抖动，而三轮角位置已连续 120 ms 稳定，可临时对三轮同时撤掉速度阻尼。收到各轮新反馈后再连续观察 600 ms。此时允许的瞬时反馈峰值为 0.80 rad/s，每轮仍须满足角跨度 0.004 rad、持续超速时间与累计往返行程限制，且平均绝对速度不超过 0.42 rad/s、实测偏航角速度不超过 0.025 rad/s。三轮重新收到常规阻尼命令并反馈后才允许续行。`encoder_stop_debug.accepted=3` 表示这条路径通过。`neutral_stop_debug` 保留了卸力、恢复的时间以及各轮的位置和速度证据。
+盲推或回撤送零后，若速度反馈抖动，而三轮角位置已连续 120 ms 稳定，可临时对三轮同时撤掉速度阻尼。从卸力前最后一帧轮角起，逐轮记录首轮反馈，三轮到齐后继续观察 600 ms。某轮先到、再回弹的位移仍计入角跨度和累计行程。此时允许的瞬时反馈峰值为 0.80 rad/s，每轮仍须满足角跨度 0.004 rad、持续超速时间与累计往返行程限制，且平均绝对速度不超过 0.42 rad/s、实测偏航角速度不超过 0.025 rad/s。三轮重新收到常规阻尼命令并反馈后才允许续行。`encoder_stop_debug.accepted=3` 表示这条路径通过。`neutral_stop_debug` 保留了卸力、恢复的时间以及各轮的位置和速度证据。
 
 自动导航加速可通过 CMake 的 `CHASSIS_NAV_SPEED_CONTROLLER` 选择实验方法。默认 `0` 沿用逐拍加速，`1` 为有限候选 MPC，`2` 为边界层 SMC，`3` 为带扩张状态观测器的 ADRC。例如使用 `cmake --preset Debug-Auto -DCHASSIS_NAV_SPEED_CONTROLLER=1` 构建 MPC 版。三种方法从当前航向坐标系下的新轮速反馈调整加速步长，反馈未更新或轮角与陀螺持续分歧时沿用原加速上限。反向、停车和定时盲推动作继续使用各自的限制。 [算法说明](../project/Core/Algorithm/Chassis/README.md#自动导航速度实验)
 
@@ -200,7 +200,7 @@ mdh <SAFETY_X> 2
 ```powershell
 $clionBin = 'C:/Program Files/JetBrains/CLion 2026.2.3.1/bin'
 $env:Path = "$clionBin/cmake/win/x64/bin;$clionBin/ninja/win/x64;$env:Path"
-$deliveryLimit = 2
+$deliveryLimit = 0
 $deliveryBuild = "STM32/project/build/field-transport-limit-$deliveryLimit"
 cmake --preset Debug-Auto -S STM32/project -B $deliveryBuild -DJETSON_AUTO_DELIVERY_LIMIT=$deliveryLimit
 if ($LASTEXITCODE -eq 0) { cmake --build $deliveryBuild --parallel }
@@ -214,7 +214,7 @@ if ($LASTEXITCODE -eq 0) { cmake --build $deliveryBuild --parallel }
 | 34 | `DELIVERY_DONE`。三轮新反馈均已确认失能，计入末趟并锁定。双趟验收时计数为 2。 |
 | 21 | `FAULT`。流程锁定故障。失能确认超过 500 ms，或等待期间 USB 会话断开，也会进入此状态。失败趟不计数。 |
 
-11 月 23 日主机回归中，单趟模拟只执行取货前的首次 180° 转身，等待失能确认期间收到新图也保持停车。GDB 在进入 34 时读到的 `start_pose` 与模拟里程计一致。双趟模拟依次接受左、右目的区和独立的请求号，只执行两次取货转身。第二趟松爪失败、整区复核超时、缺一轮失能反馈和断线均保留首趟计数 1。默认模式连续完成左、右、左三趟。可从仓库根目录复跑：
+11 月 23 日主机回归中，单趟模拟只执行取货前的首次 180° 转身，等待失能确认期间收到新图也保持停车。GDB 在进入 34 时读到的 `start_pose` 与模拟里程计一致。双趟模拟依次接受左、右目的区和独立的请求号，只执行两次取货转身。第二趟松爪失败、整区复核超时、缺一轮失能反馈和断线均保留首趟计数 1。默认模式在同一次启动中完成了 300 趟，第五趟后空场零速等待 15 秒，随后补货续跑，第 301 趟搜索已就绪。可从仓库根目录复跑：
 
 ```powershell
 python STM32/tests/run_native.py --suite jetson_auto_single_delivery --suite jetson_auto_two_deliveries --suite jetson_auto_configured --suite chassis

@@ -1,4 +1,4 @@
-// Real Session worker, exchange and Stop retry loops; only POSIX device calls are fake.
+// Exercise the real Session with fault-injected POSIX calls or a private Linux PTY.
 #include "check.hpp"
 #include "gripper/s288_servo.hpp"
 #include <sys/select.h>
@@ -12,8 +12,14 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <thread>
 #include <vector>
+#ifdef S288_LINUX_PTY
+#include <poll.h>
+#include <pty.h>
+#include <stdexcept>
+#endif
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -32,13 +38,78 @@ struct RunCommand {std::chrono::steady_clock::time_point time; std::int32_t posi
 std::vector<RunCommand> commands;
 std::atomic<int> run_count{0};
 bool record_motion = false;
+#ifndef S288_LINUX_PTY
 bool delay_near_deadline = false;
+#endif
 bool check_hold = false;
 std::atomic<int> encoder{8190}, raw_speed{0}, active_warning{0};
 std::atomic<bool> drop_run{false}, warn_stop{false};
 std::atomic<bool> unexpected_stop{false};
 bool previous_stop = false;
 
+enum class OpenPath {None, Slow, Stalled, Reversed, FastMotor, FastOutput, StillProgressing, SingleJump, LateStable};
+OpenPath open_path = OpenPath::None;
+constexpr int plant_zero = 8190;
+constexpr double plant_ratio = 70070.0 / 243.0;
+constexpr double plant_start_deg = -45.0;
+constexpr std::int16_t plant_torque = -64;
+struct CaptureSample {double error_deg, speed_rad_s, command_deg;};
+std::vector<CaptureSample> captures;
+std::atomic<int> quiet_replies{0}, crossing_replies{0};
+int injected_replies = 0;
+
+// 独立输出编码器沿实时时间演进，动作目标和反馈由生产协议各自编解码。
+void modelOpenFeedback(bool moving, bool power_on)
+{
+  double angle = power_on ? 0.0 : open_path == OpenPath::LateStable ? -0.3 : plant_start_deg;
+  int speed = 0;
+  if (moving) {
+    const double t = std::chrono::duration<double>(commands.back().time - commands.front().time).count();
+    switch (open_path) {
+      case OpenPath::Slow:
+        angle = std::min(0.0, plant_start_deg + 22.0 * t);
+        speed = t < 2.2 ? 45 : 0;
+        break;
+      case OpenPath::Stalled: break;
+      case OpenPath::Reversed: angle -= 4.0 * t; speed = -8; break;
+      case OpenPath::FastMotor:
+      case OpenPath::FastOutput:
+        angle = std::min(4.0, plant_start_deg + 22.0 * t);
+        speed = open_path == OpenPath::FastMotor && angle < 4.0 ? 45 : 0;
+        break;
+      case OpenPath::StillProgressing: angle += 4.0 * t; speed = 8; break;
+      case OpenPath::SingleJump:
+        if (t >= 0.84 && injected_replies == 0) {angle += 4.0; ++injected_replies;}
+        break;
+      case OpenPath::LateStable:
+        if (t < 0.90) {speed = 40;}
+        else if (++injected_replies == 3) {
+          // 第三张到位反馈在 1 s 捕获期限之后才返回，串口本身仍在 200 ms 读取时限内。
+          std::this_thread::sleep_for(std::chrono::milliseconds(135));
+        }
+        break;
+      case OpenPath::None: return;
+    }
+    if (std::abs(angle) <= 2.0 && open_path == OpenPath::Slow && speed == 0) {++quiet_replies;}
+    if (std::abs(angle) <= 2.0 &&
+      (open_path == OpenPath::FastMotor || open_path == OpenPath::FastOutput)) {++crossing_replies;}
+  }
+  const auto counts = std::lround(angle * 8192.0 / 360.0);
+  encoder = (plant_zero + counts + 8192) % 8192;
+  raw_speed = speed;
+  const auto motor = static_cast<std::uint32_t>(session_zero +
+    std::lround(angle * plant_ratio * 32768.0 / 360.0));
+  for (int i = 0; i < 4; ++i) {feedback[10 + i] = static_cast<unsigned char>(motor >> (8 * i));}
+  const auto torque = static_cast<std::uint16_t>(plant_torque);
+  feedback[6] = static_cast<unsigned char>(torque);
+  feedback[7] = static_cast<unsigned char>(torque >> 8);
+  if (moving) {
+    captures.push_back({-counts * 360.0 / 8192.0, speed * 2.0 * std::acos(-1.0) / (2.56 * plant_ratio),
+      (commands.back().position - session_zero) * 360.0 / (plant_ratio * 32768.0)});
+  }
+}
+
+#ifndef S288_LINUX_PTY
 bool waitStatus(s288::Session & session, s288::MotionStatus wanted,
   std::chrono::seconds timeout = std::chrono::seconds(2))
 {
@@ -49,10 +120,11 @@ bool waitStatus(s288::Session & session, s288::MotionStatus wanted,
   }
   return session.status() == wanted;
 }
-std::uint32_t crc(const unsigned char *data)
+#endif
+std::uint32_t crc(const unsigned char *data, int bytes = 20)
 {
   std::uint32_t value = 0xffffffff;
-  for (int offset = 0; offset < 20; offset += 4) {
+  for (int offset = 0; offset < bytes; offset += 4) {
     std::uint32_t word = 0;
     for (int i = 0; i < 4; ++i) {word |= std::uint32_t(data[offset + i]) << (8 * i);}
     value ^= word;
@@ -62,13 +134,8 @@ std::uint32_t crc(const unsigned char *data)
 }
 }
 
-int open(const char *, int, ...) {return 42;}
-int close(int) {return 0;}
-int flock(int, int) {return 0;}
-int ioctl(int, unsigned long, ...) {return 0;}
-ssize_t write(int, const void *raw, std::size_t size)
+static void respondToCommand(const unsigned char *packet)
 {
-  const auto *packet = static_cast<const unsigned char *>(raw);
   const auto mode = (packet[2] >> 4) & 7;
   const int count = mode == 0 ? ++stop_calls : 0;
   // Prepare and final Stop each time out twice before receiving feedback.
@@ -89,6 +156,7 @@ ssize_t write(int, const void *raw, std::size_t size)
     }
   }
   if (check_hold) {
+    if (open_path != OpenPath::None) {modelOpenFeedback(mode == 1, count == 1);}
     if (mode == 1 && (previous_stop || unexpected_stop)) {feedback[2] &= 0x0f;}
     previous_stop = mode == 0;
     int warning = mode == 1 ? active_warning.load() : int(warn_stop.load());
@@ -104,6 +172,16 @@ ssize_t write(int, const void *raw, std::size_t size)
   const auto check = crc(feedback.data() + 2);
   for (int i = 0; i < 4; ++i) {feedback[22 + i] = static_cast<unsigned char>(check >> (8 * i));}
   have_feedback = true;
+}
+
+#ifndef S288_LINUX_PTY
+int open(const char *, int, ...) {return 42;}
+int close(int) {return 0;}
+int flock(int, int) {return 0;}
+int ioctl(int, unsigned long, ...) {return 0;}
+ssize_t write(int, const void *raw, std::size_t size)
+{
+  respondToCommand(static_cast<const unsigned char *>(raw));
   return static_cast<ssize_t>(size);
 }
 ssize_t read(int, void *out, std::size_t size)
@@ -126,9 +204,157 @@ int select(int, fd_set *, fd_set *, fd_set *, timeval *timeout)
                             std::chrono::microseconds(timeout->tv_usec));
   return 0;
 }
+#else
+// 此目标链接真实的生产串口调用，只打开本用例新建的 PTY，从不接受设备路径参数。
+class TestTerminal {
+public:
+  TestTerminal()
+  {
+    if (::openpty(&master_, &slave_, name_, nullptr, nullptr) < 0) {
+      throw std::runtime_error("openpty failed");
+    }
+    responder_ = std::thread([this] {serve();});
+  }
+  ~TestTerminal() {stop(); ::close(master_); ::close(slave_);}
+  const char *device() const {return name_;}
+  void stop()
+  {
+    stopping_ = true;
+    if (responder_.joinable()) {responder_.join();}
+  }
+  bool healthy() const {return healthy_;}
+
+private:
+  void serve()
+  {
+    std::array<unsigned char, 20> command{};
+    size_t used = 0;
+    while (!stopping_) {
+      pollfd ready{master_, POLLIN, 0};
+      const int polled = ::poll(&ready, 1, 20);
+      if (polled < 0 && errno == EINTR) {continue;}
+      if (polled == 0) {continue;}
+      if (polled < 0 || !(ready.revents & POLLIN)) {healthy_ = false; return;}
+      const auto count = ::read(master_, command.data() + used, command.size() - used);
+      if (count < 0 && errno == EINTR) {continue;}
+      if (count <= 0) {healthy_ = false; return;}
+      used += static_cast<size_t>(count);
+      if (used < command.size()) {continue;}
+      std::uint32_t expected_crc = 0;
+      for (unsigned i = 0; i < 4; ++i) {expected_crc |= std::uint32_t(command[16 + i]) << (8 * i);}
+      if (command[0] != 0xfe || command[1] != 0xee || crc(command.data(), 16) != expected_crc) {
+        healthy_ = false; return;
+      }
+      respondToCommand(command.data());
+      used = 0;
+      if (timeout_reply) {continue;}
+      size_t sent = 0;
+      while (sent < feedback.size()) {
+        const auto written = ::write(master_, feedback.data() + sent, feedback.size() - sent);
+        if (written < 0 && errno == EINTR) {continue;}
+        if (written <= 0) {healthy_ = false; return;}
+        sent += static_cast<size_t>(written);
+      }
+    }
+  }
+  int master_{-1}, slave_{-1};
+  char name_[128]{};
+  std::atomic<bool> stopping_{false};
+  bool healthy_{true};  // Only inspected after join.
+  std::thread responder_;
+};
+#endif
+
+double diagnosticValue(const std::string & message, const std::string & key)
+{
+  const auto at = message.find(key + "=");
+  if (at == std::string::npos) {return std::numeric_limits<double>::quiet_NaN();}
+  try {return std::stod(message.substr(at + key.size() + 1));}
+  catch (const std::exception &) {return std::numeric_limits<double>::quiet_NaN();}
+}
+
+void testProgressiveOpen(s288::SessionConfig config)
+{
+  Group group("open progress, motor and output speed, measured diagnostics and absolute deadline");
+  config.output_tolerance_deg = 2.0;
+  for (const auto path : {OpenPath::Slow, OpenPath::Stalled, OpenPath::Reversed,
+      OpenPath::FastMotor, OpenPath::FastOutput, OpenPath::StillProgressing, OpenPath::SingleJump, OpenPath::LateStable}) {
+    // 现场配置 1 s 的旧截止为 1.5 s，同时覆盖默认动作时长 0.5 s。
+    const double move_s = path == OpenPath::Slow ? 1.0 : 0.5;
+    const double hard_s = s288::openCaptureLimitS(move_s);
+    open_path = path;
+    stop_calls = 0;
+    quiet_replies = crossing_replies = 0;
+    injected_replies = 0;
+    commands.clear();
+    captures.clear();
+#ifdef S288_LINUX_PTY
+    TestTerminal terminal;
+    config.device = terminal.device();
+#endif
+    s288::Session session(config);
+    CHECK(session.available());
+    const auto start = std::chrono::steady_clock::now();
+    CHECK(session.start_open(move_s));
+    const bool success = path == OpenPath::Slow;
+    while (session.status() == s288::MotionStatus::Busy &&
+      std::chrono::steady_clock::now() - start < std::chrono::seconds(6)) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    // 以第一次退出 Busy 为准，高速穿窗不能先上报成功、随后才因漂移而失败。
+    CHECK(session.status() == (success ? s288::MotionStatus::Succeeded : s288::MotionStatus::Failed));
+    const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    const auto message = session.message();
+    const auto reported_elapsed = diagnosticValue(message, "elapsed_s");
+    CHECK(std::abs(reported_elapsed - elapsed) < 0.18);
+    CHECK(elapsed <= hard_s + 0.30);
+    if (success) {
+      CHECK(elapsed >= 2.2 && quiet_replies >= 3);
+      CHECK(diagnosticValue(message, "good_samples") == 3);
+      CHECK(stop_calls == 2);  // 已保位，直到显式 close 才发 Stop。
+    } else {
+      CHECK(stop_calls == 3);
+      CHECK(diagnosticValue(message, "good_samples") < 3);
+      if (path == OpenPath::Stalled || path == OpenPath::Reversed || path == OpenPath::SingleJump) {
+        CHECK(elapsed <= move_s + s288::kHoldCaptureS + 0.20);
+      }
+      if (path == OpenPath::FastMotor || path == OpenPath::FastOutput) {CHECK(crossing_replies >= 3);}
+      if (path == OpenPath::StillProgressing) {CHECK(elapsed >= hard_s - 0.08);}
+    }
+    session.close();  // 工作线程退出后再检查它记录的帧。
+#ifdef S288_LINUX_PTY
+    terminal.stop();
+    CHECK(terminal.healthy());
+#endif
+    const double error = diagnosticValue(message, "error_deg");
+    const double speed = diagnosticValue(message, "speed_rad_s");
+    const double command = diagnosticValue(message, "command_deg");
+    CHECK(std::abs(diagnosticValue(message, "torque_nm") - plant_torque * plant_ratio / 256000.0) < 0.002);
+    CHECK(std::any_of(captures.begin(), captures.end(), [&](const auto & sample) {
+      return std::abs(error - sample.error_deg) < 0.02 && std::abs(speed - sample.speed_rad_s) < 0.002 &&
+        std::abs(command - sample.command_deg) < 0.02;
+    }));
+    if (path == OpenPath::SingleJump) {CHECK(injected_replies == 1);}
+    if (path == OpenPath::LateStable) {CHECK(injected_replies == 3);}
+    if (success || path == OpenPath::LateStable) {CHECK(std::abs(error) <= 2.0 && std::abs(speed) <= 0.12);}
+    else {CHECK(std::abs(error) > 2.0);}
+  }
+  open_path = OpenPath::None;
+}
 
 int main()
 {
+#ifdef S288_LINUX_PTY
+  s288::SessionConfig config;
+  config.kp = 2.0;
+  config.kd = 0.10;
+  config.open_trim_deg = 5.0;
+  config.open_hold_max_nm = 0.14;
+  config.ramp_fraction = 0.8;
+  check_hold = record_motion = true;
+  testProgressiveOpen(config);
+  return finishTests("S288 Linux PTY");
+#else
 #ifdef _WIN32
   // 默认计时粒度可超过一个命令周期；让 Windows 的实时时序回归请求 1 ms 定时分辨率。
   const auto timer = LoadLibraryW(L"winmm.dll");
@@ -393,9 +619,13 @@ int main()
     CHECK(stop_calls == 3);
     invalid.close();
   }
+  active_warning = 0;
+  unexpected_stop = false;
+  testProgressiveOpen(config);
 #ifdef _WIN32
   end_period(1);
   FreeLibrary(timer);
 #endif
   return finishTests("S288 timing");
+#endif
 }

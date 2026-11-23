@@ -131,7 +131,7 @@ struct Feedback
 {
   int id{0}, mode{0};
   bool timeout{false};
-  double position{0}, speed{0};
+  double position{0}, speed{0}, torque{0};
   int temperature{0}, winding_temperature{0}, output_encoder{0}, warning{0};
   std::uint32_t error{0};
 };
@@ -152,6 +152,8 @@ Feedback parse_feedback(const std::uint8_t * packet, int expected_id)
   feedback.timeout = (mode & 128) != 0;
   feedback.temperature = static_cast<std::int8_t>(packet[3]);
   feedback.winding_temperature = packet[4];
+  const auto raw_torque = static_cast<std::int16_t>(packet[6] | (packet[7] << 8));
+  feedback.torque = raw_torque * kRatio / kTorqueScale;
   const auto raw_speed = static_cast<std::int16_t>(packet[8] | (packet[9] << 8));
   feedback.speed = raw_speed * (2 * M_PI) / (kSpeedScale * kRatio);
   feedback.position = static_cast<double>(get_le32(packet + 10)) * (2 * M_PI) / (kPositionScale * kRatio);
@@ -496,8 +498,12 @@ void Session::execute(const Motion & motion)
   const auto began = Clock::now();
   const auto move_deadline = began + Seconds(motion.seconds);
   const auto grace = Seconds(kHoldCaptureS);
-  const auto capture_deadline = move_deadline + grace;
+  auto capture_deadline = move_deadline + grace;
+  const auto hard_deadline = began + Seconds(openCaptureLimitS(motion.seconds));
   const double tolerance = config_.output_tolerance_deg * kRadiansPerDegree;
+  constexpr double progress_step = 0.5 * kRadiansPerDegree;
+  constexpr double settled_speed = 0.12;  // rad/s
+  constexpr double encoder_step = 2 * M_PI / 8192.0;
   double anchor = feedback.position;
   // 初次张开时机械角通常已在零点，直接以当前电机角开始轻力保位。
   if (std::abs(error()) > tolerance) {
@@ -508,29 +514,62 @@ void Session::execute(const Motion & motion)
   try {
     auto previous = Clock::now();
     auto last_sample = previous;
+    double last_error = error();
+    double best_confirmed_error = std::abs(last_error);
+    std::optional<double> progress_candidate;
     std::optional<Clock::time_point> outside_since;
     int good_samples = 0;
     bool confirmed = false;
+    const auto capture_detail = [&] {
+      return " error_deg=" + std::to_string(error() / kRadiansPerDegree) +
+        " speed_rad_s=" + std::to_string(feedback.speed) +
+        " command_deg=" + std::to_string((anchor - zero_rad_) / kRadiansPerDegree) +
+        " torque_nm=" + std::to_string(feedback.torque) +
+        " elapsed_s=" + std::to_string(Seconds(Clock::now() - began).count()) +
+        " good_samples=" + std::to_string(good_samples);
+    };
     while (!cancel_.load() && !leave_hold_.load()) {
       const auto tick = Clock::now();
-      if (!confirmed && tick >= move_deadline && good_samples >= 3 &&
+      if (!confirmed && tick >= move_deadline && tick <= hard_deadline && good_samples >= 3 &&
           tick - last_sample <= Seconds(kFeedbackWaitS)) {
         std::lock_guard<std::mutex> guard(lock_);
-        message_ = "张开已到位，持续轻力保位";
+        message_ = "张开已到位，持续轻力保位" + capture_detail();
         status_.store(MotionStatus::Succeeded);
         confirmed = true;
       }
-      if (!confirmed && tick >= capture_deadline) {throw std::runtime_error("张开输出轴未在期限内停稳到位");}
+      if (!confirmed && tick >= capture_deadline) {
+        throw std::runtime_error("张开输出轴未在期限内停稳到位" + capture_detail());
+      }
       anchor = openHoldAnchorRad(anchor, error(), tolerance, feedback.position, config_.kp,
         config_.open_hold_max_nm, Seconds(tick - previous).count());
       previous = tick;
       feedback = link_->hold(anchor, config_);
       const auto received = Clock::now();
-      last_sample = received;
-      const bool in_window = std::abs(error()) <= tolerance;
+      const double sample_error = error();
+      const bool in_window = std::abs(sample_error) <= tolerance;
       if (!confirmed) {
-        if (feedback.mode != kModeRun || !in_window || std::abs(feedback.speed) > 0.12) {good_samples = 0;}
-        else if (received <= capture_deadline) {good_samples = std::min(3, good_samples + 1);}
+        if (received <= capture_deadline && feedback.mode == kModeRun) {
+          // 两个相邻反馈都优于上次确认的最小误差才续期，孤立跳码和来回摆动不能续期。
+          const double absolute_error = std::abs(sample_error);
+          if (best_confirmed_error - absolute_error >= progress_step) {
+            if (progress_candidate) {
+              best_confirmed_error = std::max(*progress_candidate, absolute_error);
+              capture_deadline = std::min(hard_deadline, std::max(capture_deadline, received + grace));
+              progress_candidate.reset();
+            } else {
+              progress_candidate = absolute_error;
+            }
+          } else {
+            progress_candidate.reset();
+          }
+          const double travel = std::abs(std::remainder(sample_error - last_error, 2 * M_PI));
+          const bool output_quiet = travel <= settled_speed * Seconds(received - last_sample).count() + encoder_step;
+          good_samples = in_window && output_quiet && std::abs(feedback.speed) <= settled_speed ?
+            std::min(3, good_samples + 1) : 0;
+        } else {
+          progress_candidate.reset();
+          good_samples = 0;
+        }
       } else if (in_window) {
         outside_since.reset();
       } else if (!outside_since) {
@@ -538,6 +577,8 @@ void Session::execute(const Motion & motion)
       } else if (received - *outside_since >= grace) {
         throw std::runtime_error("张开输出轴持续超出保位容差");
       }
+      last_error = sample_error;
+      last_sample = received;
       auto next = tick + Seconds(kCommandPeriodS);
       if (!confirmed) {
         next = std::min(next, capture_deadline);

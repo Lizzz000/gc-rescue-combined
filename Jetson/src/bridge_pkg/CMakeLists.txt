@@ -95,6 +95,13 @@ if(BUILD_TESTING)
     ament_add_test(test_${test_name} COMMAND $<TARGET_FILE:test_${test_name}>
       GENERATE_RESULT_FOR_RETURN_CODE_ZERO TIMEOUT 60)
   endforeach()
+  add_executable(test_s288_pty test/host/test_s288_timing.cpp gripper/s288_servo.cpp)
+  target_compile_features(test_s288_pty PRIVATE cxx_std_17)
+  target_compile_definitions(test_s288_pty PRIVATE S288_LINUX_PTY)
+  target_include_directories(test_s288_pty PRIVATE test/host ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(test_s288_pty Threads::Threads util)
+  ament_add_test(test_s288_pty COMMAND $<TARGET_FILE:test_s288_pty>
+    GENERATE_RESULT_FOR_RETURN_CODE_ZERO TIMEOUT 60)
   add_executable(test_cdc_exclusive test/host/test_cdc_exclusive.cpp)
   target_include_directories(test_cdc_exclusive PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test/host)
   target_link_libraries(test_cdc_exclusive bridge_transport bridge_state util)

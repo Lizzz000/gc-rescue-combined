@@ -185,7 +185,7 @@ typedef struct {
     float origin[3], minimum[3], maximum[3];
 } Encoder_Stop_Window_t;
 
-/* SWD：从本段首组零 MIT 起累计各项拒绝次数，超时后保留。accepted 1/2 为短窗/长窗。 */
+/* SWD：从本段首组零 MIT 起累计各项拒绝次数，accepted 1/2/3 为短窗、长窗、卸载后恢复。 */
 typedef struct {
     uint32_t started_ms;
     uint16_t invalid_state, invalid_imu, gyro, invalid_wheel, speed, frame_gap;
@@ -195,7 +195,7 @@ typedef struct {
 static volatile Encoder_Stop_Debug_t encoder_stop_debug;
 
 typedef enum { NEUTRAL_ARM, NEUTRAL_REQUESTED, NEUTRAL_SUBMITTED, NEUTRAL_OBSERVING,
-               NEUTRAL_RESTORE, NEUTRAL_RESTORED, NEUTRAL_FAILED } Neutral_Phase_t;
+               NEUTRAL_RESTORE, NEUTRAL_RESTORED, NEUTRAL_FAILED, NEUTRAL_FAILED_RESTORE } Neutral_Phase_t;
 static Neutral_Phase_t neutral_phase;
 static uint32_t neutral_sent_seq[3];
 static struct {
@@ -344,8 +344,12 @@ static uint8_t Neutral_Reject(uint8_t reason, unsigned wheel)
     neutral_stop_debug.rejected = reason;
     neutral_stop_debug.wheel = (uint8_t)wheel;
     neutral_window.tracking = neutral_window.overspeed = 0U;
-    if (neutral_phase != NEUTRAL_ARM)
+    if (neutral_phase == NEUTRAL_REQUESTED)
+        neutral_phase = NEUTRAL_ARM; /* 全组尚未发出，回到正常阻尼下重新验满预备窗。 */
+    else if (neutral_phase == NEUTRAL_RESTORED)
         neutral_phase = NEUTRAL_FAILED;
+    else if (neutral_phase != NEUTRAL_ARM)
+        neutral_phase = NEUTRAL_FAILED_RESTORE;
     return 0U;
 }
 
@@ -357,9 +361,18 @@ uint8_t Chassis_Longitudinal_Stop_Confirmed(uint8_t begin)
         neutral_window.tracking = neutral_window.overspeed = 0U;
         neutral_stop_debug = (Neutral_Stop_Debug_t){0};
     }
-    if (neutral_phase == NEUTRAL_ARM && (Chassis_Is_Stopped() || Chassis_Encoder_Stop_Confirmed(begin)))
-        return 1U;
-    if (neutral_phase == NEUTRAL_FAILED)
+    if (neutral_phase == NEUTRAL_ARM)
+    {
+        if (Chassis_Is_Stopped())
+        {
+            if (begin)
+                encoder_stop_debug = (Encoder_Stop_Debug_t){ .started_ms = Chassis_Time_Now_Ms() };
+            return 1U;
+        }
+        if (Chassis_Encoder_Stop_Confirmed(begin))
+            return 1U;
+    }
+    if (neutral_phase == NEUTRAL_FAILED || neutral_phase == NEUTRAL_FAILED_RESTORE)
         return 0U;
     INS_control_data_t imu;
     if (!enabled || disable_after_stop || mode != IDLE || !monitoring_stop || distance_completion_pending ||
@@ -382,14 +395,8 @@ uint8_t Chassis_Longitudinal_Stop_Confirmed(uint8_t begin)
         if (w->feedback_seq == neutral_sent_seq[i])
             all_after_command = 0U;
     }
-    if (neutral_phase == NEUTRAL_SUBMITTED && all_after_command)
-    {
-        neutral_phase = NEUTRAL_OBSERVING;
-        neutral_window.tracking = 0U;
-    }
-    /* 首个卸载组和首个恢复阻尼组都由正常 100 Hz 发送路径提交。 */
-    if (neutral_phase == NEUTRAL_SUBMITTED)
-        return 0U;
+    /* 三轮回复可能错开。逐拍检查先到轮的位置、序号和速度，最后一轮回复才开始计满观察期。 */
+    const uint8_t waiting_for_group = neutral_phase == NEUTRAL_SUBMITTED;
     const uint8_t arming = neutral_phase == NEUTRAL_ARM || neutral_phase == NEUTRAL_REQUESTED;
     const uint32_t duration = arming ? CHASSIS_NEUTRAL_ARM_MS : CHASSIS_ENCODER_BIAS_WINDOW_MS;
     uint8_t position_quiet = 1U, mean_quiet = 1U;
@@ -397,7 +404,8 @@ uint8_t Chassis_Longitudinal_Stop_Confirmed(uint8_t begin)
     {
         const Chassis_Wheel_Feedback_t *w = &snapshot.wheel[i];
         const float speed = fabsf(w->velocity);
-        if (!arming && speed > CHASSIS_NEUTRAL_PEAK_SPEED_RAD_S)
+        if (!arming && (!waiting_for_group || w->feedback_seq != neutral_sent_seq[i]) &&
+            speed > CHASSIS_NEUTRAL_PEAK_SPEED_RAD_S)
             return Neutral_Reject(7U, i + 1U);
         if (speed > CHASSIS_ENCODER_BIAS_SPEED_RAD_S)
             neutral_window.overspeed = 1U;
@@ -425,7 +433,7 @@ uint8_t Chassis_Longitudinal_Stop_Confirmed(uint8_t begin)
             neutral_stop_debug.travel[i] += fmaxf(0.0f, fabsf(step) - CHASSIS_NEUTRAL_POSITION_NOISE_RAD);
             if (neutral_stop_debug.travel[i] > CHASSIS_NEUTRAL_TRAVEL_RAD)
                 return Neutral_Reject(6U, i + 1U);
-            if (!arming)
+            if (!arming && !waiting_for_group)
             {
                 if (speed <= CHASSIS_ENCODER_BIAS_SPEED_RAD_S)
                     neutral_window.last_quiet_ms[i] = w->feedback_time_ms;
@@ -449,8 +457,16 @@ uint8_t Chassis_Longitudinal_Stop_Confirmed(uint8_t begin)
         neutral_window.last_ms[i] = w->feedback_time_ms;
         neutral_window.sequence[i] = w->feedback_seq;
         neutral_window.previous[i] = w->position;
+        if (waiting_for_group && all_after_command)
+            neutral_window.start_ms[i] = neutral_window.last_quiet_ms[i] = w->feedback_time_ms;
     }
     neutral_window.tracking = 1U;
+    if (waiting_for_group)
+    {
+        if (all_after_command)
+            neutral_phase = NEUTRAL_OBSERVING;
+        return 0U;
+    }
     if (!position_quiet)
         return 0U;
     if (neutral_phase == NEUTRAL_ARM && neutral_window.overspeed)
@@ -1196,7 +1212,8 @@ static uint8_t Send_Chassis_Targets(float vx, float vy, float wz)
         if (i < 2U)
             vTaskDelay(pdMS_TO_TICKS(CHASSIS_CAN_INTERFRAME_DELAY_MS));
     }
-    if (neutral_phase == NEUTRAL_REQUESTED || neutral_phase == NEUTRAL_RESTORE)
+    if (neutral_phase == NEUTRAL_REQUESTED || neutral_phase == NEUTRAL_RESTORE ||
+        neutral_phase == NEUTRAL_FAILED_RESTORE)
     {
         /* 记录三次 HAL 发送均成功之后的序号，每只电机都必须再返回一帧。 */
         Chassis_Feedback_Snapshot_t submitted;
@@ -1207,10 +1224,17 @@ static uint8_t Send_Chassis_Targets(float vx, float vy, float wz)
         {
             neutral_phase = NEUTRAL_SUBMITTED;
             neutral_stop_debug.submitted_ms = submitted.now_ms;
+            /* 保留末个带阻尼样本作基准，连同首个卸载回复一起检查。 */
+            for (unsigned i = 0U; i < 3U; ++i)
+            {
+                neutral_window.origin[i] = neutral_window.previous[i];
+                neutral_window.minimum[i] = neutral_window.maximum[i] = 0.0f;
+                neutral_stop_debug.span[i] = neutral_stop_debug.travel[i] = 0.0f;
+            }
         }
         else
         {
-            neutral_phase = NEUTRAL_RESTORED;
+            neutral_phase = neutral_phase == NEUTRAL_FAILED_RESTORE ? NEUTRAL_FAILED : NEUTRAL_RESTORED;
             neutral_stop_debug.restored_ms = submitted.now_ms;
         }
     }

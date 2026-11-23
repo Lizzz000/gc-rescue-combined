@@ -214,13 +214,18 @@ PickupRouteResult MissionController::registerPickupRoute(
   const std::string & class_id, std::uint32_t grasp_token, const RoiClassIds & ids)
 {
   using Destination = MissionState::Destination;
-  if (grasp_token != 0 && grasp_token == last_grasp_token_ && class_id == last_grasp_class_ &&
-    state_.cycle_phase == CyclePhase::WaitingTurn && state_.roi_request_id == grasp_token)
+  const auto previous_token = static_cast<std::uint32_t>(last_grasp_route_id_);
+  if (grasp_token != 0 && grasp_token == previous_token && class_id == last_grasp_class_ &&
+    state_.cycle_phase == CyclePhase::WaitingTurn && state_.roi_request_id == last_grasp_route_id_)
   {
-    return {true, state_.destination, grasp_token, state_.reason};
+    return {true, state_.destination, last_grasp_route_id_, state_.reason};
   }
+  // USB 的 32 位编号会回绕。按相邻抓取的前向距离扩展为 ROS 的 64 位路由身份。
+  const std::uint32_t distance = grasp_token - previous_token;
+  const auto route_id = last_grasp_route_id_ + distance;
   // 正式握手和旧诊断共享下游路由身份；同一任务进程不能将历史编号重新交给另一件货物。
-  if (grasp_token == 0 || grasp_token <= roi_response_id_high_water_ ||
+  if (grasp_token == 0 || (last_grasp_route_id_ != 0 && distance >= 0x80000000u) ||
+    route_id <= roi_response_id_high_water_ ||
     state_.cycle_phase != CyclePhase::SearchingTarget || !task_ || task_->task != "seg" ||
     busy() || roi_.pending_commit)
   {
@@ -236,15 +241,15 @@ PickupRouteResult MissionController::registerPickupRoute(
     return {false, Destination::None, 0, "selected class is not allowed for this delivery"};
   }
   last_grasp_class_ = class_id;
-  last_grasp_token_ = grasp_token;
-  roi_response_id_high_water_ = grasp_token;
-  state_.roi_request_id = grasp_token;
+  last_grasp_route_id_ = route_id;
+  roi_response_id_high_water_ = route_id;
+  state_.roi_request_id = route_id;
   state_.destination = side;
   state_.cycle_phase = CyclePhase::WaitingTurn;
   state_.outcome = MissionState::Outcome::Success;
   state_.reason = "selected pickup registered; waiting for STM32 turn completion";
   out_.publishStatus(state_);
-  return {true, side, grasp_token, state_.reason};
+  return {true, side, route_id, state_.reason};
 }
 
 void MissionController::requestRoi()

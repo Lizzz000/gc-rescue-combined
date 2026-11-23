@@ -195,6 +195,22 @@ void testSelectedPickupRoute()
   const auto black = mission.registerPickupRoute("8", 5, ids);
   CHECK(black.accepted && black.destination == Destination::Left);
   CHECK(session.out.roi_sends == 0 && session.out.published_roi_id == 0);
+
+  Session wrap;
+  auto & delivery = wrap.controller;
+  delivery.taskChanged(taskAt("seg", 1, 100), kNow);
+  CHECK(delivery.registerPickupRoute("4", 0xfffffffeu, ids).accepted);
+  CHECK(delivery.requestCommand(MissionCommand::StartSearch, 0).accepted);
+  CHECK(confirmSwitch(wrap, "seg", 200, 2));
+  CHECK(!delivery.registerPickupRoute("4", 0xfffffffdu, ids).accepted);
+  const auto next = delivery.registerPickupRoute("4", 1, ids);
+  CHECK(next.accepted && next.route_id == 0x100000001ULL);
+  CHECK(delivery.registerPickupRoute("4", 1, ids).route_id == next.route_id);
+  CHECK(!delivery.requestCommand(MissionCommand::TurnCompleted, 1).accepted);
+  CHECK(delivery.requestCommand(MissionCommand::TurnCompleted, next.route_id).accepted);
+  CHECK(confirmSwitch(wrap, "field", 300, 3));
+  CHECK(delivery.requestCommand(MissionCommand::SafetyArrived, next.route_id).accepted);
+  CHECK(delivery.requestCommand(MissionCommand::DeliveryCompleted, next.route_id).accepted);
 }
 
 void testMissionErrors()

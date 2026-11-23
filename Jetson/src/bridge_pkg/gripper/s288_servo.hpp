@@ -3,6 +3,7 @@
 // C++ 宇树 S288 协议，须与 teleop_pkg/servo/s288.py 保持一致。
 // 供 bridge 自动开合在进程内调用；不创建新进程，工作线程不得阻塞 io()。
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <condition_variable>
@@ -22,6 +23,12 @@ constexpr double kFeedbackWaitS = 0.2;
 constexpr int kStopAttempts = 3;
 constexpr double kCommandPeriodS = 0.02;
 constexpr double kHoldCaptureS = 0.5;
+constexpr double kMaxOpenProgressExtensionS = 2.5;
+// 必须由独立输出编码器的新进展赢得宽限，最长动作沿用两端原有总预算。
+constexpr double openCaptureLimitS(double move_s)
+{
+  return std::min(move_s + kHoldCaptureS + kMaxOpenProgressExtensionS, kMaxMoveS + kHoldCaptureS);
+}
 constexpr bool validRampFraction(double fraction) {return fraction >= 0.0 && fraction <= 1.0;}
 
 inline bool validHoldConfig(double max_nm, double tolerance_deg, double kp,

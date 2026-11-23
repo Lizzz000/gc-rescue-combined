@@ -1459,7 +1459,7 @@ static void Test_Consecutive_Transports(uint8_t second_fault)
 }
 
 /* 按 Jetson 登记的目的区跨趟传送，每趟沿用同一 USB 会话、控制器和请求序号。 */
-static void Test_Delivery_Batch(const uint8_t *destinations, unsigned count)
+static void Test_Delivery_Batch(const uint8_t *destinations, unsigned pattern_size, unsigned count)
 {
     Begin_Target_Test_At_Heading(100U, 0.37f);
     uint32_t search = initial_search_id;
@@ -1467,10 +1467,11 @@ static void Test_Delivery_Batch(const uint8_t *destinations, unsigned count)
     for (unsigned leg = 0U; leg < count; ++leg)
     {
         assert(enabled && !disables && total_turns == leg + 1U && jetson_completed_deliveries == leg);
-        const uint32_t grasp = Prepare_Selected_Route_From_Target(destinations[leg]);
+        const uint8_t destination = destinations[leg % pattern_size];
+        const uint32_t grasp = Prepare_Selected_Route_From_Target(destination);
         assert(grasp == sent[0].request_id && grasp > search);
         const uint8_t scenario = !JETSON_AUTO_DELIVERY_LIMIT && leg == 4U ? EMPTY_NEXT_SEARCH : 0U;
-        Transport_From_Route(destinations[leg], grasp, scenario);
+        Transport_From_Route(destination, grasp, scenario);
         assert(sent[4].request_id > grasp && jetson_completed_deliveries == leg + 1U);
         assert(startup == startup_id && enables == 1U);
         if (leg + 1U < count)
@@ -1492,7 +1493,7 @@ static void Test_Delivery_Batch(const uint8_t *destinations, unsigned count)
     else
     {
         assert(enabled && !disables && total_turns == count + 1U && sent[7].token > sent[4].request_id);
-        puts("PASS: continuous left/left/right/right/left, 15 s waiting at zero, sixth delivery and seventh search");
+        printf("PASS: %u deliveries in one session, 15 s waiting at zero after five, search %u active\n", count, total_turns);
     }
 }
 
@@ -2171,14 +2172,15 @@ int main(void)
     else if (JETSON_AUTO_DELIVERY_LIMIT == 5U)
     {
         const uint8_t destinations[] = {1U, 2U, 1U, 1U, 2U};
-        Test_Delivery_Batch(destinations, sizeof(destinations) / sizeof(destinations[0]));
+        Test_Delivery_Batch(destinations, sizeof(destinations) / sizeof(destinations[0]), 5U);
     }
     else
         Test_Consecutive_Transports(0U);
     if (!JETSON_AUTO_DELIVERY_LIMIT)
     {
         const uint8_t destinations[] = {1U, 1U, 2U, 2U, 1U, 2U};
-        Test_Delivery_Batch(destinations, sizeof(destinations) / sizeof(destinations[0]));
+        /* 跨过 255 趟和 255 个事务编号，检查控制器在同一会话中仍然继续找货。 */
+        Test_Delivery_Batch(destinations, sizeof(destinations) / sizeof(destinations[0]), 300U);
     }
     if (JETSON_AUTO_DELIVERY_LIMIT == 2U)
     {

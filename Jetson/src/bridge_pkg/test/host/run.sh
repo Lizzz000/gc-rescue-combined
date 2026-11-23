@@ -28,3 +28,7 @@ ${CXX:-g++} -std=c++17 -Wall -Wextra -I"$here/posix_stubs" -I"$here/stubs" -I"$h
 ${CXX:-g++} -std=c++17 -Wall -Wextra -pthread -I"$here/posix_stubs" -I"$here" -I"$package" \
   "$here/test_s288_timing.cpp" "$package/gripper/s288_servo.cpp" -o "$out/s288_timing_tests"
 "$out/s288_timing_tests"
+
+${CXX:-g++} -std=c++17 -Wall -Wextra -pthread -DS288_LINUX_PTY -I"$here" -I"$package" \
+  "$here/test_s288_timing.cpp" "$package/gripper/s288_servo.cpp" -lutil -o "$out/s288_pty_tests"
+"$out/s288_pty_tests"

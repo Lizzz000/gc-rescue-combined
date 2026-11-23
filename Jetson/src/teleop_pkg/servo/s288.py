@@ -1,8 +1,6 @@
-"""宇树 S288 单总线协议；这是仓库里唯一的协议实现。
+"""手动控制使用的宇树 S288 单总线协议，与自动搬运的 C++ 实现共用线协议和开爪判据。
 
-手动网页与 bridge_pkg/gripper 薄转发都使用本模块。
-不导入 bridge，不发送 CAN。角度、速度和力矩都是输出端单位。
-6 Mbps 用 termios2，数值在 Orin aarch64 上核对过。
+角度、速度和力矩使用输出端单位。6 Mbps 串口使用 Orin aarch64 的 termios2。
 """
 
 from collections.abc import Callable
@@ -27,6 +25,8 @@ COMMAND_PERIOD_S = 0.02
 OUTPUT_COUNTS_PER_REV = 8192
 MAX_OPEN_HOLD_NM = 0.6
 HOLD_CAPTURE_S = 0.5
+HOLD_PROGRESS_DEG = 0.5
+HOLD_MAX_EXTENSION_S = 2.5
 HOLD_MAX_STEP_S = 0.04
 HOLD_CORRECTION_GAIN = 6.0
 HOLD_MAX_CORRECTION_RADPS = 0.45
@@ -304,6 +304,9 @@ class ServoLink:
         if open_hold is not None:
             # 阶跃配置也先留出运动段，之后再交给独立输出轴闭环。
             motion_end = started + (ramp_seconds if ramp_seconds > 0 else 0.8 * seconds)
+            initial_error = output_error_degrees(open_hold.target_deg, initial['output_encoder'], open_hold.zero_encoder)
+            if abs(initial_error) <= open_hold.tolerance_deg:
+                motion_end = started
         # 给最后一个周期留出发送目标角的时间，避免比例为 1 时只能在截止后到达目标。
         final_window = deadline - COMMAND_PERIOD_S
         tick = started
@@ -345,8 +348,7 @@ class ServoLink:
                 previous_tick = tick
                 tick = time.monotonic()
             if open_hold is not None and not cancel.is_set():
-                capture_end = deadline + HOLD_CAPTURE_S
-                self._hold_open(open_hold, position, feedback, previous_tick, deadline, capture_end,
+                self._hold_open(open_hold, position, feedback, previous_tick, started, deadline,
                                 kp, kd, cancel, first_run)
         finally:
             final = self.stop()
@@ -359,17 +361,23 @@ class ServoLink:
         final['turned_deg'] = math.degrees(final['position'] - initial['position'])
         return final
 
-    def _hold_open(self, hold, anchor, feedback, previous_tick, deadline, capture_end,
+    def _hold_open(self, hold, anchor, feedback, previous_tick, started, deadline,
                    kp, kd, cancel, first_run):
         # 梯度用独立输出轴误差。限位以电机反馈为中心，只限制位置刚度对应的力矩。
         max_position_error = hold.max_nm / kp
         stable_samples = 0
         holding = False
         outside_since = None
+        capture_end = deadline + HOLD_CAPTURE_S
+        hard_end = min(capture_end + HOLD_MAX_EXTENSION_S, started + MAX_MOVE_SECONDS + HOLD_CAPTURE_S)
+        last_sample = time.monotonic()
+        error = output_error_degrees(hold.target_deg, feedback['output_encoder'], hold.zero_encoder)
+        best_error = abs(error)
+        progress_candidate = None
         while not cancel.is_set():
             tick = time.monotonic()
-            error = output_error_degrees(hold.target_deg, feedback['output_encoder'], hold.zero_encoder)
-            if not holding and tick >= deadline and stable_samples >= HOLD_STABLE_SAMPLES:
+            if (not holding and deadline <= tick <= hard_end and stable_samples >= HOLD_STABLE_SAMPLES and
+                    tick - last_sample <= FEEDBACK_WAIT_S):
                 holding = True
                 hold.report({**feedback, 'target_deg': hold.target_deg, 'output_error_deg': error})
             if not holding and tick >= capture_end:
@@ -391,12 +399,27 @@ class ServoLink:
             first_run = False
 
             now = time.monotonic()
+            previous_error = error
             error = output_error_degrees(hold.target_deg, feedback['output_encoder'], hold.zero_encoder)
             within = abs(error) <= hold.tolerance_deg
             if not holding:
                 if now > capture_end:
                     raise RuntimeError('张开保位捕获超时')
-                stable = running and within and abs(feedback['speed']) <= HOLD_STABLE_SPEED_RADPS
+                if running and best_error - abs(error) >= HOLD_PROGRESS_DEG:
+                    if progress_candidate is None:
+                        progress_candidate = abs(error)
+                    else:
+                        best_error = max(progress_candidate, abs(error))
+                        capture_end = min(hard_end, max(capture_end, now + HOLD_CAPTURE_S))
+                        progress_candidate = None
+                else:
+                    progress_candidate = None
+                # 电机估速与独立输出轴都要稳定。允许一个编码器计数的量化误差。
+                travel = abs(math.remainder(error - previous_error, 360.0))
+                quiet_travel = (math.degrees(HOLD_STABLE_SPEED_RADPS) * (now - last_sample)
+                                + 360.0 / OUTPUT_COUNTS_PER_REV)
+                stable = (running and within and travel <= quiet_travel
+                          and abs(feedback['speed']) <= HOLD_STABLE_SPEED_RADPS)
                 stable_samples = stable_samples + 1 if stable else 0
                 holding = now >= deadline and stable_samples >= HOLD_STABLE_SAMPLES
             elif within:
@@ -407,6 +430,7 @@ class ServoLink:
                 raise RuntimeError(f'张开保位持续超差（{error:+.2f}°）')
             if holding and not cancel.is_set():
                 hold.report({**feedback, 'target_deg': hold.target_deg, 'output_error_deg': error})
+            last_sample = now
             previous_tick = tick
             wake = tick + COMMAND_PERIOD_S
             if not holding:

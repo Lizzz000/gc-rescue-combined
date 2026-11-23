@@ -308,7 +308,7 @@ private:
   // Target 编号在其进程内递增。仅当前有效代次的非零应答推进高水位，
   // 单独重启 Target 导致编号回退时拒绝新路由，不能与旧送达收据混用。
   std::uint64_t roi_response_id_high_water_{0};
-  std::uint32_t last_grasp_token_{0};
+  std::uint64_t last_grasp_route_id_{0};
   std::string last_grasp_class_;
   TransportPolicy policy_;
   RoiContext roi_;

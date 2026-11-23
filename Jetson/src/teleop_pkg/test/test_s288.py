@@ -322,6 +322,42 @@ class LinkTrajectoryTest(unittest.TestCase):
         self.assertEqual([mode for _, mode, _ in self.commands].count(MODE_STOP), 2)
         self.assertEqual(self.commands[-1][:2], (self.cancel_at, MODE_STOP))
 
+    def test_slow_open_extends_only_while_output_approaches_target(self):
+        # 独立轴越过零点，在原来的 1.5 s 截止后才到位。
+        self.encoder = lambda at: round(8190 - max(0.0, 30.0 - 16.0 * at) * 8192 / 360) % 8192
+        self.cancel_at = 2.1
+        accepted = []
+        hold = OpenHold(8190, 0.0, 0.14, 2.0, lambda _: accepted.append(self.now))
+        self.link.goto_degrees(0, 1, 2.0, 0.1, self, 0.1, ramp_fraction=0.8, open_hold=hold)
+        self.assertTrue(accepted)
+        self.assertGreater(accepted[0], 1.5)
+        self.assertEqual(self.commands[-1][:2], (self.cancel_at, MODE_STOP))
+
+    def test_moving_output_inside_window_cannot_confirm_open(self):
+        self.encoder = lambda at: (8190 + (18 if round(at / 0.02) % 2 else -18)) % 8192
+        hold = OpenHold(8190, 0.0, 0.14, 2.0, lambda _: self.fail('输出轴往返时误报张开'))
+        with self.assertRaisesRegex(RuntimeError, '捕获超时'):
+            self.link.goto_degrees(0, 1, 2.0, 0.1, self, 0.1, ramp_fraction=0.8, open_hold=hold)
+        self.assertEqual(self.commands[-1][:2], (1.5, MODE_STOP))
+
+    def test_isolated_improvement_does_not_extend_a_stalled_open(self):
+        self.encoder = lambda at: 8150 if 1.39 <= at < 1.41 else 8000
+        hold = OpenHold(8190, 0.0, 0.14, 1.0, lambda _: self.fail('夹爪卡住时误报张开'))
+        with self.assertRaisesRegex(RuntimeError, '捕获超时'):
+            self.link.goto_degrees(0, 1, 2.0, 0.1, self, 0.1, ramp_fraction=0.8, open_hold=hold)
+        self.assertEqual(self.commands[-1][:2], (1.5, MODE_STOP))
+
+    def test_already_open_holds_starting_motor_angle(self):
+        self.cancel_at = 0.25
+        accepted = []
+        hold = OpenHold(8190, 0.0, 0.14, 1.0, accepted.append)
+        self.link.goto_degrees(0, 0.2, 2.0, 0.1, self, 0.1,
+                               ramp_fraction=0.8, trim_deg=5, open_hold=hold)
+        self.assertTrue(accepted)
+        for _, mode, position in self.commands:
+            if mode == MODE_RUN:
+                self.assertAlmostEqual(position, 0.4, delta=4e-7)
+
     def test_capture_timeout_stops_and_respects_position_torque_limit(self):
         self.follow_motor = False
         self.encoder = lambda at: 8000
@@ -336,6 +372,7 @@ class LinkTrajectoryTest(unittest.TestCase):
 
     def test_maximum_full_ramp_uses_the_capture_grace(self):
         self.cancel_at = 10.10
+        self.encoder = lambda at: 8100 if at < 10.0 else 8190
         accepted = []
         hold = OpenHold(8190, 0.0, 0.25, 1.0, lambda _: accepted.append(self.now))
         self.link.goto_degrees(0, 10, 1.0, 0.05, self, 0.1, ramp_fraction=1.0, open_hold=hold)

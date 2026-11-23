@@ -143,7 +143,8 @@ void BridgeTransactions::handleArrival(Service service)
     const auto grasp = pickup_ ? arrival_point_.result(1, pickup_->grasp_token) : std::nullopt;
     if (!grasp || !grasp->success || !mission || pickup_->cycle_generation != mission->cycle_generation ||
       (phase != BridgeCyclePhase::SearchingTarget && phase != BridgeCyclePhase::WaitingTurn) ||
-      (phase == BridgeCyclePhase::WaitingTurn && mission->roi_request_id != grasp->request_id)) {
+      (phase == BridgeCyclePhase::WaitingTurn &&
+       static_cast<std::uint32_t>(mission->roi_request_id) != grasp->request_id)) {
       armReply(CanProtocol::ARRIVAL_ACK_ID, CanProtocol::arrivalAck(false));
       return;
     }
@@ -529,7 +530,7 @@ void BridgeTransactions::finishRoi(BridgeRoiResult result, std::uint64_t request
 void BridgeTransactions::finishPickupRoute(bool accepted, BridgeDestination destination, std::uint64_t route_id)
 {
   const auto & mission = state_.missionState();
-  const bool identity_matches = pickup_ && pickup_->grasp_token == route_id &&
+  const bool identity_matches = pickup_ && pickup_->grasp_token == static_cast<std::uint32_t>(route_id) &&
     mission && mission->cycle_generation == pickup_->cycle_generation &&
     (destination == BridgeDestination::Left || destination == BridgeDestination::Right) &&
     ((mission->cycle_phase == BridgeCyclePhase::SearchingTarget && mission->roi_request_id == 0) ||
