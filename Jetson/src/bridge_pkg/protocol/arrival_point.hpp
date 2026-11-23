@@ -18,11 +18,18 @@ class ArrivalPointSession
 {
 public:
   // 构造时的启动张开已在途；kind 0 只能查询它，不能再次开爪。
-  ArrivalPointDecision onRequest(std::uint8_t kind, std::uint32_t request_id, bool authorized = true)
+  ArrivalPointDecision onRequest(std::uint8_t kind, std::uint32_t request_id, bool authorized = true,
+    std::uint32_t source_frame = 0)
   {
     if (kind > 3 || request_id == 0) {return ArrivalPointDecision::Reject;}
     auto & record = records_[kind];
-    if (record.request_id == request_id) {return ArrivalPointDecision::Resend;}
+    if (record.request_id == request_id) {
+      return kind == 1 && source_frame != record.source_frame ?
+        ArrivalPointDecision::Reject : ArrivalPointDecision::Resend;
+    }
+    if (kind == 1 && denied_grasp_id_ && !newer(request_id, denied_grasp_id_)) {
+      return ArrivalPointDecision::Reject;
+    }
     // STM32 编号递增、溢出跳过 0。已替换的旧编号不能重新触发开合。
     if (record.request_id != 0 && !newer(request_id, record.request_id)) {
       return ArrivalPointDecision::Reject;
@@ -33,9 +40,11 @@ public:
     }
     // 已知编号仍可查询终态，新动作必须属于当前阶段。
     if (!authorized || active_ || (kind == 3 && !reject_open_authorized_)) {
+      if (kind == 1) {denied_grasp_id_ = request_id;}
       return ArrivalPointDecision::Reject;
     }
-    record = {request_id, std::nullopt};
+    record = {request_id, std::nullopt, source_frame};
+    if (kind == 1) {denied_grasp_id_ = 0;}
     active_ = kind;
     if (kind == 3) {reject_open_authorized_ = false;}
     return ArrivalPointDecision::Accept;
@@ -72,6 +81,7 @@ private:
   {
     std::uint32_t request_id{0};
     std::optional<bool> success;
+    std::uint32_t source_frame{0};
   };
   static bool newer(std::uint32_t next, std::uint32_t previous)
   {
@@ -82,4 +92,5 @@ private:
   std::optional<std::uint8_t> active_{0};
   std::optional<bool> startup_result_;
   bool reject_open_authorized_{false};
+  std::uint32_t denied_grasp_id_{0};
 };

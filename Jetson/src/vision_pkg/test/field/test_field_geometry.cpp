@@ -5,10 +5,30 @@
 #include "visibility.hpp"
 
 #include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
 
 namespace {
 using namespace field_scene;
 using namespace field_test;
+
+void cargoOccludesClippedSide()
+{
+  Group group("A box beside a clipped wall cannot determine the ground side slope");
+  auto cfg = productionConfig();
+  cfg.wall_thickness_m = 0.015;
+  const auto image = cv::imread(std::string(FIELD_DATA_DIR) + "/site-20261123-occluded-left.jpg");
+  CHECK(image.size() == cv::Size(1280, 720));
+  if (image.empty()) {return;}
+  FieldLocator locator(cfg);
+  const auto result = locator.update(image);
+  CHECK(result.committed && result.split_valid);
+  CHECK(result.inner_measured_edges == 3 && result.corners.size() == 4);
+  if (result.corners.size() == 4) {
+    // 独立测量左侧被物块分开的远近两段紫→红边，外推到前墙底边并扣除 15 mm 厚度。
+    CHECK(cv::norm(result.corners[0] - cv::Point2f(285, 186)) < 12);
+    CHECK(cv::norm(result.corners[3] - cv::Point2f(47, 363)) < 16);
+  }
+}
 
 void groundPerspectiveDirection()
 {
@@ -450,6 +470,7 @@ void purplePanelsAreNotGround()
 
 int main()
 {
+  cargoOccludesClippedSide();
   groundPerspectiveDirection();
   independentRows();
   interiorScanBounds();

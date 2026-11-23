@@ -6,13 +6,18 @@
 struct BridgeRuntimeTestAccess
 {
   static bool receive(
-    BridgeRuntime & runtime, canid_t type, std::uint32_t id = 0, std::uint8_t value = 1)
+    BridgeRuntime & runtime, canid_t type, std::uint32_t id = 0, std::uint8_t value = 1,
+    std::optional<std::uint32_t> source_frame = std::nullopt)
   {
     can_frame frame{};
     frame.can_id = type;
     frame.len = type == CanProtocol::ARRIVAL_ID ? 1 : 5;
     frame.data[0] = value;
     for (unsigned i = 0; i < 4; ++i) {frame.data[i + 1] = static_cast<std::uint8_t>(id >> (8 * i));}
+    if (source_frame) {
+      frame.len = 8;
+      for (unsigned i = 0; i < 3; ++i) {frame.data[i + 5] = static_cast<std::uint8_t>(*source_frame >> (8 * i));}
+    }
     return runtime.handleCommand(frame);
   }
   static const can_frame & reply(const BridgeRuntime & runtime)
@@ -20,7 +25,10 @@ struct BridgeRuntimeTestAccess
   static void sendPeriodicFrame(BridgeRuntime & runtime) {runtime.sendPeriodicFrame();}
   static void completedGrasp(BridgeRuntime & runtime, std::uint32_t token)
   {
-    CHECK(runtime.transactions_.handleArrivalPoint(1, token, true) == ArrivalPointDecision::Accept);
+    runtime.sendPeriodicFrame();
+    runtime.sendPeriodicFrame();
+    const auto number = static_cast<std::uint32_t>((runtime.now().nanoseconds() / 1000000) & 0xffffff);
+    CHECK(runtime.transactions_.handleArrivalPoint(1, token, true, number) == ArrivalPointDecision::Accept);
     CHECK(runtime.arrival_point_.complete(true).has_value());
   }
   static void expireMissionStatus(BridgeRuntime & runtime, BridgeRuntime::Clock::duration timeout)
@@ -56,10 +64,12 @@ public:
   bool socketOpen() const override {return opened;}
   ReadResult read(can_frame &, std::string &) override {return ReadResult::EMPTY;}
   unsigned periodic_writes{0};
+  WriteResult periodic_result{WriteResult::SENT};
   WriteResult write(const can_frame & frame, std::string &) override
   {
     if (frame.can_id == CanProtocol::TARGET_ID || frame.can_id == CanProtocol::SAFETY_ID) {
       ++periodic_writes;
+      return periodic_result;
     }
     return WriteResult::SENT;
   }
@@ -172,6 +182,19 @@ void checkMissionStatusTimeout()
 void testDeliveryLocalization()
 {
   Group group("BridgeRuntime delivery localization");
+  Fixture backpressure;
+  backpressure.target();
+  const auto source = static_cast<std::uint32_t>((backpressure.node.time_ns / 1000000) & 0xffffff);
+  backpressure.transport->periodic_result = CanTransport::WriteResult::BACKPRESSURE;
+  backpressure.runtime->io();
+  backpressure.runtime->io();
+  CHECK(BridgeRuntimeTestAccess::receive(*backpressure.runtime, CanProtocol::ARRIVAL_POINT_ID, 54, 1, source));
+  CHECK(backpressure.result(false, 54, CanProtocol::ARRIVAL_POINT));
+  backpressure.transport->periodic_result = CanTransport::WriteResult::SENT;
+  backpressure.runtime->io();
+  backpressure.runtime->io();
+  CHECK(BridgeRuntimeTestAccess::receive(*backpressure.runtime, CanProtocol::ARRIVAL_POINT_ID, 55, 1, source));
+  CHECK(backpressure.result(true, 55, CanProtocol::ARRIVAL_POINT));
   Fixture registered;
   registered.target();
   BridgeRuntimeTestAccess::completedGrasp(*registered.runtime, 57);

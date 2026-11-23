@@ -58,6 +58,7 @@ install(PROGRAMS scripts/view_stream.sh DESTINATION share/${PROJECT_NAME}/script
 # 安全区纯核心测试（只依赖 OpenCV），见 test/field/README.md
 if(BUILD_TESTING)
   add_subdirectory(test/field)
+  add_subdirectory(test/gstreamer)
   add_subdirectory(test/nvmm)
   add_subdirectory(test/postprocess)
   add_subdirectory(test/image)

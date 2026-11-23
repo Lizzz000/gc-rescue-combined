@@ -246,6 +246,16 @@ void DetectNode::loadParameters()
   camera_config_.height = checkedInt(*this, "camera_height", 0, 16384);
   camera_config_.fps = checkedInt(*this, "camera_fps", 0, 1000);
   camera_config_.brightness = checkedInt(*this, "camera_brightness", -1, 255);
+  const auto & overrides = get_node_parameters_interface()->get_parameter_overrides();
+  for (const auto & control : vision_camera::optional_controls) {
+    const std::string name = std::string("camera_controls.") + control.name;
+    if (overrides.count(name)) {
+      rescue::declareRequired<std::int64_t>(*this, name.c_str());
+      const int value = checkedInt(*this, name.c_str(),
+        std::numeric_limits<int>::min(), std::numeric_limits<int>::max());
+      camera_config_.controls.push_back({control, value});
+    }
+  }
   camera_config_.fourcc = get_parameter("camera_fourcc").as_string();
   camera_config_.buffer_size =
     checkedInt(*this, "camera_buffer_size", 0, 64);

@@ -5,6 +5,10 @@
 #include <stdint.h>
 
 #if JETSON_AUTO_CAN_ENABLED
+#if JETSON_AUTO_ENABLED
+/* SWD 只读。末趟在三轮确认失能后计入；故障不计入。 */
+extern volatile uint32_t jetson_completed_deliveries;
+#endif
 #if JETSON_AUTO_CHASSIS_TEST
 /* SWD 写 1 启动本次测试；写 0 请求停车。完成/失败后须复位才可再启动。 */
 extern volatile uint8_t jetson_test_start;

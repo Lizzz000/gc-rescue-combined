@@ -71,12 +71,12 @@ struct Fixture
 
   void mission(
     BridgeCyclePhase phase, std::uint64_t generation, std::uint64_t id = 0,
-    BridgeDestination destination = BridgeDestination::None)
+    BridgeDestination destination = BridgeDestination::None, BridgeTransportPhase transport = BridgeTransportPhase::First)
   {
     ++ports.source.ns;
     const auto update = state.mission(
       {ports.source, destination, BridgeOperation::Idle, BridgeOutcome::Success,
-        BridgeTransportPhase::First, id, phase, generation}, ports.source);
+        transport, id, phase, generation}, ports.source);
     CHECK(update.accepted && !update.mission_restarted);
     transactions.onStateUpdate();
     transactions.refreshTurnRequest(ports.monotonic);
@@ -105,14 +105,15 @@ struct Fixture
     transactions.commandReply(request.command, request.requested_cycle_generation, true, ports.monotonic);
   }
 
-  void target(const char * class_id)
+  std::uint32_t target(const char * class_id, const char * track = "selected")
   {
     RecognitionDetection d;
-    d.id = "selected";
+    d.id = track;
     d.box = {960, 540, 20, 20, 0};
     d.hypothesis = RecognitionHypothesis{class_id, 0.9};
-    ++ports.source.ns;
+    ports.source.ns += 1000000;
     CHECK(state.target({ports.source, "cam", d}, ports.source, {ports.monotonic}, true));
+    return state.targetOutput(ports.source, {ports.monotonic}).source_frame;
   }
 };
 }  // namespace
@@ -125,13 +126,19 @@ void testBridgeTransactions()
   pickup.arrival.complete(true);
   pickup.task("seg");
   pickup.mission(BridgeCyclePhase::SearchingTarget, 20);
-  pickup.target("2"); // 首趟只可抓正式选出的绿色目标。
-  CHECK(pickup.transactions.handleArrivalPoint(1, 41, true) == ArrivalPointDecision::Reject);
-  pickup.target("0");
+  auto frame = pickup.target("2"); // 首趟只可抓正式选出的绿色目标。
+  CHECK(pickup.transactions.handleArrivalPoint(1, 37, true, frame) == ArrivalPointDecision::Reject);
+  frame = pickup.target("0");
+  CHECK(pickup.transactions.handleArrivalPoint(1, 38, true, frame) == ArrivalPointDecision::Reject);
+  pickup.state.targetSent();
   pickup.ports.monotonic += 2s;
-  CHECK(pickup.transactions.handleArrivalPoint(1, 41, true) == ArrivalPointDecision::Reject);
-  pickup.target("0");
-  CHECK(pickup.transactions.handleArrivalPoint(1, 41, true) == ArrivalPointDecision::Accept);
+  CHECK(pickup.transactions.handleArrivalPoint(1, 39, true, frame) == ArrivalPointDecision::Reject);
+  frame = pickup.target("0");
+  pickup.state.targetSent();
+  pickup.target("0");  // 同轨迹产生更新帧，仍可绑定板端真正收到的旧帧。
+  CHECK(pickup.transactions.handleArrivalPoint(1, 41, true, frame) == ArrivalPointDecision::Accept);
+  CHECK(pickup.transactions.handleArrivalPoint(1, 41, true, frame + 1) == ArrivalPointDecision::Reject);
+  CHECK(pickup.transactions.handleArrivalPoint(1, 41, true, frame) == ArrivalPointDecision::Resend);
   pickup.transactions.handleArrival(Service::PickupRoute);
   CHECK(pickup.ports.pickup_requests == 0 && pickup.replyIs(CanProtocol::arrivalAck(false)));
   pickup.target("3");
@@ -152,13 +159,54 @@ void testBridgeTransactions()
   pickup.transactions.handleArrival(Service::PickupRoute);
   CHECK(pickup.ports.pickup_requests == 1 && pickup.ports.roi_requests == 0);
 
+  // 已发黑块帧入窗，下一次 USB 提交之前 ROS 改选橙块。旧请求不驱动夹爪。
+  Fixture changed;
+  changed.arrival.complete(true);
+  changed.task("seg");
+  changed.mission(BridgeCyclePhase::SearchingTarget, 7, 0, BridgeDestination::None, BridgeTransportPhase::Later);
+  changed.ports.source.ns = 0xfffffeLL * 1000000;
+  const auto black = changed.target("2", "black-1");
+  changed.state.targetSent();
+  const auto orange = changed.target("3", "orange-1");
+  CHECK(black == 0xffffff && orange == 0);
+  CHECK(changed.transactions.handleArrivalPoint(1, 30, true, black) == ArrivalPointDecision::Reject);
+  CHECK(changed.transactions.handleArrivalPoint(1, 31, true, orange) == ArrivalPointDecision::Reject);
+  changed.state.targetSent();
+  CHECK(changed.transactions.handleArrivalPoint(1, 31, true, orange) == ArrivalPointDecision::Reject);
+  changed.target("3", "orange-2");
+  CHECK(changed.transactions.handleArrivalPoint(1, 32, true, orange) == ArrivalPointDecision::Reject);
+  const auto confirmed = changed.target("3", "orange-2");
+  changed.state.targetSent();
+  CHECK(changed.transactions.handleArrivalPoint(1, 33, true, confirmed) == ArrivalPointDecision::Accept);
+  changed.arrival.complete(true);
+  changed.transactions.handleArrival(Service::PickupRoute);
+  CHECK(changed.ports.pickup_class == "3" && changed.ports.pickup_token == 33);
+
+  // 两次选中结果落在同一毫秒，截短的源时刻有歧义，等待下一个独立编号。
+  Fixture collision;
+  collision.task("seg");
+  collision.mission(BridgeCyclePhase::SearchingTarget, 1);
+  const auto first = collision.target("0", "one");
+  collision.state.targetSent();
+  collision.ports.source.ns -= 999999;
+  CHECK(first == collision.target("0", "two"));
+  collision.state.targetSent();
+  CHECK(collision.state.graspClass(first, collision.ports.source, {collision.ports.monotonic}).empty());
+  const auto unambiguous = collision.target("0", "two");
+  collision.state.targetSent();
+  CHECK(collision.state.graspClass(unambiguous, collision.ports.source, {collision.ports.monotonic}) == "0");
+  collision.state.resetInputs(collision.ports.source);
+  collision.target("0", "two");
+  CHECK(collision.state.graspClass(unambiguous, collision.ports.source, {collision.ports.monotonic}).empty());
+
   for (bool disconnected : {false, true}) {
     Fixture rejected;
     rejected.arrival.complete(true);
     rejected.task("seg");
     rejected.mission(BridgeCyclePhase::SearchingTarget, 22);
-    rejected.target("0");
-    CHECK(rejected.transactions.handleArrivalPoint(1, 17, true) == ArrivalPointDecision::Accept);
+    const auto sent = rejected.target("0");
+    rejected.state.targetSent();
+    CHECK(rejected.transactions.handleArrivalPoint(1, 17, true, sent) == ArrivalPointDecision::Accept);
     rejected.arrival.complete(true);
     rejected.transactions.handleArrival(Service::PickupRoute);
     if (disconnected) {
@@ -251,7 +299,7 @@ void testBridgeTransactions()
       f.ports.last_command.roi_request_id == 0 && f.ports.last_command.requested_cycle_generation == 0);
     f.transactions.handleArrival();
     CHECK(f.ports.roi_requests == 0 && f.replyIs(CanProtocol::arrivalAck(false)));
-    CHECK(f.transactions.handleArrivalPoint(1, 55, true) == ArrivalPointDecision::Reject);
+    CHECK(f.transactions.handleArrivalPoint(1, 55, true, 0) == ArrivalPointDecision::Reject);
     f.ports.queued.clear();
     if (status_first) {
       f.task("field");

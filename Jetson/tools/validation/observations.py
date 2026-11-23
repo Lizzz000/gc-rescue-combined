@@ -290,18 +290,33 @@ class UsbProbe:
         """抓取完成后查询本趟的投送路线。"""
         return self._send('arrival', ['selected'])
 
-    def begin_action(self, kind):
+    def target_source_since(self, since):
+        """只取等待开始后最后一帧目标。无效帧会撤销之前的有效目标。"""
+        from source.usb_codec import IDS
+        for row in reversed(self.records):
+            if row['steady'] < since:
+                break
+            if row['id'] == IDS['target']:
+                data = bytes.fromhex(row['data'])
+                if len(data) == 8 and data[0] == 1:
+                    return int.from_bytes(data[5:], 'little')
+                break
+        return None
+
+    def begin_action(self, kind, source_frame=None):
         self.action_sequence = (self.action_sequence + 1) & 0xffffffff or 1
-        return self.action_sequence, self.action_request(kind, self.action_sequence)
+        return self.action_sequence, self.action_request(kind, self.action_sequence, source_frame)
 
     def begin_search(self):
         from source.usb_codec import IDS
         self.action_sequence = (self.action_sequence + 1) & 0xffffffff or 1
         return self.action_sequence, self.command(IDS['start_search'], self.action_sequence)
 
-    def action_request(self, kind, request_id):
-        """同一请求重试保持 ID；对端只查询原动作，不重复驱动舵机。"""
-        return self._send('arrival_point', [str(kind), str(request_id)])
+    def action_request(self, kind, request_id, source_frame=None):
+        values = [str(kind), str(request_id)]
+        if source_frame is not None:
+            values.append(str(source_frame))
+        return self._send('arrival_point', values)
 
     def _send(self, kind, values):
         # 共用字节编解码，采集工具不能保留另一份旧协议或自行截断非法 token。

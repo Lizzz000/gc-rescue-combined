@@ -133,7 +133,7 @@ ros2 launch bringup_pkg rescue.launch.py run:=vision config:="$(ros2 pkg prefix 
 
 相机的现场标定保存在 `rescue_advanced.yaml` 的 `vision.detect.camera_brightness` 和 `vision.detect.camera_controls`。当前标定为亮度 175、对比度 68、饱和度 90、色调 200、伽马 138、增益 48、手动曝光 150，并开启自动白平衡和连续自动对焦。这些数值是当前相机的 V4L2 控件值。使用完整配置快照启动时，快照中的参数优先，现场改动应同步到实际启动配置。
 
-在 Jetson 上用正式入口启动 `vision`、`detect` 或 `all` 时，自动 GStreamer 管线会在创建节点前通过 `v4l2-ctl`（来自 `v4l-utils`）先设置曝光等自动模式，再写手动参数，并回读全部目标值。缺少工具、设备写入失败或回读不符都会中止本次启动。文件回放、自定义管线和单独的 `stream` 角色跳过这一步。检查正在出图的相机时可直接读取驱动值：
+在 Jetson 上用正式入口启动 `vision`、`detect` 或 `all` 时，启动预检通过 `v4l2-ctl` 写入并回读现场参数。每次打开自动 GStreamer 管线时，采集线程还会在本次相机的设备描述符上先恢复自动模式、再写其余控件，并在格式协商后核对全部值。重连校验失败时关闭本次会话，继续等待相机。文件回放、自定义管线和单独的 `stream` 角色跳过这一步。检查正在出图的相机时可直接读取驱动值：
 
 ```bash
 v4l2-ctl -d /dev/video0 --get-ctrl=brightness,contrast,saturation,hue,gamma,gain,auto_exposure,exposure_time_absolute,white_balance_automatic,focus_automatic_continuous

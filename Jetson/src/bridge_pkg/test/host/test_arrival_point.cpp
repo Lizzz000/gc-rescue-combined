@@ -42,12 +42,12 @@ void testArrivalPoint()
   CHECK(session.onRequest(0, 1) == Decision::Resend);
   CHECK(!session.result(0, 1));
   CHECK(session.onRequest(0, 1) == Decision::Resend);
-  CHECK(session.onRequest(1, 2) == Decision::Reject);
+  CHECK(session.onRequest(1, 1) == Decision::Reject);
   CHECK(resultIs(session.complete(true), 0, 1, true));
   CHECK(!session.complete(false));
   CHECK(resultIs(session.result(0, 1), 0, 1, true));
 
-  CHECK(session.onRequest(1, 2, false) == Decision::Reject);
+  CHECK(session.onRequest(1, 1) == Decision::Reject);
   CHECK(session.onRequest(1, 2) == Decision::Accept);
   CHECK(session.busy());
   CHECK(session.onRequest(1, 2) == Decision::Resend);

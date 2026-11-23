@@ -113,6 +113,11 @@
 /* 停稳要求每个车轮的轴速入窗，并满足连续新反馈组数。 */
 #define CHASSIS_STOP_SPEED_RAD_S 0.20f
 #define CHASSIS_STOP_GROUPS 3U
+/* 零 MIT 已交付后，纵向推退允许用三轮编码器独立复核低速估计的静止偏置。 */
+#define CHASSIS_ENCODER_STOP_WINDOW_MS 300U
+#define CHASSIS_ENCODER_STOP_SPAN_RAD 0.006f   /* 约 16 个编码器计数，轮缘约 0.21 mm。 */
+#define CHASSIS_ENCODER_STOP_SPEED_RAD_S 0.32f
+#define CHASSIS_ENCODER_STOP_GYRO_RAD_S 0.05f
 /* 即使接收端仍在刷新，持续无法提交完整速度组也必须中止旧运动。 */
 #define CHASSIS_CAN_TX_TIMEOUT_MS 250U
 

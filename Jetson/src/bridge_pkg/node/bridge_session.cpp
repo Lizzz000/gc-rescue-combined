@@ -308,11 +308,11 @@ void BridgeRuntime::handleIoFailure(const std::exception & error)
   publishStatus();
 }
 
-void BridgeRuntime::handleArrivalPoint(std::uint8_t kind, std::uint32_t request_id)
+void BridgeRuntime::handleArrivalPoint(std::uint8_t kind, std::uint32_t request_id, std::uint32_t source_frame)
 {
   const bool motion_lease_open = !motion_lease_suspended_until_ ||
     Clock::now() >= *motion_lease_suspended_until_;
-  const auto decision = transactions_.handleArrivalPoint(kind, request_id, motion_lease_open);
+  const auto decision = transactions_.handleArrivalPoint(kind, request_id, motion_lease_open, source_frame);
   if (decision == ArrivalPointDecision::Reject) {return;}
   if (decision == ArrivalPointDecision::Resend) {
     if (const auto result = arrival_point_.result(kind, request_id)) {transactions_.armGripperResult(*result);}

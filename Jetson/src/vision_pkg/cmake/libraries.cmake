@@ -10,6 +10,7 @@ endfunction()
 
 vision_static_library(vision_camera
   camera/camera.cpp
+  camera/v4l2_controls.cpp
   camera/gstreamer/gstreamer.cpp
   camera/neon/i420.cpp)
 vision_core_target(vision_camera)

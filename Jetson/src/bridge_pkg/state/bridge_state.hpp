@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <string>
 #include <vector>
@@ -167,7 +168,8 @@ public:
     BridgeMonotonicTime arrival, bool socket_open);
   // 读取时再次检查任务、任务忙碌状态及两种帧龄，防止排队后才过期的输入被发送。
   BridgeCenterOutput targetOutput(BridgeSourceTime current, BridgeMonotonicTime now) const;
-  std::string selectedClass(BridgeSourceTime current, BridgeMonotonicTime now) const;
+  void targetSent();
+  std::string graspClass(std::uint32_t source_frame, BridgeSourceTime current, BridgeMonotonicTime now) const;
   BridgeCenterOutput safetyOutput(BridgeSourceTime current, BridgeMonotonicTime now) const;
   // 本地到达立即闭锁；同代次心跳不能解锁。恢复需新授权代次、可移动终态、匹配模式及后续新帧。
   void holdCoordinates(BridgeSourceTime current);
@@ -203,7 +205,14 @@ private:
   BridgeSourceTime cutoff_;
   // safety_ 是最近接收的 field 帧（源时间水位与 frame_id），safety_hold_ 是最近一次有效中心。
   Center target_, safety_, safety_hold_;
-  std::string target_class_;
+  std::string target_class_, target_track_;
+  std::uint64_t selection_generation_{0};
+  struct SentTarget {
+    BridgeSourceTime stamp;
+    BridgeMonotonicTime arrival;
+    std::uint64_t generation;
+  };
+  std::deque<SentTarget> sent_targets_;
   std::optional<BridgeTaskState> task_;
   std::optional<BridgeMissionState> mission_;
   bool coordinates_held_{false};

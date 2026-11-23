@@ -116,6 +116,10 @@ def load_configuration(config_file, run='all', package_resolver: Callable | None
     nodes = {node: {name: value for name, entry in NODE_PARAMETERS[node].items()
                     if (value := _parameter_value(values, entry)) is not None}
              for node in selected}
+    if 'detect_node' in nodes:
+        nodes['detect_node'].update({
+            'camera_controls.' + name[len(CONTROLS_PREFIX):]: value
+            for name, value in values.items() if name.startswith(CONTROLS_PREFIX)})
     snapshot = {'configuration': str(path), 'configuration_sha256': sources[0]['sha256'],
                 'configuration_sources': sources,
                 'run': run, 'deployment': 'vision_fast' if run == 'all' else 'development',

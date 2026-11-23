@@ -21,9 +21,11 @@ def main():
 #include "jetson_auto_config.h"
 #include "gripper/s288_servo.hpp"
 #include <cstdio>
-// prepare Stop + last motion exchange + final Stop + final period + link/retry margin.
-constexpr double total_ms = 1000 * (s288::kMaxMoveS +
-    (2 * s288::kStopAttempts + 1) * s288::kFeedbackWaitS + s288::kCommandPeriodS) +
+// Leave an in-flight hold and Stop, prepare, move/capture, then finish the last exchange and Stop.
+constexpr double stop_s = s288::kStopAttempts * s288::kFeedbackWaitS;
+constexpr double exchange_and_tick_s = s288::kFeedbackWaitS + s288::kCommandPeriodS;
+constexpr double total_ms = 1000 * (3 * stop_s + 2 * exchange_and_tick_s +
+    s288::kMaxMoveS + s288::kHoldCaptureS) +
     JETSON_AUTO_REQUEST_LINK_MARGIN_MS;
 static_assert(JETSON_AUTO_ACTION_TIMEOUT_MS >= total_ms,
               "STM32 action deadline does not cover the full S288 action");

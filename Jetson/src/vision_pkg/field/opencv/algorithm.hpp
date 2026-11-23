@@ -145,6 +145,7 @@ struct SplitMeasurement
   double top_x = 0.0, bottom_x = 0.0, confidence = 0.0;
   bool suspect = false;
 };
-SplitMeasurement detectSplitBlack(const cv::Mat & bev, const FieldConfig & cfg);
+SplitMeasurement detectSplitBlack(const cv::Mat & bev, const FieldConfig & cfg,
+  const cv::Mat & source = cv::Mat(), const FieldResult * field = nullptr);
 
 }  // namespace field_detail

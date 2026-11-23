@@ -179,6 +179,72 @@ uint8_t Chassis_Is_Stopped(void)
     return stopped;
 }
 
+uint8_t Chassis_Encoder_Stop_Confirmed(uint8_t begin)
+{
+    static struct {
+        uint8_t tracking;
+        uint32_t started_ms, last_poll_ms, last_ms[3], sequence[3];
+        float origin[3], minimum[3], maximum[3];
+    } window;
+    INS_control_data_t imu;
+    if (!enabled || disable_after_stop || mode != IDLE || !monitoring_stop || distance_completion_pending ||
+        !Read_IMU(&imu) || imu.yaw_predicted || fabsf(imu.world_z_rad_s) > CHASSIS_ENCODER_STOP_GYRO_RAD_S)
+    {
+        window.tracking = 0U;
+        return 0U;
+    }
+    Chassis_Feedback_Snapshot_t snapshot;
+    Chassis_Feedback_Read(&snapshot);
+    const uint8_t baseline = begin || !window.tracking ||
+        (uint32_t)(snapshot.now_ms - window.last_poll_ms) > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS;
+    if (baseline)
+        window.started_ms = snapshot.now_ms;
+    uint8_t confirmed = (uint32_t)(snapshot.now_ms - window.started_ms) >= CHASSIS_ENCODER_STOP_WINDOW_MS;
+    for (unsigned i = 0U; i < 3U; ++i)
+    {
+        const Chassis_Wheel_Feedback_t *wheel = &snapshot.wheel[i];
+        if (wheel->id != chassis_wheel_config[i].id || wheel->state != 1U ||
+            !(fabsf(wheel->position) <= CHASSIS_ODOMETRY_ENCODER_PERIOD_RAD * 0.5f) ||
+            !(fabsf(wheel->velocity) <= CHASSIS_ENCODER_STOP_SPEED_RAD_S) ||
+            (uint32_t)(snapshot.now_ms - wheel->feedback_time_ms) > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS)
+        {
+            window.tracking = 0U;
+            return 0U;
+        }
+        if (baseline)
+        {
+            window.origin[i] = wheel->position;
+            window.minimum[i] = window.maximum[i] = 0.0f;
+        }
+        else
+        {
+            const uint32_t frames = wheel->feedback_seq - window.sequence[i];
+            const uint32_t dt = wheel->feedback_time_ms - window.last_ms[i];
+            /* 同一帧可反复读取，但不推进该轮时间。跳号或间断的中间位移不可验证。 */
+            if (frames > 1U || (frames == 0U) != (dt == 0U) || dt > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS)
+            {
+                window.tracking = 0U;
+                return 0U;
+            }
+            const float delta = remainderf(wheel->position - window.origin[i], CHASSIS_ODOMETRY_ENCODER_PERIOD_RAD);
+            window.minimum[i] = fminf(window.minimum[i], delta);
+            window.maximum[i] = fmaxf(window.maximum[i], delta);
+            if (window.maximum[i] - window.minimum[i] > CHASSIS_ENCODER_STOP_SPAN_RAD)
+            {
+                window.tracking = 0U;
+                return 0U;
+            }
+            if ((uint32_t)(wheel->feedback_time_ms - window.started_ms) < CHASSIS_ENCODER_STOP_WINDOW_MS)
+                confirmed = 0U;
+        }
+        window.last_ms[i] = wheel->feedback_time_ms;
+        window.sequence[i] = wheel->feedback_seq;
+    }
+    window.tracking = 1U;
+    window.last_poll_ms = snapshot.now_ms;
+    return confirmed;
+}
+
 static uint8_t Zero_Target_Ready(INS_control_data_t *imu, uint8_t allow_holding)
 {
     return enabled && !disable_after_stop &&

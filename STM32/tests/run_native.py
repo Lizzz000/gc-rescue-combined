@@ -122,6 +122,9 @@ def main():
         "project/Core/Control/Jetson/jetson_auto.c", "project/Core/Algorithm/Vision/adaptive_kalman.c",
     ]
     suites["jetson_auto_unconfigured"] = suites["jetson_auto_configured"]
+    suites["jetson_auto_single_delivery"] = suites["jetson_auto_configured"]
+    suites["jetson_auto_two_deliveries"] = suites["jetson_auto_configured"]
+    suites["jetson_auto_five_deliveries"] = suites["jetson_auto_configured"]
     suites["jetson_auto_safety_unconfigured"] = suites["jetson_auto_configured"]
     suites["jetson_auto_short_distance"] = suites["jetson_auto_configured"]
     suites["jetson_chassis_flow"] = [
@@ -222,8 +225,15 @@ def main():
                 command.append("-DCHASSIS_TUNING_ENABLED=1")
             if name.startswith("jetson_auto_"):
                 command += ["-include", str(root / "tests/native/jetson_auto_test_config.h")]
-            if name == "jetson_auto_configured":
+            if name in ("jetson_auto_configured", "jetson_auto_single_delivery", "jetson_auto_two_deliveries",
+                        "jetson_auto_five_deliveries"):
                 command.append("-DTEST_JETSON_AUTO_CONFIGURED=1")
+            if name == "jetson_auto_single_delivery":
+                command.append("-DJETSON_AUTO_DELIVERY_LIMIT=1")
+            if name == "jetson_auto_two_deliveries":
+                command.append("-DJETSON_AUTO_DELIVERY_LIMIT=2")
+            if name == "jetson_auto_five_deliveries":
+                command.append("-DJETSON_AUTO_DELIVERY_LIMIT=5")
             if name == "jetson_auto_safety_unconfigured":
                 command.append("-DTEST_JETSON_AUTO_SAFETY_UNCONFIGURED=1")
             if name == "jetson_auto_short_distance":

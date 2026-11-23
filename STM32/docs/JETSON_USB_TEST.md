@@ -1,5 +1,7 @@
 # Jetson 板间 USB 与三轮 CAN1 联调
 
+更新于 2026-11-23。
+
 板间链路是 STM32 USB OTG FS 设备，Jetson 主机打开 `link.device`。引脚 PA11 D-、PA12 D+、PA10 OTG ID，全速 12 Mbit/s，没有 ULPI，不是 480 Mbit/s。bridge 与手动程序不要同时打开同一只设备。
 
 帧布局：SOF `A5`、版本 `01`、类型 uint8、长度 uint8、载荷、CRC-16/IBM 小端。CRC 覆盖版本、类型、长度和载荷。最大载荷 8。CRC 错则丢掉一个字节再同步。空载荷不是失联。
@@ -27,7 +29,7 @@ CAN1 只收发达妙电机。反馈要求 DLC=8，帧内电机 ID 为 1、2、3�
 | 16 | 1 | STM32 → Jetson | `data0=2`，按已夹取类别登记目的区。`data0=1` 用于独立底盘诊断 |
 | 17 / 18 / 20 | 5 | STM32 → Jetson | `data0=1` 加 token。转向完成、安全区到达、投送 |
 | 19 | 5 | STM32 → Jetson | `data0=1`、非零 `request_id:uint32`，开始搜索 |
-| 21 | 5 | STM32 → Jetson | `kind`、非零 `request_id:uint32`：0 启动查询、1 夹取、2 释放、3 拒绝后张开 |
+| 21 | 5 或 8 | STM32 → Jetson | `kind`、非零 `request_id:uint32`。1 夹取附最终入窗的 `source_frame:uint24`，其余 0 启动查询、2 释放、3 拒绝后张开使用 5 字节 |
 | 22 | 5 | STM32 → Jetson | `data0=1`、非零 `request_id:uint32`，请求首次整区对准，命令 6 回显编号 |
 
 类型 21 使用独立非零请求编号。类型 7 命令 5 回显编号并表示受理；类型 9（长度 6：kind、success、request_id）报告动作终态。帧表和期限以 [`Jetson/docs/usb-protocol.md`](../../Jetson/docs/usb-protocol.md) 为准，两端必须同步更新。
@@ -78,6 +80,8 @@ CAN1 只收发达妙电机。反馈要求 DLC=8，帧内电机 ID 为 1、2、3�
 找物资、整区复定位和里程计返航使用逐拍重算的启动加速度。上层继续根据视觉余量或剩余位姿误差给出制动限速，底盘按 TIM2 实测步长跟随当前目标。基准导航以约 1.17 m/s² 起步，在同向速度达到 0.10 m/s 时放开到 3.5 m/s²。短目标在走完速度差后结束加速，途中更新目标从当前速度接续，同向跟随降速限值为 0.75 m/s²。目标反向时仍按 0.45 m/s² 制动至零。这些离线仿真初值仍需实车复核，配置位于 [chassis_config.h](../project/Core/Control/Chassis/chassis_config.h)。
 
 左右横移为 0.30 m/s、0.70 s，盲推为 0.40 m/s、1.20 s，直线退出为 0.40 m/s、1.00 s。各段计时包含加速，到期提交零目标并等待停稳。正常丢目标沿用减速与停稳确认，通信或底盘故障沿用直接零目标和失能保护。
+
+正式盲推和直退各给减速送零、实测停稳两段各 1.5 s。三轮连续三组新反馈均不超过 0.20 rad/s 可确认停稳。若零速附近仍有速度估计偏置，也可从送零后开始连续核对 300 ms：三轮各自的编码器角度全程变化范围须在 0.006 rad 内，反馈速度均不超过 0.32 rad/s，有效实测陀螺偏航角速度不超过 0.05 rad/s。缺轮、跳帧、姿态过期或运动超限须重验，原截止时间继续计时。
 
 自动导航加速可通过 CMake 的 `CHASSIS_NAV_SPEED_CONTROLLER` 选择实验方法。默认 `0` 沿用逐拍加速，`1` 为有限候选 MPC，`2` 为边界层 SMC，`3` 为带扩张状态观测器的 ADRC。例如使用 `cmake --preset Debug-Auto -DCHASSIS_NAV_SPEED_CONTROLLER=1` 构建 MPC 版。三种方法从当前航向坐标系下的新轮速反馈调整加速步长，反馈未更新或轮角与陀螺持续分歧时沿用原加速上限。反向、停车和定时盲推动作继续使用各自的限制。 [算法说明](../project/Core/Algorithm/Chassis/README.md#自动导航速度实验)
 
@@ -136,18 +140,75 @@ mdh <SAFETY_X> 2
 ### 机械动作与握手
 
 1. 首次在能看全安全区的位置静置，车头朝向安全区。USB 收到合法类型 3/4 后查询启动开爪结果（类型 21，kind 0）。开爪成功后发类型 22，待 Jetson 确认整区识别才开始自动对准。对准停稳后核对两张新图并保存起点，再原地转 180°。转向停稳后发送类型 19，待确认目标识别才开始找物块。
-2. 物块接近到近处后先收敛横向误差。入窗减速、停稳并用新图复核后发类型 21（kind 1）夹取。收到同一请求号的成功终态后直接发 `16/02`，等待类型 5、6 和类型 8。目的区必须一致，类型 8 的编号须等于本次成功夹取编号。此过程不执行 ROI、检查退距或 ROI 拒收恢复。
+2. 物块接近到近处后先收敛横向误差。入窗减速、停稳并用新图复核后发类型 21（kind 1）夹取。8 字节载荷为 kind、4 字节小端请求号和 3 字节小端源帧号，源帧号来自最终确认入窗的类型 3 帧，回绕时可为零。Bridge 核对这张帧确已发出、仍新鲜、匹配唯一，且当前轨迹及类别与之连续。拒绝后用新图重新对准并换请求号。受理后按原请求号、原源帧查询。收到同号的受理回执和成功终态后发 `16/02` 登记目的区，核对类型 5、6 与 8，两个目的区须一致，类型 8 编号须等于本次抓取编号。
 3. 使用里程计返回本趟保存的起点，朝向采用首次起点的安全区方向。提交零速并复核返回位姿后按原 token 发类型 17。命令 1 匹配受理后，按目的区锁航向左移或右移，目标 0.30 m/s，计时 0.70 s。横移停稳后发类型 18。
 4. 命令 2 匹配受理后以 0.40 m/s 盲推 1.20 s，停稳后发送类型 21（kind 2）松爪。夹爪成功后以 0.40 m/s 直线回退 1.00 s，停稳再发类型 20。
-5. 命令 4 匹配受理后，按实测横移量反向复位并恢复安全区航向，合速度上限 0.225 m/s。停稳后，用新的类型 4 整区中心做视觉精调，合速度上限 0.33 m/s。两阶段共用 10 s 与同一位移限距。停稳后连续两张新源帧入窗，记录当前位姿并原地转向。
+5. 命令 4 匹配受理后，按实测横移量反向复位并恢复安全区航向，合速度上限 0.225 m/s。停稳后，用新的类型 4 整区中心做视觉精调，合速度上限 0.33 m/s。两阶段共用 10 s 与同一位移限距。停稳后连续两张新源帧入窗，记录当前位姿。继续下一趟时原地转 180°。达到设定趟数时在该位姿请求三轮失能。
 6. 路由被拒、回执超时或夹爪失败时进入故障制动。故障恢复后须重新初始化并验证整区起点。
 
-等待期间每 250 ms 重报相同请求及编号，重复查询不重复机械动作，也不刷新截止。普通请求期限仍为 3.45 s；夹爪请求包括准备、执行、结束停机重试和链路余量在内为 12 s，受理不会取消结果等待。启动未获受理时保持使能零速，允许 Jetson 慢启动，首次受理后计动作期限。类型 9 报告夹爪动作完成。闭合回读 Stop；现场开爪在输出轴连续三次低速反馈进入 ±2° 后轻力保位。实际夹持与释放须现场确认。匹配失败结果、结果超时或电机反馈异常进入故障停车。普通回执必须在截止前的控制拍消费，满足匹配回执和当前动作到位条件即可转段。
+等待期间每 250 ms 重报原请求，沿用首次截止时刻。普通请求期限为 3.45 s。夹爪请求期限为 **13.5 s**，覆盖退出旧保位、动作准备、最长 10 s 运动、0.5 s 到位确认、停机重试和链路余量。启动查询首次受理前保持使能零速，首次受理后计时。类型 9 报告夹爪终态。闭合回读 Stop，现场开爪在连续三次低速输出轴反馈进入 ±2° 后轻力保位。实际夹持与释放须现场确认。匹配失败结果、结果超时或电机反馈异常进入故障停车。普通回执须在截止前的控制拍消费。
+
+<a id="单趟构建与-swd-终态"></a>
+
+### 指定搬运趟数与 SWD 终态
+
+`JETSON_AUTO_DELIVERY_LIMIT` 指定本次启动的搬运趟数。`Debug-Auto` 默认值为 `0`，连续搬运。单绿验收设为 `1`。绿、橙各一块设为 `2`，绿色左投后继续取橙，右投并复定位后失能。以下命令在本机仓库根目录的 PowerShell 执行，ARM GNU 工具链需在 PATH 中。
+
+```powershell
+$clionBin = 'C:/Program Files/JetBrains/CLion 2026.2.3.1/bin'
+$env:Path = "$clionBin/cmake/win/x64/bin;$clionBin/ninja/win/x64;$env:Path"
+$deliveryLimit = 2
+$deliveryBuild = "STM32/project/build/field-transport-limit-$deliveryLimit"
+cmake --preset Debug-Auto -S STM32/project -B $deliveryBuild -DJETSON_AUTO_DELIVERY_LIMIT=$deliveryLimit
+if ($LASTEXITCODE -eq 0) { cmake --build $deliveryBuild --parallel }
+```
+
+烧录与 SWD 地址解析均使用该目录的 `project.elf`。按上文 CMSIS-DAP 读 RAM 方法查询 `'jetson_auto.c'::stage`、`'jetson_auto.c'::start_pose`、`'chassis.c'::disable_confirmed` 和 `jetson_completed_deliveries`。双趟时，首趟送达、复定位并保存新起点后计数为 1，底盘保持使能。
+
+| `stage`（十进制） | 达到设定趟数时的状态 |
+| ---: | --- |
+| 33 | `WAIT_DELIVERY_DISABLE`。整区双帧复核已通过，`start_pose` 保存新起点，底盘已请求三轮失能。末趟尚未计入。 |
+| 34 | `DELIVERY_DONE`。三轮新反馈均已确认失能，计入末趟并锁定。双趟验收时计数为 2。 |
+| 21 | `FAULT`。流程锁定故障。失能确认超过 500 ms，或等待期间 USB 会话断开，也会进入此状态。失败趟不计数。 |
+
+11 月 23 日主机回归中，单趟模拟只执行取货前的首次 180° 转身，等待失能确认期间收到新图也保持停车。GDB 在进入 34 时读到的 `start_pose` 与模拟里程计一致。双趟模拟依次接受左、右目的区和独立的请求号，只执行两次取货转身。第二趟松爪失败、整区复核超时、缺一轮失能反馈和断线均保留首趟计数 1。默认模式连续完成左、右、左三趟。可从仓库根目录复跑：
+
+```powershell
+python STM32/tests/run_native.py --suite jetson_auto_single_delivery --suite jetson_auto_two_deliveries --suite jetson_auto_configured --suite chassis
+python STM32/tests/check_jetson_codec.py --jetson-root Jetson
+python STM32/tests/check_gripper_budget.py
+```
+
+### 连续双趟实车记录
+
+2026-11-23 的 `live-multi-4` 使用 `field-two-20261123/project.bin`，SHA-256 为 `AD089E625FFAC4971345989258D7E6F27C411A48BCE930C2CB6A3AEEE18D219B`。绿色首趟取得左区许可（token 4），投送后底盘继续搜索。橙色第二趟取得右区许可（token 7）。同一次启动收到两次送达回执，停车照片确认绿块留在左区、橙块留在右区。
+
+| 板上 tick（ms） | SWD 记录 |
+| ---: | --- |
+| 20170 | 阶段 32 正在首次整区定位，`start.valid=0`。 |
+| 28004 | 首次读到 `start.valid=1`，保存的起点采样时间为 27970004 µs。 |
+| 60383 | 首趟已复定位，`completed_deliveries=1`、`enabled=1`，阶段 17 正在为第二趟转身。 |
+| 114447 | 阶段 34，`completed_deliveries=2`、`enabled=0`、`disable_confirmed=1`，三轮反馈状态均为 0。 |
+
+本机留存的 SWD 原始记录为 `STM32/outputs/transport-20261123-board/multi-4.jsonl`。观察器摘要和停车照片分别为 `Jetson/outputs/transport-20261123-local/two-trip-summary.json` 和同目录的 `two-delivered.jpg`。这次结果对应当时光照，弱光重放和既有视觉压力失败见[自动搬运交接](../../docs/ai-handoff.md#2026-11-23-自动搬运实测)。
+
+### 三绿两橙五趟构建
+
+在仓库根目录打开 PowerShell，沿用上文的 CLion CMake、Ninja 和 ARM 工具链。为五趟固件单独配置构建目录，保留双趟 ELF 供已有 SWD 记录复核。
+
+```powershell
+$fiveBuild = 'STM32/project/build/field-five-20261123'
+cmake --preset Debug-Auto -S STM32/project -B $fiveBuild -DJETSON_AUTO_DELIVERY_LIMIT=5
+if ($LASTEXITCODE -eq 0) { cmake --build $fiveBuild --parallel }
+Select-String -LiteralPath "$fiveBuild/CMakeCache.txt" -Pattern '^JETSON_AUTO_DELIVERY_LIMIT:STRING=5$'
+```
+
+按上文流程烧录并校验本目录的 `project.elf`，SWD 也使用此 ELF 解析地址。摆放三绿两橙并让第一趟能取到绿色。逐趟核对独立 token、送达回执和实物落区，绿色应有三块落左区，橙色应有两块落右区。以第五趟复定位后 `stage=34`、`jetson_completed_deliveries=5`、三轮反馈均失能且 `disable_confirmed=1` 为停车终态。
 
 ### 下一次现场单绿验收
 
 1. 将 STM32 OTG 接到 Jetson，S288 接到另一 USB 口；调试电脑通过 DAP-Link 核对固件身份。Jetson 现场配置使用 USB 的 `/dev/serial/by-id/` 名称，枚举编号变化无需修改。
-2. STM32 从同一工作树用 `Debug-Auto` 构建并烧录校验。在 Jetson 上按[完整构建步骤](../../README.md#jetson)更新六个运行包，加载新的 overlay。停止上一版 ROS 进程再启动，避免同时占用相机或 USB。
+2. 将上文 `$deliveryLimit` 设为 `1`，按[指定搬运趟数与 SWD 终态](#指定搬运趟数与-swd-终态)编译、烧录并校验单趟 ELF。在 Jetson 上按[完整构建步骤](../../README.md#jetson)从同一工作树更新六个运行包，加载新的 overlay。抓取使用 8 字节请求，两端均须升级。停止上一版 ROS 进程再启动，避免同时占用相机或 USB。
 3. 先用 `run:=vision` 核对相机和整区外框。停车时镜头看到完整安全区，夹爪在机械张开位，单绿放在转身后可见的取货位置。关闭预览进程后，在现场确认可以动车时只运行一次完整入口：
 
 ```bash
@@ -156,7 +217,7 @@ ros2 launch bringup_pkg rescue.launch.py run:=all config:="$profile" stream:=fal
 ```
 
 4. 核对顺序：首次整区停稳存点 → 180° 取货 → 合爪成功 → `16/02` 登记左区 → 里程计返航 → 横移、盲推、松爪及直退 → 反平移 → 停稳、整区双帧与新起点。记录开机对准用时、从直退停稳到新起点的用时，以及初次和重记的里程计采样时间。闭合动作终态与物块是否实际留在左区均须记录。
-5. 首趟复核完成后停止本次 launch 并确认底盘停机。后续需要验证右区时再布置橙块。出现通信或底盘故障时，恢复链路后要重新初始化；保留当次日志。
+5. 记录新起点后等待 SWD 的 `stage=34`，核对三轮已失能，再停止本次 launch。若读到 `stage=21`，保留当次日志并按故障处理。后续连续验证使用默认的 `Debug-Auto` 固件。
 
 ### 实车验收顺序
 

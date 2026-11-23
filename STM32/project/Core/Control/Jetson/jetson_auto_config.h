@@ -5,6 +5,11 @@
 #include "chassis.h"
 #include "visual_tracking_config.h"
 
+/* 正式搬运完成指定趟数后失能。0 为连续搬运。 */
+#ifndef JETSON_AUTO_DELIVERY_LIMIT
+#define JETSON_AUTO_DELIVERY_LIMIT 0U
+#endif
+
 /* 场地距离与路线标定 */
 /* 正式搬运的场地距离使用 m，保留 0 时流程等待现场标定。 */
 /* 定时横移和反平移复定位分别从各段起点限距。
@@ -143,6 +148,8 @@
 /* 返航限时包含停稳复核。定时横移单独计时；直退后的反平移、停稳和整区视觉精调共用对准限时。 */
 #define JETSON_AUTO_RETURN_TIMEOUT_MS 20000U
 #define JETSON_AUTO_ALIGN_TIMEOUT_MS 10000U
+/* 首次整区模式确认后，静止等待首张有效新图。收到后才开始上述对准限时。 */
+#define JETSON_AUTO_INITIAL_CENTER_TIMEOUT_MS 10000U
 
 /* 现有类型 3/4 周期流的断流期限，ms；合法无目标帧也续期，不新增心跳报文。 */
 #define JETSON_AUTO_LINK_TIMEOUT_MS 250U
@@ -171,8 +178,8 @@
 /* 唯一请求期限：自进入请求阶段起算，含 USB 提交等待，见 Jetson/docs/usb-protocol.md。 */
 #define JETSON_AUTO_REQUEST_TIMEOUT_MS (JETSON_AUTO_REQUEST_SERVICE_MS + JETSON_AUTO_REQUEST_LINK_MARGIN_MS)
 #define JETSON_AUTO_REQUEST_RETRY_MS 250U
-/* 10 s 运动 + prepare/Stop 各最多 3×200 ms + 末次 exchange 200 ms/sleep 20 ms
- * + 链路余量 450 ms = 11870 ms，向上取 12000 ms。启动从首个受理回执起算。 */
-#define JETSON_AUTO_ACTION_TIMEOUT_MS 12000U
+/* 10 s 运动 + 500 ms 开爪捕获 + 保位交接、动作准备和最终停机各 3×200 ms
+ * + 在途保位和末次反馈各 220 ms + 链路余量 450 ms = 13190 ms。启动从首个受理回执起算。 */
+#define JETSON_AUTO_ACTION_TIMEOUT_MS 13500U
 
 #endif

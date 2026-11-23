@@ -55,6 +55,7 @@ void BridgeRuntime::sendPeriodicFrame()
   const auto result = can_->write(frame, error);
   if (result == CanTransport::WriteResult::SENT) {
     ++tx_frames_;
+    if (*id == CanProtocol::TARGET_ID && frame.data[0]) {state_.targetSent();}
   } else if (result == CanTransport::WriteResult::BACKPRESSURE) {
     last_error_ = "USB transport backpressure";
   } else if (result != CanTransport::WriteResult::INTERRUPTED) {
@@ -117,7 +118,7 @@ bool BridgeRuntime::handleCommand(const can_frame & frame)
     return true;
   }
   if (command.kind == CanProtocol::CommandKind::ARRIVAL_POINT) {
-    handleArrivalPoint(command.command, command.token);
+    handleArrivalPoint(command.command, command.token, command.source_frame);
     return true;
   }
   transactions_.handleMissionCommand(command.command, command.token);

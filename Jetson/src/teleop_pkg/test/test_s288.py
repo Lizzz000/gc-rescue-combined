@@ -334,20 +334,24 @@ class LinkTrajectoryTest(unittest.TestCase):
         self.assertTrue(all(abs(position - 0.4) <= 0.0200004 for position in held_positions))
         self.assertEqual(self.commands[-1][:2], (1.5, MODE_STOP))
 
-    def test_maximum_duration_has_no_extra_capture_time(self):
+    def test_maximum_full_ramp_uses_the_capture_grace(self):
         self.cancel_at = 10.10
         accepted = []
         hold = OpenHold(8190, 0.0, 0.25, 1.0, lambda _: accepted.append(self.now))
-        self.link.goto_degrees(0, 10, 1.0, 0.05, self, 0.1, ramp_fraction=0.8, open_hold=hold)
-        self.assertEqual(accepted[0], 10.0)
+        self.link.goto_degrees(0, 10, 1.0, 0.05, self, 0.1, ramp_fraction=1.0, open_hold=hold)
+        self.assertGreater(accepted[0], 10.0)
+        self.assertLess(accepted[0], self.cancel_at)
         self.assertEqual(self.commands[-1][:2], (10.10, MODE_STOP))
 
         self.now = 0.0
         self.commands.clear()
+        self.cancel_at = math.inf
+        accepted.clear()
         self.encoder = lambda at: 8100
         with self.assertRaisesRegex(RuntimeError, '捕获超时'):
             self.link.goto_degrees(0, 10, 1.0, 0.05, self, 0.1, ramp_fraction=0.8, open_hold=hold)
-        self.assertEqual(self.commands[-1][:2], (10.0, MODE_STOP))
+        self.assertEqual(accepted, [])
+        self.assertEqual(self.commands[-1][:2], (10.5, MODE_STOP))
 
     def test_warning_stops_active_hold(self):
         self.warning_at = 1.1

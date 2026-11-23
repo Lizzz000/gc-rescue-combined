@@ -86,6 +86,37 @@ class CaptureReplayTests(unittest.TestCase):
         self.assertEqual(len(snapshot['roles']), 7)
         self.assertIn('tensorrt_gpu', snapshot['required_backends'])
 
+    def test_bridge_measurement_rejects_missing_or_real_serial_devices(self):
+        for gripper in (None, '/dev/ttyUSB0', '/dev/pts/11'):
+            with self.subTest(gripper=gripper), self.assertRaisesRegex(ContractFailure, 'pseudo-terminals'):
+                workflow.case_snapshot(self.args, run='all', link_device='/dev/pts/11', gripper_device=gripper)
+
+    def test_camera_and_performance_launch_only_vision_and_select_matching_replay(self):
+        config = yaml.safe_load(self.config.read_text(encoding='utf-8'))
+        config['vision']['detect']['camera_device'] = str(self.input)
+        config['gripper']['move_s'] = None
+        self.config.write_text(yaml.safe_dump(config), encoding='utf-8')
+        for stage, replay in (('camera', None), ('performance', self.input)):
+            self.args.stage, self.args.input = stage, replay
+            with (
+                self.subTest(stage=stage),
+                patch.dict(sys.modules, {'rclpy': Mock()}),
+                patch('validation.observations.Observer'),
+                patch('validation.observations.UsbProbe', side_effect=AssertionError('unexpected USB probe')),
+                patch.object(workflow, 'host_file_use', return_value={'free': True}),
+                patch.object(workflow.shutil, 'which', return_value='nvpmodel'),
+                patch.object(workflow.subprocess, 'run', return_value=SimpleNamespace(
+                    returncode=0, stdout='test mode', stderr='')),
+                patch.object(workflow, 'asset_snapshot', return_value={}),
+                patch.object(workflow, 'launch_case', side_effect=RuntimeError('stop before launch')) as launch,
+                self.assertRaisesRegex(RuntimeError, 'stop before launch'),
+            ):
+                workflow.camera_or_performance(self.args)
+            snapshot = launch.call_args.args[1]
+            self.assertEqual(snapshot['roles'], ['vision'])
+            self.assertNotIn('bridge_node', snapshot['nodes'])
+            self.assertEqual(launch.call_args.kwargs['replay'], replay)
+
     def test_http_stream_is_opt_in_and_disabled_for_clock(self):
         disabled = workflow.case_snapshot(self.args, directory=self.directory, run='vision')
         enabled = workflow.case_snapshot(self.args, directory=self.directory, run='vision', http_stream=True)

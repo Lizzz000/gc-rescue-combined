@@ -17,10 +17,11 @@ namespace s288
 
 // 单次开合时长的允许范围（秒），须与 teleop_pkg/servo/s288.py 一致；bridge 入口按此校验。
 constexpr double kMinMoveS = 0.2, kMaxMoveS = 10.0;
-// 动作预算包含运动前准备和结束 Stop；STM32 通过跨端回归核对这组生产常量。
+// STM32 跨端回归用这些常量核对保位交接、动作和停机的完整时间预算。
 constexpr double kFeedbackWaitS = 0.2;
 constexpr int kStopAttempts = 3;
 constexpr double kCommandPeriodS = 0.02;
+constexpr double kHoldCaptureS = 0.5;
 constexpr bool validRampFraction(double fraction) {return fraction >= 0.0 && fraction <= 1.0;}
 
 inline bool validHoldConfig(double max_nm, double tolerance_deg, double kp,

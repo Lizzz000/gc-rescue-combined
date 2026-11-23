@@ -24,7 +24,7 @@
 #define JETSON_CAN_SAFETY_ARRIVED_ID      18U
 #define JETSON_CAN_START_SEARCH_ID        19U
 #define JETSON_CAN_DELIVERY_COMPLETED_ID  20U
-/* 类型 21：kind + 非零 request_id。命令 5 回显编号，仅表示受理；类型 9 报动作终态。 */
+/* 类型 21：kind + 非零 request_id；抓取另附最终对准帧的低 24 位毫秒。 */
 #define JETSON_CAN_POINT_REACHED_ID       21U
 #define JETSON_CAN_POINT_STARTUP          0U
 #define JETSON_CAN_POINT_GRASP            1U
@@ -167,7 +167,7 @@ void Jetson_CAN_Get_Data(Jetson_CAN_Data_t *out);
  */
 uint8_t Jetson_CAN_Encode_Uplink(uint16_t type, uint32_t argument, uint8_t data[8]);
 
-/** @brief 编码类型 21，kind=0..3、request_id 非零；成功返回 5，否则 0且不改缓冲区。 */
-uint8_t Jetson_CAN_Encode_Action_Request(uint8_t kind, uint32_t request_id, uint8_t data[8]);
+/** @brief 编码类型 21。仅抓取使用 24 位 source_frame（可为零），其余动作传零。 */
+uint8_t Jetson_CAN_Encode_Action_Request(uint8_t kind, uint32_t request_id, uint32_t source_frame, uint8_t data[8]);
 
 #endif

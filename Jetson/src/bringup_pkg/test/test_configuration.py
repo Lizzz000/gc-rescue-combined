@@ -56,6 +56,13 @@ class CameraControlsTest(unittest.TestCase):
             'exposure_dynamic_framerate': 0, 'sharpness': 2000, 'power_line_frequency': 1,
             'backlight_compensation': 0, 'zoom_absolute': 100,
         }
+        with tempfile.TemporaryDirectory() as directory:
+            ros_parameters = yaml.safe_load(rescue_launch.materialize(
+                snapshot, directory).read_text(encoding='utf-8'))['detect_node']['ros__parameters']
+        self.assertEqual(ros_parameters['camera_brightness'], calibrated['brightness'])
+        self.assertEqual({name.removeprefix('camera_controls.'): value
+                          for name, value in ros_parameters.items() if name.startswith('camera_controls.')},
+                         {name: value for name, value in calibrated.items() if name != 'brightness'})
         # 模拟驱动回读，与下发顺序无关。
         output = ''.join(f'{name}: {value}\n' for name, value in reversed(calibrated.items()))
         output = output.replace('auto_exposure: 1\n', 'auto_exposure: 1 (Manual Mode)\n')

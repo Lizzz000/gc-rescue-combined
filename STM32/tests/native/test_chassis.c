@@ -19,6 +19,7 @@ static float captured_torque[3], captured_kd[3];
 static uint8_t tuning_test;
 static uint32_t sample_age;
 static uint8_t imu_ready, read_advances_tick, fail_control_id, abort_pending;
+static uint8_t predicted_imu;
 static uint8_t read_injects_feedback;
 static uint8_t fail_enable_id, fail_disable_id, last_sent_id;
 static unsigned critical_depth;
@@ -47,7 +48,7 @@ uint32_t test_timer_counter(TIM_HandleTypeDef *timer)
 /** @brief 模拟同一快照；可在复制期间切换RTOS tick，核对读取后判断年龄。 */
 uint8_t INS_Get_Data(INS_control_data_t *data)
 {
-    data->yaw_predicted = 0U;
+    data->yaw_predicted = predicted_imu;
     assert(data != NULL);
     if (!imu_ready) return 0U;
     if (read_advances_tick) { ++test_tick; read_advances_tick = 0U; }
@@ -173,6 +174,7 @@ static void reset_case(uint32_t us, uint32_t ms)
     counter_us = us; test_tick = ms; free_mailboxes = 3U;
     controls = enables = disables = aborts = sample_age = delays = 0U;
     imu_ready = 1U; read_advances_tick = fail_control_id = abort_pending = 0U;
+    predicted_imu = 0U;
     read_injects_feedback = 0U;
     fail_enable_id = fail_disable_id = last_sent_id = 0U;
     yaw_deg = yaw_rate = 0.0f;
@@ -262,6 +264,60 @@ static uint8_t enable_ready(void)
 }
 
 /** @brief 验证零速后的三轮新帧、停稳阈值、迟到反馈、计数回绕及下次起步。 @return 无。 */
+static void test_encoder_stop_feedback(void)
+{
+    enum { STILL, ONE_WHEEL_ROLLS, ROLLS_THEN_RETURNS, TURNING, SPEED_SPIKE, MISSING_WHEEL,
+           SKIPPED_FEEDBACK, STALE_IMU, INVALID_POSITION, PREDICTED_IMU, DISABLED_WHEEL };
+    for (unsigned scenario = STILL; scenario <= DISABLED_WHEEL; ++scenario)
+    {
+        reset_case(0U, UINT32_MAX - 200U);
+        assert(enable_ready());
+        for (unsigned wheel = 0U; wheel < 3U; ++wheel)
+        {
+            dm_motor[wheel].position = 12.4995f;
+            dm_motor[wheel].feedback_seq = UINT32_MAX - 15U;
+            wheel_feedback(wheel, wheel == 2U ? -0.28f : 0.25f, 1U);
+        }
+        assert(!Chassis_Encoder_Stop_Confirmed(1U));
+        for (unsigned frame = 1U; frame <= 65U; ++frame)
+        {
+            test_tick += 10U;
+            counter_us += 10000U;
+            for (unsigned wheel = 0U; wheel < 3U; ++wheel)
+            {
+                if (scenario == MISSING_WHEEL && wheel == 1U)
+                    continue;
+                /* 安静样本含编码器跨 ±12.5 rad 抖动。运动反例只动其中一轮。 */
+                float delta = (frame & 1U) ? 0.0015f : 0.0f;
+                float speed = wheel == 2U ? -0.28f : 0.25f;
+                if (wheel == 2U)
+                {
+                    if (scenario == ONE_WHEEL_ROLLS) delta = frame * 0.0010f;
+                    if (scenario == ROLLS_THEN_RETURNS) delta = (frame % 12U < 6U) ? 0.004f : -0.004f;
+                    if (scenario == SPEED_SPIKE && frame % 10U == 0U) speed = -0.36f;
+                    if (scenario == SKIPPED_FEEDBACK && frame % 10U == 0U) ++dm_motor[wheel].feedback_seq;
+                    if (scenario == INVALID_POSITION && frame % 10U == 0U) delta = NAN;
+                }
+                dm_motor[wheel].position = remainderf(12.4995f + delta, 25.0f);
+                wheel_feedback(wheel, speed, !(scenario == DISABLED_WHEEL && wheel == 0U));
+            }
+            yaw_rate = scenario == TURNING && frame % 10U == 0U ? 0.12f : 0.0f;
+            sample_age = scenario == STALE_IMU && frame % 10U == 0U ? 25U : 0U;
+            predicted_imu = scenario == PREDICTED_IMU && frame % 10U == 0U;
+            const uint8_t expected = scenario == STILL && frame * 10U >= CHASSIS_ENCODER_STOP_WINDOW_MS;
+            assert(!Chassis_Is_Stopped());
+            assert(Chassis_Encoder_Stop_Confirmed(0U) == expected);
+            assert(Chassis_Encoder_Stop_Confirmed(0U) == expected);
+        }
+        if (scenario == STILL)
+        {
+            assert(!Chassis_Encoder_Stop_Confirmed(1U));
+            assert(Chassis_Set_Velocity(0.10f, 0.0f, 0.0f));
+            assert(!Chassis_Encoder_Stop_Confirmed(0U));
+        }
+    }
+}
+
 static void test_stop_feedback(void)
 {
     reset_case(0U, UINT32_MAX - 85U);
@@ -2379,6 +2435,7 @@ int main(void)
 #endif
     test_frame_spacing();
     test_stop_feedback();
+    test_encoder_stop_feedback();
     test_timed_brake();
     test_kinematics();
     test_timing_and_parameters();

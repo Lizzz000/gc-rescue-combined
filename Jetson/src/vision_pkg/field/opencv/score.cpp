@@ -333,24 +333,36 @@ constexpr int kBandEdgeProbePx = 2;
 constexpr double kLightTo8bit = 2.55;
 constexpr int kLabOffset = 128;
 
+double bandWidthTolerance(double calibrated_width)
+{
+  return std::max(2.0, 0.35 * calibrated_width);
+}
+
 /** @brief 单行内一段连续色度下陷，坐标是搜索窗内列号。 */
 struct SplitRun {
   int y; float x, width, depth;
   float left = 0, right = 0;
   int reference_side = 0; // 0=两侧地面；-1/+1=只有左/右侧为地面。
   bool weak_boundary = false;
+  float peak_width = 0; // 两侧地面之间实测的相反色度梯度峰间距（像素）。
+  float core_width = 0; // 两侧材质色度阶跃之间的连续中性芯宽度（亚像素）。
+  float material_peak_width = 0;
+  bool sharp_left = false, sharp_right = false;
 };
 // 一侧仍可见的色度边；side=-1 为左沿，+1 为右沿。只有同帧双边段给出宽度后才能用。
 struct SplitEdge {int y; float x, depth; int side;};
 
 /** @brief 候选直线 x = top + slope * y（搜索窗内坐标）的验收结果。 */
-struct SplitLine {bool valid = false; double top = 0, slope = 0, confidence = 0, width = 0;};
+struct SplitLine {
+  bool valid = false, measured_core = false;
+  double top = 0, slope = 0, confidence = 0, width = 0;
+};
 
 /** @brief 搜索窗与带参照余量的上下文窗（BEV 坐标），half 是带宽上限的一半。 */
 struct SplitWindow {cv::Rect window, context; int half = 0, pad_lo = 0;};
 
 /** @brief 上下文窗内的逐像素证据：纵向平滑后的色度与亮度、放宽后的内部颜色（参照资格）。 */
-struct SplitEvidence {cv::Mat chroma, light, reference;};
+struct SplitEvidence {cv::Mat chroma, light, reference, opponent, difference;};
 
 bool splitWindow(const cv::Mat & bev, const FieldConfig & cfg, SplitWindow & out)
 {
@@ -408,10 +420,17 @@ bool splitEvidence(const cv::Mat & bgr, const FieldConfig & cfg, SplitEvidence &
     (cfg.use_blue_interior ? cfg.blue_chroma_ratio_min : cfg.red_chroma_ratio_min);
   out.chroma.create(lab.size(), CV_32F);
   out.light.create(lab.size(), CV_32F);
+  out.opponent.create(lab.size(), CV_32F);
+  out.difference.create(lab.size(), CV_32F);
+  const auto floor_bgr = cv::mean(bgr, out.reference);
+  const int primary = floor_bgr[2] >= floor_bgr[0] ? 2 : 0;
   for (int y = 0; y < lab.rows; ++y) {
     const auto * pixel = lab.ptr<uchar>(y);
     const auto * violet = purple.ptr<uchar>(y);
     auto * reference = out.reference.ptr<uchar>(y);
+    auto * opponent = out.opponent.ptr<float>(y);
+    auto * difference = out.difference.ptr<float>(y);
+    const auto * rgb = bgr.ptr<cv::Vec3b>(y);
     auto * c = out.chroma.ptr<float>(y);
     auto * l = out.light.ptr<float>(y);
     for (int x = 0; x < lab.cols; ++x, pixel += 3) {
@@ -422,16 +441,23 @@ bool splitEvidence(const cv::Mat & bgr, const FieldConfig & cfg, SplitEvidence &
       // 低于本帧地面亮度时仍须有真实色度；高光变亮后允许色度降低。
       // 两者沿用同一个放宽比例，不让被反光稍微提亮的暖色黑块给自身窄边作证。
       const bool floor_colour = pixel[0] >= mean_light || c[x] >= kReferenceChromaShare * mean_chroma;
+      // 主色相对绿色的归一化色差保留正负号；变暗的红、蓝或紫材质仍保留自身色度。
+      // 仅在已经有两侧材质参照的行使用，避免把亮度阴影计入无色隔断。
+      const int p = rgb[x][primary], g = rgb[x][1];
+      difference[x] = float(p - g);
+      opponent[x] = difference[x] / std::max(1, p + g);
+      const bool matches_hue = a * hue[0] + b * hue[1] >= kReferenceHueCos * std::hypot(a, b);
       // 阴影缩放 L 与色度，高光则把 L 推向白点并压低色度：分别用到黑/白点的距离归一化。
       // 仍须匹配本帧地面色相；纯白/纯灰没有色度，不能充当参照。
       const double light_range = std::max(1, std::min(int(pixel[0]), 255 - int(pixel[0])));
       if (violet[x] == 0 && pixel[0] >= light_min && floor_colour && c[x] >= chroma_per_light * light_range &&
-        a * hue[0] + b * hue[1] >= kReferenceHueCos * std::hypot(a, b)) {reference[x] = 255;}
+        matches_hue) {reference[x] = 255;}
     }
   }
   // 只沿黑带方向（纵向）平滑压缩噪声，横向不扩散，带宽保持实测。
   cv::blur(out.chroma, out.chroma, cv::Size(1, 3));
   cv::blur(out.light, out.light, cv::Size(1, 3));
+  cv::blur(out.difference, out.difference, cv::Size(1, 3));
   return true;
 }
 
@@ -526,11 +552,77 @@ double measuredEdge(const float * chroma, int boundary, int side, int width)
   return weight > 0 ? moment / weight : boundary - 0.5;
 }
 
+// 混色会让边界像素落入下陷段。找紧邻实测边界的同向色度梯度峰，
+// 对峰顶及相邻两个梯度作抛物线插值；单调坡或没有阶跃时不给出边界。
+double edgePeak(const float * chroma, int boundary, int side, int width)
+{
+  auto gradient = [&](int x) {return side * (chroma[x] - chroma[x - 1]);};
+  int best = -1;
+  float peak = 0;
+  for (int x = std::max(2, boundary - kBandEdgeProbePx);
+    x <= std::min(width - 2, boundary + kBandEdgeProbePx); ++x) {
+    const float g = gradient(x);
+    if (g > peak) {best = x; peak = g;}
+  }
+  if (best < 0) {return -1;}
+  const float left = gradient(best - 1), right = gradient(best + 1);
+  if (left > peak || right > peak || (left == peak && right == peak)) {return -1;}
+  return best - 0.5 + (right - left) / (2.0 * (2.0 * peak - left - right));
+}
+
+// 同行两侧实际材质给出色度参照。用阈值交点插值，避免把混色像素整列算入实体。
+void measureMaterialCore(const float * opponent, const float * difference, const uchar * reference,
+  int width, double center, int half, SplitRun & run)
+{
+  const int x = cvRound(center);
+  if (x - 2 * half < 0 || x + 2 * half >= width) {return;}
+  auto side = [&](int direction) {
+      double sum = 0; int count = 0;
+      for (int i = half + 1; i <= 2 * half; ++i) {
+        const int at = x + direction * i;
+        if (reference[at]) {sum += opponent[at]; ++count;}
+      }
+      return count >= kReferenceShare * half ? sum / count : 0.0;
+    };
+  const double floor = std::min(side(-1), side(1));
+  if (floor <= 0) {return;}
+  auto edges = [&](double level, double & left, double & right) {
+      const double threshold = level * floor;
+      if (opponent[x] >= threshold) {return false;}
+      int lo = x, hi = x;
+      while (lo > 1 && opponent[lo - 1] < threshold) {--lo;}
+      while (hi + 2 < width && opponent[hi + 1] < threshold) {++hi;}
+      if (lo < 2 || hi + 2 >= width || opponent[lo - 2] < threshold || opponent[hi + 2] < threshold) {return false;}
+      left = lo - (threshold - opponent[lo]) / (opponent[lo - 1] - opponent[lo]);
+      right = hi + (threshold - opponent[hi]) / (opponent[hi + 1] - opponent[hi]);
+      return true;
+    };
+  double left, right;
+  if (!edges(kReferenceChromaShare, left, right) ||
+    std::abs(0.5 * (left + right) - center) > kLineTolerancePx) {return;}
+  run.core_width = float(right - left);
+  // 对称失焦能缩窄中性芯，线性通道差的梯度峰仍能测量其真实材质边距。
+  const double left_peak = edgePeak(difference, int(std::ceil(left)), -1, width);
+  const double right_peak = edgePeak(difference, int(std::ceil(right)), 1, width);
+  if (left_peak >= 0 && right_peak > left_peak) {run.material_peak_width = float(right_peak - left_peak);}
+  // 单侧地面阴影只扩展一侧的色度过渡。另一侧边界跨多个色度层的位置变动
+  // 应在一个采样间隔内；远中近多行还须在同一侧保有这种可定位的材质边。
+  double inner_l, inner_r, outer_l, outer_r;
+  if (edges(0.5 * kReferenceChromaShare, inner_l, inner_r) &&
+    edges(2.0 * kReferenceChromaShare, outer_l, outer_r)) {
+    const double l = inner_l - outer_l, r = outer_r - inner_r;
+    run.sharp_left = l <= 1.0;
+    run.sharp_right = r <= 1.0;
+  }
+}
+
 // 连续下陷段 [start,end)（上下文列号）收尾：宽度按同一色度门槛向两侧延伸的完整无色区测量，
 // 不受参照资格截断，宽暗物块中心恰有资格的一两列不能冒充窄黑带。
 // 至少一端须紧邻地面、另一端须有真实材质边界；中心按无色区内的下陷加权。
 bool measureRun(
-  const float * chroma, const float * light, const uchar * reference_mask, int width_limit, int context_width,
+  const float * chroma, const float * light, const uchar * reference_mask,
+  const float * opponent, const float * difference,
+  int width_limit, int context_width,
   int start, int end, double reference, double max_light, double depth, const FieldConfig & cfg, int y, int pad_lo,
   SplitRun & run)
 {
@@ -557,6 +649,12 @@ bool measureRun(
   run = {y, float(moment / weight - pad_lo), float(right - left), float(depth),
     float(measuredEdge(chroma, start, -1, context_width) - pad_lo),
     float(measuredEdge(chroma, end, 1, context_width) - pad_lo), reference_side};
+  if (reference_side == 0) {
+    const double left_peak = edgePeak(chroma, left, -1, context_width);
+    const double right_peak = edgePeak(chroma, right, 1, context_width);
+    if (left_peak >= 0 && right_peak > left_peak) {run.peak_width = float(right_peak - left_peak);}
+    measureMaterialCore(opponent, difference, reference_mask, context_width, run.x + pad_lo, width_limit / 2, run);
+  }
   return true;
 }
 
@@ -575,7 +673,8 @@ void rowRuns(
   auto close = [&](int end) {
       SplitRun run;
       const int count = end - start;
-      if (measureRun(chroma, light, reference, 2 * half, width, start + pad_lo, end + pad_lo,
+      if (measureRun(chroma, light, reference, evidence.opponent.ptr<float>(y), evidence.difference.ptr<float>(y),
+        2 * half, width, start + pad_lo, end + pad_lo,
         reference_sum / count, light_limit_sum / count, depth_sum / count, cfg, y, pad_lo, run)) {runs.push_back(run);}
       if (start + pad_lo > 0 && reference[start + pad_lo - 1] != 0) {
         edges.push_back({y, float(measuredEdge(chroma, start + pad_lo, -1, width) - pad_lo),
@@ -684,7 +783,7 @@ InteriorRows interiorRows(const cv::Mat & interior, const SplitWindow & window)
 SplitLine acceptLine(
   const std::vector<SplitRun> & runs, const cv::Mat & eligible, double top, double slope,
   const FieldConfig & cfg, int min_rows, const InteriorRows & interior_rows,
-  const std::vector<SplitEdge> & edges, double calibrated_width)
+  const std::vector<SplitEdge> & edges, double calibrated_width, double top_scale)
 {
   SplitLine result;
   const int rows = eligible.rows, cols = eligible.cols;
@@ -791,15 +890,30 @@ SplitLine acceptLine(
     };
   std::vector<cv::Point2f> centers;
   std::vector<double> widths;
+  std::vector<double> peak_widths;
+  int first_peak_row = -1, last_peak_row = -1;
   double depth_sum = 0;
   const int first = eligible_rows.front(), span = eligible_rows.back() - first + 1;
   int thirds_total[3] = {}, thirds_hit[3] = {};
+  int core_hits[2][3] = {};
   for (int y : eligible_rows) {
     const int third = std::min(2, (y - first) * 3 / span);
     ++thirds_total[third];
     if (!consistent(y)) {continue;}
     ++thirds_hit[third];
     auto run = have_continued[y] ? continued[y] : runs[best[y]];
+    if (run.core_width > 0 &&
+      std::abs(run.core_width / top_scale - calibrated_width) <= bandWidthTolerance(calibrated_width)) {
+      const bool narrow = run.material_peak_width > 0 &&
+        std::abs(run.material_peak_width / top_scale - calibrated_width) <= bandWidthTolerance(calibrated_width);
+      if (narrow || run.sharp_left) {++core_hits[0][third];}
+      if (narrow || run.sharp_right) {++core_hits[1][third];}
+    }
+    if (run.peak_width > 0) {
+      peak_widths.push_back(run.peak_width);
+      if (first_peak_row < 0) {first_peak_row = y;}
+      last_peak_row = y;
+    }
     if (run.reference_side < 0) {run.x = float(run.left + left_offset);}
     if (run.reference_side > 0) {run.x = float(run.right - right_offset);}
     centers.emplace_back(run.x, float(y)); widths.push_back(run.width); depth_sum += run.depth;
@@ -833,6 +947,24 @@ SplitLine acceptLine(
   const double depth = depth_sum / centers.size();
   result.valid = true;
   result.width = measured_width;
+  // 整像素宽度刚超过上限时，用同帧双地面行的实测双峰距离复核。
+  // 两侧各只容许一个混色像素；贯通远近的多数行须实测，
+  // 单边续接、弱边、整个像素都属于黑带的宽暗条不能借此缩窄。
+  const double max_width = calibrated_width + 1.0 + bandWidthTolerance(calibrated_width);
+  const int required_peak_rows = std::max(min_rows, int(std::ceil(cfg.black_score_frac * interior_rows.count)));
+  for (const auto & hits : core_hits) {
+    bool sufficient = hits[0] + hits[1] + hits[2] >= required_peak_rows;
+    for (int i = 0; i < 3; ++i) {
+      sufficient &= hits[i] >= std::max(1.0, 0.5 * cfg.black_score_frac * thirds_total[i]);
+    }
+    result.measured_core |= sufficient;
+  }
+  if (measured_width > max_width && measured_width <= max_width + 2.0 &&
+    int(peak_widths.size()) >= required_peak_rows &&
+    first_peak_row >= 0 && first_peak_row < interior_rows.first + interior_span / 3.0 &&
+    last_peak_row >= interior_rows.first + 2.0 * interior_span / 3.0) {
+    result.width = upperMedian(peak_widths);
+  }
   // 置信度 = 下陷强度 × 资格行覆盖率 × 资格行占内部行比例：被遮挡越多、证据越短，置信度越低，
   // 选优时完整分界线优先于只在物块高度内成立的短暗边。
   result.confidence = std::min(1.0, depth / cfg.black_conf_depth) * coverage *
@@ -844,7 +976,7 @@ SplitLine acceptLine(
 std::vector<SplitLine> candidateLines(
   const std::vector<SplitRun> & runs, const cv::Mat & eligible, const FieldConfig & cfg,
   int min_rows, const InteriorRows & interior_rows, const std::vector<SplitEdge> & edges,
-  double calibrated_width)
+  double calibrated_width, double top_scale)
 {
   const int rows = eligible.rows, cols = eligible.cols;
   const double middle = 0.5 * (rows - 1);
@@ -876,7 +1008,7 @@ std::vector<SplitLine> candidateLines(
     if (peak_votes * 3.0 < min_rows * cfg.black_score_frac) {break;}
     const double slope = slopeOf(peak.y);
     const auto line = acceptLine(runs, eligible, peak.x - slope * middle, slope, cfg, min_rows,
-      interior_rows, edges, calibrated_width);
+      interior_rows, edges, calibrated_width, top_scale);
     // 只抑制实际内部首末位置都相近的直线，不能整列清空不同斜率：
     // 两条交叉黑带可以有相同中点，却是两种同样成立的分界解释。
     auto suppress = [&](double line_top, double line_slope) {
@@ -909,9 +1041,64 @@ std::vector<SplitLine> candidateLines(
   return accepted;
 }
 
-}  // namespace
+// 隔断与远墙同高。地面两侧都有连续的窄材质芯，而阴影/侧面使暗带看起来偏宽时，
+// 再在远墙紫色立面独立查找同一窄黑带。两种材质上的观测都必须来自本帧。
+struct WallProjection {double scale = 1, far_y = 0;};
 
-SplitMeasurement detectSplitBlack(const cv::Mat & bev, const FieldConfig & cfg)
+SplitMeasurement measureSplit(const cv::Mat & bev, const FieldConfig & cfg, const cv::Mat & source,
+  const FieldResult * field, bool on_wall);
+
+WallProjection wallProjection(const FieldResult & field, const FieldConfig & cfg)
+{
+  if (field.outline.size() != 4 || field.inner_measured_edges < 2 ||
+    field.edge_state[0] != EdgeState::MEASURED || field.edge_state[1] != EdgeState::MEASURED ||
+    field.edge_state[3] != EdgeState::MEASURED) {return {};}
+  const int w = field.bev.cols, h = field.bev.rows;
+  std::vector<cv::Point2f> far{field.outline[0], field.outline[1]};
+  cv::perspectiveTransform(far, far, field.homography);
+  const double inner_w = cfg.field_w_m - 2.0 * cfg.wall_thickness_m;
+  const double scale = (far[1].x - far[0].x) * inner_w / ((w - 1) * cfg.field_w_m);
+  if (!std::isfinite(scale) || scale <= 1) {return {};}
+  // 外沿顶角换算到内沿顶面；地面单应中 y=0 是远墙脚。裁掉上沿混色和下沿红底。
+  const double far_y = 0.5 * (far[0].y + far[1].y) + scale * cfg.wall_thickness_m * (h - 1) /
+    (cfg.field_h_m - 2.0 * cfg.wall_thickness_m);
+  if (!std::isfinite(far_y) || far_y < -h || far_y >= 0) {return {};}
+  return {scale, far_y};
+}
+
+bool confirmedOnFarWall(const cv::Mat & source, const FieldResult & field, const FieldConfig & cfg,
+  const SplitMeasurement & ground, double calibrated_width, const WallProjection & projection)
+{
+  if (source.empty() || projection.scale <= 1) {return false;}
+  const int w = field.bev.cols, h = field.bev.rows;
+  // 仅用立面中央的一半，两端分别与墙顶和地面混色；投影高度仍来自本帧实测墙角。
+  const int y0 = cvRound(0.75 * projection.far_y), y1 = cvRound(0.25 * projection.far_y);
+  if (y1 - y0 < kMinRowsFloor) {return false;}
+  cv::Mat translation = cv::Mat::eye(3, 3, CV_64F);
+  translation.at<double>(1, 2) = -y0;
+  cv::Mat wall;
+  cv::warpPerspective(source, wall, translation * field.homography, {w, y1 - y0});
+  auto wall_cfg = cfg;
+  wall_cfg.use_blue_interior = false;
+  wall_cfg.red_hue_lo_deg = cfg.purple_hue_lo_deg;
+  wall_cfg.red_hue_hi_deg = cfg.purple_hue_hi_deg;
+  wall_cfg.red_chroma_ratio_min = cfg.purple_chroma_ratio_min;
+  wall_cfg.red_L_min = cfg.purple_L_min;
+  // 红底对应 z=0，隔断顶面与远墙顶边处在同一高度；按本帧顶边放大率比较实物宽度。
+  wall_cfg.black_width_m *= projection.scale;
+  wall_cfg.black_row_lo = 0;
+  wall_cfg.black_row_hi = 1;
+  const auto mark = measureSplit(wall, wall_cfg, cv::Mat(), nullptr, true);
+  if (!mark.valid) {return false;}
+  auto aligned = [&](double x, int y) {
+      const double ground_x = ground.top_x + (ground.bottom_x - ground.top_x) * y / (h - 1);
+      return std::abs(x - ground_x) <= 0.5 * calibrated_width;
+    };
+  return aligned(mark.top_x, y0) && aligned(mark.bottom_x, y1 - 1);
+}
+
+SplitMeasurement measureSplit(const cv::Mat & bev, const FieldConfig & cfg,
+  const cv::Mat & source, const FieldResult * field, bool on_wall)
 {
   SplitWindow window;
   if (!splitWindow(bev, cfg, window)) {return {};}
@@ -936,8 +1123,9 @@ SplitMeasurement detectSplitBlack(const cv::Mat & bev, const FieldConfig & cfg)
         (run.width > kWidthSpread * material_width || run.width * kWidthSpread < material_width);
     }), runs.end());
   if (runs.empty()) {return {};}
+  const WallProjection projection = field ? wallProjection(*field, cfg) : WallProjection{};
   auto lines = candidateLines(runs, eligible, cfg, min_rows,
-    interiorRows(evidence.reference, window), edges, calibrated_width);
+    interiorRows(evidence.reference, window), edges, calibrated_width, projection.scale);
   if (lines.empty()) {return {};}
   // 中线应位于场地中部。过滤偏心暗条后，再在仍可能是真的分界之间判断歧义。
   const double bev_center = 0.5 * (bev.cols - 1);
@@ -957,8 +1145,7 @@ SplitMeasurement detectSplitBlack(const cv::Mat & bev, const FieldConfig & cfg)
   if (lines.size() > 1 && lines[1].confidence >= kAmbiguityRatio * lines[0].confidence) {return {};}
   const auto & line = lines.front();
   // 先识别歧义，再用物理带宽排除细缝和宽暗条。计数包含两端像素，故标定宽度加一。
-  const double width_tolerance = std::max(2.0, 0.35 * calibrated_width);
-  if (std::abs(line.width - (calibrated_width + 1.0)) > width_tolerance) {return {};}
+  const double width_tolerance = bandWidthTolerance(calibrated_width);
   // 窗内直线外推到 BEV 顶/底边，端点须落在鸟瞰图内。
   const int x0 = window.window.x, y0 = window.window.y;
   SplitMeasurement measurement;
@@ -967,9 +1154,22 @@ SplitMeasurement detectSplitBlack(const cv::Mat & bev, const FieldConfig & cfg)
   if (!std::isfinite(measurement.top_x) || !std::isfinite(measurement.bottom_x) ||
     measurement.top_x < 0 || measurement.bottom_x < 0 ||
     measurement.top_x > bev.cols - 1 || measurement.bottom_x > bev.cols - 1) {return {};}
+  if (std::abs(line.width - (calibrated_width + 1.0)) > width_tolerance) {
+    if (!line.measured_core || line.width < calibrated_width + 1.0) {return {};}
+    if (!on_wall && (!field ||
+      !confirmedOnFarWall(source, *field, cfg, measurement, calibrated_width, projection))) {return {};}
+  }
   measurement.valid = true;
   measurement.confidence = line.confidence;
   return measurement;
+}
+
+}  // namespace
+
+SplitMeasurement detectSplitBlack(const cv::Mat & bev, const FieldConfig & cfg,
+  const cv::Mat & source, const FieldResult * field)
+{
+  return measureSplit(bev, cfg, source, field, false);
 }
 
 }  // namespace field_detail

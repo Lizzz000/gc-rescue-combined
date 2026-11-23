@@ -20,7 +20,8 @@ typedef enum
     WAIT_RELEASE_POINT_ACK, RETRACTING, WAIT_DELIVERY_ACK, TURN_BACK, WAIT_SEARCH_ACK,
     RESERVED_19, RESERVED_20, FAULT, TEST_DONE,
     INITIAL_SEARCH_TURN, RETURN_TO_START, VERIFY_RETURN_POSE, LOCALIZE_START, WAIT_ENABLE,
-    TIMED_LATERAL, RECENTER_LATERAL, VERIFY_RECENTER, WAIT_START_ALIGN, INITIAL_LOCALIZE
+    TIMED_LATERAL, RECENTER_LATERAL, VERIFY_RECENTER, WAIT_START_ALIGN, INITIAL_LOCALIZE,
+    WAIT_DELIVERY_DISABLE, DELIVERY_DONE
 } Auto_Stage_t;
 
 typedef struct
@@ -59,6 +60,7 @@ typedef struct
     uint32_t first_rx;       /**< 首次发送前的接收序号屏障。 */
     uint32_t last_tx_ms;     /**< 最近一次入发送邮箱的 RTOS 毫秒。 */
     uint32_t request_id;     /**< 类型 19/21 的非零请求编号，重发保持不变。 */
+    uint32_t grasp_frame;    /**< 确认入窗的类型 3 源帧，整次夹取请求保持不变。 */
     uint32_t accepted_ms;    /**< 启动查询首次受理后的完成期限起点。 */
     uint8_t accepted;
 } Auto_Request_t;
@@ -92,6 +94,8 @@ static Chassis_Odometry_t start_pose;
 static float return_reference_yaw_rad;
 static Chassis_Odometry_t alignment_origin;
 static uint32_t alignment_started_ms;
+volatile uint32_t jetson_completed_deliveries;
+static uint8_t waiting_initial_center;
 /* 首次安全区朝向的车体左轴在世界坐标中的方向，横移量保留左右符号。 */
 static double left_axis_x, left_axis_y, outbound_lateral_m;
 static Point_Plan_t return_plan;
@@ -108,7 +112,7 @@ static uint32_t next_request_id;
 static uint8_t navigating;
 static uint32_t navigation_zero_ms;
 #if JETSON_AUTO_ENABLED
-static uint8_t timed_zero_requested;
+static enum { TIMED_MOVING, TIMED_WAIT_ZERO, TIMED_WAIT_STOP } timed_phase;
 #endif
 #if JETSON_AUTO_CHASSIS_TEST
 static uint32_t safety_lost_ms;
@@ -425,6 +429,12 @@ static uint8_t Approach(const Visual_Observation_t *center, const Image_Window_t
     }
 #if JETSON_AUTO_CHASSIS_TEST
     safety_lost = 0U;
+#elif JETSON_AUTO_ENABLED
+    if (stage == INITIAL_LOCALIZE && waiting_initial_center)
+    {
+        waiting_initial_center = 0U;
+        alignment_started_ms = now_ms;
+    }
 #endif
     center_source_valid = 1U;
     center_source_boundary = center->source_frame;
@@ -498,6 +508,11 @@ static uint8_t Approach(const Visual_Observation_t *center, const Image_Window_t
         return 0U;
     }
 
+#if JETSON_AUTO_ENABLED
+    const uint8_t repeated_lateral = window == &start_window && x_side != 0 && vision.previous.valid &&
+        (uint32_t)(now_ms - vision.previous.received_ms) < JETSON_AUTO_CENTER_TIMEOUT_MS &&
+        Window_Side(goal_x - vision.previous.x, x_tol) == x_side;
+#endif
     const float seconds = Update_Image(center);
     float x_to_left = JETSON_AUTO_X_TO_LEFT;
     Visual_Servo_Config_t config = {
@@ -526,7 +541,25 @@ static uint8_t Approach(const Visual_Observation_t *center, const Image_Window_t
     }
 #endif
     const float raw[2] = {center->x, center->y};
-    const float goal[2] = {goal_x, goal_y}, tolerance[2] = {x_tol, y_tol};
+    float goal[2] = {goal_x, goal_y}, tolerance[2] = {x_tol, y_tol};
+#if JETSON_AUTO_ENABLED
+    if (window == &start_window && inside && navigating)
+    {
+        /* 一张浅入窗还没有触发上面的双帧制动。向半窗内侧减速，避免单帧将双轴同时清零。 */
+        if (raw_x_error * vision.servo.speed[0] > 0.0f)
+            tolerance[0] = 0.5f * x_tol;
+        if (raw_y_error * vision.servo.speed[1] > 0.0f)
+            tolerance[1] = 0.5f * y_tol;
+    }
+    else if (repeated_lateral && y_side == 0 && fabsf(raw_x_error) <= 3.0f * x_tol &&
+             x_side * vision.tracker.velocity[0] * (config.latency_s + seconds) < x_tol)
+    {
+        /* 同侧多帧低速贴边，给横移留出到对侧窗沿的制动距离。图像快速收敛时沿用原限速。
+         * 规划点仍在标定窗内，实际停车和停稳后的双帧确认始终比较原窗口。 */
+        goal[0] += x_side * x_tol;
+        tolerance[0] = 0.5f * x_tol;
+    }
+#endif
     Tracked_Visual_Servo_Update(&vision.servo, &config, &vision.tracker, raw, goal, tolerance, seconds);
 #if JETSON_AUTO_ENABLED
     if (window == &target_window && vision.servo.speed[1] > 0.0f &&
@@ -568,26 +601,37 @@ static void Start_Timed_Move(float vx, float vy, Auto_Stage_t next, uint32_t now
         Halt(now_ms);
         return;
     }
-    timed_zero_requested = 0U;
+    timed_phase = TIMED_MOVING;
     Enter(next, now_ms);
 }
 
-/* 到时发零速，三轮停稳后才能进入握手。 */
+/* 推退先等斜坡实际送出零目标，再等三轮新反馈确认停车。两个期限分别只启动一次。 */
 static uint8_t Timed_Move_Complete(uint32_t duration_ms, uint32_t now_ms)
 {
-    if (!timed_zero_requested)
+    const uint8_t longitudinal = stage == PUSHING || stage == RETRACTING;
+    uint8_t begin_encoder_check = 0U;
+    if (timed_phase == TIMED_MOVING)
     {
         if ((uint32_t)(now_ms - stage_started_ms) < duration_ms)
             return 0U;
         Chassis_Hold();
-        timed_zero_requested = 1U;
+        timed_phase = longitudinal ? TIMED_WAIT_ZERO : TIMED_WAIT_STOP;
         stage_started_ms = now_ms;
     }
-    if (Chassis_Is_Stopped())
-        return 1U;
     if ((uint32_t)(now_ms - stage_started_ms) >= JETSON_AUTO_HOLD_TIMEOUT_MS)
+    {
         Halt(now_ms);
-    return 0U;
+        return 0U;
+    }
+    if (timed_phase == TIMED_WAIT_ZERO)
+    {
+        if (!Chassis_Motion_Ready())
+            return 0U;
+        timed_phase = TIMED_WAIT_STOP;
+        stage_started_ms = now_ms;
+        begin_encoder_check = 1U;
+    }
+    return Chassis_Is_Stopped() || (longitudinal && Chassis_Encoder_Stop_Confirmed(begin_encoder_check));
 }
 #endif
 
@@ -619,7 +663,9 @@ static uint8_t Search_Turn_Stopped(uint32_t now_ms)
 /* 定时横移从自身起点限距；回退后的粗复位和视觉精调从同一停点限距、计时。 */
 static uint8_t Alignment_Pose(Chassis_Odometry_t *pose, uint32_t now_ms)
 {
-    if ((uint32_t)(now_ms - alignment_started_ms) >= JETSON_AUTO_ALIGN_TIMEOUT_MS ||
+    const uint32_t timeout_ms = stage == INITIAL_LOCALIZE && waiting_initial_center ?
+        JETSON_AUTO_INITIAL_CENTER_TIMEOUT_MS : JETSON_AUTO_ALIGN_TIMEOUT_MS;
+    if ((uint32_t)(now_ms - alignment_started_ms) >= timeout_ms ||
         !Chassis_Get_Odometry(pose) ||
         hypot(pose->x_m - alignment_origin.x_m, pose->y_m - alignment_origin.y_m) > JETSON_AUTO_ALIGN_MAX_M)
     {
@@ -831,7 +877,7 @@ static uint8_t Encode_Request(uint8_t payload[8], uint32_t *argument)
         *argument = request.request_id;
     else if (request.id == JETSON_CAN_ARRIVAL_ID)
         *argument = JETSON_AUTO_ENABLED ? JETSON_CAN_SELECTED_ROUTE : 0U;
-    return action ? Jetson_CAN_Encode_Action_Request(request.point, *argument, payload) :
+    return action ? Jetson_CAN_Encode_Action_Request(request.point, *argument, request.grasp_frame, payload) :
                     Jetson_CAN_Encode_Uplink(request.id, *argument, payload);
 }
 
@@ -969,6 +1015,7 @@ static void Service_Stage(const Jetson_CAN_Data_t *data, uint32_t now_ms)
             break;
         }
         alignment_started_ms = now_ms;
+        waiting_initial_center = 1U;
         Begin_Approach(INITIAL_LOCALIZE, data, now_ms);
         break;
     }
@@ -980,10 +1027,21 @@ static void Service_Stage(const Jetson_CAN_Data_t *data, uint32_t now_ms)
             Begin_Request(JETSON_CAN_ARRIVAL_ID, WAIT_DESTINATION, now_ms);
 #else
         if (Approach(&data->target, &target_window, now_ms))
+        {
             Begin_Point_Request(JETSON_CAN_POINT_GRASP, WAIT_GRASP_POINT_ACK, now_ms);
+            request.grasp_frame = data->target.source_frame;
+        }
 #endif
         break;
     case WAIT_GRASP_POINT_ACK:
+        /* 对端明确拒绝且尚未驱动夹爪时，撤销这一请求，用新图重新对准。 */
+        if (!request.accepted && reply->valid && !reply->accepted &&
+            reply->command == JETSON_CAN_POINT_REPLY_COMMAND && reply->token == request.request_id &&
+            Reply_In_Request(reply->sequence) && !Request_Timed_Out(now_ms))
+        {
+            Begin_Approach(APPROACH_TARGET, data, now_ms);
+            break;
+        }
         if (Action_Completed(data, now_ms))
         {
             route_token = request.request_id;
@@ -1098,6 +1156,19 @@ static void Service_Stage(const Jetson_CAN_Data_t *data, uint32_t now_ms)
             start_pose = pose;
             if (initial)
                 return_reference_yaw_rad = pose.yaw_rad;
+            else
+            {
+#if JETSON_AUTO_DELIVERY_LIMIT > 0
+                if (jetson_completed_deliveries == JETSON_AUTO_DELIVERY_LIMIT - 1U)
+                {
+                    Chassis_Disable();
+                    Enter(WAIT_DELIVERY_DISABLE, now_ms);
+                    break;
+                }
+#endif
+                if (jetson_completed_deliveries < UINT32_MAX)
+                    ++jetson_completed_deliveries;
+            }
             Start_Turn(1, initial ? JETSON_AUTO_OUT_TURN_DEG : JETSON_AUTO_RETURN_TURN_DEG,
                        initial ? INITIAL_SEARCH_TURN : TURN_BACK, now_ms);
         }
@@ -1131,6 +1202,7 @@ void Jetson_Auto_Init(void)
     route_token = center_boundary = center_boundary_ms = 0U;
 #if JETSON_AUTO_ENABLED
     delivery_side = 0U;
+    jetson_completed_deliveries = 0U;
     start_pose = (Chassis_Odometry_t){0};
 #endif
     center_source_valid = 0U;
@@ -1154,6 +1226,10 @@ void Jetson_Auto_Init(void)
 /** @brief 在底盘服务后推进一次，沿用现有链路、轮反馈和制动期限。 */
 void Jetson_Auto_Loop(void)
 {
+#if JETSON_AUTO_DELIVERY_LIMIT > 0
+    if (stage == DELIVERY_DONE)
+        return;
+#endif
 #if JETSON_AUTO_CHASSIS_TEST
     if (stage == UNCONFIGURED || stage == TEST_DONE)
         return;
@@ -1187,6 +1263,21 @@ void Jetson_Auto_Loop(void)
     taskEXIT_CRITICAL();
     /* 先取接收快照再读时钟，避免中断跨 tick 写入更新的时间而被误判过期。 */
     const uint32_t now_ms = (uint32_t)xTaskGetTickCount();
+#if JETSON_AUTO_DELIVERY_LIMIT > 0
+    if (stage == WAIT_DELIVERY_DISABLE)
+    {
+        if (!Link_Ready(&data, &link, now_ms))
+            return;
+        if (Chassis_Is_Enabled() || (uint32_t)(now_ms - stage_started_ms) >= JETSON_AUTO_BRAKE_TIMEOUT_MS)
+            Halt(now_ms);
+        else if (Chassis_Disable_Confirmed())
+        {
+            ++jetson_completed_deliveries;
+            Enter(DELIVERY_DONE, now_ms);
+        }
+        return;
+    }
+#endif
 #if JETSON_AUTO_ENABLED
     Chassis_Odometry_t pose;
 #endif

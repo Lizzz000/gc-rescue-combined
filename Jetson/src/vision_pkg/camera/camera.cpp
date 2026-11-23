@@ -60,9 +60,16 @@ bool UsbCamera::open()
       }
     } else if (config_.backend == "gstreamer") {
       // 管线负责取流和 appsink；自动 MJPEG 管线输出 I420，read() 再在本地完成 BGR 转换。
-      const std::string pipeline =
-        config_.pipeline.empty() ? vision_camera::gstreamerPipeline(config_) : config_.pipeline;
-      if (!gstreamer_.open(pipeline, cancel_requested_, !config_.pipeline.empty())) {
+      const bool custom = !config_.pipeline.empty();
+      const auto pipeline = custom ? config_.pipeline : vision_camera::gstreamerPipeline(config_);
+      vision_camera::CameraControls controls;
+      if (!custom) {
+        controls = config_.controls;
+        if (config_.brightness >= 0) {
+          controls.push_back({{"brightness", V4L2_CID_BRIGHTNESS}, config_.brightness});
+        }
+      }
+      if (!gstreamer_.open(pipeline, cancel_requested_, custom, controls)) {
         last_error_ = gstreamer_.lastError();
         close();
         return false;
@@ -110,11 +117,7 @@ std::string vision_camera::gstreamerPipeline(const CameraConfig & config)
   // MJPEG先组为完整边界再丢帧，避免队列先丢掉同一JPEG的部分载荷；不要照搬到H.264/H.265。
   const bool mjpeg = isMjpegFourcc(config.fourcc);
   std::ostringstream pipeline;
-  pipeline << "v4l2src device=" << config.device << " io-mode=2";
-  if (config.brightness >= 0) {
-    // 由相机驱动设置亮度；采集重连时自动管线会再次应用。
-    pipeline << " extra-controls=\"c,brightness=" << config.brightness << "\"";
-  }
+  pipeline << "v4l2src name=rescue_camera_source device=" << config.device << " io-mode=2";
   if (mjpeg) {
     // jpegparse只按SOI/EOI恢复边界，不证明熵数据或RST完整；已缺失的数据不会被补回。
     pipeline << " ! image/jpeg,width=" << config.width << ",height=" << config.height

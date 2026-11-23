@@ -331,12 +331,15 @@ static void Check_Uplink(void)
     /* 类型 21 独立编码，非零编号覆盖全部 32 位，越界输入不改缓冲区。 */
     for (uint8_t kind = 0U; kind <= 3U; ++kind)
     {
-        const uint8_t expected[8] = {kind, 0xEFU, 0xCDU, 0xABU, 0x89U};
-        assert(Jetson_CAN_Encode_Action_Request(kind, 0x89ABCDEFU, data) == 5U);
+        uint8_t expected[8] = {kind, 0xEFU, 0xCDU, 0xABU, 0x89U};
+        const uint8_t grasp = kind == JETSON_CAN_POINT_GRASP;
+        if (grasp) {expected[5] = 0xba; expected[6] = 0xdc; expected[7] = 0xfe;}
+        assert(Jetson_CAN_Encode_Action_Request(kind, 0x89ABCDEFU, grasp ? 0xfedcbaU : 0U, data) == (grasp ? 8U : 5U));
         assert(memcmp(data, expected, sizeof(data)) == 0);
-        assert(Jetson_CAN_Encode_Action_Request(kind, 0U, data) == 0U);
-        assert(Jetson_CAN_Encode_Action_Request(4U, 1U, data) == 0U);
-        assert(Jetson_CAN_Encode_Action_Request(kind, 1U, NULL) == 0U);
+        assert(Jetson_CAN_Encode_Action_Request(kind, 0U, 0U, data) == 0U);
+        assert(Jetson_CAN_Encode_Action_Request(4U, 1U, 0U, data) == 0U);
+        assert(Jetson_CAN_Encode_Action_Request(kind, 1U, 0U, NULL) == 0U);
+        assert(Jetson_CAN_Encode_Action_Request(kind, 1U, 0x1000000U, data) == 0U);
         assert(Jetson_CAN_Encode_Uplink(JETSON_CAN_POINT_REACHED_ID, kind, data) == 0U);
         assert(memcmp(data, expected, sizeof(data)) == 0);
     }

@@ -167,11 +167,16 @@ void testCanProtocol()
   CHECK(CanProtocol::parseCommand(commandFrame(CanProtocol::START_SEARCH_ID, 5, 0, 12)).kind == CanProtocol::CommandKind::MALFORMED);
 
   for (std::uint8_t kind = 0; kind <= 3; ++kind) {
-    const auto action = CanProtocol::parseCommand(commandFrame(21, 5, kind, 0xa1b2c3d4u));
+    auto frame = commandFrame(21, kind == 1 ? 8 : 5, kind, 0xa1b2c3d4u);
+    frame.data[5] = 0xba;
+    frame.data[6] = 0xdc;
+    frame.data[7] = 0xfe;
+    const auto action = CanProtocol::parseCommand(frame);
     CHECK(action.kind == CanProtocol::CommandKind::ARRIVAL_POINT &&
       action.command == kind && action.token == 0xa1b2c3d4u);
+    CHECK(action.source_frame == (kind == 1 ? 0xfedcbau : 0u));
   }
-  for (std::uint8_t size : {0, 1, 4, 6, 8}) {
+  for (std::uint8_t size : {0, 1, 4, 5, 6, 7}) {
     CHECK(CanProtocol::parseCommand(commandFrame(21, size, 1, 1)).kind ==
       CanProtocol::CommandKind::MALFORMED);
   }

@@ -198,16 +198,16 @@ void BridgeTransactions::handleArrival(Service service)
 }
 
 ArrivalPointDecision BridgeTransactions::handleArrivalPoint(
-  std::uint8_t kind, std::uint32_t request_id, bool motion_lease_open)
+  std::uint8_t kind, std::uint32_t request_id, bool motion_lease_open, std::uint32_t source_frame)
 {
   const auto phase = state_.cyclePhase();
-  const auto class_id = kind == 1 ? state_.selectedClass(ports_.sourceNow(), {ports_.monotonicNow()}) : "";
+  const auto class_id = kind == 1 ? state_.graspClass(source_frame, ports_.sourceNow(), {ports_.monotonicNow()}) : "";
   const bool can_grasp = kind == 1 && !route_aborted_ &&
     phase == BridgeCyclePhase::SearchingTarget && !state_.locallyHeld() && !class_id.empty();
   const bool can_release = kind == 2 && !route_aborted_ && phase == BridgeCyclePhase::WaitingTransfer;
   const bool authorized = kind == 0 ||
     (!initial_align_request_.busy() && motion_lease_open && (can_grasp || can_release || kind == 3));
-  const auto decision = arrival_point_.onRequest(kind, request_id, authorized);
+  const auto decision = arrival_point_.onRequest(kind, request_id, authorized, source_frame);
   if (decision == ArrivalPointDecision::Accept && kind == 1) {
     pickup_ = Pickup{class_id, request_id, state_.missionState()->cycle_generation};
   }

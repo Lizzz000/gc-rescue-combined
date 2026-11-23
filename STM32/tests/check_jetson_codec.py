@@ -220,7 +220,13 @@ def uplink_cases():
     requests = [(f"^{ARRIVAL:03X}:{mode}", pack(ARRIVAL, mode)) for mode in (0, 2)]
     for kind in range(4):
         for request_id in (1, 0x89ABCDEF, 0xFFFFFFFF):
-            requests.append((f"^{POINT:03X}:{kind}:{request_id}", struct.pack("<BI", kind, request_id)))
+            cmd = f"^{POINT:03X}:{kind}:{request_id}"
+            payload = struct.pack("<BI", kind, request_id)
+            if kind == 1:
+                for source in (0, 0xabcdef, 0xffffff):
+                    requests.append((f"{cmd}:{source}", payload + source.to_bytes(3, "little")))
+            else:
+                requests.append((cmd, payload))
     for type_number in (TURN_COMPLETED, SAFETY_ARRIVED, START_SEARCH, DELIVERY, START_ALIGN):
         for token in (0, 1, 0x89ABCDEF, 0xFFFFFFFF):
             requests.append((f"^{type_number:03X}:{token}", pack(type_number, token)))
@@ -303,7 +309,12 @@ def jetson_cross_check(codec, sender):
             for request_id in (1, 0x89ABCDEF, 0xFFFFFFFF):
                 samples.append(("action_result", [str(kind), str(success), str(request_id)], False,
                                 wire(ACTION_RESULT, struct.pack("<BBI", kind, success, request_id))))
-        samples.append(("arrival_point", [str(kind), "1"], False, wire(POINT, struct.pack("<BI", kind, 1))))
+        values = [str(kind), "1"]
+        data = struct.pack("<BI", kind, 1)
+        if kind == 1:
+            values.append(str(0xabcdef))
+            data += bytes.fromhex('efcdab')
+        samples.append(("arrival_point", values, False, wire(POINT, data)))
     for kind, values, invalid, expected in samples:
         try:
             actual = from_jetson_text(codec.encode(kind, values, invalid))

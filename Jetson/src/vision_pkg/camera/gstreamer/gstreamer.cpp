@@ -273,7 +273,8 @@ struct GstreamerCapture::Impl {
     return false;
   }
 
-  bool start(GstElement * owned, const std::atomic<bool> & cancelled, Clock::time_point deadline)
+  bool start(GstElement * owned, const std::atomic<bool> & cancelled, Clock::time_point deadline,
+    const CameraControls & controls)
   {
     pipeline = owned;
     if (!pipeline || !GST_IS_BIN(pipeline)) {
@@ -319,12 +320,32 @@ struct GstreamerCapture::Impl {
     gst_app_sink_set_drop(sink, true);
     gst_app_sink_set_max_buffers(sink, 1);
     gst_app_sink_set_wait_on_eos(sink, false);
+    // READY opens this v4l2src instance. Its descriptor stays owned by the pipeline.
+    gint camera_fd = -1;
+    if (!controls.empty()) {
+      if (gst_element_set_state(pipeline, GST_STATE_READY) == GST_STATE_CHANGE_FAILURE) {
+        error = "cannot open the camera to restore its V4L2 controls";
+        return false;
+      }
+      auto * source = gst_bin_get_by_name(GST_BIN(pipeline), "rescue_camera_source");
+      if (source) {
+        g_object_get(source, "device-fd", &camera_fd, nullptr);
+        gst_object_unref(source);
+      }
+      if (camera_fd < 0) {error = "camera did not expose an open V4L2 descriptor"; return false;}
+      if (!cameraControls(camera_fd, controls, ControlOperation::Apply, error)) {return false;}
+      if (cancelled.load(std::memory_order_relaxed)) {error = "GStreamer capture cancelled"; return false;}
+      // UVC control transfers can take several seconds. The camera cannot stream in READY.
+      deadline = Clock::now() + kWaitBudget;
+    }
     // 不使用无限 gst_element_get_state；PLAYING 的异步协商与首帧共享同一预算。
     if (gst_element_set_state(pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
       error = "GStreamer capture cannot enter PLAYING";
       return false;
     }
-    return poll(primed, primed_at, cancelled, deadline, primed_nvmm);
+    if (!poll(primed, primed_at, cancelled, deadline, primed_nvmm)) {return false;}
+    // Verify after format negotiation, before any frame reaches detection.
+    return controls.empty() || cameraControls(camera_fd, controls, ControlOperation::Verify, error);
   }
 };
 
@@ -332,7 +353,7 @@ GstreamerCapture::GstreamerCapture() : impl_(std::make_unique<Impl>()) {}
 GstreamerCapture::~GstreamerCapture() {close();}
 
 bool GstreamerCapture::open(const std::string & description, const std::atomic<bool> & cancelled,
-  bool require_bgr)
+  bool require_bgr, const CameraControls & controls)
 {
   const auto deadline = Clock::now() + kWaitBudget;
   close();
@@ -352,7 +373,7 @@ bool GstreamerCapture::open(const std::string & description, const std::atomic<b
     if (pipeline) {gst_object_unref(pipeline);}
     return false;
   }
-  if (!impl_->start(pipeline, cancelled, deadline)) {close(); return false;}
+  if (!impl_->start(pipeline, cancelled, deadline, controls)) {close(); return false;}
   return true;
 }
 
@@ -361,7 +382,7 @@ bool GstreamerCapture::open(GstElement * pipeline, const std::atomic<bool> & can
   const auto deadline = Clock::now() + kWaitBudget;
   close();
   impl_->error.clear();
-  if (!impl_->start(pipeline, cancelled, deadline)) {close(); return false;}
+  if (!impl_->start(pipeline, cancelled, deadline, {})) {close(); return false;}
   return true;
 }
 

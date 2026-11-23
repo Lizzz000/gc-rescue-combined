@@ -178,8 +178,8 @@ def main():
                  f"{name}，请求编号 {token}")
             return began
 
-        def action(kind, token):
-            began = usb.action_request(kind, token)
+        def action(kind, token, source_frame=None):
+            began = usb.action_request(kind, token, source_frame)
             wait(lambda: saw(IDS["command_reply"], q(COMMANDS["arrival_point"], token), began),
                  f"夹爪确认动作 {kind}")
             wait(lambda: saw(IDS["action_result"], struct.pack("<BBI", kind, 1, token), began),
@@ -218,9 +218,8 @@ def main():
         for label, side, grasp, release, search in [("green", 1, 4, 5, 6), ("orange", 2, 7, 8, 9)]:
             cargo = str(mission[f"{label}_class_id"])
             start = time.monotonic()
-            wait(lambda: any(row["id"] == IDS["target"] and row["data"].startswith("01") and row["steady"] >= start
-                             for row in usb.records), f"选择 {label} 取货目标")
-            action(1, grasp)
+            wait(lambda: usb.target_source_since(start) is not None, f"选择 {label} 取货目标")
+            action(1, grasp, usb.target_source_since(start))
             cargo = None
             start = time.monotonic()
             wait(lambda: any(row["id"] == IDS["target"] and row["data"].startswith("00") and row["steady"] >= start

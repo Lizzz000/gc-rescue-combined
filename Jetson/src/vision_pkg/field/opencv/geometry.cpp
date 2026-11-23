@@ -644,7 +644,7 @@ constexpr double kInnerScanDepth = 0.5;
 // along=true 时按列扫描（上/下边），from_end=true 从底/右端开始。
 std::vector<cv::Point2f> innerTransitions(
   const cv::Mat & mask, const cv::Rect & support,
-  bool along, bool from_end, const FieldConfig & cfg)
+  bool along, bool from_end)
 {
   // 候选包含围边立面和近墙遮挡；采样槽分配到实际出现内部颜色过渡的行/列。
   // 否则低机位只露出一条地面时，大部分槽落在墙面，侧边会因点数不足退回先验。
@@ -673,6 +673,11 @@ std::vector<cv::Point2f> innerTransitions(
       }
     }
   }
+  return candidates;
+}
+
+std::vector<cv::Point2f> sampleTransitions(const std::vector<cv::Point2f> & candidates, const FieldConfig & cfg)
+{
   const int samples = std::max(4, cfg.edge_bins);
   std::vector<cv::Point2f> points;
   int previous = -1;
@@ -755,14 +760,27 @@ InnerQuad fitInnerQuad(
     cfg.red_hue_lo_deg + cfg.red_hue_hi_deg) * CV_PI / 360;
   const cv::Point2d contrast(std::cos(inner_hue) - std::cos(purple_hue),
     std::sin(inner_hue) - std::sin(purple_hue));
+  const cv::Rect2f frame(0.f, 0.f, float(interior.cols), float(interior.rows));
+  const bool observed_near = frame.contains(outer[2]) && frame.contains(outer[3]);
+  const int radius = cfg.edge_probe_radius + cfg.interior_open_ksize;
+  auto has_wall = [&](const cv::Point2f & p, int outward) {
+      const int y = cvRound(p.y), center = cvRound(p.x);
+      if (y < 0 || y >= purple.rows) {return false;}
+      for (int step = 1; step <= radius; ++step) {
+        const int x = center + outward * step;
+        if (x >= 0 && x < purple.cols && purple.at<uchar>(y, x)) {return true;}
+      }
+      return false;
+    };
   const auto transitions = [&](bool along, bool from_end) {
-      auto points = innerTransitions(mask, support, along, from_end, cfg);
+      auto points = innerTransitions(mask, support, along, from_end);
+      const bool clipped_side = !along && !observed_near && !purple.empty();
+      if (!clipped_side) {points = sampleTransitions(points, cfg);}
       for (auto & p : points) {p += cv::Point2f(float(bounds.x), float(bounds.y));}
       if (!lab.empty()) {
         // 严格颜色判据负责确认内部身份；几何位置取附近的材质色度跃迁，
         // 不把混色、JPEG或开运算导致的阈值内缩当作物理边界。
         const cv::Point direction = along ? cv::Point(0, 1) : cv::Point(from_end ? -1 : 1, 0);
-        const int radius = cfg.edge_probe_radius + cfg.interior_open_ksize;
         for (auto & p : points) {
           const cv::Point seed(cvRound(p.x), cvRound(p.y));
           double best = 0;
@@ -776,6 +794,17 @@ InnerQuad fitInnerQuad(
             if (gradient > best) {best = gradient; p = 0.5f * cv::Point2f(a + b);}
           }
         }
+      }
+      if (clipped_side) {
+        // 近角在画外时，错误斜率会放大到近边。先挑出逐行确有相邻紫墙的点，
+        // 再均匀分槽；先抽样会把多数槽浪费在物块的外沿，只留下几行真边。
+        std::vector<cv::Point2f> wall_points;
+        for (const auto & p : points) {
+          if (has_wall(p, from_end ? 1 : -1)) {wall_points.push_back(p);}
+        }
+        if (int(wall_points.size()) >= cfg.min_side_points ||
+          (from_end ? 1 : 3) != missing_purple_side) {points = std::move(wall_points);}
+        points = sampleTransitions(points, cfg);
       }
       if (!points.empty()) {cv::perspectiveTransform(points, points, forward);}
       return points;
@@ -791,8 +820,6 @@ InnerQuad fitInnerQuad(
     {transitions(false, false), {tx, ty}, {tx, h}}};          // 左
   InnerQuad out;
   Line lines[3];
-  const cv::Rect2f frame(0.f, 0.f, float(interior.cols), float(interior.rows));
-  const bool observed_near = frame.contains(outer[2]) && frame.contains(outer[3]);
   bool far_measured = false;
   int recovered_side = -1;
   for (int i = 0; i < 3; ++i) {
@@ -831,16 +858,12 @@ InnerQuad fitInnerQuad(
       cv::perspectiveTransform(sides[i].scan, source, inverse);
       int supported = 0;
       int ground_transitions = 0;
-      const int radius = cfg.edge_probe_radius + cfg.interior_open_ksize;
       for (size_t k = 0; k < source.size(); ++k) {
         if (pointLineDistance(line, sides[i].scan[k]) > std::max(cfg.fit_outlier_px, kMinInlierBandPx)) {continue;}
         const int y = cvRound(source[k].y);
         const int x_center = cvRound(source[k].x);
         const int outward = i == 1 ? 1 : -1;
-        for (int step = 1; step <= radius; ++step) {
-          const int x = x_center + outward * step;
-          if (x >= 0 && y >= 0 && x < purple.cols && y < purple.rows && purple.at<uchar>(y, x)) {++supported; break;}
-        }
+        if (has_wall(source[k], outward)) {++supported;}
         if (!recover_side || y < 0 || y >= interior.rows) {continue;}
         const int in = x_center - outward * radius, out = x_center + outward * radius;
         if (in >= 0 && in < interior.cols && out >= 0 && out < interior.cols &&

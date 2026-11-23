@@ -460,7 +460,7 @@ void FieldLocator::buildOutput(
     res.ms_warp = (cv::getTickCount() - t0) * 1000.0 / cv::getTickFrequency() - ms_resize -
       ms_detect;
     res.red_ratio = redRatioInBev(res.bev, cfg_);
-    const auto split = detectSplitBlack(res.bev, cfg_);
+    const auto split = detectSplitBlack(res.bev, cfg_, small, ok && res.committed ? &res : nullptr);
     res.split_valid = split.valid;
     res.split_conf = split.confidence;
     res.split_suspect = split.suspect;

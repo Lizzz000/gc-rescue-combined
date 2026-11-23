@@ -283,9 +283,10 @@ uint8_t Jetson_CAN_Encode_Uplink(uint16_t type, uint32_t argument, uint8_t data[
     return length;
 }
 
-uint8_t Jetson_CAN_Encode_Action_Request(uint8_t kind, uint32_t request_id, uint8_t data[8])
+uint8_t Jetson_CAN_Encode_Action_Request(uint8_t kind, uint32_t request_id, uint32_t source_frame, uint8_t data[8])
 {
-    if (data == NULL || kind > JETSON_CAN_POINT_REJECT_OPEN || request_id == 0U)
+    if (data == NULL || kind > JETSON_CAN_POINT_REJECT_OPEN || request_id == 0U ||
+        source_frame > 0xffffffU || (kind != JETSON_CAN_POINT_GRASP && source_frame != 0U))
     {
         return 0U;
     }
@@ -294,6 +295,13 @@ uint8_t Jetson_CAN_Encode_Action_Request(uint8_t kind, uint32_t request_id, uint
     for (unsigned byte = 0U; byte < 4U; ++byte)
     {
         data[byte + 1U] = (uint8_t)(request_id >> (byte * 8U));
+    }
+    if (kind == JETSON_CAN_POINT_GRASP)
+    {
+        data[5] = (uint8_t)source_frame;
+        data[6] = (uint8_t)(source_frame >> 8U);
+        data[7] = (uint8_t)(source_frame >> 16U);
+        return 8U;
     }
     return 5U;
 }

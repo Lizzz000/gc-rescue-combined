@@ -90,6 +90,7 @@ public:
     std::uint8_t command{0};
     // 命令 1/2/4 为本轮 ROI 号低32位；搜索、首次对准和到点各自回显非零请求编号。
     std::uint32_t token{0};
+    std::uint32_t source_frame{0};  // 仅类型 21 抓取携带，零是有效回绕值。
   };
 
   static bool streamId(canid_t id)
@@ -248,11 +249,16 @@ public:
       return command;
     }
     if (frame.can_id == ARRIVAL_POINT_ID) {
-      const bool ok = frame.len == 5 && frame.data[0] <= 3 && getUnsigned(frame.data + 1) != 0;
+      const auto kind = frame.data[0];
+      const bool ok = frame.len == (kind == 1 ? 8 : 5) && kind <= 3 && getUnsigned(frame.data + 1) != 0;
       command.kind = ok ? CommandKind::ARRIVAL_POINT : CommandKind::MALFORMED;
       if (ok) {
         command.command = frame.data[0];
         command.token = getUnsigned(frame.data + 1);
+        if (kind == 1) {
+          command.source_frame = frame.data[5] | (std::uint32_t(frame.data[6]) << 8) |
+            (std::uint32_t(frame.data[7]) << 16);
+        }
       }
       return command;
     }

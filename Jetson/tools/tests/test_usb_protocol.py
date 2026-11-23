@@ -4,9 +4,11 @@
 import copy
 import io
 import importlib.util
+import json
 from pathlib import Path
 import struct
 import sys
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -30,12 +32,17 @@ class CodecContract(unittest.TestCase):
     def test_action_requests_exact_bytes(self):
         for number, name in enumerate(('startup', 'grasp', 'release', 'reject_open')):
             expected = 'T21#' + struct.pack('<BI', number, 0xa1b2c3d4).hex().upper()
+            suffix = [str(0xfedcba)] if number == 1 else []
+            if number == 1:
+                expected += 'BADCFE'
             for kind in (str(number), name):
                 with self.subTest(kind=kind):
-                    self.assertEqual(encode('arrival_point', [kind, '2712847316']), expected)
+                    self.assertEqual(encode('arrival_point', [kind, '2712847316', *suffix]), expected)
             decoded = decode(expected)
             self.assertEqual(decoded['action_kind'], number)
             self.assertEqual(decoded['request_id'], 0xa1b2c3d4)
+            if number == 1:
+                self.assertEqual(decoded['source_frame'], 0xfedcba)
 
     def test_action_results_exact_bytes(self):
         for kind in range(4):
@@ -51,13 +58,14 @@ class CodecContract(unittest.TestCase):
 
     def test_invalid_action_requests_rejected(self):
         cases = (['1'], ['4', '1'], ['-1', '1'], ['grab', '1'],
-                 ['1', '0'], ['1', '-1'], ['1', '4294967296'])
+                 ['1', '0', '1'], ['1', '-1', '1'], ['1', '4294967296', '1'],
+                 ['1', '1'], ['1', '1', '16777216'], ['2', '1', '0'])
         for values in cases:
             with self.subTest(values=values), self.assertRaises(ValueError):
                 encode('arrival_point', values)
         with self.assertRaises(ValueError):
             encode('arrival_point', ['1', '1'], invalid=True)
-        for payload in ('01', '0401000000', '0100000000'):
+        for payload in ('01', '0401000000', '0101000000', '0100000000000000', '0201000000000000'):
             with self.subTest(payload=payload), self.assertRaises(ValueError):
                 decode('T21#' + payload)
 
@@ -146,13 +154,23 @@ class ProbeContract(unittest.TestCase):
         probe.action_sequence = 0
         packets = []
         with patch('validation.observations.os.write', side_effect=lambda _, data: packets.append(data) or len(data)):
-            first, _ = probe.begin_action('grasp')
-            probe.action_request('grasp', first)
+            first, _ = probe.begin_action('grasp', 0x120034)
+            probe.action_request('grasp', first, 0x120034)
             second, _ = probe.begin_action('release')
         self.assertEqual((first, second), (1, 2))
         self.assertEqual(frame.Parser().feed(b''.join(packets)), [
-            (21, bytes.fromhex('0101000000')), (21, bytes.fromhex('0101000000')),
+            (21, bytes.fromhex('0101000000340012')), (21, bytes.fromhex('0101000000340012')),
             (21, bytes.fromhex('0202000000'))])
+
+    def test_grasp_source_requires_a_new_valid_target_and_allows_wrapped_zero(self):
+        probe = UsbProbe.__new__(UsbProbe)
+        probe.records = [{'steady': 3, 'id': 3, 'data': '0100000000000000'}]
+        self.assertIsNone(probe.target_source_since(4))
+        self.assertEqual(probe.target_source_since(3), 0)
+        probe.records.append({'steady': 4, 'id': 4, 'data': '00' * 8})
+        self.assertEqual(probe.target_source_since(3), 0)
+        probe.records.append({'steady': 5, 'id': 3, 'data': '00' * 8})
+        self.assertIsNone(probe.target_source_since(3))
 
     def test_periodic_evidence_requires_only_coordinate_types(self):
         probe = UsbProbe.__new__(UsbProbe)
@@ -215,12 +233,12 @@ class ActionWaitContract(unittest.TestCase):
             def __init__(self):
                 self.current, self.sent, self.clock, self.calls = set(), [], 10.0, []
 
-            def begin_action(self, kind):
-                self.action_request(kind, 23)
+            def begin_action(self, kind, source_frame):
+                self.action_request(kind, 23, source_frame)
                 return 23, self.clock
 
-            def action_request(self, kind, request_id):
-                self.sent.append((kind, request_id))
+            def action_request(self, kind, request_id, source_frame):
+                self.sent.append((kind, request_id, source_frame))
                 return self.clock
 
             def has_reply(self, identifier, payload, since):
@@ -241,7 +259,7 @@ class ActionWaitContract(unittest.TestCase):
             raise ContractFailure('timeout: no terminal action result')
 
         with patch('validation.workflow.time.monotonic', side_effect=lambda: probe.clock):
-            result = workflow.gripper_action(SimpleNamespace(wait=wait), probe, None, 'grasp')
+            result = workflow.gripper_action(SimpleNamespace(wait=wait), probe, None, 'grasp', 0x1234)
         return result, probe, observed
 
     def test_ack_and_stale_terminal_do_not_complete_action(self):
@@ -251,9 +269,10 @@ class ActionWaitContract(unittest.TestCase):
         terminal = (9, '010117000000')
         result, probe, observed = self.run_action([[ack], [stale, wrong_kind], [terminal]])
         self.assertEqual(observed, [False, False, True])
-        self.assertEqual(result, {'action_kind': 1, 'request_id': 23, 'accepted': True, 'success': True})
+        self.assertEqual(result, {'action_kind': 1, 'request_id': 23, 'accepted': True,
+                                  'success': True, 'source_frame': 0x1234})
         self.assertGreaterEqual(len(probe.sent), 2)
-        self.assertEqual(set(probe.sent), {(1, 23)})
+        self.assertEqual(set(probe.sent), {(1, 23, 0x1234)})
         self.assertTrue(all(since == 10.0 for _, _, since in probe.calls))
 
     def test_ack_only_times_out(self):
@@ -296,11 +315,13 @@ class CaptureEvidenceContract(unittest.TestCase):
             'startup_action': {'action_kind': 0, 'request_id': 1, 'accepted': True, 'success': True},
             '/target_node/check_roi': direct, '/mission_node/roi_result': roi,
             'mission_roi_wire': '000000',
-            'seg_can': {key: {'valid_bytes': [], 'ros_expected_bytes': [], 'invalid_only': True}
-                        for key in ('03', '04')},
+            'seg_can': {'03': {'valid_bytes': ['0100010001000000'], 'ros_expected_bytes': ['0100010001000000'],
+                               'invalid_only': False},
+                        '04': {'valid_bytes': [], 'ros_expected_bytes': [], 'invalid_only': True}},
             'handshake': {'field_executed': False, 'coordinates_paused': True,
                           'phase_after_roi': 7, 'reason': 'ROI rejected',
-                          'grasp': {'action_kind': 1, 'request_id': 2, 'accepted': True, 'success': True},
+                          'grasp': {'action_kind': 1, 'request_id': 2, 'accepted': True, 'success': True,
+                                    'source_frame': 0},
                           'reject_open': {'action_kind': 3, 'request_id': 3, 'accepted': True, 'success': True},
                           'restart': {'command': 3, 'phase': 0, 'cycle_generation': 2}}}}
 
@@ -330,9 +351,43 @@ class CaptureEvidenceContract(unittest.TestCase):
         second = copy.deepcopy(first)
         second['result']['startup_action']['request_id'] = 54
         second['result']['handshake']['grasp']['request_id'] = 56
+        second['result']['handshake']['grasp']['source_frame'] = 123
+        second['result']['seg_can']['03'].update(valid_bytes=['01000100017b0000'],
+                                                ros_expected_bytes=['01000100017b0000'])
         second['result']['handshake']['reject_open']['request_id'] = 55
         workflow.result_evidence(second)
         self.assertEqual(workflow.semantic_result(first), workflow.semantic_result(second))
+
+    def test_empty_scene_compares_across_pty_allocations_and_keeps_calibration(self):
+        inputs = [{'sha256': char * 64} for char in 'abc']
+        capture = {'inputs': inputs, 'status': 'executed', 'mission_contract': workflow.MISSION_CONTRACT,
+                   'cases': []}
+        for image in inputs:
+            case = self.rejected_case()
+            case.update(input=image, status='executed', assets_unchanged=True, input_unchanged=True,
+                        shutdown={'clean': True}, cleanup_errors=[], assets={'model': 'fixture'},
+                        parameters={'link.device': '/dev/pts/1', 'gripper.device': '/dev/pts/2',
+                                    'gripper.kp': 2.0, 'vision.stream.stream_port': 1001})
+            case['result']['seg_can']['03'] = dict(valid_bytes=[], ros_expected_bytes=[], invalid_only=True)
+            case['result']['handshake']['grasp'] = None
+            capture['cases'].append(case)
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+                workflow, 'CAPTURE_SCENARIOS', (('chain', (0, 1, 2)),)):
+            root = Path(tmp)
+            args = SimpleNamespace(output=root, baseline=root / 'a.json', candidate=root / 'b.json')
+            args.baseline.write_text(json.dumps(capture), encoding='utf-8')
+            for case in capture['cases']:
+                case['parameters'].update({'link.device': '/dev/pts/5', 'gripper.device': '/dev/pts/7',
+                                           'vision.stream.stream_port': 1024})
+            args.candidate.write_text(json.dumps(capture), encoding='utf-8')
+            workflow.compare(args)
+            self.assertEqual(json.loads((root / 'comparison.json').read_text(encoding='utf-8'))['status'],
+                             'executed')
+            capture['cases'][0]['parameters']['gripper.kp'] = 1.0
+            args.candidate.write_text(json.dumps(capture), encoding='utf-8')
+            with self.assertRaisesRegex(ContractFailure, 'parameters differ'):
+                workflow.compare(args)
 
     def test_successful_capture_checks_post_delivery_localization(self):
         case = self.rejected_case()
@@ -370,9 +425,9 @@ class CaptureEvidenceContract(unittest.TestCase):
 
 
 class ChainSequenceContract(unittest.TestCase):
-    def test_grasp_finishes_before_arrival_in_both_roi_branches(self):
-        for passed in (False, True):
-            with self.subTest(passed=passed):
+    def test_diagnostic_roi_with_and_without_a_grasp_target(self):
+        for has_target, passed in ((True, False), (True, True), (False, False)):
+            with self.subTest(has_target=has_target, passed=passed):
                 events = []
                 roi = {'valid': True, 'passed': passed}
                 state = {'cycle_phase': 2 if passed else 7, 'destination': 1 if passed else 0,
@@ -396,22 +451,29 @@ class ChainSequenceContract(unittest.TestCase):
                     events.append(('reply', identifier))
                     return True
 
-                def action(_observer, _can, _owner, kind):
+                def action(_observer, _can, _owner, kind, source_frame=None):
+                    if kind == 'grasp':
+                        self.assertEqual(source_frame, 0)
                     events.append(('action', kind))
                     return {'action_kind': {'grasp': 1, 'reject_open': 3}[kind],
                             'request_id': len(events), 'accepted': True, 'success': True}
 
                 observer.wait = wait
-                can = SimpleNamespace(command=command, has_reply=has_reply, require_paused=lambda *_: None)
+                can = SimpleNamespace(command=command, has_reply=has_reply, require_paused=lambda *_: None,
+                                      target_source_since=lambda _: 0 if has_target else None)
                 service = SimpleNamespace(CheckRoi=SimpleNamespace(Request=lambda: object()))
-                result = {}
+                result = {'seg_can': {'03': {'invalid_only': not has_target}}}
                 with patch.dict(sys.modules, {'interface_pkg.srv': service}), \
                         patch('validation.observations.value_record', side_effect=lambda value: value), \
                         patch('validation.workflow.gripper_action', side_effect=action), \
                         patch('validation.workflow.mission_command', return_value={}):
                     workflow.chain_arrival(observer, can, None, result)
-                self.assertLess(events.index(('action', 'grasp')), events.index(('command', 16)))
-                self.assertEqual(result['handshake']['grasp']['action_kind'], 1)
+                if has_target:
+                    self.assertLess(events.index(('action', 'grasp')), events.index(('command', 16)))
+                    self.assertEqual(result['handshake']['grasp']['action_kind'], 1)
+                else:
+                    self.assertNotIn(('action', 'grasp'), events)
+                    self.assertIsNone(result['handshake']['grasp'])
                 if not passed:
                     self.assertLess(events.index(('reply', 6)), events.index(('action', 'reject_open')))
 

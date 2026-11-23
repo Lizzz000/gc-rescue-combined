@@ -345,7 +345,7 @@ class ServoLink:
                 previous_tick = tick
                 tick = time.monotonic()
             if open_hold is not None and not cancel.is_set():
-                capture_end = min(deadline + HOLD_CAPTURE_S, started + MAX_MOVE_SECONDS)
+                capture_end = deadline + HOLD_CAPTURE_S
                 self._hold_open(open_hold, position, feedback, previous_tick, deadline, capture_end,
                                 kp, kd, cancel, first_run)
         finally:

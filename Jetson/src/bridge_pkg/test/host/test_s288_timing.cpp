@@ -39,10 +39,12 @@ std::atomic<bool> drop_run{false}, warn_stop{false};
 std::atomic<bool> unexpected_stop{false};
 bool previous_stop = false;
 
-bool waitStatus(s288::Session & session, s288::MotionStatus wanted)
+bool waitStatus(s288::Session & session, s288::MotionStatus wanted,
+  std::chrono::seconds timeout = std::chrono::seconds(2))
 {
-  const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-  while (session.status() != wanted && std::chrono::steady_clock::now() < until) {
+  const auto until = std::chrono::steady_clock::now() + timeout;
+  while (session.status() != wanted && session.status() != s288::MotionStatus::Failed &&
+         std::chrono::steady_clock::now() < until) {
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
   return session.status() == wanted;
@@ -292,6 +294,42 @@ int main()
   // 闭合输出轴被挡住仍允许成功 Stop。末个运行帧按逻辑目标加闭合修正量发出。
   const auto closed_target = session_zero + std::lround((-50.0 + 0.35) * (70070.0 / 243.0) * 32768.0 / 360.0);
   CHECK(!commands.empty() && commands.back().position == closed_target);
+
+  Group trim_group("open and close calibration remain effective with holding disabled");
+  config.open_hold_max_nm = 0;
+  commands.clear();
+  stop_calls = 0;
+  s288::Session trimmed(config);
+  CHECK(trimmed.start_open(s288::kMinMoveS));
+  CHECK(waitStatus(trimmed, s288::MotionStatus::Succeeded));
+  const auto open_target = session_zero + std::lround(5.0 * (70070.0 / 243.0) * 32768.0 / 360.0);
+  CHECK(!commands.empty() && commands.back().position == open_target);
+  CHECK(stop_calls == 3);
+  CHECK(trimmed.start_close(s288::kMinMoveS));
+  CHECK(waitStatus(trimmed, s288::MotionStatus::Succeeded));
+  CHECK(!commands.empty() && commands.back().position == closed_target);
+  CHECK(stop_calls == 5);
+  trimmed.close();
+
+  Group max_hold_group("maximum-duration full ramp leaves time for stable output feedback");
+  config.open_hold_max_nm = 0.14;
+  config.ramp_fraction = 1.0;
+  encoder = 8190;
+  stop_calls = 0;
+  run_count = 0;
+  s288::Session full_ramp(config);
+  encoder = 286;
+  const auto open_started = std::chrono::steady_clock::now();
+  CHECK(full_ramp.start_open(s288::kMaxMoveS));
+  while (run_count == 0 && std::chrono::steady_clock::now() - open_started < std::chrono::seconds(2)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  CHECK(run_count > 0);
+  encoder = 8190;
+  CHECK(waitStatus(full_ramp, s288::MotionStatus::Succeeded, std::chrono::seconds(12)));
+  CHECK(std::chrono::duration<double>(std::chrono::steady_clock::now() - open_started).count() >= s288::kMaxMoveS);
+  full_ramp.close();
+  config.ramp_fraction = 0.8;
 
   Group fault_group("open hold losses stop and remain visible after acknowledgement");
   enum class Fault {Drift, Warning, Link, Handoff, Mode};

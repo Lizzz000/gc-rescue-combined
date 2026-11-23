@@ -1,4 +1,5 @@
 #pragma once
+#include "camera/v4l2_controls.hpp"
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -20,7 +21,7 @@ public:
   GstreamerCapture & operator=(const GstreamerCapture &) = delete;
 
   bool open(const std::string & pipeline, const std::atomic<bool> & cancelled,
-    bool require_bgr = false);
+    bool require_bgr = false, const CameraControls & controls = {});
   bool open(_GstElement * owned_pipeline, const std::atomic<bool> & cancelled);
   /// nvmm：appsink 协商为 memory:NVMM 时持有本帧 NvBufSurface（get() 即 NvBufSurface*，
   /// 释放即归还 GstSample）；否则为空。image 照常是 CPU 拷贝。

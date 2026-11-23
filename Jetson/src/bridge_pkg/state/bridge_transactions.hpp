@@ -55,7 +55,7 @@ public:
 
   void handleArrival(Service service = Service::Roi);
   ArrivalPointDecision handleArrivalPoint(
-    std::uint8_t kind, std::uint32_t request_id, bool motion_lease_open);
+    std::uint8_t kind, std::uint32_t request_id, bool motion_lease_open, std::uint32_t source_frame);
   // command 由板间协议解析，取运输命令 1–4 或首次整区对准命令 6。
   void handleMissionCommand(std::uint8_t command, std::uint32_t token);
 

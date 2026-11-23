@@ -55,6 +55,7 @@ struct CameraConfig
 
   // 仅由验收工具对本次冻结图片开启，不属于 ROS 参数。
   bool validation_replay_nvmm{false};
+  vision_camera::CameraControls controls;
 };
 
 /// 配置的宽和高都为正时，交付帧必须与之一致。任一请求尺寸 <= 0 表示不检查，调用方自行对齐下游 image_width。

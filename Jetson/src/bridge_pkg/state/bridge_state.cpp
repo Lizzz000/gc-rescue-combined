@@ -74,6 +74,7 @@ BridgeState::BridgeState(BridgeStateConfig config)
 
 void BridgeState::resetInputs(BridgeSourceTime current)
 {
+  ++selection_generation_;
   // 会话或运动授权改变时重新建立感知基线。
   target_ = Center{};
   safety_ = Center{};
@@ -188,7 +189,13 @@ bool BridgeState::target(
       center.valid = RecognitionValueValidation::hypothesis(result) && class_allowed &&
         bridge_scale::fixedPoint(box.center_x / config_.image_width, 10000.0, center.x) &&
         bridge_scale::fixedPoint(box.center_y / config_.image_height, 10000.0, center.y);
-      if (center.valid) {target_class_ = class_id;}
+      if (center.valid) {
+        if (!target_.valid || target_track_ != detection.id || target_class_ != class_id) {
+          ++selection_generation_;
+        }
+        target_class_ = class_id;
+        target_track_ = detection.id;
+      }
     }
   }
   target_ = std::move(center);
@@ -259,10 +266,32 @@ BridgeCenterOutput BridgeState::targetOutput(
     static_cast<std::uint32_t>((target_.stamp.ns / 1000000) & 0xffffff)};
 }
 
-std::string BridgeState::selectedClass(BridgeSourceTime current, BridgeMonotonicTime now) const
+void BridgeState::targetSent()
 {
-  // 取与类型 3 同一个合法、新鲜、且当前允许移动的选中目标。
-  return targetOutput(current, now).valid ? target_class_ : "";
+  // 只由成功写入有效类型 3 的串行回调调用。重复发送同一张图不会刷新其到达时间。
+  if (!sent_targets_.empty() && sent_targets_.back().stamp.ns == target_.stamp.ns &&
+      sent_targets_.back().generation == selection_generation_) {return;}
+  // 100 Hz 的发送节拍中，32 个样本覆盖板上 250 ms 的有效期。
+  if (sent_targets_.size() == 32) {sent_targets_.pop_front();}
+  sent_targets_.push_back({target_.stamp, target_.arrival, selection_generation_});
+}
+
+std::string BridgeState::graspClass(
+  std::uint32_t source_frame, BridgeSourceTime current, BridgeMonotonicTime now) const
+{
+  if (!targetOutput(current, now).valid) {return {};}
+  const double lifetime = std::min(config_.input_timeout_s, CanProtocol::CENTER_TIMEOUT_S);
+  const SentTarget * matched = nullptr;
+  for (const auto & sent : sent_targets_) {
+    if (((sent.stamp.ns / 1000000) & 0xffffff) != source_frame ||
+        std::chrono::duration<double>(now.value - sent.arrival.value).count() >= lifetime) {continue;}
+    // 同一低 24 位对应两个已发送样本时无法区分，即使其中一个属于旧会话也拒绝。
+    if (matched) {return {};}
+    matched = &sent;
+  }
+  if (!matched || matched->generation != selection_generation_ || current.ns < matched->stamp.ns ||
+      current.ns - matched->stamp.ns >= lifetime * 1e9) {return {};}
+  return target_class_;
 }
 
 BridgeCenterOutput BridgeState::safetyOutput(

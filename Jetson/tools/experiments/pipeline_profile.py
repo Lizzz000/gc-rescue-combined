@@ -194,7 +194,7 @@ def main():
         worker = None
         try:
             if args.input is None:
-                snapshot = workflow.configuration().load_configuration(args.config, 'all')
+                snapshot = workflow.configuration().load_configuration(args.config, 'vision')
                 with defer_creation_cancel():
                     witness = HostFileUseWitness(
                         snapshot['values']['vision.detect.camera_device'],
@@ -294,12 +294,10 @@ def main():
     args.kind = 'candidate'  # 本工具双方均为有来源记录的独立当前协议安装。
     args.stage = 'pipeline-profile'
     cfg = workflow.configuration()
-    original = cfg.load_configuration(args.config, 'all')
+    original = cfg.load_configuration(args.config, 'vision')
     values = copy.deepcopy(original['values'])
     require(values['vision.detect.publish_timing'], '生产配置未开启耗时消息，不能伪造分段数据')
-    from validation.observations import UsbProbe
-    usb_probe = UsbProbe(args.output)
-    overrides = {'link.device': usb_probe.device, 'vision.detect.active_task': 'seg',
+    overrides = {'vision.detect.active_task': 'seg',
                  'vision.stream.stream_address': '127.0.0.1',
                  'vision.stream.stream_enabled': True}
     with socket.socket() as channel:
@@ -307,13 +305,14 @@ def main():
         overrides['vision.stream.stream_port'] = channel.getsockname()[1]
     if args.input:
         args.input = args.input.resolve(strict=True)
-        overrides.update({'vision.detect.camera_backend': 'file',
+        overrides.update({'vision.detect.camera_backend': 'file', 'vision.detect.camera_pipeline': '',
+                          'vision.detect.camera_brightness': -1,
                           'vision.detect.camera_device': str(args.input)})
     values.update(overrides)
     case_config = args.output / 'case-config.yaml'
     case_config.write_text(yaml.safe_dump(workflow.flat_to_document(values),
                                          sort_keys=False), encoding='utf-8')
-    snapshot = cfg.load_configuration(case_config, 'all')
+    snapshot = cfg.load_configuration(case_config, 'vision')
     port = values['vision.stream.stream_port']
     require(not port_open(port), '本轮 HTTP 端口已被占用')
     before = asset_snapshot(snapshot)
@@ -359,8 +358,7 @@ def main():
                 observer.node.destroy_subscription(subscription)
                 observer.subscriptions.remove(subscription)
         with defer_creation_cancel():
-            observer.pollers.append(usb_probe.poll)
-            owner = workflow.launch_case(args, snapshot, args.output)
+            owner = workflow.launch_case(args, snapshot, args.output, replay=args.input)
         observer.wait(lambda: observer.states and observer.records['detections'],
                       owner=owner, reason='initial real seg source')
         started = time.monotonic()
@@ -394,8 +392,7 @@ def main():
         raise
     finally:
         protect_cleanup()
-        workflow.cleanup_case(report, observer, owner, http, usb_probe, snapshot, before,
-                              workflow.FULL_ROLES, port)
+        workflow.cleanup_case(report, observer, owner, http, None, snapshot, before, port)
         if context_started:
             try:
                 rclpy.shutdown()

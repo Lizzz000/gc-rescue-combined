@@ -2,6 +2,7 @@
 #include "field_scene.hpp"
 #include "harness.hpp"
 #include "field/opencv/algorithm.hpp"
+#include <opencv2/imgcodecs.hpp>
 
 namespace {
 cv::Mat groundBev(const field_scene::Scene & scene, const FieldConfig & config)
@@ -22,6 +23,91 @@ cv::Mat groundBev(const field_scene::Scene & scene, const FieldConfig & config)
 int main()
 {
   const auto config = field_test::productionConfig();
+  {
+    Group group("Oblique site divider requires a narrow material core and a matching wall mark");
+    auto site = config;
+    site.wall_thickness_m = 0.015;
+    struct Pose {const char * name; int center, edges; std::vector<cv::Point2f> outline;};
+    const Pose poses[] = {
+      {"site-20261123-wall-divider.png", 130, 2, {{-6.29f, 37.53f}, {264.73f, 41.43f}, {265.80f, 226.95f}, {-6.31f, 226.95f}}},
+      {"site-20261123-oblique-divider.png", 125, 3, {{-17.61f, 37.74f}, {265.98f, 39.49f}, {264.23f, 226.95f}, {-12.28f, 226.95f}}}
+    };
+    for (const auto & pose : poses) {
+      const auto observed = cv::imread(std::string(FIELD_DATA_DIR) + "/" + pose.name);
+      CHECK(observed.size() == cv::Size(252, 222));
+      if (observed.size() != cv::Size(252, 222)) {continue;}
+      // 实拍图沿用现场地面单应，上方留 90 px。远墙两顶角来自同帧外沿拟合。
+      FieldResult field;
+      field.inner_measured_edges = pose.edges;
+      for (auto & state : field.edge_state) {state = EdgeState::MEASURED;}
+      field.outline = pose.outline;
+      field.homography = cv::Mat::eye(3, 3, CV_64F);
+      field.homography.at<double>(1, 2) = -90;
+      auto measure = [&](const cv::Mat & image) {
+          field.bev = image.rowRange(90, image.rows);
+          return field_detail::detectSplitBlack(field.bev, site, image, &field);
+        };
+      CHECK(!field_detail::detectSplitBlack(observed.rowRange(90, observed.rows), site).valid);
+      const auto split = measure(observed);
+      CHECK(split.valid);
+      if (split.valid) {
+        CHECK(std::abs(split.top_x - pose.center) < 2.0);
+        CHECK(std::abs(split.bottom_x - pose.center) < 2.0);
+      }
+      cv::Mat absent = observed.clone();
+      observed.colRange(75, 107).copyTo(absent.colRange(114, 146));
+      CHECK(!measure(absent).valid);
+      cv::Mat wall_only = absent.clone();
+      observed.rowRange(0, 90).copyTo(wall_only.rowRange(0, 90));
+      CHECK(!measure(wall_only).valid);
+      cv::Mat ground_only = absent.clone();
+      observed.rowRange(90, observed.rows).copyTo(ground_only.rowRange(90, observed.rows));
+      CHECK(!measure(ground_only).valid);
+      for (int width : {14, 22}) {
+        cv::Mat wider = wall_only.clone();
+        wider(cv::Rect(pose.center - width / 2, 90, width, 132)).setTo(cv::Scalar(35, 35, 35));
+        CHECK(!measure(wider).valid);
+        for (double sigma : {0.9, 1.4, 2.0}) {
+          cv::Mat blurred = wider.clone();
+          cv::GaussianBlur(wider.rowRange(90, wider.rows), blurred.rowRange(90, blurred.rows),
+            cv::Size(0, 0), sigma);
+          CHECK(!measure(blurred).valid);
+        }
+      }
+      cv::Mat dark_floor = wall_only.clone();
+      dark_floor(cv::Rect(pose.center - 7, 90, 14, 132)) *= 0.5;
+      CHECK(!measure(dark_floor).valid);
+    }
+  }
+  {
+    Group group("Site divider with blurred colour edges requires two measured boundaries");
+    auto site = config;
+    site.wall_thickness_m = 0.015; // 11 月 23 日实车场地，内框宽 630 mm。
+    const cv::Mat observed = cv::imread(std::string(FIELD_DATA_DIR) + "/site-20261123-divider.png");
+    CHECK(observed.size() == cv::Size(252, 132));
+    if (!observed.empty()) {
+      const auto split = field_detail::detectSplitBlack(observed, site);
+      CHECK(split.valid);
+      CHECK(std::abs(split.top_x - 126.0) < 2.0);
+      CHECK(std::abs(split.bottom_x - 125.0) < 2.0);
+
+      // 邻近地面替掉整条分界，保留该帧的噪声、光照与围栏。
+      cv::Mat absent = observed.clone();
+      observed.colRange(83, 113).copyTo(absent.colRange(110, 140));
+      CHECK(!field_detail::detectSplitBlack(absent, site).valid);
+      for (const int width : {12, 13}) {
+        cv::Mat solid = absent.clone();
+        const int left = (solid.cols - width) / 2;
+        solid.colRange(left, left + width).setTo(cv::Scalar(35, 35, 35));
+        CHECK(!field_detail::detectSplitBlack(solid, site).valid);
+      }
+      // 仅中间一段能见到实际带宽时，两端的宽暗条不能借中段通过。
+      cv::Mat partly_visible = absent.clone();
+      partly_visible.colRange(120, 133).setTo(cv::Scalar(35, 35, 35));
+      observed.rowRange(45, 70).copyTo(partly_visible.rowRange(45, 70));
+      CHECK(!field_detail::detectSplitBlack(partly_visible, site).valid);
+    }
+  }
   {
     Group group("Only a divider near the calibrated center and width is accepted");
     const auto size = field_detail::bevSize(config);

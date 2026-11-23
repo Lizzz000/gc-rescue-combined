@@ -477,11 +477,10 @@ void Session::execute(const Motion & motion)
   using Clock = std::chrono::steady_clock;
   using Seconds = std::chrono::duration<double>;
   auto feedback = link_->prepare();
-  const bool calibrated = config_.open_hold_max_nm > 0;
   const double trim = motion.open ? config_.open_trim_deg : config_.closed_trim_deg;
-  const double target = trimmedTargetRad(zero_rad_, motion.target_deg, calibrated ? trim : 0.0);
+  const double target = trimmedTargetRad(zero_rad_, motion.target_deg, trim);
   auto error = [&] {return outputErrorRad(motion.target_deg, zero_encoder_, feedback.output_encoder);};
-  if (!motion.open || !calibrated) {
+  if (!motion.open || config_.open_hold_max_nm == 0) {
     feedback = link_->run_to(feedback.position, target, motion.seconds, config_, cancel_, false);
     checkFeedback(feedback, kModeStop);
     if (cancel_.load()) {return;}
@@ -496,8 +495,8 @@ void Session::execute(const Motion & motion)
 
   const auto began = Clock::now();
   const auto move_deadline = began + Seconds(motion.seconds);
-  const auto grace = Seconds(0.5);
-  const auto capture_deadline = std::min(move_deadline + grace, began + Seconds(kMaxMoveS));
+  const auto grace = Seconds(kHoldCaptureS);
+  const auto capture_deadline = move_deadline + grace;
   const double tolerance = config_.output_tolerance_deg * kRadiansPerDegree;
   double anchor = feedback.position;
   // 初次张开时机械角通常已在零点，直接以当前电机角开始轻力保位。

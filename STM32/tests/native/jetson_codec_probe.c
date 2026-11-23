@@ -132,7 +132,7 @@ static void Print_Snapshot(void)
 }
 
 /**
- * @brief 按 ^ID:参数 调用真实上行编码；类型21使用 ^15:kind:request_id。
+ * @brief 按 ^ID:参数 调用真实上行编码；类型21使用 ^15:kind:request_id，抓取再附 :source_frame。
  * @param[in] line 以 ^ 开头的文本，ID 为十六进制，参数为十进制 uint32。
  * @return 文本格式正确返回 1；否则返回 0。
  */
@@ -155,8 +155,17 @@ static int Print_Uplink(const char *line)
         unsigned long request_id = strtoul(end + 1, &end, 10);
         if (errno != 0 || request_id > UINT32_MAX)
             return 0;
+        unsigned long frame = 0U;
+        if (argument == JETSON_CAN_POINT_GRASP)
+        {
+            if (*end != ':')
+                return 0;
+            frame = strtoul(end + 1, &end, 10);
+            if (errno != 0 || frame > UINT32_MAX)
+                return 0;
+        }
         length = argument > UINT8_MAX ? 0U :
-            Jetson_CAN_Encode_Action_Request((uint8_t)argument, (uint32_t)request_id, data);
+            Jetson_CAN_Encode_Action_Request((uint8_t)argument, (uint32_t)request_id, (uint32_t)frame, data);
     }
     else
         length = Jetson_CAN_Encode_Uplink((uint16_t)id, (uint32_t)argument, data);

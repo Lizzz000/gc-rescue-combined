@@ -127,7 +127,7 @@ private:
   can_frame currentFrame(canid_t id) const;
   bool handleCommand(const can_frame & frame);
   void missionRestarted();
-  void handleArrivalPoint(std::uint8_t kind, std::uint32_t request_id);
+  void handleArrivalPoint(std::uint8_t kind, std::uint32_t request_id, std::uint32_t source_frame);
   void pollGripper();
 
   BridgeSourceTime sourceNow() const override {return {now().nanoseconds()};}

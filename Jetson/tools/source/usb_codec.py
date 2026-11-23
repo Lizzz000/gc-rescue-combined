@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """离线核对 USB 报文。文本形如 T03#HEX，数字是类型号，不是电机总线编号。不打开设备。
 
-arrival_point KIND REQUEST_ID；action_result KIND STATUS REQUEST_ID。
+arrival_point KIND REQUEST_ID（grasp 另加 SOURCE_FRAME）；action_result KIND STATUS REQUEST_ID。
 KIND 为 0/startup、1/grasp、2/release、3/reject_open；STATUS 为 0/1；
 REQUEST_ID 为非零 uint32。start_search、start_align 同样携带请求 ID，命令 3/5/6 回显各自编号。
 """
@@ -47,6 +47,13 @@ def action_request_id(value) -> int:
     return request_id
 
 
+def frame_number(value) -> int:
+    number = int(value)
+    if not 0 <= number <= 0xffffff:
+        raise ValueError('source frame must fit in 24 bits')
+    return number
+
+
 def reply_token(command, value) -> int:
     if command in (COMMANDS['arrival_point'], COMMANDS['start_search'], COMMANDS['start_align']):
         return action_request_id(value)
@@ -86,9 +93,7 @@ def encode(kind: str, values: list[str], invalid: bool = False) -> str:
             raise ValueError('manual needs vx, vy, yaw_rate')
         if kind in ('target', 'safety') and len(values) != count and not (len(values) == 3):
             raise ValueError(f'{kind} needs {count} values and optionally a source frame')
-        source_frame = int(values[2]) if kind in ('target', 'safety') and len(values) == 3 else 0
-        if source_frame < 0 or source_frame > 0xffffff:
-            raise ValueError('source frame must fit in 24 bits')
+        source_frame = frame_number(values[2]) if kind in ('target', 'safety') and len(values) == 3 else 0
         numbers = [float(value) for value in values[:count]]
         try:
             quantized = [fixed_point(value, 1000 if count == 3 else 10000) for value in numbers]
@@ -102,9 +107,14 @@ def encode(kind: str, values: list[str], invalid: bool = False) -> str:
             if not invalid:
                 data += source_frame.to_bytes(3, 'little')
     elif kind == 'arrival_point':
-        if len(values) != 2 or invalid:
-            raise ValueError('arrival_point needs kind and nonzero uint32 request_id; --invalid is forbidden')
-        data = struct.pack('<BI', action_kind(values[0]), action_request_id(values[1]))
+        if not values or invalid:
+            raise ValueError('arrival_point needs kind and request_id; --invalid is forbidden')
+        action = action_kind(values[0])
+        if len(values) != (3 if action == 1 else 2):
+            raise ValueError('arrival_point requires a source frame only for grasp')
+        data = struct.pack('<BI', action, action_request_id(values[1]))
+        if action == 1:
+            data += frame_number(values[2]).to_bytes(3, 'little')
     elif kind == 'action_result':
         if len(values) != 3 or invalid:
             raise ValueError('action_result needs kind, status (0/1) and nonzero uint32 request_id; --invalid is forbidden')
@@ -154,12 +164,15 @@ def decode(text: str) -> dict:
         data = bytes.fromhex(payload)
     except (ValueError, TypeError) as error:
         raise ValueError('expected T03#HEX; the number is a USB type') from error
-    if identifier not in LENGTHS or len(data) != LENGTHS[identifier]:
+    expected_length = 8 if identifier == IDS['arrival_point'] and data[:1] == b'\x01' else LENGTHS.get(identifier)
+    if len(data) != expected_length:
         raise ValueError('unknown USB type or incorrect length')
     result = {'type': identifier, 'length': len(data), 'kind': KINDS[identifier]}
     if identifier == IDS['arrival_point']:
         result.update(action_kind=action_kind(data[0]),
-                      request_id=action_request_id(struct.unpack('<I', data[1:])[0]))
+                      request_id=action_request_id(struct.unpack_from('<I', data, 1)[0]))
+        if data[0] == 1:
+            result['source_frame'] = int.from_bytes(data[5:8], 'little')
         return result
     if identifier == IDS['action_result']:
         if data[1] not in (0, 1):

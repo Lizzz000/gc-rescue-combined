@@ -15,6 +15,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import socket
@@ -35,7 +36,7 @@ from .provenance import begin_build, build_packages, finish_build, verify_instal
 
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE = 'c1f83e9ed987d6dd24bc59641e22f6b2a44f6717'
-MISSION_CONTRACT = 'stm32-handshake-v4'
+MISSION_CONTRACT = 'stm32-handshake-v5'
 CAPTURE_SCENARIOS = (('detect', (0, 1, 2)), ('clock', (0,)), ('chain', (0, 1, 2)))
 CAPTURE_REPLAY_ENV = 'RESCUE_VALIDATION_NVMM_REPLAY'
 LOCALIZING_START = 9  # MissionStatus.CYCLE_LOCALIZING_START
@@ -377,13 +378,21 @@ def launch_case(args, snapshot, directory, *, clock=False, replay=None):
                          env=env, role_executables=role_executables)
 
 
+def require_serial_ptys(link, gripper):
+    require(all(isinstance(path, str) and re.fullmatch(r'/dev/pts/[0-9]+', path)
+                for path in (link, gripper)) and link != gripper,
+            'bridge validation requires separate USB and S288 pseudo-terminals')
+
+
 def case_snapshot(args, image=None, clock=False, directory=None, link_device=None, *,
-                  run='all', gripper_device=None, http_stream=False):
+                  run, gripper_device=None, http_stream=False):
     """将场景覆盖值写入独立验收配置，再经生产装配器 load_configuration 读取；配置期能拦住哪些非法组合以 bringup 当前校验为准，其余在节点启动时暴露。"""
     import yaml
     cfg = configuration()
     original = cfg.load_configuration(args.config, run)
     values = dict(original['values'])
+    if 'bridge' in original['roles']:
+        require_serial_ptys(link_device, gripper_device)
     # 场景只连接本次创建的伪终端，不打开实车设备。
     values.update({'link.device': link_device or '/dev/rescue-validation-unused',
                    'vision.detect.active_task': 'seg',
@@ -555,11 +564,11 @@ def mission_command(observer, can, owner, command, phase):
     return result
 
 
-def gripper_action(observer, can, owner, kind):
+def gripper_action(observer, can, owner, kind, source_frame=None):
     """ACK 只表示受理；匹配动作和请求 ID 的类型 9 才能确认动作完成。"""
     from source.usb_codec import IDS, action_kind, encode
     kind = action_kind(kind)
-    request_id, since = can.begin_action(kind)
+    request_id, since = can.begin_action(kind, source_frame)
     accepted = encode('command_reply', ['arrival_point', str(request_id)]).split('#')[1].lower()
     rejected = encode('command_reply', ['arrival_point', str(request_id)], True).split('#')[1].lower()
     success = encode('action_result', [str(kind), '1', str(request_id)]).split('#')[1].lower()
@@ -575,11 +584,14 @@ def gripper_action(observer, can, owner, kind):
             return True
         # 回复可能丢失，重复同 ID 仅查询 ACK 和缓存终态。
         if time.monotonic() - last_sent >= 0.2:
-            last_sent = can.action_request(kind, request_id)
+            last_sent = can.action_request(kind, request_id, source_frame)
         return False
 
     observer.wait(completed, owner=owner, reason='gripper action terminal result')
-    return dict(action_kind=kind, request_id=request_id, accepted=True, success=True)
+    result = dict(action_kind=kind, request_id=request_id, accepted=True, success=True)
+    if source_frame is not None:
+        result['source_frame'] = source_frame
+    return result
 
 
 def observe_periodic(observer, can, owner, task, http=None):
@@ -606,8 +618,13 @@ def chain_arrival(observer, can, owner, result):
         observer.node.destroy_client(client)
     before = len(observer.records['roi'])
     from source.usb_codec import IDS
-    # 对应 STM32 到夹取点后的动作：先夹取完成，再后退并报告到达 ROI 点。
-    grasp = gripper_action(observer, can, owner, 'grasp')
+    # 有目标时按 STM32 收到的类型 3 源帧夹取。空场只执行独立的类型 16 ROI 诊断。
+    grasp = None
+    if not result['seg_can']['03']['invalid_only']:
+        since = time.monotonic()
+        observer.wait(lambda: can.target_source_since(since) is not None, owner=owner,
+                      reason='fresh USB target for grasp')
+        grasp = gripper_action(observer, can, owner, 'grasp', can.target_source_since(since))
     since = can.command(IDS['arrival'])
     observer.wait(lambda: can.has_reply(IDS['arrival_ack'], '01', since),
                   owner=owner, reason='arrival/stop acknowledgment')
@@ -753,9 +770,19 @@ def result_evidence(case):
         field_executed = handshake['field_executed']
         require(type(handshake.get('phase_after_roi')) is int and
                 handshake['phase_after_roi'] == (2 if field_executed else 7), 'ROI phase evidence differs')
-        actions = [(result.get('startup_action'), 0), (handshake.get('grasp'), 1)] + (
+        require(isinstance(result['seg_can'], dict), 'USB target evidence missing')
+        target_usb = result['seg_can'].get('03')
+        require(isinstance(target_usb, dict) and 'grasp' in handshake and
+                type(target_usb.get('invalid_only')) is bool and
+                target_usb['invalid_only'] == (handshake['grasp'] is None), 'target/grasp evidence differs')
+        actions = [(result.get('startup_action'), 0)] + (
             [(handshake.get('release'), 2)] if field_executed else
             [(handshake.get('reject_open'), 3)])
+        if handshake['grasp'] is not None:
+            require(isinstance(handshake['grasp'], dict), 'grasp action evidence missing')
+            frame = handshake['grasp'].get('source_frame')
+            require(type(frame) is int and 0 <= frame <= 0xffffff, 'grasp source frame missing')
+            actions.append((handshake['grasp'], 1))
         request_ids = set()
         for action, kind in actions:
             require(isinstance(action, dict) and type(action.get('action_kind')) is int and
@@ -808,6 +835,13 @@ def result_evidence(case):
                         {'valid_bytes', 'ros_expected_bytes', 'invalid_only'} <= can[key].keys() and
                         isinstance(can[key]['valid_bytes'], list) and isinstance(can[key]['ros_expected_bytes'], list) and
                         type(can[key]['invalid_only']) is bool for key in ('03', '04')), 'USB type evidence missing')
+            for data in can.values():
+                observed = data['valid_bytes']
+                expected = data['ros_expected_bytes']
+                require(all(isinstance(frame, str) and re.fullmatch(r'01[0-9a-f]{14}', frame)
+                            for frame in observed + expected) and set(observed) <= set(expected) and
+                        data['invalid_only'] == (not observed) and bool(observed) == bool(expected),
+                        'USB center evidence differs from ROS')
     if field_executed:
         phase = result.get('field_phase')
         require(isinstance(phase, dict) and {'task', 'epoch', 'stage_header', 'source_frames',
@@ -975,6 +1009,13 @@ def semantic_result(case):
     原始日志完整保留；中间动作顺序须由独立真实节点合同验证，不能由此投影推断。
     """
     result = copy.deepcopy(case['result'])
+    for name in ('seg_can', 'field_can'):
+        for center in result.get(name, {}).values():
+            # 每次运行的 ROS 源时钟不同；原始 8 字节载荷已在本轮与 ROS 配对。
+            for key in ('valid_bytes', 'ros_expected_bytes'):
+                center[key] = sorted({frame[:10] for frame in center[key]})
+    if result.get('handshake', {}).get('grasp'):
+        result['handshake']['grasp'].pop('source_frame', None)
     states = result.get('task_states', [])
     sessions = []
     for state in states:
@@ -1048,22 +1089,26 @@ def semantic_result(case):
     return projected
 
 
+def capture_parameters(case):
+    values = dict(case['parameters'])
+    values.pop('vision.stream.stream_port', None)
+    if case['scenario'] == 'chain':
+        require_serial_ptys(values.get('link.device'), values.get('gripper.device'))
+        del values['link.device'], values['gripper.device']
+    return values
+
+
 def compare(args):
     report_path = args.output / 'comparison.json'
     require(report_path.resolve() not in (args.baseline.resolve(), args.candidate.resolve()),
             'comparison output would overwrite an input capture')
     differences = []
     report = {'differences': differences, 'numeric_abs_tol': 1e-6, 'numeric_rel_tol': 1e-6,
-              'parameter_exclusions': ['vision.stream.stream_port'], 'status': 'failed'}
+              'parameter_exclusions': ['vision.stream.stream_port'],
+              'chain_pty_parameters': ['link.device', 'gripper.device'], 'status': 'failed'}
     def load_capture(path):
         identity = fingerprint(path)
         return json.loads(path.read_bytes()), identity
-
-    def compare_parameters(left, right):
-        normalize = lambda values: {key: value for key, value in values.items()
-                                    if key != 'vision.stream.stream_port'}
-        before, after = normalize(left['parameters']), normalize(right['parameters'])
-        require(before == after, 'effective parameters differ')
 
     def walk(left, right, path):
         if type(left) is bool or type(right) is bool:
@@ -1089,7 +1134,7 @@ def compare(args):
         require(left_cases.keys() == right_cases.keys(), 'capture input/scenario identity differs')
         for key, left in left_cases.items():
             right = right_cases[key]
-            compare_parameters(left, right)
+            require(capture_parameters(left) == capture_parameters(right), 'effective parameters differ')
             require(left['assets'] == right['assets'], 'engine/model/cache identity differs')
             walk(semantic_result(left), semantic_result(right), left['scenario'] + ':' + left['input']['sha256'])
         require(not differences, 'GPU/chain output differences remain')
@@ -1106,13 +1151,12 @@ def compare(args):
 def camera_or_performance(args):
     # 性能使用固定文件输入，摄像头使用真实设备；直接切阶段不验证 Mission 运输握手。
     import rclpy
-    from .observations import Observer, MjpegClient, UsbProbe
+    from .observations import Observer, MjpegClient
     require(args.stage != 'performance' or (args.input and args.input.is_file()),
             'performance requires one frozen --input file')
     args.output.mkdir(parents=True, exist_ok=True)
-    can = UsbProbe(args.output)
-    snapshot = case_snapshot(args, args.input if args.stage == 'performance' else None,
-                             link_device=can.device, http_stream=True)
+    replay = args.input if args.stage == 'performance' else None
+    snapshot = case_snapshot(args, replay, run='vision', http_stream=True)
     before = asset_snapshot(snapshot)
     if args.stage == 'camera':
         device = Path(snapshot['values']['vision.detect.camera_device'])
@@ -1140,10 +1184,9 @@ def camera_or_performance(args):
             'RMW_IMPLEMENTATION': os.environ.get('RMW_IMPLEMENTATION')}
     rclpy.init()
     observer = Observer(snapshot, args.output)
-    observer.pollers.append(can.poll)
     owner = http = None
     try:
-        owner = launch_case(args, snapshot, args.output)
+        owner = launch_case(args, snapshot, args.output, replay=replay)
         observer.wait(lambda: observer.states and observer.records['detections'], owner=owner, reason='initial real seg source')
         # 预热起点是首个真实源帧，不是进程创建时刻。
         warmup_start = time.monotonic()
@@ -1215,7 +1258,7 @@ def camera_or_performance(args):
                     'temperature evidence missing')
         report['status'] = 'observed_pending_shutdown'
     finally:
-        cleanup_case(report, observer, owner, http, can, snapshot, before, port)
+        cleanup_case(report, observer, owner, http, None, snapshot, before, port)
         try:
             rclpy.shutdown()
         except BaseException as error:
@@ -1272,6 +1315,8 @@ def performance_compare(args):
                 {(task, index) for task in ('seg', 'field') for index in (1, 2, 3)},
                 'performance window evidence requires three distinct rounds per task')
     require(left.get('status') == right.get('status') == 'executed', 'cannot compare failed performance runs')
+    require(left['configuration']['roles'] == right['configuration']['roles'],
+            'performance role sets differ')
     normal = lambda values: {key: value for key, value in values.items() if key != 'vision.stream.stream_port'}
     require(normal(left['configuration']['values']) == normal(right['configuration']['values']),
             'performance effective parameters differ')
@@ -1417,7 +1462,7 @@ def isolated_stage(args, forwarded):
     interrupted_handler = None
     try:
         if args.stage == 'camera':
-            snapshot = configuration().load_configuration(args.config, 'all')
+            snapshot = configuration().load_configuration(args.config, 'vision')
             with defer_creation_interrupt():
                 witness = HostFileUseWitness(snapshot['values']['vision.detect.camera_device'],
                                             args.output / 'host-camera-witness.json')
