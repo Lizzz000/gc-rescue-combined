@@ -94,6 +94,7 @@ vision:
   field:
     # 仅 Field 按 720p 处理；源图/图传仍为 1080p，结果坐标还原到源图。
     proc_width: 1280
+    neutral_reference_luma: 0  # 现场标定无彩地面后再启用
     proc_height: 720
     # 鸟瞰像素密度，单位 px/m；bev_width/height 为 0 时按基础配置中的物理尺寸计算。
     bev_px_per_m: 400.0

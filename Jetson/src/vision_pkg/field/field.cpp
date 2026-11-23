@@ -15,6 +15,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <numeric>
@@ -33,6 +34,34 @@ using namespace field_detail;
 namespace {
 // 距处理图边界不超过该像素数的轮廓点视为画面裁断点（与候选贴边计数同一口径）。
 constexpr int kBorderPx = 1;
+
+// 用同一场地标定的无彩地面作参考。少量深色物块和高亮反光不会决定上四分位数。
+double floorExposureGain(const cv::Mat & bgr, int reference)
+{
+  constexpr int rows = 24, cols = 32;
+  std::array<int, 256> histogram{};
+  int neutral = 0;
+  for (int row = 0; row < rows; ++row) {
+    const auto * pixels = bgr.ptr<cv::Vec3b>((2 * row + 1) * bgr.rows / (2 * rows));
+    for (int col = 0; col < cols; ++col) {
+      const auto & p = pixels[(2 * col + 1) * bgr.cols / (2 * cols)];
+      const int high = std::max({p[0], p[1], p[2]}), low = std::min({p[0], p[1], p[2]});
+      if (high - low > high / 6) {continue;}
+      ++histogram[(p[0] + 2 * p[1] + p[2]) / 4];
+      ++neutral;
+    }
+  }
+  if (neutral < rows * cols / 2) {return 1.0;}
+  int accumulated = 0;
+  for (int level = 0; level < 256; ++level) {
+    accumulated += histogram[level];
+    if (4 * accumulated < 3 * neutral) {continue;}
+    // 超出已标定的低光范围时交给原始证据；小于 5% 的亮度波动保持原图。
+    if (level == 0 || reference > 1.6 * level || reference < 1.05 * level) {return 1.0;}
+    return double(reference) / level;
+  }
+  return 1.0;
+}
 }  // namespace
 
 void FieldLocator::reset()
@@ -273,7 +302,7 @@ FieldLocator::SearchResult FieldLocator::searchRegion(
       reasons += "没有可测的内沿";
       continue;
     }
-    score.red_inside = redInsideGrid(interior_mask, geometry_purple, inner.quad, cfg_, score.cells_red);
+    score.red_inside = redInsideGrid(interior_mask, geometry_purple, inner.quad, cfg_, score.cells_red, lab);
     score.red_outside = redOutsideRing(interior_mask, fit_result.quad, cfg_);
     score.crosses_interior = crossesInterior(interior_mask, purple_probe, fit_result.quad, cfg_);
     score.geometry = geometryScore(fit_result.quad, img.size(), cfg_);
@@ -372,6 +401,14 @@ bool FieldLocator::prepareFrame(
   // 后续角点、预测与搜索窗口统一在 small 坐标。尺寸相同时只借用 frame 的只读视图，不改输入像素。
   if (frame.cols == pw && frame.rows == ph) {small = frame;} else {
     small = resizeForField(frame, {pw, ph});
+  }
+  if (cfg_.neutral_reference_luma > 0) {
+    const auto gain = floorExposureGain(small, cfg_.neutral_reference_luma);
+    if (gain > 1.0) {
+      cv::Mat corrected;
+      small.convertTo(corrected, -1, gain);
+      small = std::move(corrected);
+    }
   }
   ++frame_idx_;
   return true;

@@ -90,6 +90,8 @@ vision:
     field_h_m: 0.36
     black_width_m: 0.02
     proc_width: 1280
+    # 两个现场停车位的无彩地面采样亮度上四分位数为 132–133。
+    neutral_reference_luma: 132
     proc_height: 720
     bev_px_per_m: 400.0
     bev_width: 0

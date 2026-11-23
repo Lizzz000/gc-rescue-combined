@@ -47,6 +47,7 @@ def _read_configuration(config_file, package_resolver):
     values.setdefault('gripper.open_trim_deg', 0.0)
     values.setdefault('gripper.open_hold_max_nm', 0.0)
     values.setdefault('gripper.output_tolerance_deg', 1.0)
+    values.setdefault('vision.field.neutral_reference_luma', 0)
     unknown = set(values) - set(FIELDS)
     # 早期整份配置只登记亮度。未提供的扩展控件保留设备当前值。
     missing = {name for name in FIELDS if name not in values and not name.startswith(CONTROLS_PREFIX)}

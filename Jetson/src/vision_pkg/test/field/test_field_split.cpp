@@ -24,6 +24,34 @@ int main()
 {
   const auto config = field_test::productionConfig();
   {
+    Group group("Distant floor uses both divider edges above the measured near wall");
+    const cv::Size size(cvRound((config.field_w_m - 2 * config.wall_thickness_m) * config.bev_px_per_m),
+      cvRound((config.field_h_m - 2 * config.wall_thickness_m) * config.bev_px_per_m));
+    const int band = cvRound(config.black_width_m * (size.width - 1) /
+      (config.field_w_m - 2 * config.wall_thickness_m));
+    const int first = int(config.black_row_lo * size.height);
+    const int floor_end = first + cvRound(0.08 * size.height);
+    auto floor = [&](int top, int bottom, int width, const cv::Scalar & near) {
+        cv::Mat bev(size, CV_8UC3, field_test::kRed);
+        bev.rowRange(floor_end, size.height).setTo(near);
+        if (top < bottom) {
+          bev(cv::Rect((size.width - width) / 2, top, width, bottom - top)).setTo(field_test::kBlack);
+        }
+        return field_detail::detectSplitBlack(bev, config);
+      };
+    const auto measured = floor(0, floor_end, band, field_test::kPurple);
+    CHECK(measured.valid);
+    if (measured.valid) {
+      CHECK(std::abs(measured.top_x - 0.5 * (size.width - 1)) < 1.0);
+      CHECK(std::abs(measured.bottom_x - measured.top_x) < 1.0);
+    }
+    CHECK(!floor(0, 0, band, field_test::kPurple).valid);
+    CHECK(!floor(0, floor_end, 2 * band, field_test::kPurple).valid);
+    CHECK(!floor(0, floor_end / 2, band, field_test::kPurple).valid);
+    CHECK(!floor(floor_end / 2, floor_end, band, field_test::kPurple).valid);
+    CHECK(!floor(0, floor_end, band, field_test::kBlack).valid);
+  }
+  {
     Group group("Oblique site divider requires a narrow material core and a matching wall mark");
     auto site = config;
     site.wall_thickness_m = 0.015;
@@ -297,13 +325,14 @@ int main()
     }
   }
   {
-    Group group("Split light-gray divider and horizontal blur remain measurable");
-    for (int scenario : {22, 23, 32}) {
+    Group group("Split endpoints survive a light-gray divider, horizontal blur and JPEG chroma subsampling");
+    for (int scenario : {22, 23, 32, 35}) {
       for (int seed = 0; seed < 3; ++seed) {
         field_scene::Scene scene;
         scene.cam_x += field_test::kSeedCamShiftX * (seed - 1);
         scene.cam_d += field_test::kSeedCamShiftD * (seed - 1);
         if (scenario == 32) {scene.motion_blur = 21;}
+        else if (scenario == 35) {scene.jpeg = 50; scene.noise = 4.0;}
         else {scene.divider_bgr = field_test::kLightGrayDivider;}
         if (scenario == 23) {scene.exposure = 0.7;}
         for (int frame = 4; frame < 8; ++frame) {
@@ -430,17 +459,19 @@ int main()
       scene.glare = 1; scene.shadows = 1; scene.floor = field_scene::Floor::WOOD;
       scene.blocks = {{0.0, 0.18, 0.05, 0.05, field_test::kBlack}};
       scene.cam_x += 0.03 * (seed - 1); scene.cam_d += 0.04 * (seed - 1);
-      scene.seed = unsigned(seed + 1) * 7919u + 84u + seed;
-      FieldLocator locator(config);
-      for (int frame = 0; frame < 8; ++frame) {
-        // 保持旧host场景的递推种子，覆盖其实际误报帧而非仅相似的矩阵种子。
-        scene.seed = scene.seed * 31u + frame;
-        field_scene::Truth truth;
-        const auto result = locator.update(field_scene::render(scene,
-          {config.proc_width, config.proc_height}, truth));
-        if (frame < 4) {continue;}
-        CHECK(!result.split_valid);
-        CHECK(!field_detail::detectSplitBlack(groundBev(scene, config), config).valid);
+      // 两组独立噪声序列均实测到过反光暗块被当作分界，保留原场景的递推方式。
+      for (unsigned offset : {0u, 2u}) {
+        scene.seed = unsigned(seed + 1) * 7919u + 84u + seed + offset;
+        FieldLocator locator(config);
+        for (int frame = 0; frame < 8; ++frame) {
+          scene.seed = scene.seed * 31u + frame;
+          field_scene::Truth truth;
+          const auto result = locator.update(field_scene::render(scene,
+            {config.proc_width, config.proc_height}, truth));
+          if (frame < 4) {continue;}
+          CHECK(!result.split_valid);
+          CHECK(!field_detail::detectSplitBlack(groundBev(scene, config), config).valid);
+        }
       }
     }
   }

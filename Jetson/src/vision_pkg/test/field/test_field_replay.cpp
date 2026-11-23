@@ -132,10 +132,12 @@ ClipStats runClip(const Clip & clip, const FieldConfig & config)
   FieldLocator locator(config);
   ClipStats st;
   for (const auto & f : clip.frames) {
-    const cv::Mat image = cv::imread((clip.dir / f.file).string(), cv::IMREAD_COLOR);
-    if (image.empty()) {std::fprintf(stderr, "读不到 %s\n", (clip.dir / f.file).c_str()); continue;}
+    const auto filename = (clip.dir / f.file).string();
+    const cv::Mat image = cv::imread(filename, cv::IMREAD_COLOR);
+    if (image.empty()) {std::fprintf(stderr, "读不到 %s\n", filename.c_str()); continue;}
     if (clip.image_width > 0 && clip.image_width != image.cols) {
       std::fprintf(stderr, "%s 宽 %d 与 labels.yaml 的 image_width %d 不一致\n", f.file.c_str(), image.cols, clip.image_width);
+      continue;
     }
     // 标注是原图像素；算法角点在处理分辨率
     const cv::Point2d scale(double(size.width) / image.cols, double(size.height) / image.rows);
@@ -163,6 +165,7 @@ void judgeClip(const Clip & clip, const ClipStats & st)
     "中线误差 %.2f px，边线距离 %.2f px\n", gate ? "" : "·仅参考", name.c_str(), st.frames, st.judgeable_valid,
     st.judgeable, st.unjudgeable_valid, st.absent_valid, st.wrong, st.predicted, countFlips(st.valid),
     mean(st.split_err), mean(st.edge_dist));
+  expect(gate, size_t(st.frames) == clip.frames.size(), name, "标注帧缺失或尺寸不符");
   expect(gate, st.judgeable == 0 || ratio(st.judgeable_valid, st.judgeable) >= kMinValidRate, name, "可判帧有效率不足");
   expect(gate, st.unjudgeable_valid == 0, name, "不可判帧仍输出分区");
   expect(gate, st.absent_valid == 0, name, "无场地帧误检");

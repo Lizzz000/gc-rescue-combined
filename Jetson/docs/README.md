@@ -68,7 +68,7 @@ CPU 分割后处理在 `src/vision_pkg/yolo/postprocess.cpp`，GPU 提交在 `yo
 | Mission 状态机与几何 | [Windows run.ps1](../src/mission_pkg/test/host/run.ps1)，主机 G++ |
 | 装配与验收工具 | 在 `Jetson/` 下运行 `python -m unittest discover -s tools/tests`，Python/PyYAML |
 
-安全区在 Windows、OpenCV 4.13.0 的主机基线有 7 条失败断言（压力矩阵 4 条、黑带专项 2 条、困难光照几何 1 条）。回归时用相同配置和环境对比具体断言。没有标注时，实拍回放按跳过记录。按上表入口运行安全区回归。 [已知基线](../src/vision_pkg/test/field/README.md#2026-11-17-验证结果)
+11 月 17 日的 Windows / OpenCV 4.13.0 基线曾有 7 条失败断言（压力矩阵 4 条、黑带专项 2 条、困难光照几何 1 条）。当前实拍回放默认使用仓库中已标注的左区带货照片。按上表入口运行安全区回归。[历史基线](../src/vision_pkg/test/field/README.md#2026-11-17-验证结果)
 
 ### Linux ROS 软件合同
 
@@ -184,6 +184,10 @@ python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/manual_control.py
 
 ### 安全区识别验证状态
 
+现场配置 `field_20261122.yaml` 使用 `vision.field.neutral_reference_luma=132`。这是在两个停车位置从灰色地面测得的 8 位亮度上四分位数。每帧在处理图均匀采样，至少一半为无彩像素且所需增益在 1.05–1.6 倍之间时，才为安全区识别提高亮度。外框和黑带仍须各自提供该帧的几何与材质证据。通用配置的参考值为 0。
+
+2026-11-23 断电后的 Windows 离线重放使用两次实跑各 5 张原图。原图、由各原图生成的 80% 亮度和 65% 亮度版本共 30 张都识别到分区。135 张去带、改带等反例全部拒绝分区。另两张来自最后一次实跑的停车照片（空区、左区已有绿色物块）均识别到中央分界线。数字调暗的覆盖范围仍需由现场灯光和 Jetson 相机实测补充。
+
 安全区识别仍需实车校准。左右区域沿黑带中心线分割，安全区目标为各区域四边形对角线的交点；对矩形区域，这对应矩形中心经过透视投影后的位置。仿真采用已确认的 20 mm 黑带宽度，中心真值与消息中的分区定义一致。
 
 红色和蓝色安全区共用标准几何。标准配置采用 660 × 360 mm 外框和 600 × 300 mm 内框，平面内缩每侧 30 mm。紫围栏高 20 mm，中央黑带长 300 mm、宽 20 mm、高 20 mm。标准鸟瞰图为 240 × 120 像素。红色或蓝色底面由 `vision.field.use_blue_interior` 选择。11 月 16 日的 660 × 640 mm 试验场地使用该次记录中的独立配置。
@@ -198,7 +202,7 @@ python3 /home/nvidia/WorkSpace/GC_Rescue/Jetson/src/teleop_pkg/manual_control.py
 
 八向裁切使用完整场地图像进行配准，目前是离线原型。正式接入前需标定实际相机内参和安装姿态，回放带标注的平移、转向和遮挡画面。逐方向误差、已知回归失败与运行命令见[安全区测试](../src/vision_pkg/test/field/README.md#八方向裁切模拟)。
 
-2026-11-16 的 Jetson Orin Nano / OpenCV 4.10 板端验证中，完整矩阵 1162 条断言、中线专项 385 条及 ROS 图像适配 33 条全部通过。修复了杂物反向透视外框、伪弱边及稀疏锚点授权补线的问题，保留原覆盖率和误差门槛。图像适配直接持有八位 ROS 消息，移除了引入另一版本 OpenCV 的 cv_bridge 依赖；支持 BGR8/RGB8/BGRA8/RGBA8/MONO8，类别掩膜只接受 MONO8/8UC1。详情见 [安全区测试](../src/vision_pkg/test/field/README.md)。尚无带标注的实车回放数据，该项测试会明确跳过；真实场地识别成功率和位置精度仍需现场校准。
+2026-11-16 的 Jetson Orin Nano / OpenCV 4.10 板端验证中，完整矩阵 1162 条断言、中线专项 385 条及 ROS 图像适配 33 条全部通过。修复了杂物反向透视外框、伪弱边及稀疏锚点授权补线的问题，保留原覆盖率和误差门槛。图像适配直接持有八位 ROS 消息，移除了引入另一版本 OpenCV 的 cv_bridge 依赖；支持 BGR8/RGB8/BGRA8/RGBA8/MONO8，类别掩膜只接受 MONO8/8UC1。详情见 [安全区测试](../src/vision_pkg/test/field/README.md)。当次因缺少实拍标注跳过回放。真实场地识别成功率和位置精度仍需现场校准。
 
 同日完成安全区性能优化：内色阴影掩膜按候选需要计算，ARM NEON 加速阴影候选像素扫描。分辨率、颜色和几何阈值、覆盖率门槛及 JPEG 质量均保持。130 张冻结输入组成 13 组序列，前后各运行 432 次，非计时结果及鸟瞰图像素全部一致；含 SEARCH、LOCATE、TRACK、遮挡保持、切换及动态配置。新增 144 条阴影掩膜像素等价断言通过，优化后的完整视觉回归无失败（标注回放因缺少数据跳过）。
 

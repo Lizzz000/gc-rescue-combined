@@ -30,6 +30,34 @@ void cargoOccludesClippedSide()
   }
 }
 
+void calibratedFloorExposure()
+{
+  Group group("Grey-floor calibration preserves the measured field under reduced exposure");
+  auto cfg = productionConfig();
+  cfg.wall_thickness_m = 0.015;
+  cfg.neutral_reference_luma = 132;
+  const auto site = cv::imread(std::string(FIELD_DATA_DIR) + "/site-20261123-occluded-left.jpg");
+  CHECK(!site.empty());
+  if (site.empty()) {return;}
+  const auto reference = FieldLocator(cfg).update(site);
+  CHECK(reference.committed && reference.split_valid);
+  for (const double brightness : {0.8, 0.65}) {
+    cv::Mat dark;
+    site.convertTo(dark, -1, brightness);
+    const auto original = dark.clone();
+    const auto measured = FieldLocator(cfg).update(dark);
+    CHECK(measured.committed && measured.split_valid);
+    CHECK(std::abs(measured.split_top_x - reference.split_top_x) < 3);
+    CHECK(std::abs(measured.split_bottom_x - reference.split_bottom_x) < 3);
+    CHECK(cv::norm(original, dark, cv::NORM_INF) == 0);
+  }
+  for (auto shade : {cv::Scalar(85, 85, 85), cv::Scalar(2, 2, 2), cv::Scalar(8, 20, 90)}) {
+    cv::Mat panel(site.size(), CV_8UC3, shade);
+    const auto empty = FieldLocator(cfg).update(panel);
+    CHECK(!empty.committed && !empty.split_valid);
+  }
+}
+
 void groundPerspectiveDirection()
 {
   Group group("ground perspective preserves near/far direction");
@@ -356,6 +384,10 @@ void visibleGridEvidence()
   const auto covered = field_detail::redInsideGrid(red, purple, quad, cfg, cells);
   CHECK(cells >= cfg.red_cells_min);
   CHECK(std::abs(covered - 0.375) < 1e-9);
+  // 高光切断一列近墙时仅该列失去遮挡证据，其余列仍在可见地面核验格数。
+  purple(cv::Rect(62, 50, 10, 50)).setTo(0);
+  CHECK(field_detail::redInsideGrid(red, purple, quad, cfg, cells) >= cfg.red_inside_min);
+  CHECK(cells >= cfg.red_cells_min);
   purple.setTo(0);
   CHECK(field_detail::redInsideGrid(red, purple, quad, cfg, cells) == covered);
   CHECK(cells < cfg.red_cells_min);
@@ -368,6 +400,20 @@ void visibleGridEvidence()
   red(cv::Rect(0, 0, 40, 50)).setTo(255); purple(cv::Rect(0, 0, 40, 50)).setTo(0);
   const auto corner_coverage = field_detail::redInsideGrid(red, purple, quad, cfg, cells);
   CHECK(corner_coverage < cfg.red_inside_min || cells < cfg.red_cells_min);
+
+  cv::Mat coloured(red.size(), CV_8UC3, cv::Scalar(100, 163, 147));
+  purple.setTo(0);
+  red.setTo(0);
+  // 即使原图全是同色，孤立的细线或不足一个分布区域的色块也不能取得完整地面证据。
+  CHECK(field_detail::redInsideGrid(red, purple, quad, cfg, cells, coloured) == 0.0);
+  red(cv::Rect(12, 20, 10, 20)).setTo(255);
+  CHECK(field_detail::redInsideGrid(red, purple, quad, cfg, cells, coloured) < cfg.red_inside_min);
+  red.setTo(0);
+  for (int x = 0; x < red.cols; x += 8) {red.colRange(x, x + 3).setTo(255);}
+  const double stripes = field_detail::redInsideGrid(red, purple, quad, cfg, cells);
+  CHECK(field_detail::redInsideGrid(red, purple, quad, cfg, cells, coloured) > stripes);
+  coloured.setTo(cv::Scalar(100, 128, 128));
+  CHECK(field_detail::redInsideGrid(red, purple, quad, cfg, cells, coloured) == stripes);
 }
 
 void difficultLighting()
@@ -465,12 +511,32 @@ void purplePanelsAreNotGround()
       }
     }
   }
+  // 带分界的平板有轻微透视时，仍没有近墙遮住大半地面的浅视角证据。
+  cv::Mat panel(720, 1280, CV_8UC3, cv::Scalar(205, 205, 205));
+  cv::rectangle(panel, {300, 200, 680, 400}, kPurple, cv::FILLED);
+  cv::rectangle(panel, {312, 212, 656, 80}, kRed, cv::FILLED);
+  cv::rectangle(panel, {630, 212, 20, 80}, kBlack, cv::FILLED);
+  const std::vector<cv::Point2f> rectangle{{300, 200}, {980, 200}, {980, 600}, {300, 600}};
+  for (float widening : {17.f, 34.f}) {  // 近边宽度增加 5%、10%。
+    auto trapezoid = rectangle;
+    trapezoid[2].x += widening;
+    trapezoid[3].x -= widening;
+    cv::Mat tilted;
+    cv::warpPerspective(panel, tilted, cv::getPerspectiveTransform(rectangle, trapezoid),
+      panel.size(), cv::INTER_LINEAR, cv::BORDER_REPLICATE);
+    FieldLocator locator(productionConfig());
+    for (int frame = 0; frame < 8; ++frame) {
+      const auto result = locator.update(tilted);
+      CHECK(!committedOutline(result)); CHECK(!splitValid(result));
+    }
+  }
 }
 }  // namespace
 
 int main()
 {
   cargoOccludesClippedSide();
+  calibratedFloorExposure();
   groundPerspectiveDirection();
   independentRows();
   interiorScanBounds();

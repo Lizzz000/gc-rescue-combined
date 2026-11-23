@@ -38,6 +38,7 @@ struct FieldConfig
   // 新参数同时登记节点字段映射、统一配置及 validateFieldConfig；核心默认值仅供直接开发 API 使用。
   // ---- [分组] 处理尺寸：宽为正像素数；仅高度为 0 时按源图宽高比推算 ----
   int proc_width = 640;
+  int neutral_reference_luma = 0;      // 场地无彩地面的参考亮度，0 关闭曝光补偿。
   int proc_height = 0;                   // 0 = 按原图比例
 
   // 场地真实尺寸与鸟瞰分辨率：米、像素/米共同确定 BEV 大小；可选长宽比检查也使用米制比例。角点仍用处理图像素。
@@ -173,6 +174,7 @@ struct FieldConfig
 // 新增字段先改这里，再同步统一配置、validateFieldConfig 与参数映射；不要复制第二份名单。
 #define VISION_FIELD_PARAMETERS(X) \
   X(int, proc_width) \
+  X(int, neutral_reference_luma) \
   X(int, proc_height) \
   X(double, field_w_m) \
   X(double, field_h_m) \

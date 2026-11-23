@@ -125,6 +125,10 @@
         "path": "vision.field.proc_width",
         "kind": "integer"
       },
+      "field.neutral_reference_luma": {
+        "path": "vision.field.neutral_reference_luma",
+        "kind": "integer"
+      },
       "field.proc_height": {
         "path": "vision.field.proc_height",
         "kind": "integer"
@@ -963,6 +967,7 @@
     "vision.detect.publish_status": "boolean",
     "vision.detect.frame_id": "string",
     "vision.field.proc_width": "integer",
+    "vision.field.neutral_reference_luma": "integer",
     "vision.field.proc_height": "integer",
     "vision.field.field_w_m": "number",
     "vision.field.field_h_m": "number",

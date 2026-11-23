@@ -122,7 +122,7 @@ void scoreEdges(
   const FieldConfig & cfg, CandidateScore & score);
 double redInsideGrid(
   const cv::Mat & red, const cv::Mat & purple, const std::vector<cv::Point2f> & quad,
-  const FieldConfig & cfg, int & cells_red);
+  const FieldConfig & cfg, int & cells_red, const cv::Mat & lab = cv::Mat());
 double redOutsideRing(
   const cv::Mat & red, const std::vector<cv::Point2f> & quad,
   const FieldConfig & cfg);

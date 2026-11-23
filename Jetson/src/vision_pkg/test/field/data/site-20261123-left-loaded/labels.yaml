@@ -1,0 +1,8 @@
+%YAML:1.0
+---
+# 两处横截面均在可见红地面上，标注直接取原图黑带左右边的中点。
+reference_only: 0
+image_width: 1280
+frames:
+   - { file: "../site-20261123-occluded-left.jpg", present: 1, judge: "judgeable",
+       divider: [ 649., 195., 678., 290. ] }

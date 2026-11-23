@@ -190,6 +190,7 @@ void validateFieldConfig(const FieldConfig & c)
       }
     };
   range(c.proc_width, 16, 4096, "proc_width");
+  range(c.neutral_reference_luma, 0, 255, "neutral_reference_luma");
   range(c.proc_height, 0, 4096, "proc_height");
   if (c.proc_height != 0) {range(c.proc_height, 16, 4096, "proc_height");}
   range(c.field_w_m, 0.001, 1000, "field_w_m");

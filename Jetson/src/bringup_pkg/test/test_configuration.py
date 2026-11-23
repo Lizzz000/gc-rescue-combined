@@ -166,6 +166,19 @@ class AutoGripperConfigTest(unittest.TestCase):
         self.assertEqual(snapshot['values']['vision.field.black_width_m'], 0.020)
         self.assertEqual(snapshot['nodes']['detect_node']['field.black_width_m'], 0.020)
 
+    def test_field_exposure_reference_is_site_specific(self):
+        site = OFFICIAL.with_name('field_20261122.yaml')
+        for config, expected in ((OFFICIAL, 0), (site, 132)):
+            snapshot = load_configuration(config, 'vision', _resolver, require_assets=False)
+            self.assertEqual(snapshot['nodes']['detect_node']['field.neutral_reference_luma'], expected)
+        legacy = read_configuration(site, package_resolver=_resolver)
+        del legacy['vision']['field']['neutral_reference_luma']
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'legacy.yaml'
+            path.write_text(yaml.safe_dump(legacy), encoding='utf-8')
+            snapshot = load_configuration(path, 'vision', _resolver, require_assets=False)
+            self.assertEqual(snapshot['nodes']['detect_node']['field.neutral_reference_luma'], 0)
+
     def test_official_yaml_passes_gripper_preset_to_bridge(self):
         for role in ('all', 'bridge'):
             with self.subTest(role=role):
