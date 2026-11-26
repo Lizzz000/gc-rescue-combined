@@ -373,9 +373,13 @@ void initializePlugin()
       try {
         void * vendor = dlsym(plugin, "jpeg_CreateCompress");
         Dl_info info{};
-        check(vendor && dladdr(vendor, &info) && info.dli_fname &&
-          std::string(info.dli_fname).find("/nvidia/libnvjpeg.so") != std::string::npos &&
-          vendor != dlsym(RTLD_DEFAULT, "jpeg_CreateCompress"), "JPEG symbol isolation failed");
+        const std::string provider = vendor && dladdr(vendor, &info) && info.dli_fname ?
+          info.dli_fname : "unresolved";
+        // JetPack 7 将 GStreamer 的 JPEG ABI 移到了 libnvmm_jpeg，旧版仍使用 libnvjpeg。
+        const bool nvidia_jpeg = provider.find("/nvidia/libnvjpeg.so") != std::string::npos ||
+          provider.find("/nvidia/libnvmm_jpeg.so") != std::string::npos;
+        check(nvidia_jpeg && vendor != dlsym(RTLD_DEFAULT, "jpeg_CreateCompress"),
+          "JPEG symbol isolation failed: " + provider);
         GError * error = nullptr;
         if (!gst_init_check(nullptr, nullptr, &error)) {
           const std::string description = error ? error->message : "unknown error";
