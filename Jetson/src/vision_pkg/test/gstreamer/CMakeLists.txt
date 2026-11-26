@@ -21,7 +21,7 @@ if(TARGET vision_camera)
   target_link_libraries(test_capture_startup PRIVATE vision_camera)
 else()
   target_sources(test_capture_startup PRIVATE
-    ../../camera/gstreamer/gstreamer.cpp ../../camera/v4l2_controls.cpp)
+    ../../camera/gstreamer/gstreamer.cpp ../../camera/neon/i420.cpp ../../camera/v4l2_controls.cpp)
   target_compile_definitions(test_capture_startup PRIVATE VISION_ENABLE_NVMM=0)
 endif()
 

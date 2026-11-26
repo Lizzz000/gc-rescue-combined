@@ -1,7 +1,10 @@
 #include "camera/gstreamer/gstreamer.hpp"
+#include "camera/neon/i420.hpp"
 
 #include <gst/gst.h>
 #include <linux/videodev2.h>
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -47,6 +50,33 @@ void control_device_class_init(ControlDeviceClass * klass)
   gst_element_class_set_static_metadata(GST_ELEMENT_CLASS(klass), "Test control device",
     "Generic/Bin", "Supplies a simulated V4L2 descriptor", "GC Rescue");
 }
+
+bool strided_color_matches_packed(cv::Size size)
+{
+  const int width = size.width, height = size.height;
+  cv::Mat y_backing(height, width + 7, CV_8UC1);
+  cv::Mat u_backing(height / 2, width / 2 + 13, CV_8UC1);
+  cv::Mat v_backing(height / 2, width / 2 + 19, CV_8UC1);
+  const std::array<cv::Mat, 3> planes{
+    y_backing.colRange(1, width + 1),
+    u_backing.colRange(3, width / 2 + 3),
+    v_backing.colRange(5, width / 2 + 5)};
+  cv::RNG rng(1073741827u);
+  rng.fill(y_backing, cv::RNG::UNIFORM, 0, 256);
+  rng.fill(u_backing, cv::RNG::UNIFORM, 0, 256);
+  rng.fill(v_backing, cv::RNG::UNIFORM, 0, 256);
+  cv::Mat packed(height + height / 2, width, CV_8UC1);
+  auto * destination = packed.data;
+  for (const auto & plane : planes) {
+    for (int row = 0; row < plane.rows; ++row) {
+      std::copy_n(plane.ptr<unsigned char>(row), plane.cols, destination);
+      destination += plane.cols;
+    }
+  }
+  const auto expected = vision_camera::fullRangeI420ToBgr(packed);
+  const auto actual = vision_camera::fullRangeI420ToBgr(planes[0], planes[1], planes[2]);
+  return cv::norm(actual, expected, cv::NORM_INF) == 0;
+}
 }  // namespace
 
 // Intercepts only ioctl references linked into this executable. The shared
@@ -74,6 +104,13 @@ extern "C" int __wrap_ioctl(int fd, unsigned long request, ...)
 
 int main(int argc, char ** argv)
 {
+  // Non-vector-multiple width and V beginning halfway into a packed row.
+  for (const auto size : {cv::Size(34, 6), cv::Size(642, 482)}) {
+    if (!strided_color_matches_packed(size)) {
+      std::cerr << "independent I420 plane pitches changed BGR pixels at " << size << '\n';
+      return 1;
+    }
+  }
   gst_init(&argc, &argv);
   if (!gst_element_register(nullptr, "gccontroltestdevice", GST_RANK_NONE, control_device_get_type())) {
     std::cerr << "cannot register the test control device\n";

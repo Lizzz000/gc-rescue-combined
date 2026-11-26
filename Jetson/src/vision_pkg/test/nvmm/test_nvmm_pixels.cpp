@@ -32,7 +32,7 @@ struct Frame {
       const auto bytes = packed ? 4u : 1u;
       params.planeParams.width[plane] = width;
       params.planeParams.height[plane] = height;
-      params.planeParams.pitch[plane] = width * bytes + 8;
+      params.planeParams.pitch[plane] = width * bytes + 8 + plane * 4;
       params.planeParams.psize[plane] = params.planeParams.pitch[plane] * height;
       params.planeParams.bytesPerPix[plane] = bytes;
       params.mappedAddr.addr[plane] = storage[plane];
@@ -104,7 +104,7 @@ int main()
     int copies = 0;
     std::string error;
     check(consume(frame, false, copies, error) && copies == 1,
-      "default planar I420/full-range I420/BGRx remains supported with padded rows");
+      "default planar I420/full-range I420/BGRx supports separately padded planes");
     check(mapped == 1 && synced == 1 && unmapped == 1, "successful copy maps/syncs/unmaps once");
     rejected(frame, "custom BGR contract rejects NVMM I420/BGRx", true);
   }

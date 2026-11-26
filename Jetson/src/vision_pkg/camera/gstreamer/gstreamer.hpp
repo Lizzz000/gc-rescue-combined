@@ -24,7 +24,7 @@ public:
     bool require_bgr = false, const CameraControls & controls = {});
   bool open(_GstElement * owned_pipeline, const std::atomic<bool> & cancelled);
   /// nvmm：appsink 协商为 memory:NVMM 时持有本帧 NvBufSurface（get() 即 NvBufSurface*，
-  /// 释放即归还 GstSample）；否则为空。image 照常是 CPU 拷贝。
+  /// 释放即归还 GstSample），同时为 CPU 交付独占的 BGR 图像。非 NVMM 帧保留原始格式。
   bool read(cv::Mat & image, std::chrono::steady_clock::time_point & at,
     const std::atomic<bool> & cancelled, std::shared_ptr<void> & nvmm);
   void close();

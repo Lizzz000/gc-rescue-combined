@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <limits>
 #if defined(__aarch64__)
 #include <arm_neon.h>
 #endif
@@ -212,24 +213,21 @@ inline void neonRow(
 }
 #endif
 
-inline cv::Mat convert(const cv::Mat & input)
+struct RowPair {
+  const unsigned char * y0;
+  const unsigned char * y1;
+  const unsigned char * u;
+  const unsigned char * v;
+};
+
+template<class Rows>
+cv::Mat convert(int width, int height, const Rows & rows)
 {
-  if (input.empty() || input.type() != CV_8UC1 || input.rows % 3 != 0 ||
-    input.cols % 2 != 0)
-  {
-    CV_Error(cv::Error::StsBadArg, "expected packed 8-bit I420 with even width and height");
-  }
-  const int height = input.rows / 3 * 2, width = input.cols;
   const auto & mapping = tables();
   cv::Mat output(height, width, CV_8UC3);
-  const auto luma_bytes = static_cast<std::size_t>(height) * width;
   const auto work = [&](const cv::Range & range) {
       for (int pair = range.start; pair < range.end; ++pair) {
-        const auto chroma_offset = static_cast<std::size_t>(pair) * (width / 2);
-        const auto * u = packedPointer(input, luma_bytes + chroma_offset);
-        const auto * v = packedPointer(input, luma_bytes + luma_bytes / 4 + chroma_offset);
-        const auto * y0 = input.ptr<unsigned char>(pair * 2);
-        const auto * y1 = input.ptr<unsigned char>(pair * 2 + 1);
+        const auto [y0, y1, u, v] = rows(pair);
         auto * out0 = output.ptr<unsigned char>(pair * 2);
         auto * out1 = output.ptr<unsigned char>(pair * 2 + 1);
         int x = 0;
@@ -279,7 +277,15 @@ cv::Mat fullRangeI420ToBgr(const cv::Mat & image)
   }
 #if defined(__aarch64__)
   if (vision_camera_detail::fused_i420::nativeNeonEnabled()) {
-    return vision_camera_detail::fused_i420::convert(image);
+    using namespace vision_camera_detail::fused_i420;
+    const int height = image.rows / 3 * 2, width = image.cols;
+    const auto luma_bytes = static_cast<std::size_t>(height) * width;
+    return convert(width, height, [&](int pair) {
+      const auto chroma_offset = static_cast<std::size_t>(pair) * (width / 2);
+      return RowPair{image.ptr<unsigned char>(pair * 2), image.ptr<unsigned char>(pair * 2 + 1),
+        packedPointer(image, luma_bytes + chroma_offset),
+        packedPointer(image, luma_bytes + luma_bytes / 4 + chroma_offset)};
+    });
   }
 #endif
   const int height = image.rows / 3 * 2;
@@ -299,6 +305,38 @@ cv::Mat fullRangeI420ToBgr(const cv::Mat & image)
   cv::Mat bgr;
   cv::cvtColor(limited, bgr, cv::COLOR_YUV2BGR_I420);
   return bgr;
+}
+
+cv::Mat fullRangeI420ToBgr(const cv::Mat & luma, const cv::Mat & cb, const cv::Mat & cr)
+{
+  const int width = luma.cols, height = luma.rows;
+  const cv::Size chroma_size(width / 2, height / 2);
+  if (luma.empty() || luma.type() != CV_8UC1 || width % 2 || height % 2 ||
+    height > std::numeric_limits<int>::max() / 3 * 2 ||
+    cb.type() != CV_8UC1 || cr.type() != CV_8UC1 ||
+    cb.size() != chroma_size || cr.size() != chroma_size)
+  {
+    CV_Error(cv::Error::StsBadArg, "expected 8-bit I420 planes with even luma dimensions");
+  }
+#if defined(__aarch64__)
+  if (vision_camera_detail::fused_i420::nativeNeonEnabled()) {
+    using namespace vision_camera_detail::fused_i420;
+    return convert(width, height, [&](int pair) {
+      return RowPair{luma.ptr<unsigned char>(pair * 2), luma.ptr<unsigned char>(pair * 2 + 1),
+        cb.ptr<unsigned char>(pair), cr.ptr<unsigned char>(pair)};
+    });
+  }
+#endif
+  // 非 NEON 仍沿用紧排图的查表和 OpenCV 色转。
+  cv::Mat packed(height + height / 2, width, CV_8UC1);
+  const auto luma_bytes = static_cast<std::size_t>(height) * width;
+  cv::Mat packed_luma(height, width, CV_8UC1, packed.data);
+  cv::Mat packed_cb(chroma_size, CV_8UC1, packed.data + luma_bytes);
+  cv::Mat packed_cr(chroma_size, CV_8UC1, packed.data + luma_bytes + luma_bytes / 4);
+  luma.copyTo(packed_luma);
+  cb.copyTo(packed_cb);
+  cr.copyTo(packed_cr);
+  return fullRangeI420ToBgr(packed);
 }
 
 }  // namespace vision_camera

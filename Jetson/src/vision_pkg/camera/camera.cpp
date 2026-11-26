@@ -59,7 +59,7 @@ bool UsbCamera::open()
         return false;
       }
     } else if (config_.backend == "gstreamer") {
-      // 管线负责取流和 appsink；自动 MJPEG 管线输出 I420，read() 再在本地完成 BGR 转换。
+      // 自动 MJPEG 管线输出 I420。NVMM 在采集后端直接转 BGR，系统内存则由 read() 转换。
       const bool custom = !config_.pipeline.empty();
       const auto pipeline = custom ? config_.pipeline : vision_camera::gstreamerPipeline(config_);
       vision_camera::CameraControls controls;
@@ -135,7 +135,7 @@ std::string vision_camera::gstreamerPipeline(const CameraConfig & config)
   if (mjpeg) {
     // 保留 JPEG 全范围 YUV；read() 精确映射范围并转 BGR，避免 VIC 范围误解。
 #if VISION_ENABLE_NVMM
-    // H13：留在 NVMM，推理前处理由 CUDA 直接读同一缓冲；CPU 侧在 appsink 映射后拷出 I420。
+    // 推理前处理直接使用 NVMM，CPU 在 appsink 从各平面读取全范围 I420 并转换为 BGR。
     pipeline << " ! video/x-raw(memory:NVMM),format=I420";
 #else
     pipeline << " ! video/x-raw,format=I420";
@@ -279,7 +279,7 @@ bool UsbCamera::read(CameraFrame & out)
       grabbed_at = std::chrono::steady_clock::now();
       if (!camera_.retrieve(frame) || frame.empty()) {return false;}
     }
-    if (config_.backend == "gstreamer" && config_.pipeline.empty() &&
+    if (config_.backend == "gstreamer" && config_.pipeline.empty() && !out.nvmm &&
       isMjpegFourcc(config_.fourcc))
     {
       frame = vision_camera::fullRangeI420ToBgr(frame);

@@ -157,6 +157,8 @@ ros2 launch bringup_pkg rescue.launch.py run:=vision stream:=true
 
 省略 `stream` 时沿用 `rescue_advanced.yaml` 的 `vision.stream.stream_enabled`；`stream:=false` 可显式关闭。开关在启动时生效。启用后，地址和端口由 `rescue.yaml` 的 `stream_address`、`stream_port` 决定，默认监听 `0.0.0.0:8080`。
 
+Jetson 自动 MJPEG 管线由 NVDEC 解码，VIC 提供 I420 NVMM 帧，CUDA 直接读取同一缓冲完成分割前处理，TensorRT 在 GPU 上推理。安全区识别和图传叠加在 CPU 上运行。ARM NEON 色转直接读取映射后的独立 I420 平面，省去紧排 I420 中间拷贝。Orin Nano 的 `nvjpeg` 图传配置选择 NVIDIA GStreamer JPEG 插件，该机型没有独立 JPEG 编码器。[NVIDIA 对 Orin Nano JPEG 编码的说明](https://forums.developer.nvidia.com/t/nvjpg-hw-coder-for-jpg/234504)
+
 - `http://<板端>:8080/healthz`
 - `http://<板端>:8080/view`
 - `http://<板端>:8080/snapshot.jpg`

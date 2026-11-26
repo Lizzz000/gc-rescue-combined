@@ -10,6 +10,7 @@
 #include <gst/video/video.h>
 #if VISION_ENABLE_NVMM
 #include "camera/gstreamer/nvmm_pixels.hpp"
+#include "camera/neon/i420.hpp"
 #endif
 
 namespace vision_camera {
@@ -64,9 +65,7 @@ struct NvmmSampleMap {
   }
 };
 
-// H13：NVMM 帧（MJPEG 为 I420，raw 为 VIC 转好的 BGRx）。CPU 侧（field/叠层/推流）仍需一份：
-// 从同一 NvBufSurface 映射后拷出 I420，或去掉 x 通道得到 BGR（等价于原 videoconvert）；
-// 推理侧保留 sample 引用，由 CUDA 经 EGL 直接读同一块 NVMM。
+// CPU 侧从 NVMM 的各平面直接转换为独占的 BGR 图像，CUDA 推理仍读取同一块 NVMM。
 bool copyNvmm(GstSample * sample, GstBuffer * buffer, cv::Mat & image, cv::Size & size,
   std::string & error, bool require_bgr, std::shared_ptr<void> & nvmm)
 {
@@ -88,18 +87,12 @@ bool copyNvmm(GstSample * sample, GstBuffer * buffer, cv::Mat & image, cv::Size 
         const cv::Mat bgrx(height, width, CV_8UC4, params.mappedAddr.addr[0], params.planeParams.pitch[0]);
         cv::cvtColor(bgrx, image, cv::COLOR_BGRA2BGR);
       } else {
-        image.create(height + height / 2, width, CV_8UC1);
-        const int rows[3] = {height, height / 2, height / 2};
-        const int bytes[3] = {width, width / 2, width / 2};
-        unsigned char * destination = image.data;
-        for (int plane = 0; plane < 3; ++plane) {
-          const auto * source = static_cast<const unsigned char *>(params.mappedAddr.addr[plane]);
-          const auto stride = params.planeParams.pitch[plane];
-          for (int row = 0; row < rows[plane]; ++row) {
-            std::memcpy(destination, source + static_cast<std::size_t>(row) * stride, bytes[plane]);
-            destination += bytes[plane];
-          }
-        }
+        const cv::Mat luma(height, width, CV_8UC1, params.mappedAddr.addr[0], params.planeParams.pitch[0]);
+        const cv::Mat cb(height / 2, width / 2, CV_8UC1,
+          params.mappedAddr.addr[1], params.planeParams.pitch[1]);
+        const cv::Mat cr(height / 2, width / 2, CV_8UC1,
+          params.mappedAddr.addr[2], params.planeParams.pitch[2]);
+        image = fullRangeI420ToBgr(luma, cb, cr);
       }
       size = {width, height};
     });
