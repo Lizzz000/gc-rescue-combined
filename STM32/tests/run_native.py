@@ -139,6 +139,7 @@ def main():
         "project/Core/Algorithm/PID/pid.c",
     ]
     suites["can_auto"] = suites["can"]
+    suites["can_tuning"] = suites["can"]
     suites["link_frame"] = [
         "tests/native/test_link_frame.c",
         "project/Core/Communication/Common/link_frame.c",
@@ -221,7 +222,7 @@ def main():
                 command.append("-DJETSON_AUTO_ENABLED=0")
             if name == "can_auto":
                 command.append("-DJETSON_AUTO_ENABLED=1")
-            if name in ("can_diag", "live_tuning", "chassis_tuning", "vofa_tuning"):
+            if name in ("can_diag", "can_tuning", "live_tuning", "chassis_tuning", "vofa_tuning"):
                 command.append("-DCHASSIS_TUNING_ENABLED=1")
             if name.startswith("jetson_auto_"):
                 command += ["-include", str(root / "tests/native/jetson_auto_test_config.h")]

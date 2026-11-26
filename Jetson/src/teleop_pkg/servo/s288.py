@@ -239,9 +239,13 @@ class ServoLink:
                 data.extend(os.read(self._fd, READ_BYTES))
             except BlockingIOError:
                 continue
-            feedback = _take_feedback(data, self.motor_id)
-            if feedback is not None:
-                return feedback
+            while time.monotonic() < deadline:
+                pending = len(data)
+                feedback = _take_feedback(data, self.motor_id)
+                if feedback is not None:
+                    return feedback
+                if len(data) == pending:
+                    break
         raise TimeoutError('未收到有效的舵机反馈')
 
     def stop(self):

@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import yaml
@@ -129,6 +130,40 @@ class CameraControlsTest(unittest.TestCase):
                 rescue_launch._start(None)
             self.assertEqual(run.call_count, 1)
             modules['launch_ros.actions'].Node.assert_not_called()
+
+
+class LaunchFailureTest(unittest.TestCase):
+    def test_every_role_has_an_exit_handler_before_launching(self):
+        snapshot = load_configuration(OFFICIAL, run='all', package_resolver=_resolver)
+        modules = {name: MagicMock() for name in (
+            'launch', 'launch.actions', 'launch.event_handlers', 'launch.substitutions',
+            'launch_ros', 'launch_ros.actions')}
+        roles = tuple(snapshot['roles'])
+        nodes = [object() for _ in roles]
+        handlers = [object() for _ in roles]
+        modules['launch_ros.actions'].Node.side_effect = nodes
+        modules['launch.actions'].RegisterEventHandler.side_effect = handlers
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(sys.modules, modules),
+            patch.dict(os.environ, RESCUE_RUN_DIR=directory),
+            patch.object(rescue_launch, 'load_configuration', return_value=snapshot),
+            patch.object(rescue_launch, 'apply_camera_controls', return_value={}),
+        ):
+            actions = rescue_launch._start(None)
+
+        self.assertEqual(actions[1:], handlers + nodes)
+        registrations = modules['launch.event_handlers'].OnProcessExit.call_args_list
+        self.assertEqual(len(registrations), len(roles))
+        for role, node, registration in zip(roles, nodes, registrations):
+            with self.subTest(role=role):
+                self.assertIs(registration.kwargs['target_action'], node)
+                callback = registration.kwargs['on_exit']
+                for code in (0, 7):
+                    event = SimpleNamespace(returncode=code)
+                    with self.assertRaisesRegex(RuntimeError, f'{role} .* code {code}'):
+                        callback(event, SimpleNamespace(is_shutdown=False))
+                    self.assertIsNone(callback(event, SimpleNamespace(is_shutdown=True)))
 
 
 class AutoGripperConfigTest(unittest.TestCase):

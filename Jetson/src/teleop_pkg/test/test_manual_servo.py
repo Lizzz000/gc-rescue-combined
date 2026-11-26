@@ -59,6 +59,26 @@ def session_with_link(**kwargs):
 
 
 class ManualConfigTest(unittest.TestCase):
+    def test_rejects_duplicate_yaml_keys_in_either_config(self):
+        with tempfile.TemporaryDirectory() as folder:
+            basic = Path(folder) / 'rescue.yaml'
+            advanced = Path(folder) / 'advanced.yaml'
+            basic.write_text('link:\n  device: /dev/first\n  "device": /dev/second\n')
+            with self.assertRaisesRegex(ValueError, r"配置字段重复：'device'.*rescue\.yaml"):
+                manual_control.load_manual_config(basic)
+            basic.write_text('advanced_config: advanced.yaml\n')
+            advanced.write_text('gripper:\n  id: 2\n  id: 3\n')
+            with self.assertRaisesRegex(ValueError, r"配置字段重复：'id'.*advanced\.yaml"):
+                manual_control.load_manual_config(basic)
+
+    def test_loads_yaml_merge_with_explicit_override(self):
+        with tempfile.TemporaryDirectory() as folder:
+            basic = Path(folder) / 'rescue.yaml'
+            basic.write_text('defaults: &defaults {device: /dev/default}\n'
+                             'link: &custom {<<: *defaults, device: /dev/custom}\n'
+                             'other: {<<: *custom}\n')
+            self.assertEqual(manual_control.load_manual_config(basic)['link_device'], '/dev/custom')
+
     def test_dotted_path_matches_nested_and_rejects_conflicts(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'manual.yaml'

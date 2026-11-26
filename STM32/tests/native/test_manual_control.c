@@ -23,6 +23,7 @@ static uint32_t counter_us, free_mailboxes, controls, enables, disables, aborts;
 static uint32_t nonzero_controls, imu_age_ms;
 static unsigned critical_depth;
 static uint8_t imu_ready, abort_pending, last_sent_id;
+static uint8_t motor_state[3], queued_state[3], queued_state_mask;
 static int imu_reads_before_failure;
 static uint16_t failing_motor;
 static float motor_velocity[3];
@@ -96,25 +97,29 @@ HAL_StatusTypeDef ctrl_motor(CAN_HandleTypeDef *can, uint16_t id, float position
     return HAL_OK;
 }
 
-/** @brief 模拟使能帧入队，不修改电机反馈状态。
+/** @brief 模拟使能帧入队，完成事件后才更新车轮状态。
  * @param[in] can CAN1。 @param[in] id 电机 1～3。 @return HAL_OK。
  */
 HAL_StatusTypeDef enable_motor(CAN_HandleTypeDef *can, uint16_t id)
 {
     assert(can == &hcan1 && id >= 1U && id <= 3U && free_mailboxes > 0U && !abort_pending);
     last_sent_id = (uint8_t)id;
+    queued_state[id - 1U] = 1U;
+    queued_state_mask |= (uint8_t)(1U << (id - 1U));
     --free_mailboxes;
     ++enables;
     return HAL_OK;
 }
 
-/** @brief 模拟失能帧入队，不冒充真实停车确认。
+/** @brief 模拟失能帧入队，完成事件后才更新车轮状态。
  * @param[in] can CAN1。 @param[in] id 电机 1～3。 @return HAL_OK。
  */
 HAL_StatusTypeDef disable_motor(CAN_HandleTypeDef *can, uint16_t id)
 {
     assert(can == &hcan1 && id >= 1U && id <= 3U && free_mailboxes > 0U && !abort_pending);
     last_sent_id = (uint8_t)id;
+    queued_state[id - 1U] = 0U;
+    queued_state_mask |= (uint8_t)(1U << (id - 1U));
     --free_mailboxes;
     ++disables;
     return HAL_OK;
@@ -138,14 +143,14 @@ static void Advance(uint32_t milliseconds)
 { test_tick += milliseconds; counter_us += milliseconds * 1000U; }
 
 /** @brief 为三轮分别提供一条新反馈，不由发送函数自动生成。
- * @param[in] speed 各轮反馈 rad/s。 @param[in] state 达妙原始状态。 @return 无。
+ * @param[in] speed 各轮反馈 rad/s。 @return 无。
  */
-static void Feedback(float speed, uint8_t state)
+static void Feedback(float speed)
 {
     for (unsigned i = 0U; i < 3U; ++i)
     {
         dm_motor[i].id = (uint8_t)(i + 1U);
-        dm_motor[i].state = state;
+        dm_motor[i].state = motor_state[i];
         dm_motor[i].velocity = speed;
         dm_motor[i].feedback_time_ms = test_tick;
         ++dm_motor[i].feedback_seq;
@@ -160,11 +165,16 @@ static void Service(Feedback_Mode_t feedback, uint8_t complete_can)
 {
     if (complete_can)
     {
+        if (!abort_pending)
+            for (unsigned i = 0U; i < 3U; ++i)
+                if (queued_state_mask & (1U << i))
+                    motor_state[i] = queued_state[i];
+        queued_state_mask = 0U;
         free_mailboxes = 3U;
         abort_pending = 0U;
     }
     if (feedback != NO_FEEDBACK)
-        Feedback(feedback == QUIET_FEEDBACK ? 0.0f : 1.0f, 1U);
+        Feedback(feedback == QUIET_FEEDBACK ? 0.0f : 1.0f);
     Manual_Control_Loop();
     Chassis_Loop();
     assert(critical_depth == 0U);
@@ -210,7 +220,8 @@ static void Reset(uint32_t milliseconds, uint32_t microseconds)
     imu_ready = 1U;
     imu_reads_before_failure = -1;
     failing_motor = 0U;
-    abort_pending = last_sent_id = 0U;
+    abort_pending = last_sent_id = queued_state_mask = 0U;
+    memset(motor_state, 0, sizeof(motor_state));
     memset(motor_velocity, 0, sizeof(motor_velocity));
     memset((void *)dm_motor, 0, sizeof(dm_motor));
     Chassis_Init();
@@ -504,7 +515,7 @@ static void Test_Feedback_And_IMU(void)
         Prepare_Ready();
         Start_Moving(100, 0, 0);
         Receive(100, 0, 0, 1U, 7U);
-        Feedback(1.0f, 1U);
+        Feedback(1.0f);
         if (fault == 0U)
         {
             for (unsigned i = 0U; i < 3U; ++i)

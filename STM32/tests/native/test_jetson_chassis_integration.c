@@ -21,6 +21,7 @@ TIM_HandleTypeDef htim2;
 volatile dm_motor_t dm_motor[3];
 uint32_t test_tick;
 static uint32_t counter_us, free_mailboxes, nonzero_controls, zero_controls, disable_frames;
+static uint8_t motor_state[3], queued_state[3];
 static unsigned critical_depth;
 static float imu_yaw, imu_yaw_rate;
 static uint32_t imu_age_ms;
@@ -59,6 +60,7 @@ uint32_t HAL_CAN_GetTxMailboxesFreeLevel(CAN_HandleTypeDef *can)
 HAL_StatusTypeDef HAL_CAN_AbortTxRequest(CAN_HandleTypeDef *can, uint32_t mailboxes)
 {
     assert(can == &hcan1 && mailboxes == (CAN_TX_MAILBOX0 | CAN_TX_MAILBOX1 | CAN_TX_MAILBOX2));
+    memcpy(queued_state, motor_state, sizeof(queued_state));
     free_mailboxes = 3U;
     return HAL_OK;
 }
@@ -90,11 +92,17 @@ HAL_StatusTypeDef ctrl_motor(CAN_HandleTypeDef *can, uint16_t id, float position
 }
 
 HAL_StatusTypeDef enable_motor(CAN_HandleTypeDef *can, uint16_t id)
-{ return Submit_Motor(can, id); }
+{
+    const HAL_StatusTypeDef result = Submit_Motor(can, id);
+    queued_state[id - 1U] = 1U;
+    return result;
+}
 HAL_StatusTypeDef disable_motor(CAN_HandleTypeDef *can, uint16_t id)
 {
     ++disable_frames;
-    return Submit_Motor(can, id);
+    const HAL_StatusTypeDef result = Submit_Motor(can, id);
+    queued_state[id - 1U] = 0U;
+    return result;
 }
 
 int Jetson_Link_Send(uint8_t type, const uint8_t *payload, uint8_t length)
@@ -120,10 +128,11 @@ static void Step_Wheels(const float feedback[3])
         Jetson_CAN_Receive(background_center, no_center, sizeof(no_center));
     }
     free_mailboxes = 3U;
+    memcpy(motor_state, queued_state, sizeof(motor_state));
     for (unsigned i = 0U; i < 3U; ++i)
     {
         dm_motor[i].id = (uint8_t)(i + 1U);
-        dm_motor[i].state = 1U;
+        dm_motor[i].state = motor_state[i];
         dm_motor[i].position = remainderf(dm_motor[i].position + feedback[i] * .005f, 25.0f);
         dm_motor[i].velocity = feedback[i];
         dm_motor[i].feedback_time_ms = test_tick;
@@ -209,6 +218,8 @@ static void Start_Safety_Approach(void)
     free_mailboxes = 3U;
     nonzero_controls = critical_depth = 0U;
     zero_controls = disable_frames = 0U;
+    memset(motor_state, 0, sizeof(motor_state));
+    memset(queued_state, 0, sizeof(queued_state));
     imu_yaw = 0.0f;
     imu_yaw_rate = 0.0f;
     imu_age_ms = 0U;

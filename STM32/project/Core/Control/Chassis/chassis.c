@@ -36,13 +36,17 @@ static uint32_t ff_previous_us;
 static float ff_previous_yaw_rad;
 static uint8_t ff_history_valid, ff_yaw_valid;
 static pid_type_def yaw_pid, turn_pid;
-static uint8_t enabled, pending_disable, pending_enable;
+static uint8_t enabled, pending_enable, disable_requested;
 static uint8_t waiting_for_mailboxes;
 static uint32_t mailboxes_busy_since_ms;
 static uint8_t awaiting_enable_feedback;
 static uint32_t enable_feedback_seq[3];
-static uint32_t disable_feedback_seq[3];
-static uint8_t awaiting_disable_feedback, disable_confirmed;
+typedef enum { DISABLE_UNSENT, DISABLE_WAITING, DISABLE_CONFIRMED } Disable_Phase_t;
+static struct
+{
+    Disable_Phase_t phase;
+    uint32_t feedback_seq, last_attempt_ms;
+} disable_wheel[3];
 static uint8_t monitoring_stop, stop_groups, disable_after_stop;
 static uint32_t stop_seq[3], last_stop_group_ms;
 static Chassis_Mode_t mode;
@@ -560,8 +564,12 @@ static float Predict_Command_Yaw(const Chassis_Odometry_t *pose, uint32_t now_us
 /** @brief 只在没有执行动作时重置平移原点，保持现有 INS 的航向参考。 */
 uint8_t Chassis_Reset_Odometry(void)
 {
-    if (pending_disable || (enabled && !Chassis_Is_Stopped()))
+    if (enabled && !Chassis_Is_Stopped())
         return 0U;
+    if (disable_requested)
+        for (unsigned i = 0U; i < 3U; ++i)
+            if (disable_wheel[i].phase == DISABLE_UNSENT)
+                return 0U;
     Odometry_Init(&odometry);
     distance_completion_pending = 0U;
     for (unsigned i = 0U; i < 3U; ++i)
@@ -702,8 +710,7 @@ void Chassis_Init(void)
              CHASSIS_STRAIGHT_YAW_INTEGRAL_LIMIT);
     PID_init(&turn_pid, PID_POSITION, turn_gains, CHASSIS_TURN_OUTPUT_LIMIT,
              CHASSIS_TURN_INTEGRAL_LIMIT);
-    enabled = pending_disable = pending_enable = awaiting_enable_feedback = waiting_for_mailboxes = 0U;
-    awaiting_disable_feedback = disable_confirmed = 0U;
+    enabled = pending_enable = disable_requested = awaiting_enable_feedback = waiting_for_mailboxes = 0U;
     monitoring_stop = stop_groups = disable_after_stop = 0U;
     Chassis_Stop();
     Odometry_Init(&odometry);
@@ -761,47 +768,74 @@ void Chassis_Disable(void)
     pending_enable = 0U;
     monitoring_stop = stop_groups = disable_after_stop = 0U;
     Chassis_Stop();
-    pending_disable = 1U;
-    awaiting_disable_feedback = disable_confirmed = 0U;
+    disable_requested = 1U;
+    for (unsigned i = 0U; i < 3U; ++i)
+        disable_wheel[i].phase = DISABLE_UNSENT;
     HAL_CAN_AbortTxRequest(&MOTOR_CAN, CAN_TX_MAILBOX0 | CAN_TX_MAILBOX1 | CAN_TX_MAILBOX2);
 }
 
 uint8_t Chassis_Disable_Confirmed(void)
 {
-    if (enabled)
+    if (!disable_requested)
         return 0U;
 
-    const uint32_t now_ms = Chassis_Time_Now_Ms();
+    uint8_t confirmed = 1U;
     taskENTER_CRITICAL();
-    if (awaiting_disable_feedback)
-    {
-        uint8_t confirmed = 1U;
-        for (unsigned i = 0U; i < 3U; ++i)
-        {
-            if (dm_motor[i].id != chassis_wheel_config[i].id || dm_motor[i].state != 0U ||
-                dm_motor[i].feedback_seq == disable_feedback_seq[i] ||
-                (uint32_t)(now_ms - dm_motor[i].feedback_time_ms) > CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS)
-                confirmed = 0U;
-        }
-        if (confirmed)
-        {
-            disable_confirmed = 1U;
-            awaiting_disable_feedback = 0U;
-        }
-    }
+    const uint32_t now_ms = Chassis_Time_Now_Ms();
     for (unsigned i = 0U; i < 3U; ++i)
     {
-        if (dm_motor[i].id == chassis_wheel_config[i].id && dm_motor[i].state != 0U)
-            disable_confirmed = 0U;
+        const volatile dm_motor_t *motor = &dm_motor[i];
+        if (motor->id == chassis_wheel_config[i].id)
+        {
+            if (disable_wheel[i].phase == DISABLE_WAITING && motor->state == 0U &&
+                motor->feedback_seq != disable_wheel[i].feedback_seq &&
+                (uint32_t)(now_ms - motor->feedback_time_ms) <= CHASSIS_MOTOR_FEEDBACK_TIMEOUT_MS)
+                disable_wheel[i].phase = DISABLE_CONFIRMED;
+            else if (disable_wheel[i].phase == DISABLE_CONFIRMED && motor->state != 0U)
+                disable_wheel[i].phase = DISABLE_UNSENT;
+        }
+        confirmed &= disable_wheel[i].phase == DISABLE_CONFIRMED;
     }
-    const uint8_t confirmed = disable_confirmed;
     taskEXIT_CRITICAL();
     return confirmed;
 }
 
+/* FD 已进邮箱也须等回执。没有回执时按轮限频；HAL 提交未成功的轮下一拍继续尝试。 */
+static void Service_Disable(void)
+{
+    if (!disable_requested || Chassis_Disable_Confirmed() ||
+        HAL_CAN_GetTxMailboxesFreeLevel(&MOTOR_CAN) != 3U)
+        return;
+
+    uint8_t previous_sent = 0U;
+    for (unsigned i = 0U; i < 3U; ++i)
+    {
+        const Disable_Phase_t phase = disable_wheel[i].phase;
+        if (phase == DISABLE_CONFIRMED ||
+            (phase == DISABLE_WAITING &&
+             (uint32_t)(Chassis_Time_Now_Ms() - disable_wheel[i].last_attempt_ms) < CHASSIS_CAN_DISABLE_RETRY_MS))
+            continue;
+        if (previous_sent)
+            vTaskDelay(pdMS_TO_TICKS(CHASSIS_CAN_INTERFRAME_DELAY_MS));
+
+        taskENTER_CRITICAL();
+        const uint32_t feedback_seq = dm_motor[i].feedback_seq;
+        const HAL_StatusTypeDef result = disable_motor(&MOTOR_CAN, chassis_wheel_config[i].id);
+        if (phase == DISABLE_UNSENT && result == HAL_OK)
+        {
+            disable_wheel[i].feedback_seq = feedback_seq;
+            disable_wheel[i].phase = DISABLE_WAITING;
+        }
+        disable_wheel[i].last_attempt_ms = Chassis_Time_Now_Ms();
+        taskEXIT_CRITICAL();
+        previous_sent = result == HAL_OK;
+    }
+}
+
 uint8_t Chassis_Can_Enable(void)
 {
-    return !enabled && !pending_disable && HAL_CAN_GetTxMailboxesFreeLevel(&MOTOR_CAN) == 3U;
+    return !enabled && (!disable_requested || Chassis_Disable_Confirmed()) &&
+        HAL_CAN_GetTxMailboxesFreeLevel(&MOTOR_CAN) == 3U;
 }
 
 /** @brief 沿旧 Queue_Enable_Command 先提交零 MIT，再由 Loop 分周期提交 FC/零 MIT。
@@ -817,7 +851,7 @@ uint8_t Chassis_Enable(void)
         return 0U;
     Chassis_Stop();
     enabled = 1U;
-    awaiting_disable_feedback = disable_confirmed = 0U;
+    disable_requested = 0U;
     pending_enable = 1U;
     Chassis_Time_Reset(&control_clock);
     return 1U;
@@ -1402,34 +1436,9 @@ void Chassis_Loop(void)
             Begin_Fault_Stop(now_ms);
     }
 
-    if (pending_disable)
-    {
-        if (HAL_CAN_GetTxMailboxesFreeLevel(&MOTOR_CAN) != 3U)
-            return;
-        uint8_t sent = 1U;
-        for (unsigned i = 0U; i < 3U; ++i)
-        {
-            /* 记录发送前的序号，已缓存的失能状态不能当作本次确认。 */
-            taskENTER_CRITICAL();
-            disable_feedback_seq[i] = dm_motor[i].feedback_seq;
-            const HAL_StatusTypeDef result = disable_motor(&MOTOR_CAN, chassis_wheel_config[i].id);
-            taskEXIT_CRITICAL();
-            if (result != HAL_OK)
-                sent = 0U;
-            else if (i < 2U)
-                vTaskDelay(pdMS_TO_TICKS(CHASSIS_CAN_INTERFRAME_DELAY_MS));
-        }
-        if (sent)
-        {
-            awaiting_disable_feedback = 1U;
-            pending_disable = 0U;
-        }
-        return;
-    }
     if (!enabled)
     {
-        if (awaiting_disable_feedback)
-            Chassis_Disable_Confirmed();
+        Service_Disable();
         return;
     }
 

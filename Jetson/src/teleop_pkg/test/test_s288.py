@@ -43,6 +43,22 @@ class ProtocolTest(unittest.TestCase):
         self.assertIsNone(_take_feedback(noise, 2))
         self.assertEqual(bytes(noise), b'\x22')
 
+    def test_exchange_recovers_feedback_buffered_after_bad_crc(self):
+        body = struct.pack('<BbBBhhiIHBB', 0x02, 1, 2, 24, 0, 0, 0, 0, 0, 0, 0)
+        packet = FEEDBACK_MARK + body + struct.pack('<I', crc32(body))
+        corrupt = bytearray(packet)
+        corrupt[8] ^= 1
+        link = ServoLink.__new__(ServoLink)
+        link.motor_id = 2
+        link._fd = 123
+        command = control_packet(2, MODE_STOP, 0, 0, 0, 0, 0, 0)
+        for chunks in ((bytes(corrupt) + packet,), (bytes(corrupt) + packet[:1], packet[1:])):
+            with self.subTest(chunks=len(chunks)):
+                with (patch('servo.s288.os.write', return_value=len(command)),
+                      patch('servo.s288.os.read', side_effect=chunks),
+                      patch('servo.s288.select.select', side_effect=[([link._fd], [], [])] * len(chunks))):
+                    self.assertEqual(link.exchange(command)['id'], 2)
+
 
 class FakeLink:
     def __init__(self):

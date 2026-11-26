@@ -14,6 +14,7 @@ TIM_HandleTypeDef htim2;
 volatile dm_motor_t dm_motor[3];
 uint32_t test_tick;
 static uint32_t counter_us, free_mailboxes, controls, enables, disables, aborts, delays;
+static uint32_t disable_count[3];
 static float motor_velocity[3], yaw_deg, yaw_rate;
 static float captured_torque[3], captured_kd[3];
 static uint8_t tuning_test;
@@ -147,6 +148,7 @@ HAL_StatusTypeDef disable_motor(CAN_HandleTypeDef *can, uint16_t id)
     if (id == fail_disable_id) { fail_disable_id = 0U; return HAL_ERROR; }
     last_sent_id = (uint8_t)id;
     --free_mailboxes; ++disables;
+    ++disable_count[id - 1U];
     return HAL_OK;
 }
 
@@ -205,6 +207,7 @@ static void reset_case(uint32_t us, uint32_t ms)
 {
     counter_us = us; test_tick = ms; free_mailboxes = 3U;
     controls = enables = disables = aborts = sample_age = delays = 0U;
+    memset(disable_count, 0, sizeof(disable_count));
     imu_ready = 1U; read_advances_tick = fail_control_id = abort_pending = 0U;
     predicted_imu = 0U;
     read_injects_feedback = 0U;
@@ -586,7 +589,7 @@ static void test_timed_brake(void)
         {
             for (unsigned i = 0U; i < 65U; ++i)
                 step(10000U, 1U);
-            assert(disables == 3U && !Chassis_Is_Stopped());
+            assert(disables > 3U && !Chassis_Is_Stopped());
         }
     }
 }
@@ -625,7 +628,9 @@ static void test_frame_spacing(void)
         assert(disables == 2U && delays == (id < 3U ? 1U : 2U));
         before = delays;
         step(10000U,1U);
-        assert(disables == 5U && delays == before + 2U);
+        assert(disables == 3U && delays == before);
+        for (unsigned wheel = 0U; wheel < 3U; ++wheel)
+            assert(disable_count[wheel] == 1U);
     }
 }
 
@@ -734,6 +739,9 @@ static void test_reenable_order(void)
     Chassis_Disable();
     step(10000U,0U); assert(disables == 0U);
     step(10000U,1U); assert(disables == 3U);
+    assert(!Chassis_Can_Enable() && !Chassis_Enable());
+    for (unsigned i = 0U; i < 3U; ++i)
+        wheel_feedback(i, 0.0f, 0U);
     step(10000U,1U);
     controls = enables = 0U;
     assert(Chassis_Enable() && controls == 3U && enables == 0U);
@@ -974,7 +982,7 @@ static void test_distance_no_progress(void)
             feedback_step(10000U,wheels);
             assert(!Chassis_Is_Stopped() && !Chassis_Motion_Ready());
         }
-        assert(!Chassis_Is_Enabled() && disables == 3U);
+        assert(!Chassis_Is_Enabled() && disables >= 3U);
     }
 }
 
@@ -1079,7 +1087,7 @@ static void test_distance_coast_after_zero(uint8_t small_rollback)
         stopped_group();
         assert(!Chassis_Is_Stopped());
     }
-    assert(!Chassis_Is_Enabled() && disables == 3U);
+    assert(!Chassis_Is_Enabled() && disables >= 3U);
 }
 
 /** @brief 有持续小进展也不能无限延长动作，必须遵守独立的定距总期限。 */
@@ -1098,7 +1106,7 @@ static void test_distance_total_timeout(void)
         /* 每0.5s有2mm进展，已经超过1.5s堵转期限但仍应继续。 */
         if (frame == 249U) assert(Chassis_Is_Enabled());
     }
-    assert(!Chassis_Is_Enabled() && disables == 3U);
+    assert(!Chassis_Is_Enabled() && disables >= 3U);
 }
 
 /** @brief 同一个到位样本可直接接续。要求实测静止的调用者仍受 500 ms 期限保护。 */
@@ -1134,7 +1142,7 @@ static void test_distance_stop_deadline(uint8_t accept_motion)
     assert(Chassis_Get_Odometry(&rotating));
     assert(fabs(rotating.x_m - at_zero.x_m) < 0.0001);
     assert(fabs(rotating.y_m - at_zero.y_m) < 0.0001);
-    assert(!Chassis_Is_Enabled() && disables == 3U);
+    assert(!Chassis_Is_Enabled() && disables >= 3U);
 }
 
 /** @brief CAN拥塞不得推迟里程越界故障判断，释放邮箱后只能发失能。 */
@@ -2435,7 +2443,7 @@ static void test_translation_feedforward_geometry(void)
     }
 }
 
-/** @brief 执行底盘真实源码回归。 @return 成功为0。 */
+/* 各轮回执分开确认，仍等待缺失轮，并保持邮箱、限频和回绕约束。 */
 static void test_disable_feedback_confirmation(void)
 {
     reset_case(0U, UINT32_MAX - 50U);
@@ -2446,23 +2454,31 @@ static void test_disable_feedback_confirmation(void)
     Chassis_Disable();
     assert(!Chassis_Is_Enabled() && !Chassis_Disable_Confirmed());
     step(10000U, 1U);
-    assert(disables == 3U && !Chassis_Disable_Confirmed());
+    assert(disables == 3U && !Chassis_Disable_Confirmed() && !Chassis_Can_Enable());
 
     wheel_feedback(0U, 0.0f, 0U);
     wheel_feedback(1U, 0.0f, 0U);
     assert(!Chassis_Disable_Confirmed());
-    step(40000U, 1U);
-    wheel_feedback(2U, 0.0f, 0U);
-    assert(!Chassis_Disable_Confirmed());
-
-    wheel_feedback(0U, 0.0f, 0U);
-    wheel_feedback(1U, 0.0f, 0U);
+    step((CHASSIS_CAN_DISABLE_RETRY_MS - 10U) * 1000U, 1U);
+    assert(disables == 3U);
+    wheel_feedback(2U, 0.0f, 1U);
     step(10000U, 1U);
-    assert(Chassis_Disable_Confirmed());
+    assert(disable_count[0] == 1U && disable_count[1] == 1U && disable_count[2] == 2U);
+    assert(!Chassis_Disable_Confirmed() && !Chassis_Can_Enable());
+    step(600000U, 0U);
+    assert(disables == 4U); /* 原 FD 仍占用邮箱。 */
+    step(10000U, 1U);
+    assert(disable_count[0] == 1U && disable_count[1] == 1U && disable_count[2] == 3U);
+
+    wheel_feedback(2U, 0.0f, 0U);
+    step(10000U, 1U);
+    assert(Chassis_Disable_Confirmed() && Chassis_Can_Enable());
     step(100000U, 1U);
-    assert(Chassis_Disable_Confirmed());
+    assert(disables == 5U && Chassis_Disable_Confirmed());
     wheel_feedback(1U, 0.0f, 1U);
-    assert(!Chassis_Disable_Confirmed());
+    assert(!Chassis_Disable_Confirmed() && !Chassis_Can_Enable());
+    step(10000U, 1U);
+    assert(disable_count[0] == 1U && disable_count[1] == 2U && disable_count[2] == 3U);
 }
 
 

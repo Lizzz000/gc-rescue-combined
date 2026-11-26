@@ -22,6 +22,7 @@ typedef struct
 /* ISR更新最近一次反馈，数组下标0/1/2对应电机ID1/2/3，供调试器观察。 */
 extern volatile dm_motor_t dm_motor[3];
 
+#if CHASSIS_TUNING_ENABLED
 typedef struct
 {
     uint8_t reg;
@@ -37,15 +38,16 @@ extern volatile dm_param_reply_t dm_param_reply[3];
  * @return HAL提交结果；非法ID或已观察到电机使能返回HAL_ERROR；未到期请求返回HAL_BUSY。
  * @note 仅控制任务在底盘失能期间调用；一次只容许一个请求，100ms超时后可重新请求。
  *       HAL_OK不等于读成功，须观察对应dm_param_reply.sequence发生变化并核对reg。
- *       本车MST_ID均为0，回复仍经StdID 0接收。参数读取期间不采纳失能运动反馈，
- *       避免共用ID/载荷长度的参数数据污染位置、速度或停车确认。
+ *       本车MST_ID均为0，参数帧与失能运动反馈存在相同的载荷布局。
+ *       首次提交读取后，诊断固件会拦截可能的参数帧，避免迟到回复污染运动反馈。
  */
 HAL_StatusTypeDef DM_Motor_ReadParam(uint16_t id, uint8_t reg);
+#endif
 
 /**
  * @brief 解码达妙反馈，由共用 CAN1 接收中断在筛选帧头后调用。
  * @param[in] data StdID=0、DLC=8 的八字节载荷，非空；仅接受帧内 ID 1～3。
- * @return 无；优先分流参数回复，其余更新电机反馈、RTOS到达时刻及序号。
+ * @return 无；更新电机反馈、RTOS到达时刻及序号。诊断固件还会分流参数回复。
  * @note 不在此处读取 HAL FIFO，不执行动作或发送报文。
  */
 void DM_Motor_ReceiveFeedback(const uint8_t data[8]);

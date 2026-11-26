@@ -9,6 +9,8 @@
 #define CHASSIS_BATTERY_SAMPLE_PERIOD_MS 100U
 #define CHASSIS_LED_TOGGLE_PERIOD_MS 500U
 #define CHASSIS_CAN_INTERFRAME_DELAY_MS 1U
+/* 首次 FD 提交后等待各轮回执；缺失回执时限制该轮重发频率。 */
+#define CHASSIS_CAN_DISABLE_RETRY_MS 50U
 /* 控制调度迟到时限制单次斜坡步长，单位 s。 */
 #define CHASSIS_CONTROL_MAX_STEP_S 0.05f
 

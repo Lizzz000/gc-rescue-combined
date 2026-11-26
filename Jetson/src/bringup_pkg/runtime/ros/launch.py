@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import tempfile
+from functools import partial
+from pathlib import Path
 
 import yaml
 
@@ -43,15 +44,20 @@ def materialize(snapshot, directory):
 
 # ---- 正式启动入口：与配置实现合并，launch 文件只绑定 ROS 发现入口 ----
 
+def _on_role_exit(role, event, context):
+    if not context.is_shutdown:
+        # 让 LaunchService 停止其余角色，并向外层进程管理器返回失败。
+        raise RuntimeError(f'{role} process exited unexpectedly with code {event.returncode}')
+
+
 def _start(context):
     """经 load_configuration 验证配置一次，再生成快照并装配角色；失败时不创建业务资源。
 
     context 为 ROS LaunchContext，读取配置、角色和图传开关。返回 launch action 列表；
     配置错误直接抛出，参数文件和节点均在完整校验成功后创建。
     """
-    from launch.actions import EmitEvent, LogInfo, RegisterEventHandler
+    from launch.actions import LogInfo, RegisterEventHandler
     from launch.event_handlers import OnProcessExit
-    from launch.events import Shutdown
     from launch.substitutions import LaunchConfiguration
     from launch_ros.actions import Node
 
@@ -66,20 +72,17 @@ def _start(context):
     if camera_controls:
         readback = ', '.join(f'{name}={value}' for name, value in camera_controls.items())
         actions.append(LogInfo(msg=f"USB camera {snapshot['nodes']['detect_node']['camera_device']}: {readback}"))
+    nodes = []
     for role in snapshot['roles']:
         package, executable, _ = ROLES[role]
         node = Node(
             package=package, executable=executable, arguments=['--role', role],
             parameters=[str(parameter_file)], output='screen',
             additional_env={'RESCUE_EFFECTIVE_SHA256': snapshot['effective_sha256']})
-        actions.append(node)
-        if role == 'bridge':
-            # bridge 独占 CAN 串口；它退出（含串口被占用）后其余节点无法控制底盘，整体关闭 launch。
-            reason = 'bridge process exited; shutting down rescue launch'
-            actions.append(RegisterEventHandler(OnProcessExit(
-                target_action=node,
-                on_exit=[LogInfo(msg=reason), EmitEvent(event=Shutdown(reason=reason))])))
-    return actions
+        nodes.append(node)
+        actions.append(RegisterEventHandler(OnProcessExit(
+            target_action=node, on_exit=partial(_on_role_exit, role))))
+    return actions + nodes
 
 
 def generate_launch_description():

@@ -15,8 +15,11 @@
 #include "jetson_link.h"
 #include "manual_link.h"
 #include "manual_control.h"
+#if CHASSIS_TUNING_ENABLED
+#include "live_tuning.h"
+#endif
 
-/* 板间帧改走 USB。两种编译模式的 CAN 过滤器都只留电机反馈。 */
+/* 板间帧走 USB。CAN 过滤器使用一个配置组。 */
 #define TEST_FILTER_BANKS 1U
 
 static CAN_TypeDef can1_regs, can2_regs;
@@ -44,6 +47,9 @@ static uint8_t manual_rx_length, manual_rx_data[8];
 static uint32_t tx_count, rx_count, loops, setup_steps;
 static uint32_t chassis_inits, chassis_loops;
 static uint32_t jetson_can_inits, manual_can_inits, manual_control_inits, manual_control_loops;
+#if CHASSIS_TUNING_ENABLED
+static uint32_t tuning_inits, tuning_loops, tuning_snapshots;
+#endif
 static uint32_t jetson_auto_inits, jetson_auto_loops;
 static HAL_StatusTypeDef start_result = HAL_OK;
 static HAL_StatusTypeDef tx_result = HAL_OK;
@@ -117,6 +123,14 @@ void Manual_Control_Loop(void)
     assert(chassis_loops == manual_control_loops);
     ++manual_control_loops;
 }
+#if CHASSIS_TUNING_ENABLED
+void Live_Tuning_Init(void)
+{ assert(manual_control_inits == 1U && setup_steps == 7U); ++tuning_inits; }
+void Live_Tuning_Loop(void)
+{ assert(tuning_inits == 1U && tuning_snapshots == chassis_loops); ++tuning_loops; }
+void Live_Tuning_Snapshot(void)
+{ assert(tuning_loops == chassis_loops && tuning_snapshots + 1U == chassis_loops); ++tuning_snapshots; }
+#endif
 /** @brief 核对原任务每5ms调用一次底盘调度；动作算法另由chassis suite编译验证。
  * @return 无。
  */
@@ -125,6 +139,8 @@ void Chassis_Loop(void)
     assert(test_tick == 5U * (chassis_loops + 1U));
 #if JETSON_AUTO_CAN_ENABLED
     assert(jetson_auto_loops == chassis_loops);
+#elif CHASSIS_TUNING_ENABLED
+    assert(tuning_loops == chassis_loops + 1U);
 #else
     assert(manual_control_loops == chassis_loops + 1U);
 #endif
@@ -216,6 +232,25 @@ void vTaskDelayUntil(TickType_t *wake, TickType_t ticks)
     if (++loops == 201U) longjmp(task_finished,1);
 }
 
+/* 位置低字节可与参数操作码相同；正常工作时仍须接收失能帧。 */
+static void test_disabled_feedback_signatures(void)
+{
+    const uint8_t positions[] = {0x33U, 0x55U, 0xAAU};
+    uint8_t feedback[8] = {2U, 0U, 0U, 0x7FU, 0xF7U, 0xFFU, 25U, 26U};
+    memset(&rx_header, 0, sizeof(rx_header));
+    rx_header.DLC = 8U;
+    uint32_t sequence = dm_motor[1].feedback_seq;
+    for (unsigned i = 0U; i < sizeof(positions); ++i)
+    {
+        feedback[2] = positions[i];
+        memcpy(rx_data, feedback, sizeof(feedback));
+        Receive_Current_Frame();
+        assert(dm_motor[1].feedback_seq == ++sequence && dm_motor[1].state == 0U);
+        assert(dm_motor[1].position == uint_to_float(positions[i], -12.5f, 12.5f, 16));
+    }
+}
+
+#if CHASSIS_TUNING_ENABLED
 /** @brief 参数读回与运动反馈共用ID时仍隔离；仅0x33当前请求能发布结果。 */
 static void test_param_read_only(void)
 {
@@ -305,6 +340,7 @@ static void test_param_read_only(void)
     assert(dm_param_reply[1].sequence == 0U && dm_motor[1].state == 1U);
     assert(DM_Motor_ReadParam(2U, 1U) == HAL_ERROR && critical_depth == 0U);
 }
+#endif
 
 /** @brief 验证手册MIT向量、反馈解码、CAN1筛选与任务无自动命令。 @return 成功为0。 */
 int main(void)
@@ -324,21 +360,22 @@ int main(void)
     start_result = HAL_OK;
     can_filter_init();
     assert(filter_count == TEST_FILTER_BANKS && setup_steps == 7U);
-    const uint16_t accepted_ids[TEST_FILTER_BANKS][4] = {
-        {0x000U, 0x000U, 0x000U, 0x000U},
-    };
     for (unsigned bank = 0U; bank < TEST_FILTER_BANKS; ++bank)
     {
         const CAN_FilterTypeDef *filter = &filters[bank];
         assert(filter->FilterBank == bank && filter->SlaveStartFilterBank == 14U);
-        assert(filter->FilterMode == CAN_FILTERMODE_IDLIST &&
-               filter->FilterScale == CAN_FILTERSCALE_16BIT);
+        assert(filter->FilterScale == CAN_FILTERSCALE_16BIT);
         assert(filter->FilterActivation == ENABLE && filter->FilterFIFOAssignment == CAN_FILTER_FIFO0);
-        /* 四项都应是标准数据帧，16 位编码的低五位为零。 */
-        assert(filter->FilterIdLow == ((uint32_t)accepted_ids[bank][0] << 5U));
-        assert(filter->FilterMaskIdLow == ((uint32_t)accepted_ids[bank][1] << 5U));
-        assert(filter->FilterIdHigh == ((uint32_t)accepted_ids[bank][2] << 5U));
-        assert(filter->FilterMaskIdHigh == ((uint32_t)accepted_ids[bank][3] << 5U));
+        assert(filter->FilterIdLow == 0U && filter->FilterIdHigh == 0U);
+#if CHASSIS_TUNING_ENABLED
+        /* 调参构建捕获所有标准数据帧，运动解码仍只使用 ID 0。 */
+        assert(filter->FilterMode == CAN_FILTERMODE_IDMASK);
+        assert(filter->FilterMaskIdLow == 0x18U && filter->FilterMaskIdHigh == 0x18U);
+#else
+        /* 两个 ID 字段及两个 Mask 字段组成四个相同的 ID 0 列表项。 */
+        assert(filter->FilterMode == CAN_FILTERMODE_IDLIST);
+        assert(filter->FilterMaskIdLow == 0U && filter->FilterMaskIdHigh == 0U);
+#endif
     }
     enable_motor(&hcan1,1);
     for (unsigned i = 0; i < 7; ++i) assert(tx_data[i] == 0xFF);
@@ -456,7 +493,10 @@ int main(void)
     HAL_CAN_RxFifo0MsgPendingCallback(&hcan1);
     assert(rx_count == previous_rx);
 
+    test_disabled_feedback_signatures();
+#if CHASSIS_TUNING_ENABLED
     test_param_read_only();
+#endif
     previous_tx = tx_count;
     setup_steps = filter_count = 0U; test_tick = 0U;
     if (setjmp(task_finished) == 0) test_task(NULL);
@@ -467,12 +507,14 @@ int main(void)
 #if JETSON_AUTO_CAN_ENABLED
     assert(jetson_can_inits == 1U && jetson_auto_inits == 1U && jetson_auto_loops == 200U);
     assert(manual_can_inits == 0U && manual_control_inits == 0U && manual_control_loops == 0U);
+#elif CHASSIS_TUNING_ENABLED
+    assert(manual_can_inits == 1U && manual_control_inits == 1U && manual_control_loops == 0U);
+    assert(tuning_inits == 1U && tuning_loops == 200U && tuning_snapshots == 200U);
 #else
     assert(manual_can_inits == 1U && manual_control_inits == 1U && manual_control_loops == 200U);
     assert(jetson_can_inits == 0U && jetson_auto_inits == 0U && jetson_auto_loops == 0U);
 #endif
     assert(fabsf(battery_voltage - 24.11f) < 0.0001f);
-    puts(JETSON_AUTO_CAN_ENABLED ? "PASS CAN auto: motor-only filter, MIT feedback and 5ms task ordering"
-                       : "PASS CAN manual: motor-only filter, MIT feedback and 5ms task ordering");
+    puts("PASS CAN: filters, MIT feedback and 5ms task ordering");
     return 0;
 }

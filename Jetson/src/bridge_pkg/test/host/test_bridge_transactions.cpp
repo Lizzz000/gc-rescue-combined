@@ -31,6 +31,8 @@ struct Ports final : BridgeTransactions::Ports
   CommandRequest last_command{};
   std::vector<canid_t> queued;
   std::vector<std::pair<Service, std::int64_t>> cancelled;
+  std::string request_error;
+  std::string request_warning;
 
   BridgeSourceTime sourceNow() const override {return source;}
   Clock::time_point monotonicNow() const override {return monotonic;}
@@ -58,8 +60,8 @@ struct Ports final : BridgeTransactions::Ports
   void queueReply(canid_t id) override {queued.push_back(id);}
   void dropReply(canid_t) override {}
   void dropRequest() override {}
-  void setRequestError(std::string_view) override {}
-  void warnRequest(const char *) override {}
+  void setRequestError(std::string_view message) override {request_error = message;}
+  void warnRequest(const char * message) override {request_warning = message;}
 };
 
 struct Fixture
@@ -356,6 +358,17 @@ void testBridgeTransactions()
   occupied.mission(BridgeCyclePhase::WaitingTurn, 1, roi_id, BridgeDestination::Left);
   occupied.transactions.handleMissionCommand(align, token + 1);
   CHECK(occupied.ports.command_requests == 0 && occupied.replyIs(CanProtocol::commandResult(false, align, token + 1)));
+
+  // STM32 和 Bridge 重启时，尚未重启的 Mission 即使正在搜索也不能重新授权首次对准。
+  Fixture restarted_bridge;
+  restarted_bridge.arrival.complete(true);
+  restarted_bridge.task("seg");
+  restarted_bridge.mission(BridgeCyclePhase::SearchingTarget, 2);
+  restarted_bridge.transactions.handleMissionCommand(align, 1);
+  CHECK(restarted_bridge.ports.command_requests == 0 &&
+    restarted_bridge.replyIs(CanProtocol::commandResult(false, align, 1)));
+  CHECK(restarted_bridge.ports.request_error == restarted_bridge.ports.request_warning &&
+    restarted_bridge.ports.request_error.find("restart the full stack") != std::string::npos);
 
   Fixture lost;
   lost.arrival.complete(true);

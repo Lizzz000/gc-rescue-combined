@@ -73,7 +73,7 @@ void Chassis_Init(void);
  */
 uint8_t Chassis_Is_Enabled(void);
 
-/* 初次使能的发送资源已就绪：底盘失能、没有待发失能帧、CAN 三邮箱全空。 */
+/* 底盘失能且 CAN 三邮箱全空；曾请求失能时还须确认三轮均已回执。 */
 uint8_t Chassis_Can_Enable(void);
 
 /** @brief 接受使能请求，按旧零 MIT、FC、零 MIT 顺序分组提交，之后执行动作。
@@ -83,7 +83,7 @@ uint8_t Chassis_Can_Enable(void);
 uint8_t Chassis_Enable(void);
 
 /** @brief 清除动作并请求三轮失能；取消旧帧后由 Loop 等待空邮箱发送 FD。
- * @return 无；调用后仍需持续调用 Loop 完成失能帧提交。
+ * @return 无；Loop 会对缺少新失能反馈的车轮限频重发。
  */
 void Chassis_Disable(void);
 /** @brief 本次失能指令后是否收到三台电机的新失能反馈。 */

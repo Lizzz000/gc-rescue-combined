@@ -8,16 +8,18 @@
 #include "task.h"
 
 volatile dm_motor_t dm_motor[3];
+/* 用户已确认的电机幅值，必须与电机端参数一致。 */
+static const float motor_tmax[3] = {1.0f, 1.0f, 2.0f};
+
+#if CHASSIS_TUNING_ENABLED
 volatile dm_param_reply_t dm_param_reply[3];
 #define DM_PARAM_TIMEOUT_MS 100U
 /* 由控制任务发布，CAN ISR消费；提交时短临界区防止回复先于请求登记。 */
 static volatile struct
 {
-    uint8_t active, id, reg;
+    uint8_t active, requested, id, reg;
     uint32_t started_ms;
 } param_request;
-/* 用户已确认的电机幅值，必须与电机端参数一致。 */
-static const float motor_tmax[3] = {1.0f, 1.0f, 2.0f};
 
 HAL_StatusTypeDef DM_Motor_ReadParam(uint16_t id, uint8_t reg)
 {
@@ -53,7 +55,9 @@ HAL_StatusTypeDef DM_Motor_ReadParam(uint16_t id, uint8_t reg)
     param_request.started_ms = now_ms;
     param_request.active = 1U;
     HAL_StatusTypeDef result = HAL_CAN_AddTxMessage(&MOTOR_CAN, &header, data, &mailbox);
-    if (result != HAL_OK)
+    if (result == HAL_OK)
+        param_request.requested = 1U;
+    else
         param_request.active = 0U;
     taskEXIT_CRITICAL();
     return result;
@@ -61,10 +65,14 @@ HAL_StatusTypeDef DM_Motor_ReadParam(uint16_t id, uint8_t reg)
 
 /** @brief 参数/运动回复共用MST_ID=0；只发布当前请求的0x33读回。
  * 官方SDK依据：dmBots/motor-sdk/Python例程/u2can/DM_CAN.py，
- * __read_RID_param、__process_set_param_packet。0x55/0xAA绝不作为运动反馈。
+ * __read_RID_param、__process_set_param_packet。诊断固件提交过读请求后，
+ * 优先隔离可能的参数帧及迟到回包，避免同一载荷被解释成运动反馈。
  */
 static uint8_t receive_param_reply(const uint8_t data[8], uint32_t now_ms)
 {
+    if (!param_request.requested)
+        return 0U;
+
     const uint8_t waiting = param_request.active &&
         (uint32_t)(now_ms - param_request.started_ms) < DM_PARAM_TIMEOUT_MS;
     if (!waiting)
@@ -95,6 +103,7 @@ static uint8_t receive_param_reply(const uint8_t data[8], uint32_t now_ms)
         param_request.active = 0U;
     return 0U;
 }
+#endif
 
 /** @brief 沿用手册uint_to_float公式；输入范围及单位见头文件。 */
 float uint_to_float(int x_int, float x_min, float x_max, int bits)
@@ -184,8 +193,10 @@ void DM_Motor_ReceiveFeedback(const uint8_t data[8])
     if (data == NULL)
         return;
     uint32_t now_ms = (uint32_t)xTaskGetTickCountFromISR();
+#if CHASSIS_TUNING_ENABLED
     if (receive_param_reply(data, now_ms))
         return;
+#endif
     uint8_t id = data[0] & 0x0FU;
     if (id < 1U || id > 3U)
         return;

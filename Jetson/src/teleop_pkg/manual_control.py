@@ -36,7 +36,37 @@ _GRIPPER_KEYS = ('device', 'id', 'kp', 'kd', 'closed_deg', 'open_deg', 'move_s',
                  'open_hold_max_nm', 'output_tolerance_deg', 'open_trim_deg', 'closed_trim_deg')
 
 
-def _mapping(path, document, label):
+class _UniqueConfigLoader(yaml.SafeLoader):
+    def __init__(self, stream):
+        super().__init__(stream)
+        self._checked_mappings = set()
+
+    def flatten_mapping(self, node):
+        # Check each mapping before PyYAML expands YAML merge keys in place.
+        if node not in self._checked_mappings:
+            self._checked_mappings.add(node)
+            keys = set()
+            merge_key = object()
+            for key_node, _ in node.value:
+                if key_node.tag == 'tag:yaml.org,2002:merge':
+                    key = merge_key
+                elif key_node.tag == 'tag:yaml.org,2002:value':
+                    key = key_node.value
+                else:
+                    key = self.construct_object(key_node)
+                try:
+                    if key in keys:
+                        raise ValueError(f'配置字段重复：{key_node.value!r}{key_node.start_mark}')
+                    keys.add(key)
+                except TypeError:
+                    # The YAML constructor reports unhashable keys with source context.
+                    continue
+        super().flatten_mapping(node)
+
+
+def _read_mapping(path, label):
+    with path.open('rb') as stream:
+        document = yaml.load(stream, Loader=_UniqueConfigLoader)
     if not isinstance(document, dict):
         raise ValueError(f'{path}: {label}须为映射')
     return document
@@ -56,7 +86,7 @@ def _merge_fields(document, values, prefix=''):
 def _read_config_values(path):
     """读取 --config 及其 advanced_config 引用，按叶键合并；只用于提取中性键。"""
     path = Path(path).resolve()
-    document = _mapping(path, yaml.safe_load(path.read_bytes()), '配置')
+    document = _read_mapping(path, '配置')
     reference = document.pop('advanced_config', None)
     values = {}
     _merge_fields(document, values)
@@ -67,7 +97,7 @@ def _read_config_values(path):
     advanced_path = Path(reference)
     if not advanced_path.is_absolute():
         advanced_path = path.parent / advanced_path
-    advanced = _mapping(advanced_path, yaml.safe_load(advanced_path.read_bytes()), '高级配置')
+    advanced = _read_mapping(advanced_path, '高级配置')
     _merge_fields(advanced, values)
     return values
 

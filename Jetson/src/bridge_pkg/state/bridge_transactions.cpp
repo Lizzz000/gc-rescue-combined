@@ -50,7 +50,16 @@ void BridgeTransactions::handleMissionCommand(std::uint8_t command, std::uint32_
     }
     if (initial) {
       const auto & mission = state_.missionState();
-      if (!mission || mission->cycle_generation != 0 || mission->transport_phase != BridgeTransportPhase::First ||
+      if (mission && mission->cycle_generation != 0) {
+        constexpr auto message =
+          "Initial alignment rejected because the Mission session has already started. "
+          "Stop the Jetson stack, reinitialize STM32, then restart the full stack.";
+        ports_.setRequestError(message);
+        ports_.warnRequest(message);
+        reply(false);
+        return;
+      }
+      if (!mission || mission->transport_phase != BridgeTransportPhase::First ||
         mission->roi_request_id != 0 || mission->destination != BridgeDestination::None ||
         mission->operation != BridgeOperation::Idle || route_aborted_ || state_.locallyHeld() ||
         arrival_point_.busy() || (mission->cycle_phase != BridgeCyclePhase::SearchingTarget &&
