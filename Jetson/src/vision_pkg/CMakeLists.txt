@@ -48,7 +48,7 @@ add_library(vision_components SHARED)
 vision_ros_target(vision_components)
 target_link_libraries(vision_components PRIVATE vision_nodes)
 rclcpp_components_register_nodes(vision_components "DetectNode" "StreamNode")
-install(TARGETS vision_runtime DESTINATION lib/${PROJECT_NAME})
+install(TARGETS vision_runtime vision_engine_build DESTINATION lib/${PROJECT_NAME})
 install(TARGETS vision_components LIBRARY DESTINATION lib)
 install(FILES camera/neon/LICENSE-OpenCV.txt DESTINATION share/${PROJECT_NAME}/licenses)
 # 模型目录仅提供类别/元数据及用户已有本机资产；不安装旧配置和旧 launch。
