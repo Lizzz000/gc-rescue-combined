@@ -683,7 +683,7 @@ FieldResult FieldLocator::update(const cv::Mat & frame)
   // 运动预测仅使用已接受的几何；失败帧不能写入成功历史。
   const auto predicted = predictQuad();
   const bool tracking = has_corners_ && predicted.size() == 4;
-  FrameEvidence evidence{small, predicted, tracking, t0, ms_resize, 0.0, {}, {}};
+  FrameEvidence evidence{small, predicted, tracking, t0, ms_resize, 0.0, {}, {}, {}};
   // refit_every 按通过帧准备的累计帧数计，包括之后未通过候选门槛的帧，不按成功提交次数计。
   auto candidate = findCandidate(evidence, frame_idx_ % std::max(1, cfg_.refit_every) == 0);
   evidence.ms_detect = (cv::getTickCount() - t0) * 1000.0 / cv::getTickFrequency() - ms_resize;

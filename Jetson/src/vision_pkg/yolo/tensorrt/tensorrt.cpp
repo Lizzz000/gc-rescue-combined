@@ -1,4 +1,6 @@
 #include "yolo/tensorrt/tensorrt.hpp"
+
+#if NV_TENSORRT_MAJOR < 11
 #include "yolo/postprocess.hpp"
 
 #include <algorithm>
@@ -230,3 +232,4 @@ void ImageFolderCalibrator::writeCalibrationCache(
     std::cerr << "[engine] calibration cache write failed: unknown exception" << std::endl;
   }
 }
+#endif

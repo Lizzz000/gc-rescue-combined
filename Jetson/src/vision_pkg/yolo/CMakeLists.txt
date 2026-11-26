@@ -12,7 +12,7 @@ target_compile_features(vision_postprocess PUBLIC cxx_std_17)
 set_target_properties(vision_postprocess PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(vision_postprocess PUBLIC vision_yolo_headers)
 
-# 本集成只接受 TensorRT 10.x，主版本不符直接失败。
+# 支持 TensorRT 10.x 和 11.x，其他主版本在配置阶段拒绝。
 # 在启用 CUDA 前确定目标架构；87 是 Orin 默认值，其他设备须显式指定实际 GPU 架构。
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
   set(CMAKE_CUDA_ARCHITECTURES 87 CACHE STRING "Target CUDA compute architectures")
@@ -32,12 +32,21 @@ find_library(NVONNXPARSER_LIB nvonnxparser
 if(NOT TENSORRT_INCLUDE_DIR OR NOT NVINFER_LIB OR NOT NVONNXPARSER_LIB)
   message(FATAL_ERROR "TensorRT headers, nvinfer and nvonnxparser are required. Set TENSORRT_DIR.")
 endif()
-file(READ "${TENSORRT_INCLUDE_DIR}/NvInferVersion.h" _trt_version)
-if(_trt_version MATCHES "define[ \t]+NV_TENSORRT_MAJOR[ \t]+([0-9]+)")
-  set(_trt_major "${CMAKE_MATCH_1}")
-endif()
-if(NOT _trt_major STREQUAL "10")
-  message(FATAL_ERROR "This integration targets TensorRT 10.x; found '${_trt_major}'.")
+include(CheckCXXSourceCompiles)
+include(CMakePushCheckState)
+cmake_push_check_state(RESET)
+set(CMAKE_REQUIRED_INCLUDES "${TENSORRT_INCLUDE_DIR}")
+unset(VISION_TENSORRT_VERSION_SUPPORTED CACHE)
+check_cxx_source_compiles([=[
+  #include <NvInferVersion.h>
+  #if NV_TENSORRT_MAJOR != 10 && NV_TENSORRT_MAJOR != 11
+  #error TensorRT 10 or 11 is required
+  #endif
+  int main() { return 0; }
+]=] VISION_TENSORRT_VERSION_SUPPORTED)
+cmake_pop_check_state()
+if(NOT VISION_TENSORRT_VERSION_SUPPORTED)
+  message(FATAL_ERROR "TensorRT 10.x or 11.x headers are required at '${TENSORRT_INCLUDE_DIR}'.")
 endif()
 
 # 固定归档及校验和，把下载与展开限制在构建目录，避免依赖可变分支。

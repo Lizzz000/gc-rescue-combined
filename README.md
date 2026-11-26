@@ -52,19 +52,21 @@ python STM32/tests/check_gripper_budget.py
 
 ### Jetson
 
-完整工作区需要 ROS 2 Humble、CUDA/TensorRT、OpenCV 和相应 Jetson 多媒体 SDK；模型引擎需按实际设备准备。进入 `Jetson/` 后，在已经加载 ROS 环境的终端构建：
+Jetson 需要 ROS 2、CUDA、TensorRT、OpenCV、GStreamer 和 Jetson 多媒体 SDK。Ubuntu 24.04 使用 ROS 2 Jazzy，Ubuntu 22.04 的既有环境使用 ROS 2 Humble。下面在 Ubuntu 24.04 上使用系统工具链构建运行和控制包，跳过独立的录像工具 `record_pkg`。
 
 ```sh
 cd Jetson
-source /opt/ros/humble/setup.bash
-colcon build --base-paths src --packages-select \
-  interface_pkg vision_pkg track_pkg mission_pkg bridge_pkg bringup_pkg \
-  --cmake-args -DBUILD_TESTING=ON
-source install/setup.bash
-ros2 launch bringup_pkg rescue.launch.py run:=vision
+source /opt/ros/jazzy/setup.bash
+colcon build --base-paths src --packages-skip record_pkg \
+  --cmake-args -DBUILD_TESTING=ON -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
+source install/local_setup.bash
 ```
 
-`run:=vision` 启动视觉检测，HTTP 图传默认关闭。调试取流时可在启动命令末尾加 `stream:=true`。`run:=vision` 需要匹配的 TensorRT 引擎；仓库未附带该引擎。现场自动搬运使用 STM32 的 `Debug-Auto` 预设和 Jetson 的 [现场配置](Jetson/src/bringup_pkg/config/field_20261122.yaml)。构建、烧录及 `run:=all` 命令见 [现场启动](STM32/docs/JETSON_USB_TEST.md#下一次现场单绿验收)。
+如果 Jetson 无法访问 GitHub，可在 `--cmake-args` 后添加 `-DYOLOS_CPP_TRT_ARCHIVE=/path/to/yolos-v3.1.0.tar.gz`，使用已下载的源码归档。CMake 会校验归档的 SHA-256。[YOLO 固定版本源码归档](https://codeload.github.com/Geekgineer/YOLOs-CPP-TensorRT/tar.gz/refs/tags/v3.1.0)
+
+TensorRT 10 的引擎构建器默认使用 FP16。TensorRT 11 使用 ONNX 模型定义的精度，分割管线要求静态 NCHW 的 FLOAT 输入和 FLOAT 输出。升级 TensorRT 主版本后，用 `ros2 run vision_pkg vision_engine_build /path/to/model.onnx` 为当前设备重新生成引擎，并将启动配置中的 `seg_model_path` 指向新引擎。
+
+使用 `ros2 launch bringup_pkg rescue.launch.py run:=vision config:=/path/to/config.yaml` 启动视觉检测。需要 HTTP 图传时添加 `stream:=true`。现场自动搬运使用 STM32 的 `Debug-Auto` 预设和 Jetson 现场配置。[现场配置](Jetson/src/bringup_pkg/config/field_20261122.yaml) · [构建、烧录与现场启动](STM32/docs/JETSON_USB_TEST.md#下一次现场单绿验收)
 
 不依赖 ROS/GPU 的主机测试入口：
 

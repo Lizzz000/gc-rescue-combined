@@ -108,9 +108,8 @@ bool commitVerifiedBinary(
 #include <vector>
 
 // ---- 离线构建的精度尝试与校准数据身份 ----
-/// 已规范化的精度名（fp32 / fp16 / int8）。未知或空串返回空列表。
-/// int8 的第二项固定是 fp16：部分 TensorRT 10.x 无法以 INT8 构建 YOLO26 end2end 图，
-/// 回退是预定路径。板端是否仍会走这条回退要实测，顺序本身不依赖板端。
+/// TensorRT 10 接受 fp32 / fp16 / int8，int8 失败时再尝试 fp16。
+/// TensorRT 11 只接受 model，精度由 ONNX 确定。不支持的精度返回空列表。
 std::vector<std::string> precisionAttempts(const std::string & requested);
 
 // 给标定器和 engine 缓存同一份确定排序的图片清单和内容指纹，不解码图片或访问 GPU。
@@ -257,10 +256,11 @@ PromotionResult promote(
 // 构建输入和缓存条件；增加影响引擎内容的选项时必须同步缓存键。
 struct BuildOptions
 {
-  /// "fp32"、"fp16" 或 "int8"。仅在确实需要构建 engine 时才会用到。
-  std::string precision{"fp16"};
+  /// "auto" 在 TensorRT 10 选择 "fp16"，在 TensorRT 11 选用 ONNX 自带精度（"model"）。
+  /// "fp32"、"fp16" 或 "int8" 仅适用于 TensorRT 10。
+  std::string precision{"auto"};
 
-  /// calibration 图像所在目录，使用 "int8" 时必需。
+  /// TensorRT 10 使用 "int8" 时提供的标定图像目录。
   std::string int8_calib_dir;
 
   /// engine 与计时缓存的写出位置；为空时使用 weakly_canonical(ONNX) 的真实父目录。
@@ -269,7 +269,7 @@ struct BuildOptions
   /// TensorRT tactic workspace 池大小，单位为 MiB。它不是 engine 的内存占用。
   std::size_t workspace_mb{1024};
 
-  /// TensorRT 10.x 构建优化级别为 0..5；更高等级通常增加构建时间，实际推理性能须测量。
+  /// 构建优化级别为 0..5；更高等级通常增加构建时间，实际推理性能须测量。
   int builder_optimization_level{5};
 
   /// -1 使用 GPU；非负值选择 DLA 核心，是否可用由当前设备能力检查决定。
@@ -329,6 +329,6 @@ std::string cacheKey(const std::string & onnx_path, const BuildOptions & options
 ///
 /// ".trt"/".engine" 路径先经 verifyEngineFile 校验，通过才原样返回。".onnx" 路径会
 /// 先验收稳定缓存，再精确验收旧身份缓存并保留原文件迁移；无有效匹配缓存时才
-/// 构建；若 INT8 构建失败，则 *再以 FP16 构建一次*，并写下 "<stem>.<key>.int8-failed"
+/// 构建。TensorRT 10 的隐式 INT8 构建失败时，再以 FP16 构建一次，并写下 "<stem>.<key>.int8-failed"
 /// 标记：输入不变时下次启动直接走 FP16，不再重复耗时的 INT8 构建（删掉标记即可重试）。
 BuildResult resolveEngine(const std::string & model_path, const BuildOptions & options);

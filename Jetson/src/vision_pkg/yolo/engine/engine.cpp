@@ -10,12 +10,15 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <utility>
 
 #include <NvInfer.h>
 #include <NvInferVersion.h>
 #include <NvOnnxParser.h>
+#include <cuda_runtime_api.h>
 
 constexpr const char * kBuilderRevision = "dual-v4";
 
@@ -38,14 +41,22 @@ std::string lower(std::string s)
   return s;
 }
 
-// 新精度名要同时进这个函数、buildOnce() 的 flag、precisionAttempts() 和 cacheKey()。漏一处就会把不同精度写成同一个缓存。
-/// 把用户传入的精度字符串规范化；无法识别时返回 ""。
-std::string normalisePrecision(const std::string & raw)
+// 规范化构建选项，缓存键使用与实际构建相同的精度名。
+std::string buildPrecision(const BuildOptions & options, std::string & error)
 {
-  const std::string p = lower(raw);
+  const std::string p = lower(options.precision);
+#if NV_TENSORRT_MAJOR >= 11
+  if ((p == "auto" || p == "model") && options.int8_calib_dir.empty()) {return "model";}
+  error = "TensorRT 11 uses precision encoded in the ONNX model. Use precision 'model' "
+    "without int8_calib_dir. For mixed precision or INT8, convert the ONNX offline and "
+    "keep FLOAT inputs and outputs (use explicit quantize/dequantize nodes for INT8).";
+#else
+  if (p == "auto") {return "fp16";}
   if (p == "fp16" || p == "half") {return "fp16";}
   if (p == "int8" || p == "int8_entropy") {return "int8";}
   if (p == "fp32" || p == "float32" || p == "none" || p.empty()) {return "fp32";}
+  error = "unknown precision '" + options.precision + "' (use auto, fp32, fp16 or int8)";
+#endif
   return "";
 }
 
@@ -104,12 +115,17 @@ bool writeBinaryComplete(
 
 std::vector<std::string> precisionAttempts(const std::string & requested)
 {
+#if NV_TENSORRT_MAJOR >= 11
+  if (requested == "model") {return {requested};}
+  return {};
+#else
   if (requested != "fp32" && requested != "fp16" && requested != "int8") {
     return {};
   }
   std::vector<std::string> attempts{requested};
   if (requested == "int8") {attempts.push_back("fp16");}
   return attempts;
+#endif
 }
 
 std::vector<std::string> calibrationImages(const std::string & dir)
@@ -328,8 +344,7 @@ struct TrtVersion
   int patch{0};
 };
 
-/// 解码 getInferLibVersion() 的整数编码。TensorRT 10 头文件（NvInferRuntimeBase.h）写明格式为
-/// (MAJOR * 100 + MINOR) * 100 + PATCH；本集成在 CMake 里已限定 TensorRT 10.x。
+/// NvInferRuntimeBase.h 定义 getInferLibVersion() 为 (MAJOR * 100 + MINOR) * 100 + PATCH。
 TrtVersion decodeTrtVersion(std::int64_t value)
 {
   TrtVersion v;
@@ -594,6 +609,17 @@ bool buildOnce(
     inputs.push_back(std::move(tensor));
   }
   if (!validateSegInputTensors(inputs, error_out)) {return false;}
+#if NV_TENSORRT_MAJOR >= 11
+  // 强类型网络保留 ONNX 输出类型，构建前拒绝无法交给现有分割管线的低精度输出。
+  for (int i = 0; i < network->getNbOutputs(); ++i) {
+    const auto * output = network->getOutput(i);
+    if (!output || output->getType() != nvinfer1::DataType::kFLOAT) {
+      error_out = "TensorRT 11 requires FLOAT ONNX outputs for this segmentation pipeline; "
+        "preserve the original input and output types when converting the model";
+      return false;
+    }
+  }
+#endif
 
   if (cancelled()) {return false;}
   std::unique_ptr<nvinfer1::IBuilderConfig> config(builder->createBuilderConfig());
@@ -618,7 +644,7 @@ bool buildOnce(
   const std::filesystem::path timing_path = timingCachePath(options, out);
   if (options.use_timing_cache && !timing_path.empty()) {
     const std::vector<char> blob = readBinary(timing_path);
-    // TensorRT 10.x 由 IBuilderConfig 创建计时缓存，再绑定到同一份构建配置。
+    // 由 IBuilderConfig 创建计时缓存，再绑定到同一份构建配置。
     timing_cache.reset(config->createTimingCache(blob.data(), blob.size()));
     if (timing_cache) {
       if (!blob.empty()) {
@@ -628,8 +654,8 @@ bool buildOnce(
     }
   }
 
-  // 注意：较新的 TensorRT 10.x 头文件已把 kFP16/kINT8 标志和隐式量化标定器标为 deprecated
-  // （推荐强类型网络 + 显式量化），目前仍可用；编译时会出现 -Wdeprecated-declarations 警告。
+#if NV_TENSORRT_MAJOR < 11
+  // TensorRT 10 支持隐式量化。TensorRT 11 直接使用强类型 ONNX 的类型信息。
   std::unique_ptr<ImageFolderCalibrator> calibrator;
   if (precision == "int8") {
     if (options.int8_calib_dir.empty()) {
@@ -655,6 +681,7 @@ bool buildOnce(
   } else if (precision == "fp16") {
     config->setFlag(nvinfer1::BuilderFlag::kFP16);
   }
+#endif
 
   if (cancelled()) {return false;}
   std::cout << "[engine] buildSerializedNetwork " << precision << " begin" << std::endl;
@@ -662,11 +689,13 @@ bool buildOnce(
     builder->buildSerializedNetwork(*network, *config));
   // 取消可能已由 monitor 观察到；即使 TensorRT 返回计划，也不把它提交为新缓存。
   if (cancelled()) {return false;}
+#if NV_TENSORRT_MAJOR < 11
   // getBatch(false) 既可能表示数据耗尽也可能是资源失败；失败不能提交为成功 INT8 引擎。
   if (calibrator && !calibrator->lastError().empty()) {
     error_out = "INT8 calibration failed: " + calibrator->lastError();
     return false;
   }
+#endif
   if (!plan) {
     error_out = "TensorRT engine build failed (see the [engine][TRT] lines above)";
     return false;
@@ -697,8 +726,10 @@ bool cacheIdentity(
   const std::filesystem::path & model, const BuildOptions & options,
   EngineCache::Identity & identity, std::string & error)
 {
+  const auto precision = buildPrecision(options, error);
+  if (precision.empty()) {return false;}
   if (!EngineCache::readModel(model, identity, error)) {return false;}
-  identity.precision = normalisePrecision(options.precision);
+  identity.precision = precision;
   identity.dla_core = options.dla_core;
   identity.gpu = deviceSignature();
   identity.tensor_rt = runtimeTensorRTVersion();
@@ -758,6 +789,8 @@ BuildResult resolveEngine(const std::string & model_path, const BuildOptions & o
     result.error = "model_path must be a .onnx, .trt or .engine file, got " + model_path;
     return result;
   }
+  const auto requested = buildPrecision(options, result.error);
+  if (requested.empty()) {return result;}
   std::error_code ec;
   if (!std::filesystem::is_regular_file(model_path, ec)) {
     result.error = "model not found: " + model_path;
@@ -770,11 +803,6 @@ BuildResult resolveEngine(const std::string & model_path, const BuildOptions & o
   const auto directory = EngineCache::directory(real_model, options.cache_dir);
   std::filesystem::create_directories(directory, ec);
   if (ec) {result.error = "cannot create engine cache directory: " + ec.message(); return result;}
-  const auto requested = normalisePrecision(options.precision);
-  if (requested.empty()) {
-    result.error = "unknown precision '" + options.precision + "' (use fp32, fp16 or int8)";
-    return result;
-  }
   const auto keep_file = [](const std::filesystem::path &, std::string & error) {
       error.clear(); return true;
     };

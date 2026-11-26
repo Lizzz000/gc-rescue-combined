@@ -9,11 +9,11 @@
 int main(int argc, char ** argv)
 {
   if (argc < 2 || argc > 5) {
-    std::cerr << "usage: vision_engine_build <model.onnx> [cache_dir] [optimization_level] [workspace_mb]\n";
+    std::cerr << "usage: vision_engine_build <model.onnx> [cache_dir] [optimization_level] [workspace_mb]\n"
+              << "Uses FP16 on TensorRT 10 or the ONNX model's precision on TensorRT 11.\n";
     return 2;
   }
   BuildOptions options;
-  options.precision = "fp16";
   options.workspace_mb = 1024;
   options.builder_optimization_level = 5;
   options.dla_core = -1;

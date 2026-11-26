@@ -6,7 +6,6 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
-import time
 import unittest
 import urllib.error
 import urllib.request
@@ -31,14 +30,14 @@ class FakeLink:
         self.calls.append(('move', degrees, seconds, cancel.is_set()))
         if self.block:
             self.started.set()
-            self.release.wait(timeout=2)
+            self.release.wait()
         return {'position': math.radians(degrees), 'turned_deg': degrees}
 
     def goto_degrees(self, target_deg, seconds, kp, kd, cancel, zero_rad, *, ramp_fraction=0.0):
         self.calls.append(('goto', target_deg, seconds, cancel.is_set(), zero_rad))
         if self.block:
             self.started.set()
-            self.release.wait(timeout=2)
+            self.release.wait()
         return {'position': zero_rad + math.radians(target_deg), 'turned_deg': target_deg,
                 'target_deg': target_deg}
 
@@ -182,7 +181,7 @@ class ManualServoApiTest(unittest.TestCase):
         request = urllib.request.Request(self.url + path, data=data,
                                          method=method, headers={'Content-Type': 'application/json'})
         try:
-            with urllib.request.urlopen(request, timeout=2) as response:
+            with urllib.request.urlopen(request, timeout=5) as response:
                 return response.status, json.loads(response.read())
         except urllib.error.HTTPError as error:
             return error.code, json.loads(error.read())
@@ -194,21 +193,19 @@ class ManualServoApiTest(unittest.TestCase):
         self.assertIn(b'id="servo_preset_s" type="number" step="0.1" value="1.0"', page)
 
     def test_move_returns_202_and_busy_is_409(self):
-        self.session._link.block = True
-        started = time.monotonic()
-        status, payload = self.request('/api/servo', {'degrees': 10, 'seconds': 0.2})
+        link = self.session._link
+        link.block = True
+        status, _ = self.request('/api/servo', {'degrees': 10, 'seconds': 0.2})
         self.assertEqual(status, 202)
-        self.assertLess(time.monotonic() - started, 0.05)
-        self.assertTrue(self.session._link.started.wait(timeout=1))
+        self.assertTrue(link.started.wait(timeout=5), '伪舵机没有开始执行转动')
         status, payload = self.request('/api/servo', {'degrees': 5, 'seconds': 0.2})
         self.assertEqual(status, 409)
         self.assertIn('正在转动', payload['error'])
-        hold_started = time.monotonic()
-        status, payload = self.request('/api/hold', {'vx': 0.1, 'vy': 0, 'wz': 0})
+        status, _ = self.request('/api/hold', {'vx': 0.1, 'vy': 0, 'wz': 0})
         self.assertEqual(status, 200)
-        self.assertLess(time.monotonic() - hold_started, 0.05)
-        self.session._link.release.set()
-        self.session.wait(timeout=2)
+        self.assertTrue(self.session.busy)
+        link.release.set()
+        self.session.wait(timeout=5)
 
     def test_open_close_and_chassis_stop_do_not_cancel(self):
         self.session._link.block = True

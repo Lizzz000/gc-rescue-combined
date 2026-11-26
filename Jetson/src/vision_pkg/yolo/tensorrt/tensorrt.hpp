@@ -46,6 +46,8 @@ constexpr GraphCaptureDecision graphCaptureDecision(
 #include <vector>
 
 #include <NvInfer.h>
+#include <NvInferVersion.h>
+#if NV_TENSORRT_MAJOR < 11
 #include <opencv2/core.hpp>
 
 
@@ -107,6 +109,7 @@ private:
   std::vector<char> cache_;
   std::string error_;
 };
+#endif
 
 // Copyright 2026 jetson_yolo integration
 // SPDX-License-Identifier: AGPL-3.0
